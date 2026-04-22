@@ -125,8 +125,17 @@ jobs:
 
       - name: Build shared/db (required by api and web)
         run: |
+          # TypeScript incremental mode persists a .tsbuildinfo that can cause
+          # it to skip emit if it thinks nothing changed. Force a clean build
+          # so dist/ is always populated.
+          find . -name "*.tsbuildinfo" -not -path "*/node_modules/*" -delete || true
+          rm -rf packages/shared/dist packages/db/dist
           pnpm --filter @aligned/shared build
           pnpm --filter @aligned/db build
+          # Verify the outputs actually exist — tsc silently emits nothing
+          # when all inputs are unchanged, so this catches the regression.
+          test -f packages/shared/dist/index.js || (echo "shared/dist missing" && exit 1)
+          test -f packages/db/dist/index.js || (echo "db/dist missing" && exit 1)
 
       - name: Install Playwright browsers
         run: pnpm --filter @aligned/e2e exec playwright install --with-deps chromium

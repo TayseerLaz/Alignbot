@@ -41,6 +41,10 @@ jobs:
             set -euo pipefail
             cd /opt/aligned/app
 
+            # Load production env before any pnpm/prisma commands so DATABASE_URL
+            # etc. are available to the build scripts.
+            set -a; source .env.production; set +a
+
             echo "=== git pull ==="
             git fetch --all --quiet
             git reset --hard origin/main
@@ -56,7 +60,6 @@ jobs:
             pnpm --filter @aligned/db exec prisma generate
             pnpm --filter @aligned/db exec prisma migrate deploy
             # RLS is idempotent — safe to re-apply every deploy.
-            set -a; source .env.production; set +a
             PGPASSWORD="$POSTGRES_PASSWORD" psql -h localhost -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f packages/db/prisma/rls.sql || true
 
             echo "=== build ==="

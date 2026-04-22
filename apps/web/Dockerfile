@@ -12,7 +12,7 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/config/package.json packages/config/
 RUN pnpm fetch
 COPY . .
-RUN pnpm install --frozen-lockfile --offline
+RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
 WORKDIR /repo

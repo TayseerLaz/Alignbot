@@ -1,4 +1,9 @@
 export * from './client.js';
+// Runtime binding — the PrismaClient class is used by type-constrained generics
+// (e.g. `tx: PrismaClient`) in the api and worker.
+export { PrismaClient } from '@prisma/client';
+// Type-only re-exports. Any new Prisma enum / model added to schema.prisma
+// that the apps need should be listed here.
 export type {
   Organization,
   User,
@@ -12,5 +17,38 @@ export type {
   UserStatus,
   InvitationStatus,
   AuditAction,
+  Product,
+  ProductVariant,
+  ProductImage,
+  Category,
+  Service,
+  ServicePricingTier,
+  AvailabilityWindow,
+  BusinessInfo,
+  Location,
+  ContactChannel,
+  FAQ,
+  Policy,
+  Asset,
+  ImportJob,
+  ImportJobRow,
+  ImportEntityKind,
+  ImportJobStatus,
+  ApiConnector,
+  SyncRun,
+  SyncRunStatus,
+  SyncTrigger,
+  ConnectorAuthKind,
+  ConnectorStatus,
+  WebhookEndpoint,
+  WebhookDelivery,
+  WebhookEventKind,
+  WebhookDeliveryStatus,
+  CatalogRevision,
+  RevisionAction,
+  RevisionEntityType,
+  Notification,
+  NotificationKind,
+  NotificationSeverity,
   Prisma,
 } from '@prisma/client';

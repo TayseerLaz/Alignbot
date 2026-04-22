@@ -13,10 +13,14 @@ jobs:
       packages: write
     outputs:
       tag: ${{ steps.tag.outputs.value }}
+      owner_lc: ${{ steps.owner.outputs.value }}
     steps:
       - uses: actions/checkout@v4
       - id: tag
         run: echo "value=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+      - id: owner
+        # GHCR image names must be lowercase.
+        run: echo "value=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -31,8 +35,8 @@ jobs:
           file: ./apps/api/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/aligned-api:latest
-            ghcr.io/${{ github.repository_owner }}/aligned-api:${{ steps.tag.outputs.value }}
+            ghcr.io/${{ steps.owner.outputs.value }}/aligned-api:latest
+            ghcr.io/${{ steps.owner.outputs.value }}/aligned-api:${{ steps.tag.outputs.value }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,scope=api,mode=max
 
@@ -43,8 +47,8 @@ jobs:
           file: ./apps/worker/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/aligned-worker:latest
-            ghcr.io/${{ github.repository_owner }}/aligned-worker:${{ steps.tag.outputs.value }}
+            ghcr.io/${{ steps.owner.outputs.value }}/aligned-worker:latest
+            ghcr.io/${{ steps.owner.outputs.value }}/aligned-worker:${{ steps.tag.outputs.value }}
           cache-from: type=gha,scope=worker
           cache-to: type=gha,scope=worker,mode=max
 
@@ -55,8 +59,8 @@ jobs:
           file: ./apps/web/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/aligned-web:latest
-            ghcr.io/${{ github.repository_owner }}/aligned-web:${{ steps.tag.outputs.value }}
+            ghcr.io/${{ steps.owner.outputs.value }}/aligned-web:latest
+            ghcr.io/${{ steps.owner.outputs.value }}/aligned-web:${{ steps.tag.outputs.value }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,scope=web,mode=max
 
@@ -81,7 +85,7 @@ jobs:
             git fetch --all
             git reset --hard origin/main
             export TAG=${{ needs.build-and-push.outputs.tag }}
-            export REGISTRY=ghcr.io/${{ github.repository_owner }}
+            export REGISTRY=ghcr.io/${{ needs.build-and-push.outputs.owner_lc }}
             # Log in to GHCR using the workflow's GITHUB_TOKEN is not possible
             # from the server, so we use the explicit PAT stored as a secret.
             echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin

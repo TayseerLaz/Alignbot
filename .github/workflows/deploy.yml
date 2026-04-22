@@ -5,114 +5,96 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Native deploy: SSH to the server, git pull, pnpm build, systemctl restart.
+# No Docker / no GHCR. Faster (~3 min) and sidesteps the pnpm-workspace-in-docker
+# resolution issues we hit during the Phase 1 launch.
+#
+# Required GitHub Secrets:
+#   DEPLOY_HOST            88.80.145.171
+#   DEPLOY_PORT            269
+#   DEPLOY_USER            aligned
+#   DEPLOY_SSH_KEY         server's ~/.ssh/github_deploy (private half)
+#   API_DOMAIN             api.aligned-tech.com  (for the smoke test)
+#   INITIAL_ADMIN_EMAIL    admin@aligned-tech.com
+#   INITIAL_ADMIN_PASSWORD <strong password>
+#
+# The server must already have Node 20, pnpm, Postgres 16, Redis, Caddy
+# installed, the repo cloned at /opt/aligned/app, and .env.production in place.
+
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      tag: ${{ steps.tag.outputs.value }}
-      owner_lc: ${{ steps.owner.outputs.value }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: tag
-        run: echo "value=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
-      - id: owner
-        # GHCR image names must be lowercase.
-        run: echo "value=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build & push api
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./apps/api/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ steps.owner.outputs.value }}/aligned-api:latest
-            ghcr.io/${{ steps.owner.outputs.value }}/aligned-api:${{ steps.tag.outputs.value }}
-          cache-from: type=gha,scope=api
-          cache-to: type=gha,scope=api,mode=max
-
-      - name: Build & push worker
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./apps/worker/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ steps.owner.outputs.value }}/aligned-worker:latest
-            ghcr.io/${{ steps.owner.outputs.value }}/aligned-worker:${{ steps.tag.outputs.value }}
-          cache-from: type=gha,scope=worker
-          cache-to: type=gha,scope=worker,mode=max
-
-      - name: Build & push web
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./apps/web/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ steps.owner.outputs.value }}/aligned-web:latest
-            ghcr.io/${{ steps.owner.outputs.value }}/aligned-web:${{ steps.tag.outputs.value }}
-          cache-from: type=gha,scope=web
-          cache-to: type=gha,scope=web,mode=max
-
   deploy:
-    needs: build-and-push
     runs-on: ubuntu-latest
     environment: production
     steps:
       - uses: actions/checkout@v4
-      - name: SSH deploy
+
+      - name: Deploy to server
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           port: ${{ secrets.DEPLOY_PORT }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          envs: TAG,REGISTRY,GHCR_PAT,GITHUB_ACTOR
+          command_timeout: 20m
           script_stop: true
           script: |
             set -euo pipefail
             cd /opt/aligned/app
-            git fetch --all
+
+            echo "=== git pull ==="
+            git fetch --all --quiet
             git reset --hard origin/main
-            export TAG=${{ needs.build-and-push.outputs.tag }}
-            export REGISTRY=ghcr.io/${{ needs.build-and-push.outputs.owner_lc }}
-            # Log in to GHCR using the workflow's GITHUB_TOKEN is not possible
-            # from the server, so we use the explicit PAT stored as a secret.
-            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            docker compose -f docker-compose.prod.yml --env-file .env.production pull
-            # Run migrations once with the api image, against the direct DB url.
-            docker compose -f docker-compose.prod.yml --env-file .env.production run --rm api \
-              node node_modules/prisma/build/index.js migrate deploy --schema packages/db/prisma/schema.prisma
-            docker compose -f docker-compose.prod.yml --env-file .env.production up -d --remove-orphans
-            # Apply RLS policies (idempotent — safe to run on every deploy).
-            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T postgres \
-              psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
-              < packages/db/prisma/rls.sql || true
-            # Bootstrap / refresh the ALIGNED super-admin (idempotent upsert by email).
-            docker compose -f docker-compose.prod.yml --env-file .env.production run --rm \
-              -e INITIAL_ADMIN_EMAIL='${{ secrets.INITIAL_ADMIN_EMAIL }}' \
-              -e INITIAL_ADMIN_PASSWORD='${{ secrets.INITIAL_ADMIN_PASSWORD }}' \
-              api node node_modules/tsx/dist/cli.mjs packages/db/seed/super-admin.ts || true
-            # Persist the current admin credentials to a local file only root/aligned can read.
+
+            echo "=== pnpm install ==="
+            pnpm install --frozen-lockfile --prefer-offline
+
+            echo "=== clear stale tsbuildinfo + dists (prevents incremental ghost builds) ==="
+            find . -name "*.tsbuildinfo" -not -path "*/node_modules/*" -delete || true
+            rm -rf packages/shared/dist packages/db/dist apps/api/dist apps/worker/dist
+
+            echo "=== prisma generate + migrate deploy + RLS ==="
+            pnpm --filter @aligned/db exec prisma generate
+            pnpm --filter @aligned/db exec prisma migrate deploy
+            # RLS is idempotent — safe to re-apply every deploy.
+            set -a; source .env.production; set +a
+            PGPASSWORD="$POSTGRES_PASSWORD" psql -h localhost -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f packages/db/prisma/rls.sql || true
+
+            echo "=== build ==="
+            pnpm --filter @aligned/shared build
+            pnpm --filter @aligned/db build
+            pnpm --filter @aligned/api build
+            pnpm --filter @aligned/worker build
+            # Clear Next.js output and rebuild
+            rm -rf apps/web/.next
+            pnpm --filter @aligned/web build
+
+            echo "=== bootstrap super-admin (idempotent) ==="
+            INITIAL_ADMIN_EMAIL='${{ secrets.INITIAL_ADMIN_EMAIL }}' \
+            INITIAL_ADMIN_PASSWORD='${{ secrets.INITIAL_ADMIN_PASSWORD }}' \
+            pnpm --filter @aligned/db exec tsx ./seed/super-admin.ts
+
+            echo "=== restart services ==="
+            sudo systemctl restart aligned-api aligned-worker aligned-web
+            sleep 5
+            sudo systemctl is-active aligned-api aligned-worker aligned-web
+
+            echo "=== update /opt/aligned/secrets/super-admin.txt ==="
             umask 077
             cat > /opt/aligned/secrets/super-admin.txt <<EOF
-            ALIGNED super-admin — generated by deploy at $(date -u +%FT%TZ)
+            ALIGNED super-admin — last updated by deploy at $(date -u +%FT%TZ)
             Portal: https://${{ secrets.WEB_DOMAIN }}
             Email:  ${{ secrets.INITIAL_ADMIN_EMAIL }}
             Pass:   ${{ secrets.INITIAL_ADMIN_PASSWORD }}
             Change the password from /settings/profile once signed in.
             EOF
             chmod 600 /opt/aligned/secrets/super-admin.txt
-            # Smoke test
-            sleep 8
-            curl -fsS https://${{ secrets.API_DOMAIN }}/health
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          # Give caddy/api a moment after restart
+          sleep 3
+          curl -fsS --max-time 10 https://${{ secrets.API_DOMAIN }}/health | tee /tmp/health.json
+          grep -q '"status":"ok"' /tmp/health.json
+          echo ""
+          echo "Smoke test passed."

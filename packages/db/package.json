@@ -27,6 +27,7 @@
     "reset": "prisma migrate reset --force --skip-seed && pnpm rls:apply && pnpm seed",
     "seed": "tsx --env-file=.env ./seed/index.ts",
     "seed:pilot": "tsx --env-file=.env ./seed/pilot.ts",
+    "seed:super-admin": "tsx ./seed/super-admin.ts",
     "studio": "prisma studio",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"

@@ -1,0 +1,50 @@
+# dependencies
+node_modules
+.pnpm-store
+
+# build outputs
+dist
+build
+.next
+out
+.turbo
+
+# env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea
+
+# coverage
+coverage
+*.lcov
+.nyc_output
+
+# prisma
+packages/db/prisma/migrations/**/migration_lock.toml
+
+# uploads / tmp
+uploads
+tmp
+
+# database dumps
+*.sql.gz
+*.dump
+
+# claude
+.claude

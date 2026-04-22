@@ -1,0 +1,71 @@
+'use client';
+
+import { zodResolver } from '@hookform/resolvers/zod';
+import { acceptInvitationBodyWithoutTokenSchema, type AcceptInvitationBody } from '@aligned/shared';
+import { useParams, useRouter } from 'next/navigation';
+import { useForm } from 'react-hook-form';
+import { toast } from 'sonner';
+
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { api, ApiError } from '@/lib/api';
+
+type FormValues = Omit<AcceptInvitationBody, 'token'>;
+
+export default function AcceptInvitePage() {
+  const params = useParams<{ token: string }>();
+  const router = useRouter();
+  const form = useForm<FormValues>({
+    resolver: zodResolver(acceptInvitationBodyWithoutTokenSchema),
+    defaultValues: { firstName: '', lastName: '', password: '' },
+  });
+
+  const onSubmit = form.handleSubmit(async (values) => {
+    try {
+      await api.post(`/api/v1/auth/invites/${params.token}/accept`, values, { anonymous: true });
+      toast.success('Invitation accepted. Please sign in.');
+      router.push('/login');
+    } catch (err) {
+      if (err instanceof ApiError) toast.error(err.payload.message);
+      else toast.error('Could not accept invitation.');
+    }
+  });
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Accept your invitation</h1>
+        <p className="mt-1 text-sm text-foreground-muted">
+          Set up your account to join the organization.
+        </p>
+      </div>
+
+      <form onSubmit={onSubmit} className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="firstName">First name</Label>
+            <Input id="firstName" {...form.register('firstName')} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lastName">Last name</Label>
+            <Input id="lastName" {...form.register('lastName')} />
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="password">Password</Label>
+          <Input id="password" type="password" autoComplete="new-password" {...form.register('password')} />
+          <p className="text-xs text-foreground-subtle">
+            12+ characters with uppercase, lowercase, and a number.
+          </p>
+          {form.formState.errors.password ? (
+            <p className="text-xs text-red-600">{form.formState.errors.password.message}</p>
+          ) : null}
+        </div>
+        <Button type="submit" className="w-full" loading={form.formState.isSubmitting}>
+          Accept invitation
+        </Button>
+      </form>
+    </div>
+  );
+}

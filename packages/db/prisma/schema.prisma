@@ -1,0 +1,1012 @@
+// ============================================================================
+// ALIGNED Business Platform — Prisma schema (Day 1: org / user / auth core)
+// Day 2 will extend with Product, Service, BusinessInfo, FAQ, etc.
+// All tenant-scoped tables MUST have organization_id and matching RLS policy
+// (see prisma/rls.sql, applied after every migrate via `pnpm rls:apply`).
+// ============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_DATABASE_URL")
+  extensions = [pgcrypto, citext, pg_trgm]
+}
+
+// ----------------------------------------------------------------------------
+// Enums
+// ----------------------------------------------------------------------------
+
+enum OrgRole {
+  admin
+  editor
+  viewer
+}
+
+enum OrgStatus {
+  active
+  suspended
+  deleted
+}
+
+enum UserStatus {
+  pending // email not yet verified
+  active
+  disabled
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  revoked
+  expired
+}
+
+enum AuditAction {
+  user_created
+  user_updated
+  user_deactivated
+  user_role_changed
+  org_created
+  org_suspended
+  invitation_sent
+  invitation_accepted
+  invitation_revoked
+  api_key_created
+  api_key_revoked
+  password_changed
+  password_reset_requested
+  email_verified
+  login_succeeded
+  login_failed
+  logout
+  // Catalog (Day 2)
+  product_created
+  product_updated
+  product_deleted
+  service_created
+  service_updated
+  service_deleted
+  category_created
+  category_updated
+  category_deleted
+  business_info_updated
+  faq_created
+  faq_updated
+  faq_deleted
+  policy_created
+  policy_updated
+  policy_deleted
+  asset_uploaded
+  asset_deleted
+  // Day 3 — imports / connectors / webhooks / api keys
+  import_started
+  import_completed
+  import_failed
+  api_key_used_first_time
+  webhook_endpoint_created
+  webhook_endpoint_deleted
+  webhook_delivered
+  webhook_failed
+  connector_created
+  connector_updated
+  connector_deleted
+  connector_sync_started
+  connector_sync_succeeded
+  connector_sync_failed
+  // Day 4
+  revision_restored
+  notification_marked_read
+  org_pilot_onboarded
+}
+
+enum RevisionEntityType {
+  product
+  service
+  business_info
+  faq
+  policy
+}
+
+enum RevisionAction {
+  created
+  updated
+  deleted
+  restored
+}
+
+enum NotificationKind {
+  import_succeeded
+  import_partial
+  import_failed
+  sync_succeeded
+  sync_failed
+  webhook_disabled
+  api_key_first_use
+  generic
+}
+
+enum NotificationSeverity {
+  info
+  success
+  warning
+  error
+}
+
+enum ImportJobStatus {
+  pending
+  validating
+  processing
+  succeeded
+  partial // some rows failed
+  failed
+  cancelled
+}
+
+enum ImportEntityKind {
+  product
+  service
+  faq
+  business_info
+}
+
+enum ImportRowStatus {
+  succeeded
+  failed
+  skipped
+}
+
+enum ConnectorAuthKind {
+  none
+  api_key  // header X-Custom-Key: <secret>
+  bearer
+  basic
+  hmac
+}
+
+enum ConnectorStatus {
+  active
+  paused
+  failing
+  disabled
+}
+
+enum SyncRunStatus {
+  pending
+  running
+  succeeded
+  failed
+  partial
+}
+
+enum SyncTrigger {
+  scheduled
+  manual
+  webhook
+}
+
+enum WebhookDeliveryStatus {
+  pending
+  in_flight
+  delivered
+  failed
+  giving_up
+}
+
+enum WebhookEventKind {
+  product_created
+  product_updated
+  product_deleted
+  service_created
+  service_updated
+  service_deleted
+  business_info_updated
+  faq_changed
+  policy_changed
+  catalog_changed // umbrella event for clients that just want any change
+}
+
+enum AssetKind {
+  image
+  document
+  csv_upload
+  other
+}
+
+enum DayOfWeek {
+  monday
+  tuesday
+  wednesday
+  thursday
+  friday
+  saturday
+  sunday
+}
+
+enum PriceUnit {
+  flat
+  per_hour
+  per_day
+  per_session
+  per_unit
+}
+
+enum FaqVisibility {
+  public  // exposed to chatbot read API
+  private // internal only
+}
+
+// ----------------------------------------------------------------------------
+// Organization (tenant)
+// ----------------------------------------------------------------------------
+
+model Organization {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug      String    @unique @db.Citext
+  name      String
+  status    OrgStatus @default(active)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  memberships  Membership[]
+  invitations  Invitation[]
+  apiKeys      ApiKey[]
+  auditLogs    AuditLog[]
+  sessions     Session[]
+  products     Product[]
+  productVariants ProductVariant[]
+  productImages   ProductImage[]
+  categories   Category[]
+  services     Service[]
+  servicePricingTiers ServicePricingTier[]
+  availabilityWindows AvailabilityWindow[]
+  businessInfo BusinessInfo?
+  locations    Location[]
+  contactChannels ContactChannel[]
+  faqs         FAQ[]
+  policies     Policy[]
+  assets       Asset[]
+  // Day 3
+  importJobs       ImportJob[]
+  importJobRows    ImportJobRow[]
+  apiConnectors    ApiConnector[]
+  syncRuns         SyncRun[]
+  webhookEndpoints WebhookEndpoint[]
+  webhookDeliveries WebhookDelivery[]
+  // Day 4
+  catalogRevisions CatalogRevision[]
+  notifications    Notification[]
+
+  @@index([status])
+  @@map("organizations")
+}
+
+// ----------------------------------------------------------------------------
+// User — global identity. A user can belong to multiple orgs via Membership.
+// ----------------------------------------------------------------------------
+
+model User {
+  id                          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                       String     @unique @db.Citext
+  emailVerifiedAt             DateTime?  @map("email_verified_at")
+  passwordHash                String     @map("password_hash")
+  firstName                   String?    @map("first_name")
+  lastName                    String?    @map("last_name")
+  avatarUrl                   String?    @map("avatar_url")
+  status                      UserStatus @default(pending)
+  isAlignedAdmin              Boolean    @default(false) @map("is_aligned_admin")
+  // Email verification + password reset tokens (hashed). Single-use, short TTL.
+  emailVerificationTokenHash  String?    @map("email_verification_token_hash")
+  emailVerificationExpiresAt  DateTime?  @map("email_verification_expires_at")
+  passwordResetTokenHash      String?    @map("password_reset_token_hash")
+  passwordResetExpiresAt      DateTime?  @map("password_reset_expires_at")
+  lastLoginAt                 DateTime?  @map("last_login_at")
+  failedLoginAttempts         Int        @default(0) @map("failed_login_attempts")
+  lockedUntil                 DateTime?  @map("locked_until")
+  createdAt                   DateTime   @default(now()) @map("created_at")
+  updatedAt                   DateTime   @updatedAt @map("updated_at")
+
+  memberships         Membership[]
+  sessions            Session[]
+  invitationsSent     Invitation[] @relation("InvitedBy")
+  invitationsAccepted Invitation[] @relation("AcceptedBy")
+  auditLogs           AuditLog[]   @relation("AuditActor")
+
+  @@index([status])
+  @@map("users")
+}
+
+// ----------------------------------------------------------------------------
+// Membership — user ↔ org with role
+// ----------------------------------------------------------------------------
+
+model Membership {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  role           OrgRole  @default(viewer)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@index([organizationId, role])
+  @@map("memberships")
+}
+
+// ----------------------------------------------------------------------------
+// Session — refresh-token-backed sessions, one row per device/login
+// ----------------------------------------------------------------------------
+
+model Session {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String    @map("user_id") @db.Uuid
+  organizationId     String?   @map("organization_id") @db.Uuid
+  refreshTokenHash   String    @unique @map("refresh_token_hash")
+  userAgent          String?   @map("user_agent")
+  ipAddress          String?   @map("ip_address") @db.Inet
+  expiresAt          DateTime  @map("expires_at")
+  revokedAt          DateTime? @map("revoked_at")
+  lastUsedAt         DateTime  @default(now()) @map("last_used_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ----------------------------------------------------------------------------
+// Invitation — invite a teammate to an org with a specific role
+// ----------------------------------------------------------------------------
+
+model Invitation {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String           @map("organization_id") @db.Uuid
+  email           String           @db.Citext
+  role            OrgRole          @default(viewer)
+  tokenHash       String           @unique @map("token_hash")
+  status          InvitationStatus @default(pending)
+  invitedById     String           @map("invited_by_id") @db.Uuid
+  acceptedById    String?          @map("accepted_by_id") @db.Uuid
+  acceptedAt      DateTime?        @map("accepted_at")
+  expiresAt       DateTime         @map("expires_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("InvitedBy", fields: [invitedById], references: [id])
+  acceptedBy   User?        @relation("AcceptedBy", fields: [acceptedById], references: [id])
+
+  @@unique([organizationId, email])
+  @@index([status, expiresAt])
+  @@map("invitations")
+}
+
+// ----------------------------------------------------------------------------
+// ApiKey — issued per-org for chatbot read API + outbound integrations
+// ----------------------------------------------------------------------------
+
+model ApiKey {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String    @map("organization_id") @db.Uuid
+  name            String
+  prefix          String    @unique // displayed in UI, e.g. "ak_live_abc123"
+  keyHash         String    @map("key_hash")
+  scopes          String[]  @default([]) // e.g. ["read:catalog","read:business-info"]
+  lastUsedAt      DateTime? @map("last_used_at")
+  expiresAt       DateTime? @map("expires_at")
+  revokedAt       DateTime? @map("revoked_at")
+  createdById     String    @map("created_by_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([revokedAt])
+  @@map("api_keys")
+}
+
+// ----------------------------------------------------------------------------
+// AuditLog — every meaningful state change. Kept tenant-scoped (org_id).
+// ----------------------------------------------------------------------------
+
+model AuditLog {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String?     @map("organization_id") @db.Uuid
+  actorUserId     String?     @map("actor_user_id") @db.Uuid
+  action          AuditAction
+  entityType      String?     @map("entity_type")
+  entityId        String?     @map("entity_id") @db.Uuid
+  metadata        Json?
+  ipAddress       String?     @map("ip_address") @db.Inet
+  userAgent       String?     @map("user_agent")
+  createdAt       DateTime    @default(now()) @map("created_at")
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  actor        User?         @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([actorUserId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+// ============================================================================
+// CATALOG (Day 2)
+// ----------------------------------------------------------------------------
+// All tables tenant-scoped via organization_id + Postgres RLS (see rls.sql).
+// Money is stored as Int (minor units, e.g. cents) to avoid float drift.
+// Search indexes use pg_trgm for fast ILIKE / similarity queries on name/desc.
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// Asset — generic file in object storage (Wasabi). Used for product images
+// today, will be reused for CSV uploads on Day 3 and avatars later.
+// ----------------------------------------------------------------------------
+
+model Asset {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String    @map("organization_id") @db.Uuid
+  kind            AssetKind
+  storageKey      String    @unique @map("storage_key") // S3 object key
+  contentType     String    @map("content_type")
+  byteSize        Int       @map("byte_size")
+  width           Int?
+  height          Int?
+  checksumSha256  String?   @map("checksum_sha256")
+  uploadedById    String?   @map("uploaded_by_id") @db.Uuid
+  metadata        Json?
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  organization  Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  productImages ProductImage[]
+
+  @@index([organizationId, kind, createdAt(sort: Desc)])
+  @@map("assets")
+}
+
+// ----------------------------------------------------------------------------
+// Category — self-referencing tree, tenant-scoped, manual sort order
+// ----------------------------------------------------------------------------
+
+model Category {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  parentId        String?  @map("parent_id") @db.Uuid
+  name            String
+  slug            String   @db.Citext
+  description     String?
+  sortOrder       Int      @default(0) @map("sort_order")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent       Category?    @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children     Category[]   @relation("CategoryTree")
+  products     Product[]
+  services     Service[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, parentId, sortOrder])
+  @@map("categories")
+}
+
+// ----------------------------------------------------------------------------
+// Product
+// ----------------------------------------------------------------------------
+
+model Product {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  categoryId      String?  @map("category_id") @db.Uuid
+  sku             String   @db.Citext
+  name            String
+  slug            String   @db.Citext
+  description     String?  // rich text / markdown stored as text
+  shortDescription String? @map("short_description")
+  // Price is stored in minor units (e.g. cents). Currency is per-org for v1.
+  priceMinor      Int?     @map("price_minor")
+  currency        String   @default("USD") @db.Char(3)
+  compareAtMinor  Int?     @map("compare_at_minor")
+  isAvailable     Boolean  @default(true) @map("is_available")
+  stockQuantity   Int?     @map("stock_quantity")
+  trackInventory  Boolean  @default(false) @map("track_inventory")
+  attributes      Json?    // freeform key/value
+  searchText      String?  @map("search_text") // denormalised name+desc for trigram search
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at") // soft-delete
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  category     Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  variants     ProductVariant[]
+  images       ProductImage[]
+
+  @@unique([organizationId, sku])
+  @@unique([organizationId, slug])
+  @@index([organizationId, isAvailable, createdAt(sort: Desc)])
+  @@index([organizationId, categoryId])
+  @@index([organizationId, deletedAt])
+  // pg_trgm GIN index added in raw SQL after migration (Prisma can't express it):
+  //   CREATE INDEX products_search_trgm_idx ON products USING gin (search_text gin_trgm_ops);
+  @@map("products")
+}
+
+model ProductVariant {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  productId       String   @map("product_id") @db.Uuid
+  sku             String   @db.Citext
+  name            String   // e.g. "Red / Large"
+  options         Json     // {"color":"red","size":"large"}
+  priceMinor      Int?     @map("price_minor") // overrides parent if set
+  stockQuantity   Int?     @map("stock_quantity")
+  isAvailable     Boolean  @default(true) @map("is_available")
+  sortOrder       Int      @default(0) @map("sort_order")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, sku])
+  @@index([productId, sortOrder])
+  @@map("product_variants")
+}
+
+model ProductImage {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  productId       String   @map("product_id") @db.Uuid
+  assetId         String   @map("asset_id") @db.Uuid
+  altText         String?  @map("alt_text")
+  sortOrder       Int      @default(0) @map("sort_order")
+  isPrimary       Boolean  @default(false) @map("is_primary")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  asset        Asset        @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@unique([productId, assetId])
+  @@index([productId, sortOrder])
+  @@map("product_images")
+}
+
+// ----------------------------------------------------------------------------
+// Service — like Product but with duration + pricing tiers + availability
+// ----------------------------------------------------------------------------
+
+model Service {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  categoryId      String?  @map("category_id") @db.Uuid
+  slug            String   @db.Citext
+  name            String
+  description     String?
+  shortDescription String? @map("short_description")
+  durationMinutes Int?     @map("duration_minutes")
+  basePriceMinor  Int?     @map("base_price_minor")
+  currency        String   @default("USD") @db.Char(3)
+  priceUnit       PriceUnit @default(flat) @map("price_unit")
+  isAvailable     Boolean  @default(true) @map("is_available")
+  bookingRules    Json?    @map("booking_rules") // freeform: { min_notice_hours, max_party_size, ... }
+  searchText      String?  @map("search_text")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  category     Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  pricingTiers ServicePricingTier[]
+  availability AvailabilityWindow[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, isAvailable, createdAt(sort: Desc)])
+  @@index([organizationId, categoryId])
+  @@index([organizationId, deletedAt])
+  @@map("services")
+}
+
+model ServicePricingTier {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  serviceId       String   @map("service_id") @db.Uuid
+  name            String   // e.g. "Standard", "Premium"
+  description     String?
+  priceMinor      Int      @map("price_minor")
+  currency        String   @default("USD") @db.Char(3)
+  priceUnit       PriceUnit @default(flat) @map("price_unit")
+  sortOrder       Int      @default(0) @map("sort_order")
+  features        String[] @default([])
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  service      Service      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@index([serviceId, sortOrder])
+  @@map("service_pricing_tiers")
+}
+
+model AvailabilityWindow {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String    @map("organization_id") @db.Uuid
+  serviceId       String    @map("service_id") @db.Uuid
+  dayOfWeek       DayOfWeek @map("day_of_week")
+  // Times stored as minutes since midnight (0..1440). Simpler than TIME for grids.
+  startMinute     Int       @map("start_minute")
+  endMinute       Int       @map("end_minute")
+  effectiveFrom   DateTime? @map("effective_from") // optional date range
+  effectiveUntil  DateTime? @map("effective_until")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  service      Service      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@index([serviceId, dayOfWeek])
+  @@map("availability_windows")
+}
+
+// ----------------------------------------------------------------------------
+// BusinessInfo — single row per org, hours stored as JSON for flexibility.
+// Locations / contacts / FAQs / policies are separate tables.
+// ----------------------------------------------------------------------------
+
+model BusinessInfo {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @unique @map("organization_id") @db.Uuid
+  legalName       String?  @map("legal_name")
+  tagline         String?
+  about           String?  // rich text
+  websiteUrl      String?  @map("website_url")
+  // Operating hours: { "monday": [{open: "09:00", close: "17:00"}], ... }
+  operatingHours  Json?    @map("operating_hours")
+  // Exceptions / holidays: [{date: "2026-12-25", closed: true, note: "Christmas"}]
+  hoursExceptions Json?    @map("hours_exceptions")
+  timezone        String   @default("UTC")
+  currency        String   @default("USD") @db.Char(3)
+  metadata        Json?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("business_info")
+}
+
+model Location {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  name            String   // e.g. "Downtown branch"
+  addressLine1    String?  @map("address_line1")
+  addressLine2    String?  @map("address_line2")
+  city            String?
+  region          String?
+  postalCode      String?  @map("postal_code")
+  country         String?  @db.Char(2)
+  latitude        Decimal? @db.Decimal(9, 6)
+  longitude       Decimal? @db.Decimal(9, 6)
+  phone           String?
+  email           String?  @db.Citext
+  isPrimary       Boolean  @default(false) @map("is_primary")
+  sortOrder       Int      @default(0) @map("sort_order")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, sortOrder])
+  @@map("locations")
+}
+
+model ContactChannel {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  kind            String   // "phone" | "email" | "whatsapp" | "instagram" | "x" | ...
+  label           String?
+  value           String   // the actual phone/email/URL
+  isPrimary       Boolean  @default(false) @map("is_primary")
+  sortOrder       Int      @default(0) @map("sort_order")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, sortOrder])
+  @@map("contact_channels")
+}
+
+model FAQ {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String        @map("organization_id") @db.Uuid
+  question        String
+  answer          String        // rich text / markdown
+  tags            String[]      @default([])
+  visibility      FaqVisibility @default(public)
+  sortOrder       Int           @default(0) @map("sort_order")
+  isPublished     Boolean       @default(true) @map("is_published")
+  searchText      String?       @map("search_text")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, isPublished, sortOrder])
+  // pg_trgm index added in raw SQL.
+  @@map("faqs")
+}
+
+model Policy {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  kind            String   // "return" | "shipping" | "privacy" | "terms" | custom
+  title           String
+  content         String   // rich text / markdown
+  isPublished     Boolean  @default(true) @map("is_published")
+  sortOrder       Int      @default(0) @map("sort_order")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, kind])
+  @@index([organizationId, sortOrder])
+  @@map("policies")
+}
+
+// ============================================================================
+// IMPORTS / CONNECTORS / WEBHOOKS (Day 3)
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// ImportJob — async CSV/XLSX upload, processed by BullMQ worker.
+// One ImportJobRow per source row, recording success/failure + parsed payload.
+// ----------------------------------------------------------------------------
+
+model ImportJob {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String           @map("organization_id") @db.Uuid
+  entityKind      ImportEntityKind @map("entity_kind")
+  status          ImportJobStatus  @default(pending)
+  // Source file in object storage (Wasabi). Optional for in-memory imports.
+  sourceAssetId   String?          @map("source_asset_id") @db.Uuid
+  sourceFilename  String?          @map("source_filename")
+  // Column mapping selected by the user: { "Product Name": "name", "Cost": "priceMinor" }
+  columnMapping   Json?            @map("column_mapping")
+  // Counts
+  totalRows       Int              @default(0) @map("total_rows")
+  processedRows   Int              @default(0) @map("processed_rows")
+  succeededRows   Int              @default(0) @map("succeeded_rows")
+  failedRows      Int              @default(0) @map("failed_rows")
+  skippedRows     Int              @default(0) @map("skipped_rows")
+  // Lifecycle
+  startedAt       DateTime?        @map("started_at")
+  finishedAt      DateTime?        @map("finished_at")
+  errorMessage    String?          @map("error_message")
+  createdById     String?          @map("created_by_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rows         ImportJobRow[]
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([status, createdAt])
+  @@map("import_jobs")
+}
+
+model ImportJobRow {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String          @map("organization_id") @db.Uuid
+  importJobId     String          @map("import_job_id") @db.Uuid
+  rowNumber       Int             @map("row_number") // 1-based, includes header offset
+  status          ImportRowStatus
+  // Resulting entity (when succeeded) — e.g. product id created/updated.
+  resultEntityId  String?         @map("result_entity_id") @db.Uuid
+  // Parsed source data (raw before validation) for debugging.
+  rawData         Json?           @map("raw_data")
+  errors          Json?           // [{path, message}]
+  createdAt       DateTime        @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  importJob    ImportJob    @relation(fields: [importJobId], references: [id], onDelete: Cascade)
+
+  @@index([importJobId, status])
+  @@index([importJobId, rowNumber])
+  @@map("import_job_rows")
+}
+
+// ----------------------------------------------------------------------------
+// ApiConnector — outbound pull from a client's external system (REST).
+// SyncRun records each execution.
+// ----------------------------------------------------------------------------
+
+model ApiConnector {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String              @map("organization_id") @db.Uuid
+  name            String
+  entityKind      ImportEntityKind    @map("entity_kind")
+  endpointUrl     String?             @map("endpoint_url")
+  authKind        ConnectorAuthKind   @default(none) @map("auth_kind")
+  // Encrypted-at-rest credentials would normally live in a vault; for v1 we store
+  // them in JSONB and recommend pg_crypto in prod. The structure depends on authKind:
+  //   bearer:  { token: "..." }
+  //   api_key: { headerName: "X-…", value: "..." }
+  //   basic:   { username: "...", password: "..." }
+  //   hmac:    { secret: "...", header: "X-Sig" }
+  authConfig      Json?               @map("auth_config")
+  // Cron schedule. NULL = webhook-only (inbound).
+  scheduleCron    String?             @map("schedule_cron")
+  // Mapping spec (same shape as ImportJob.columnMapping).
+  columnMapping   Json?               @map("column_mapping")
+  // Webhook secret used to verify inbound calls (HMAC over body).
+  webhookSecret   String?             @map("webhook_secret")
+  status          ConnectorStatus     @default(active)
+  lastRunAt       DateTime?           @map("last_run_at")
+  lastSuccessAt   DateTime?           @map("last_success_at")
+  consecutiveFailures Int             @default(0) @map("consecutive_failures")
+  createdById     String?             @map("created_by_id") @db.Uuid
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  syncRuns     SyncRun[]
+
+  @@index([organizationId, status])
+  @@map("api_connectors")
+}
+
+model SyncRun {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String         @map("organization_id") @db.Uuid
+  connectorId     String         @map("connector_id") @db.Uuid
+  trigger         SyncTrigger
+  status          SyncRunStatus  @default(pending)
+  startedAt       DateTime?      @map("started_at")
+  finishedAt      DateTime?      @map("finished_at")
+  recordsFetched  Int            @default(0) @map("records_fetched")
+  recordsUpserted Int            @default(0) @map("records_upserted")
+  recordsFailed   Int            @default(0) @map("records_failed")
+  errorMessage    String?        @map("error_message")
+  metadata        Json?
+  createdAt       DateTime       @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connector    ApiConnector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+
+  @@index([connectorId, createdAt(sort: Desc)])
+  @@index([organizationId, status, createdAt(sort: Desc)])
+  @@map("sync_runs")
+}
+
+// ----------------------------------------------------------------------------
+// Outbound webhooks — notify customer systems / chatbot when catalog changes.
+// HMAC-SHA256 signature in `X-Aligned-Signature` header.
+// ----------------------------------------------------------------------------
+
+model WebhookEndpoint {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  url             String
+  description     String?
+  // Subscribed event kinds. Empty/null = subscribe to all.
+  eventKinds      WebhookEventKind[] @default([]) @map("event_kinds")
+  signingSecret   String   @map("signing_secret") // displayed once on create
+  isActive        Boolean  @default(true) @map("is_active")
+  // For automatic disabling after too many consecutive failures.
+  consecutiveFailures Int  @default(0) @map("consecutive_failures")
+  lastDeliveryAt  DateTime? @map("last_delivery_at")
+  createdById     String?  @map("created_by_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries   WebhookDelivery[]
+
+  @@index([organizationId, isActive])
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String                @map("organization_id") @db.Uuid
+  endpointId      String                @map("endpoint_id") @db.Uuid
+  eventKind       WebhookEventKind      @map("event_kind")
+  payload         Json
+  status          WebhookDeliveryStatus @default(pending)
+  attempts        Int                   @default(0)
+  // Last response (truncated body kept for diagnostics).
+  responseStatus  Int?                  @map("response_status")
+  responseBody    String?               @map("response_body")
+  responseHeaders Json?                 @map("response_headers")
+  scheduledFor    DateTime              @default(now()) @map("scheduled_for")
+  attemptedAt     DateTime?             @map("attempted_at")
+  deliveredAt     DateTime?             @map("delivered_at")
+  errorMessage    String?               @map("error_message")
+  createdAt       DateTime              @default(now()) @map("created_at")
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  endpoint     WebhookEndpoint  @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId, createdAt(sort: Desc)])
+  @@index([status, scheduledFor])
+  @@map("webhook_deliveries")
+}
+
+// ============================================================================
+// VERSIONING + NOTIFICATIONS (Day 4)
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// CatalogRevision — append-only history of catalog mutations.
+// One row per create/update/delete on a tracked entity. The `snapshot` is the
+// post-mutation state for create/update, and the pre-deletion state for delete.
+// Restores read the snapshot and apply it back to the live row.
+// ----------------------------------------------------------------------------
+
+model CatalogRevision {
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String             @map("organization_id") @db.Uuid
+  entityType      RevisionEntityType @map("entity_type")
+  entityId        String             @map("entity_id") @db.Uuid
+  action          RevisionAction
+  snapshot        Json
+  // Optional human-readable summary (e.g. "Updated price from $19 to $24")
+  summary         String?
+  actorUserId     String?            @map("actor_user_id") @db.Uuid
+  // The "version number" for this entity, monotonically increasing per (entityType, entityId).
+  // Computed by the application (count + 1) inside the same transaction so it stays consistent.
+  versionNumber   Int                @map("version_number")
+  createdAt       DateTime           @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([entityType, entityId, versionNumber])
+  @@index([organizationId, entityType, entityId, createdAt(sort: Desc)])
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@map("catalog_revisions")
+}
+
+// ----------------------------------------------------------------------------
+// Notification — in-app notifications shown in the bell icon dropdown.
+// Generated by the worker on import/sync events and by API key first-use.
+// ----------------------------------------------------------------------------
+
+model Notification {
+  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String               @map("organization_id") @db.Uuid
+  // If set, only this user sees the notification. NULL = visible to all org members.
+  targetUserId    String?              @map("target_user_id") @db.Uuid
+  kind            NotificationKind
+  severity        NotificationSeverity @default(info)
+  title           String
+  body            String?
+  // Optional deep link (e.g. /imports/<id>)
+  link            String?
+  // Optional reference back to the entity that triggered this.
+  entityType      String?              @map("entity_type")
+  entityId        String?              @map("entity_id") @db.Uuid
+  metadata        Json?
+  readAt          DateTime?            @map("read_at")
+  // Per-user read state when targetUserId is NULL: stored as user IDs that have
+  // read the notification. Cheap for small teams; revisit if orgs grow.
+  readByUserIds   String[]             @default([]) @map("read_by_user_ids") @db.Uuid
+  createdAt       DateTime             @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, targetUserId, createdAt(sort: Desc)])
+  @@map("notifications")
+}

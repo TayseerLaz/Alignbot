@@ -1,0 +1,534 @@
+'use client';
+
+import type { AvailabilityWindow, Category, PriceUnit, Service, ServicePricingTier } from '@aligned/shared';
+import { DAY_OF_WEEK_LABELS, DAYS_OF_WEEK, PRICE_UNIT_LABELS } from '@aligned/shared';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
+import Link from 'next/link';
+import { useParams, useRouter } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
+
+import { PageHeader } from '@/components/shell/page-header';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
+import { api, ApiError } from '@/lib/api';
+import { minorToMajorString, minutesToTime, parseMoneyMajor, timeToMinutes } from '@/lib/format';
+
+const NO_CATEGORY = '__none__';
+const PRICE_UNITS: PriceUnit[] = ['flat', 'per_hour', 'per_day', 'per_session', 'per_unit'];
+
+export default function ServiceEditPage() {
+  const params = useParams<{ id: string }>();
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
+  const serviceQuery = useQuery({
+    queryKey: ['service', params.id],
+    queryFn: () => api.get<{ data: Service }>(`/api/v1/services/${params.id}`),
+  });
+  const categoriesQuery = useQuery({
+    queryKey: ['categories'],
+    queryFn: () => api.get<{ data: Category[] }>('/api/v1/categories'),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => api.delete(`/api/v1/services/${params.id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['services'] });
+      toast.success('Service deleted');
+      router.push('/services');
+    },
+  });
+
+  if (serviceQuery.isLoading || !serviceQuery.data) {
+    return <div className="text-sm text-foreground-muted">Loading…</div>;
+  }
+  const service = serviceQuery.data.data;
+
+  return (
+    <>
+      <PageHeader
+        title={service.name}
+        description={service.shortDescription}
+        actions={
+          <Button variant="secondary" asChild>
+            <Link href="/services">
+              <ArrowLeft className="size-4" /> Back to list
+            </Link>
+          </Button>
+        }
+      />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          <DetailsCard service={service} categories={categoriesQuery.data?.data ?? []} />
+          <PricingTiersCard service={service} />
+          <AvailabilityCard service={service} />
+        </div>
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Visibility</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Badge variant={service.isAvailable ? 'success' : 'muted'}>
+                {service.isAvailable ? 'Available' : 'Unavailable'}
+              </Badge>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Danger zone</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Button
+                variant="danger"
+                className="w-full"
+                onClick={async () => {
+                  if (
+                    await confirmDialog({
+                      title: `Delete "${service.name}"?`,
+                      body: 'The service will be hidden from the chatbot immediately.',
+                      confirmLabel: 'Delete service',
+                      destructive: true,
+                    })
+                  ) {
+                    deleteMutation.mutate();
+                  }
+                }}
+                loading={deleteMutation.isPending}
+              >
+                <Trash2 className="size-4" /> Delete service
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function DetailsCard({ service, categories }: { service: Service; categories: Category[] }) {
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState({
+    name: service.name,
+    shortDescription: service.shortDescription ?? '',
+    description: service.description ?? '',
+    durationMinutes: service.durationMinutes ?? 0,
+    basePriceMajor: minorToMajorString(service.basePriceMinor),
+    currency: service.currency,
+    priceUnit: service.priceUnit,
+    isAvailable: service.isAvailable,
+    categoryId: service.categoryId ?? NO_CATEGORY,
+  });
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [saving, setSaving] = useState(false);
+  const skipNext = useRef(true);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setDraft({
+      name: service.name,
+      shortDescription: service.shortDescription ?? '',
+      description: service.description ?? '',
+      durationMinutes: service.durationMinutes ?? 0,
+      basePriceMajor: minorToMajorString(service.basePriceMinor),
+      currency: service.currency,
+      priceUnit: service.priceUnit,
+      isAvailable: service.isAvailable,
+      categoryId: service.categoryId ?? NO_CATEGORY,
+    });
+    skipNext.current = true;
+  }, [service]);
+
+  useEffect(() => {
+    if (skipNext.current) {
+      skipNext.current = false;
+      return;
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setSaving(true);
+      try {
+        await api.patch(`/api/v1/services/${service.id}`, {
+          name: draft.name.trim() || 'Untitled service',
+          shortDescription: draft.shortDescription || null,
+          description: draft.description || null,
+          durationMinutes: draft.durationMinutes || null,
+          basePriceMinor: parseMoneyMajor(draft.basePriceMajor),
+          currency: draft.currency,
+          priceUnit: draft.priceUnit,
+          isAvailable: draft.isAvailable,
+          categoryId: draft.categoryId === NO_CATEGORY ? null : draft.categoryId,
+        });
+        setSavedAt(new Date());
+        queryClient.invalidateQueries({ queryKey: ['service', service.id] });
+      } catch (err) {
+        toast.error(err instanceof ApiError ? err.payload.message : 'Save failed');
+      } finally {
+        setSaving(false);
+      }
+    }, 800);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [draft, service.id, queryClient]);
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle>Details</CardTitle>
+        <span className="text-xs text-foreground-subtle">
+          {saving ? 'Saving…' : savedAt ? `Saved ${savedAt.toLocaleTimeString()}` : 'Auto-save on'}
+        </span>
+      </CardHeader>
+      <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5 sm:col-span-2">
+          <Label htmlFor="name">Name</Label>
+          <Input id="name" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="category">Category</Label>
+          <Select value={draft.categoryId} onValueChange={(v) => setDraft({ ...draft, categoryId: v })}>
+            <SelectTrigger id="category">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_CATEGORY}>Uncategorized</SelectItem>
+              {categories.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="duration">Duration (minutes)</Label>
+          <Input
+            id="duration"
+            type="number"
+            min={0}
+            value={draft.durationMinutes}
+            onChange={(e) => setDraft({ ...draft, durationMinutes: Number(e.target.value) || 0 })}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="basePrice">Base price ({draft.currency})</Label>
+          <Input
+            id="basePrice"
+            inputMode="decimal"
+            value={draft.basePriceMajor}
+            placeholder="0.00"
+            onChange={(e) => setDraft({ ...draft, basePriceMajor: e.target.value })}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="priceUnit">Price unit</Label>
+          <Select
+            value={draft.priceUnit}
+            onValueChange={(v) => setDraft({ ...draft, priceUnit: v as PriceUnit })}
+          >
+            <SelectTrigger id="priceUnit">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PRICE_UNITS.map((u) => (
+                <SelectItem key={u} value={u}>
+                  {PRICE_UNIT_LABELS[u]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5 sm:col-span-2">
+          <Label htmlFor="shortDescription">Short description</Label>
+          <Input
+            id="shortDescription"
+            value={draft.shortDescription}
+            onChange={(e) => setDraft({ ...draft, shortDescription: e.target.value })}
+          />
+        </div>
+        <div className="space-y-1.5 sm:col-span-2">
+          <Label htmlFor="description">Description</Label>
+          <Textarea
+            id="description"
+            rows={6}
+            value={draft.description}
+            onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PricingTiersCard({ service }: { service: Service }) {
+  const queryClient = useQueryClient();
+  const [tiers, setTiers] = useState<ServicePricingTier[]>(service.pricingTiers);
+  useEffect(() => setTiers(service.pricingTiers), [service]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.put(`/api/v1/services/${service.id}/pricing-tiers`, {
+        tiers: tiers.map((t, i) => ({
+          id: t.id,
+          name: t.name,
+          description: t.description,
+          priceMinor: t.priceMinor,
+          currency: t.currency,
+          priceUnit: t.priceUnit,
+          features: t.features,
+          sortOrder: i,
+        })),
+      }),
+    onSuccess: () => {
+      toast.success('Pricing tiers saved');
+      queryClient.invalidateQueries({ queryKey: ['service', service.id] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Pricing tiers</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {tiers.length === 0 ? (
+          <div className="rounded-md border border-dashed border-border px-6 py-8 text-center text-sm text-foreground-muted">
+            No tiers yet. Add a tier to offer multiple price points (e.g. Basic / Premium).
+          </div>
+        ) : (
+          tiers.map((t, i) => (
+            <div key={t.id ?? i} className="rounded-lg border border-border p-4">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Name</Label>
+                  <Input
+                    value={t.name}
+                    onChange={(e) =>
+                      setTiers((prev) => prev.map((x, idx) => (idx === i ? { ...x, name: e.target.value } : x)))
+                    }
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Price (cents)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={t.priceMinor}
+                      onChange={(e) =>
+                        setTiers((prev) =>
+                          prev.map((x, idx) =>
+                            idx === i ? { ...x, priceMinor: Number(e.target.value) || 0 } : x,
+                          ),
+                        )
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Unit</Label>
+                    <Select
+                      value={t.priceUnit}
+                      onValueChange={(v) =>
+                        setTiers((prev) =>
+                          prev.map((x, idx) => (idx === i ? { ...x, priceUnit: v as PriceUnit } : x)),
+                        )
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PRICE_UNITS.map((u) => (
+                          <SelectItem key={u} value={u}>
+                            {PRICE_UNIT_LABELS[u]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-1.5 md:col-span-2">
+                  <Label>Description</Label>
+                  <Textarea
+                    rows={2}
+                    value={t.description ?? ''}
+                    onChange={(e) =>
+                      setTiers((prev) =>
+                        prev.map((x, idx) => (idx === i ? { ...x, description: e.target.value } : x)),
+                      )
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5 md:col-span-2">
+                  <Label>Features (comma-separated)</Label>
+                  <Input
+                    value={t.features.join(', ')}
+                    onChange={(e) =>
+                      setTiers((prev) =>
+                        prev.map((x, idx) =>
+                          idx === i
+                            ? {
+                                ...x,
+                                features: e.target.value
+                                  .split(',')
+                                  .map((s) => s.trim())
+                                  .filter(Boolean),
+                              }
+                            : x,
+                        ),
+                      )
+                    }
+                  />
+                </div>
+              </div>
+              <div className="mt-3 flex justify-end">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setTiers((prev) => prev.filter((_, idx) => idx !== i))}
+                >
+                  <Trash2 className="size-4" /> Remove
+                </Button>
+              </div>
+            </div>
+          ))
+        )}
+        <div className="flex items-center justify-between">
+          <Button
+            variant="secondary"
+            onClick={() =>
+              setTiers((prev) => [
+                ...prev,
+                {
+                  id: `temp-${Date.now()}` as never,
+                  name: `Tier ${prev.length + 1}`,
+                  description: null,
+                  priceMinor: 0,
+                  currency: service.currency,
+                  priceUnit: service.priceUnit,
+                  features: [],
+                  sortOrder: prev.length,
+                },
+              ])
+            }
+          >
+            <Plus className="size-4" /> Add tier
+          </Button>
+          <Button
+            onClick={() => {
+              const clean = tiers.map((t) =>
+                t.id && !t.id.startsWith('temp-') ? t : { ...t, id: undefined },
+              );
+              setTiers(clean as never);
+              save.mutate();
+            }}
+            loading={save.isPending}
+          >
+            Save tiers
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface WeeklyRow {
+  dayOfWeek: (typeof DAYS_OF_WEEK)[number];
+  open: boolean;
+  start: string; // HH:MM
+  end: string;
+}
+
+function AvailabilityCard({ service }: { service: Service }) {
+  const queryClient = useQueryClient();
+  const [rows, setRows] = useState<WeeklyRow[]>(() => buildRows(service.availability));
+  useEffect(() => setRows(buildRows(service.availability)), [service]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.put(`/api/v1/services/${service.id}/availability`, {
+        windows: rows
+          .filter((r) => r.open)
+          .map((r) => ({
+            dayOfWeek: r.dayOfWeek,
+            startMinute: timeToMinutes(r.start),
+            endMinute: timeToMinutes(r.end),
+          })),
+      }),
+    onSuccess: () => {
+      toast.success('Availability saved');
+      queryClient.invalidateQueries({ queryKey: ['service', service.id] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Weekly availability</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {rows.map((row, i) => (
+          <div key={row.dayOfWeek} className="grid grid-cols-[100px_auto_1fr_1fr] items-center gap-3">
+            <span className="text-sm font-medium">{DAY_OF_WEEK_LABELS[row.dayOfWeek]}</span>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={row.open}
+                onChange={(e) =>
+                  setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, open: e.target.checked } : r)))
+                }
+                className="size-4 cursor-pointer rounded border-border accent-brand-500"
+              />
+              Open
+            </label>
+            <Input
+              type="time"
+              disabled={!row.open}
+              value={row.start}
+              onChange={(e) =>
+                setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, start: e.target.value } : r)))
+              }
+            />
+            <Input
+              type="time"
+              disabled={!row.open}
+              value={row.end}
+              onChange={(e) =>
+                setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, end: e.target.value } : r)))
+              }
+            />
+          </div>
+        ))}
+        <div className="flex justify-end pt-2">
+          <Button onClick={() => save.mutate()} loading={save.isPending}>
+            Save availability
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function buildRows(windows: AvailabilityWindow[]): WeeklyRow[] {
+  const byDay = new Map(windows.map((w) => [w.dayOfWeek, w]));
+  return DAYS_OF_WEEK.map((d) => {
+    const w = byDay.get(d);
+    return {
+      dayOfWeek: d,
+      open: !!w,
+      start: w ? minutesToTime(w.startMinute) : '09:00',
+      end: w ? minutesToTime(w.endMinute) : '17:00',
+    };
+  });
+}

@@ -1,0 +1,40 @@
+# Caddyfile — production. Auto-TLS via Let's Encrypt.
+# Override domains via environment when needed; defaults match a typical layout.
+{
+    email {$ACME_EMAIL:ops@aligned.example}
+}
+
+# Portal
+{$WEB_DOMAIN:app.aligned.example} {
+    encode zstd gzip
+    header {
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), camera=(), microphone=()"
+        -Server
+    }
+    reverse_proxy web:3000 {
+        health_uri /
+        health_interval 10s
+    }
+}
+
+# API + chatbot read API
+{$API_DOMAIN:api.aligned.example} {
+    encode zstd gzip
+    header {
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        -Server
+    }
+    @health path /health /health/ready
+    handle @health {
+        reverse_proxy api:4000
+    }
+    reverse_proxy api:4000 {
+        health_uri /health
+        health_interval 10s
+    }
+}

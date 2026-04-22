@@ -1,0 +1,157 @@
+import { z } from 'zod';
+
+import { CONTACT_KINDS, DAYS_OF_WEEK, FaqVisibility, POLICY_KINDS } from '../enums/catalog.js';
+import { uuidSchema } from './common.js';
+
+const currency3 = z.string().length(3).regex(/^[A-Z]{3}$/);
+const country2 = z.string().length(2).regex(/^[A-Z]{2}$/);
+const timeOfDay = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'HH:MM');
+
+export const operatingHoursDaySchema = z.array(
+  z.object({ open: timeOfDay, close: timeOfDay }).refine((v) => v.open < v.close, 'open must be before close'),
+);
+
+export const operatingHoursSchema = z.object(
+  Object.fromEntries(DAYS_OF_WEEK.map((d) => [d, operatingHoursDaySchema])) as Record<
+    (typeof DAYS_OF_WEEK)[number],
+    typeof operatingHoursDaySchema
+  >,
+);
+
+export const hoursExceptionSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD'),
+  closed: z.boolean(),
+  open: timeOfDay.optional(),
+  close: timeOfDay.optional(),
+  note: z.string().max(200).optional(),
+});
+
+export const businessInfoSchema = z.object({
+  id: uuidSchema,
+  legalName: z.string().nullable(),
+  tagline: z.string().nullable(),
+  about: z.string().nullable(),
+  websiteUrl: z.string().url().nullable(),
+  operatingHours: operatingHoursSchema.nullable(),
+  hoursExceptions: z.array(hoursExceptionSchema).nullable(),
+  timezone: z.string(),
+  currency: currency3,
+  metadata: z.record(z.string(), z.unknown()).nullable(),
+  updatedAt: z.string().datetime(),
+});
+export type BusinessInfoDto = z.infer<typeof businessInfoSchema>;
+
+export const upsertBusinessInfoBodySchema = z.object({
+  legalName: z.string().trim().max(200).nullable().optional(),
+  tagline: z.string().trim().max(200).nullable().optional(),
+  about: z.string().max(20000).nullable().optional(),
+  websiteUrl: z.string().url().nullable().optional(),
+  operatingHours: operatingHoursSchema.nullable().optional(),
+  hoursExceptions: z.array(hoursExceptionSchema).nullable().optional(),
+  timezone: z.string().min(1).max(80).optional(),
+  currency: currency3.optional(),
+  metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+});
+export type UpsertBusinessInfoBody = z.infer<typeof upsertBusinessInfoBodySchema>;
+
+// ---------- locations -------------------------------------------------------
+export const locationSchema = z.object({
+  id: uuidSchema,
+  name: z.string(),
+  addressLine1: z.string().nullable(),
+  addressLine2: z.string().nullable(),
+  city: z.string().nullable(),
+  region: z.string().nullable(),
+  postalCode: z.string().nullable(),
+  country: country2.nullable(),
+  latitude: z.number().nullable(),
+  longitude: z.number().nullable(),
+  phone: z.string().nullable(),
+  email: z.string().email().nullable(),
+  isPrimary: z.boolean(),
+  sortOrder: z.number().int(),
+});
+export type LocationDto = z.infer<typeof locationSchema>;
+
+export const upsertLocationBodySchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  addressLine1: z.string().max(200).nullable().optional(),
+  addressLine2: z.string().max(200).nullable().optional(),
+  city: z.string().max(120).nullable().optional(),
+  region: z.string().max(120).nullable().optional(),
+  postalCode: z.string().max(20).nullable().optional(),
+  country: country2.nullable().optional(),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
+  phone: z.string().max(40).nullable().optional(),
+  email: z.string().email().nullable().optional(),
+  isPrimary: z.boolean().optional(),
+});
+
+// ---------- contact channels ------------------------------------------------
+export const contactChannelSchema = z.object({
+  id: uuidSchema,
+  kind: z.enum(CONTACT_KINDS),
+  label: z.string().nullable(),
+  value: z.string(),
+  isPrimary: z.boolean(),
+  sortOrder: z.number().int(),
+});
+
+export const upsertContactChannelBodySchema = z.object({
+  kind: z.enum(CONTACT_KINDS),
+  label: z.string().max(80).nullable().optional(),
+  value: z.string().trim().min(1).max(200),
+  isPrimary: z.boolean().optional(),
+});
+
+// ---------- faqs ------------------------------------------------------------
+export const faqSchema = z.object({
+  id: uuidSchema,
+  question: z.string(),
+  answer: z.string(),
+  tags: z.array(z.string()),
+  visibility: z.nativeEnum(FaqVisibility),
+  sortOrder: z.number().int(),
+  isPublished: z.boolean(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type FaqDto = z.infer<typeof faqSchema>;
+
+export const createFaqBodySchema = z.object({
+  question: z.string().trim().min(2).max(500),
+  answer: z.string().trim().min(2).max(20000),
+  tags: z.array(z.string().max(40)).max(20).optional(),
+  visibility: z.nativeEnum(FaqVisibility).optional(),
+  sortOrder: z.number().int().optional(),
+  isPublished: z.boolean().optional(),
+});
+export type CreateFaqBody = z.infer<typeof createFaqBodySchema>;
+export const updateFaqBodySchema = createFaqBodySchema.partial();
+
+export const reorderFaqsBodySchema = z.object({
+  order: z.array(z.object({ id: uuidSchema, sortOrder: z.number().int() })).min(1),
+});
+
+// ---------- policies --------------------------------------------------------
+export const policySchema = z.object({
+  id: uuidSchema,
+  kind: z.enum(POLICY_KINDS),
+  title: z.string(),
+  content: z.string(),
+  isPublished: z.boolean(),
+  sortOrder: z.number().int(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type PolicyDto = z.infer<typeof policySchema>;
+
+export const upsertPolicyBodySchema = z.object({
+  kind: z.enum(POLICY_KINDS),
+  title: z.string().trim().min(1).max(200),
+  content: z.string().min(1).max(50000),
+  isPublished: z.boolean().optional(),
+  sortOrder: z.number().int().optional(),
+});
+export type UpsertPolicyBody = z.infer<typeof upsertPolicyBodySchema>;

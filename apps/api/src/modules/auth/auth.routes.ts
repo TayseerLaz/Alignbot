@@ -1,0 +1,321 @@
+import {
+  acceptInvitationBodyWithoutTokenSchema,
+  changePasswordBodySchema,
+  forgotPasswordBodySchema,
+  loginBodySchema,
+  loginResponseSchema,
+  refreshResponseSchema,
+  resetPasswordBodySchema,
+  sessionResponseSchema,
+  signupBodySchema,
+  signupResponseSchema,
+  successSchema,
+  switchOrgBodySchema,
+  updateProfileBodySchema,
+  updateProfileResponseSchema,
+  verifyEmailBodySchema,
+} from '@aligned/shared';
+import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
+
+import { clearRefreshCookieOptions, REFRESH_COOKIE_NAME, refreshCookieOptions } from '../../lib/cookies.js';
+import { env } from '../../lib/env.js';
+import { unauthorized } from '../../lib/errors.js';
+import {
+  acceptInvitation,
+  changePassword,
+  forgotPassword,
+  getSessionContext,
+  login,
+  logout,
+  refreshSession,
+  resetPassword,
+  signup,
+  switchOrganization,
+  updateProfile,
+  verifyEmail,
+} from './auth.service.js';
+
+const meta = (req: { ip: string; headers: { 'user-agent'?: string | string[] } }) => ({
+  ip: req.ip,
+  userAgent: Array.isArray(req.headers['user-agent'])
+    ? req.headers['user-agent'][0] ?? null
+    : req.headers['user-agent'] ?? null,
+});
+
+export default async function authRoutes(app: FastifyInstance) {
+  const r = app.withTypeProvider<ZodTypeProvider>();
+
+  // Stricter rate limit on auth endpoints. Env-driven so local QA can raise it.
+  const authLimit = {
+    rateLimit: {
+      max: env.RATE_LIMIT_AUTH_PER_MINUTE,
+      timeWindow: '1 minute',
+      keyGenerator: (req: { ip: string; routeOptions: { url: string } }) =>
+        `${req.ip}:${req.routeOptions.url}`,
+    },
+  };
+
+  // ---------- POST /auth/signup ---------------------------------------------
+  r.post(
+    '/auth/signup',
+    {
+      schema: {
+        tags: ['auth'],
+        summary: 'Create a new organization + admin user.',
+        body: signupBodySchema,
+        response: { 201: signupResponseSchema },
+      },
+      config: authLimit,
+    },
+    async (req, reply) => {
+      const result = await signup({ ...req.body, meta: meta(req) });
+      reply.code(201);
+      return {
+        user: {
+          id: result.user.id,
+          email: result.user.email,
+          firstName: result.user.firstName,
+          lastName: result.user.lastName,
+        },
+        organization: {
+          id: result.organization.id,
+          slug: result.organization.slug,
+          name: result.organization.name,
+        },
+        emailVerificationRequired: true,
+      };
+    },
+  );
+
+  // ---------- POST /auth/login ---------------------------------------------
+  r.post(
+    '/auth/login',
+    {
+      schema: {
+        tags: ['auth'],
+        summary: 'Exchange credentials for an access token (refresh in cookie).',
+        body: loginBodySchema,
+        response: { 200: loginResponseSchema },
+      },
+      config: authLimit,
+    },
+    async (req, reply) => {
+      const result = await login({ ...req.body, meta: meta(req) });
+      reply.setCookie(REFRESH_COOKIE_NAME, result.refreshToken, refreshCookieOptions());
+      return {
+        accessToken: result.accessToken,
+        expiresAt: result.expiresAt.toISOString(),
+        user: {
+          id: result.user.id,
+          email: result.user.email,
+          firstName: result.user.firstName,
+          lastName: result.user.lastName,
+          isAlignedAdmin: result.user.isAlignedAdmin,
+        },
+        organization: {
+          id: result.organization.id,
+          slug: result.organization.slug,
+          name: result.organization.name,
+          role: result.organization.role,
+        },
+        availableOrganizations: result.availableOrganizations,
+      };
+    },
+  );
+
+  // ---------- POST /auth/refresh -------------------------------------------
+  r.post(
+    '/auth/refresh',
+    {
+      schema: {
+        tags: ['auth'],
+        summary: 'Rotate refresh cookie and issue a fresh access token.',
+        response: { 200: refreshResponseSchema },
+      },
+    },
+    async (req, reply) => {
+      const cookie = req.cookies[REFRESH_COOKIE_NAME];
+      if (!cookie) throw unauthorized();
+      const result = await refreshSession(cookie, meta(req));
+      reply.setCookie(REFRESH_COOKIE_NAME, result.refreshToken, refreshCookieOptions());
+      return { accessToken: result.accessToken, expiresAt: result.expiresAt.toISOString() };
+    },
+  );
+
+  // ---------- POST /auth/logout --------------------------------------------
+  r.post(
+    '/auth/logout',
+    {
+      schema: { tags: ['auth'], summary: 'Revoke current session.', response: { 200: successSchema } },
+      preHandler: [app.requireAuth],
+    },
+    async (req, reply) => {
+      await logout(req.auth!.sessionId, meta(req));
+      reply.clearCookie(REFRESH_COOKIE_NAME, clearRefreshCookieOptions());
+      return { ok: true as const };
+    },
+  );
+
+  // ---------- POST /auth/verify-email --------------------------------------
+  r.post(
+    '/auth/verify-email',
+    {
+      schema: {
+        tags: ['auth'],
+        summary: 'Verify email via single-use token.',
+        body: verifyEmailBodySchema,
+        response: { 200: successSchema },
+      },
+      config: authLimit,
+    },
+    async (req) => verifyEmail(req.body.token),
+  );
+
+  // ---------- POST /auth/forgot-password -----------------------------------
+  r.post(
+    '/auth/forgot-password',
+    {
+      schema: {
+        tags: ['auth'],
+        summary: 'Request a password reset email.',
+        body: forgotPasswordBodySchema,
+        response: { 200: successSchema },
+      },
+      config: authLimit,
+    },
+    async (req) => forgotPassword(req.body.email, meta(req)),
+  );
+
+  // ---------- POST /auth/reset-password ------------------------------------
+  r.post(
+    '/auth/reset-password',
+    {
+      schema: {
+        tags: ['auth'],
+        summary: 'Set a new password using a single-use reset token.',
+        body: resetPasswordBodySchema,
+        response: { 200: successSchema },
+      },
+      config: authLimit,
+    },
+    async (req) => resetPassword(req.body.token, req.body.password, meta(req)),
+  );
+
+  // ---------- POST /auth/invites/:token/accept -----------------------------
+  r.post(
+    '/auth/invites/:token/accept',
+    {
+      schema: {
+        tags: ['auth'],
+        summary: 'Accept an invitation (creates user if needed).',
+        params: z.object({ token: z.string().min(20) }),
+        body: acceptInvitationBodyWithoutTokenSchema,
+        response: { 200: successSchema },
+      },
+      config: authLimit,
+    },
+    async (req) => {
+      await acceptInvitation({ token: req.params.token, ...req.body, meta: meta(req) });
+      return { ok: true as const };
+    },
+  );
+
+  // ---------- GET /auth/session --------------------------------------------
+  r.get(
+    '/auth/session',
+    {
+      schema: {
+        tags: ['auth'],
+        summary: 'Get current user + active org + available orgs.',
+        response: { 200: sessionResponseSchema },
+      },
+      preHandler: [app.requireAuth],
+    },
+    async (req) => {
+      const ctx = await getSessionContext(req.auth!.userId, req.auth!.organizationId);
+      return {
+        user: {
+          id: ctx.user.id,
+          email: ctx.user.email,
+          firstName: ctx.user.firstName,
+          lastName: ctx.user.lastName,
+          avatarUrl: ctx.user.avatarUrl,
+          isAlignedAdmin: ctx.user.isAlignedAdmin,
+        },
+        organization: ctx.organization,
+        availableOrganizations: ctx.availableOrganizations,
+      };
+    },
+  );
+
+  // ---------- PATCH /auth/me ----------------------------------------------
+  r.patch(
+    '/auth/me',
+    {
+      schema: {
+        tags: ['auth'],
+        summary: 'Update the signed-in user\'s name fields.',
+        body: updateProfileBodySchema,
+        response: { 200: updateProfileResponseSchema },
+      },
+      preHandler: [app.requireAuth],
+    },
+    async (req) => {
+      return updateProfile(req.auth!.userId, req.body, meta(req));
+    },
+  );
+
+  // ---------- POST /auth/change-password ----------------------------------
+  r.post(
+    '/auth/change-password',
+    {
+      schema: {
+        tags: ['auth'],
+        summary: 'Change the signed-in user\'s password (requires current).',
+        body: changePasswordBodySchema,
+        response: { 200: successSchema },
+      },
+      config: authLimit,
+      preHandler: [app.requireAuth],
+    },
+    async (req) => {
+      await changePassword(
+        req.auth!.userId,
+        {
+          currentPassword: req.body.currentPassword,
+          newPassword: req.body.newPassword,
+          currentSessionId: req.auth!.sessionId,
+        },
+        meta(req),
+      );
+      return { ok: true as const };
+    },
+  );
+
+  // ---------- POST /auth/switch-org ----------------------------------------
+  r.post(
+    '/auth/switch-org',
+    {
+      schema: {
+        tags: ['auth'],
+        summary: 'Switch active organization for the session.',
+        body: switchOrgBodySchema,
+        response: { 200: refreshResponseSchema },
+      },
+      preHandler: [app.requireAuth],
+    },
+    async (req, reply) => {
+      const result = await switchOrganization({
+        userId: req.auth!.userId,
+        sessionId: req.auth!.sessionId,
+        newOrganizationId: req.body.organizationId,
+        isAlignedAdmin: req.auth!.isAlignedAdmin,
+        meta: meta(req),
+      });
+      reply.setCookie(REFRESH_COOKIE_NAME, result.refreshToken, refreshCookieOptions());
+      return { accessToken: result.accessToken, expiresAt: result.expiresAt.toISOString() };
+    },
+  );
+}

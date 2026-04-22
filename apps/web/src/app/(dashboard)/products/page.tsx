@@ -1,0 +1,350 @@
+'use client';
+
+import type { Category, ProductListItem } from '@aligned/shared';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { CheckCircle2, Eye, EyeOff, MoreHorizontal, Package, Plus, Search, Trash2 } from 'lucide-react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
+
+import { PageHeader } from '@/components/shell/page-header';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { api, ApiError } from '@/lib/api';
+import { formatMoney, formatRelative } from '@/lib/format';
+import { cn } from '@/lib/utils';
+
+const ALL_CATEGORIES = '__all__';
+const ALL_AVAILABILITY = '__all__';
+
+export default function ProductsPage() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [categoryId, setCategoryId] = useState<string>(ALL_CATEGORIES);
+  const [availability, setAvailability] = useState<string>(ALL_AVAILABILITY);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(searchInput.trim()), 300);
+    return () => clearTimeout(id);
+  }, [searchInput]);
+
+  const params = useMemo(() => {
+    const p = new URLSearchParams();
+    if (debouncedSearch) p.set('q', debouncedSearch);
+    if (categoryId !== ALL_CATEGORIES) p.set('categoryId', categoryId);
+    if (availability !== ALL_AVAILABILITY) p.set('isAvailable', availability);
+    p.set('limit', '50');
+    return p.toString();
+  }, [debouncedSearch, categoryId, availability]);
+
+  const productsQuery = useQuery({
+    queryKey: ['products', params],
+    queryFn: () => api.get<{ data: ProductListItem[]; nextCursor: string | null }>(`/api/v1/products?${params}`),
+  });
+
+  const categoriesQuery = useQuery({
+    queryKey: ['categories'],
+    queryFn: () => api.get<{ data: Category[] }>('/api/v1/categories'),
+  });
+
+  const bulkAvailabilityMutation = useMutation({
+    mutationFn: (vars: { ids: string[]; isAvailable: boolean }) =>
+      api.post('/api/v1/products/bulk-update', vars),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      setSelected(new Set());
+      toast.success('Updated');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Update failed'),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/products/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      toast.success('Product deleted');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Delete failed'),
+  });
+
+  const createDraft = async () => {
+    setCreating(true);
+    try {
+      const stamp = Date.now().toString(36).toUpperCase();
+      const res = await api.post<{ data: { id: string } }>(`/api/v1/products`, {
+        sku: `DRAFT-${stamp}`,
+        // Slug must also be unique per draft, otherwise the second "Untitled
+        // product" collides with the first on @@unique([organizationId, slug]).
+        slug: `draft-${stamp.toLowerCase()}`,
+        name: 'Untitled product',
+        isAvailable: false,
+      });
+      router.push(`/products/${res.data.id}`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.payload.message : 'Could not create draft');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const products = productsQuery.data?.data ?? [];
+  const allSelected = products.length > 0 && products.every((p) => selected.has(p.id));
+  const someSelected = selected.size > 0;
+
+  const toggleAll = () => {
+    if (allSelected) setSelected(new Set());
+    else setSelected(new Set(products.map((p) => p.id)));
+  };
+  const toggleOne = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <>
+      <PageHeader
+        title="Products"
+        description="Catalog items the chatbot can answer questions about and the team can sell."
+        actions={
+          <Button onClick={createDraft} loading={creating}>
+            <Plus className="size-4" /> New product
+          </Button>
+        }
+      />
+
+      <Card>
+        <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-subtle" />
+            <Input
+              placeholder="Search by name or SKU…"
+              className="pl-9"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+          </div>
+          <Select value={categoryId} onValueChange={setCategoryId}>
+            <SelectTrigger className="w-full lg:w-48">
+              <SelectValue placeholder="All categories" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_CATEGORIES}>All categories</SelectItem>
+              {categoriesQuery.data?.data.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={availability} onValueChange={setAvailability}>
+            <SelectTrigger className="w-full lg:w-44">
+              <SelectValue placeholder="Availability" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_AVAILABILITY}>All availability</SelectItem>
+              <SelectItem value="true">Available</SelectItem>
+              <SelectItem value="false">Unavailable</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {someSelected ? (
+          <div className="flex items-center justify-between gap-3 border-b border-border bg-brand-50/40 px-4 py-2 text-sm">
+            <span>
+              <strong>{selected.size}</strong> selected
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  bulkAvailabilityMutation.mutate({ ids: Array.from(selected), isAvailable: true })
+                }
+              >
+                <Eye className="size-4" /> Mark available
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  bulkAvailabilityMutation.mutate({ ids: Array.from(selected), isAvailable: false })
+                }
+              >
+                <EyeOff className="size-4" /> Mark unavailable
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+                Clear
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        <CardContent className="p-0">
+          {productsQuery.isLoading ? (
+            <div className="px-6 py-12 text-center text-sm text-foreground-muted">Loading…</div>
+          ) : products.length === 0 ? (
+            <EmptyState
+              icon={Package}
+              title={debouncedSearch ? 'No matches' : 'No products yet'}
+              description={
+                debouncedSearch
+                  ? 'Try a different search term or filter.'
+                  : 'Add your first product to start populating your catalog.'
+              }
+              action={
+                !debouncedSearch ? (
+                  <Button onClick={createDraft} loading={creating}>
+                    <Plus className="size-4" /> Create your first product
+                  </Button>
+                ) : undefined
+              }
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
+                  <tr>
+                    <th className="w-10 px-4 py-3">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all"
+                        checked={allSelected}
+                        onChange={toggleAll}
+                        className="size-4 cursor-pointer rounded border-border accent-brand-500"
+                      />
+                    </th>
+                    <th className="px-4 py-3">Product</th>
+                    <th className="px-4 py-3">SKU</th>
+                    <th className="px-4 py-3">Category</th>
+                    <th className="px-4 py-3 text-right">Price</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3">Updated</th>
+                    <th className="w-12 px-4 py-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.map((p) => (
+                    <tr
+                      key={p.id}
+                      className={cn(
+                        'group border-b border-border transition-colors last:border-0 hover:bg-surface-muted/50',
+                        selected.has(p.id) && 'bg-brand-50/30',
+                      )}
+                    >
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${p.name}`}
+                          checked={selected.has(p.id)}
+                          onChange={() => toggleOne(p.id)}
+                          className="size-4 cursor-pointer rounded border-border accent-brand-500"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <Link href={`/products/${p.id}`} className="flex items-center gap-3">
+                          <div className="size-12 shrink-0 overflow-hidden rounded-md border border-border bg-surface-muted">
+                            {p.primaryImageUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={p.primaryImageUrl}
+                                alt=""
+                                className="size-full object-cover"
+                                loading="lazy"
+                              />
+                            ) : (
+                              <div className="flex size-full items-center justify-center text-foreground-subtle">
+                                <Package className="size-5" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{p.name}</p>
+                            {p.shortDescription ? (
+                              <p className="truncate text-xs text-foreground-subtle">{p.shortDescription}</p>
+                            ) : null}
+                          </div>
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-foreground-muted">{p.sku}</td>
+                      <td className="px-4 py-3 text-foreground-muted">
+                        {p.categoryName ?? <span className="text-foreground-subtle">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium">
+                        {formatMoney(p.priceMinor, p.currency)}
+                      </td>
+                      <td className="px-4 py-3">
+                        {p.isAvailable ? (
+                          <Badge variant="success">
+                            <CheckCircle2 className="mr-1 size-3" /> Available
+                          </Badge>
+                        ) : (
+                          <Badge variant="muted">Unavailable</Badge>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-foreground-muted">{formatRelative(p.updatedAt)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon">
+                              <MoreHorizontal className="size-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem asChild>
+                              <Link href={`/products/${p.id}`}>Edit</Link>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-red-600 focus:text-red-700"
+                              onSelect={async () => {
+                                if (
+                                  await confirmDialog({
+                                    title: `Delete "${p.name}"?`,
+                                    body: 'The product will be hidden from the chatbot immediately. You can still find it in the database for 30 days.',
+                                    confirmLabel: 'Delete product',
+                                    destructive: true,
+                                  })
+                                ) {
+                                  deleteMutation.mutate(p.id);
+                                }
+                              }}
+                            >
+                              <Trash2 className="size-4" /> Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </>
+  );
+}

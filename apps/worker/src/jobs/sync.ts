@@ -1,0 +1,221 @@
+// API connector sync worker.
+//
+// Reads an external REST endpoint (with the configured auth), expects a JSON
+// array (or { data: [...] }) of records, applies the column mapping, and
+// upserts each record using the same per-entity validators as the import worker.
+//
+// Designed to be idempotent: SKU-based upserts for products, slug-based for
+// services, name-based for FAQs (after dedupe), upsert-singleton for business_info.
+//
+// Schedule comes from ApiConnector.scheduleCron — for v1 we resolve "every X
+// minutes" simple specs in the API's repeatable-job registration; arbitrary cron
+// is handled by BullMQ's repeat option set when the connector is created.
+import type { ApiConnector, ImportEntityKind, PrismaClient, SyncRun } from '@aligned/db';
+
+import { Worker } from 'bullmq';
+import { request as undiciRequest } from 'undici';
+import { z } from 'zod';
+
+import { env } from '../lib/env.js';
+import { getConnection } from '../lib/redis.js';
+
+import { prisma, withTenant } from './db.js';
+
+interface SyncJobData {
+  organizationId: string;
+  connectorId: string;
+  syncRunId: string;
+  trigger: 'scheduled' | 'manual' | 'webhook';
+}
+
+// Re-use the entity schemas used by the import worker.
+import {
+  productSchema,
+  serviceSchema,
+  faqSchema,
+  businessInfoSchema,
+  upsertOne,
+} from './shared-upsert.js';
+
+function buildHeaders(connector: ApiConnector): Record<string, string> {
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const cfg = (connector.authConfig ?? {}) as Record<string, string>;
+  switch (connector.authKind) {
+    case 'bearer':
+      if (cfg.token) headers.Authorization = `Bearer ${cfg.token}`;
+      break;
+    case 'api_key':
+      if (cfg.headerName && cfg.value) headers[cfg.headerName] = cfg.value;
+      break;
+    case 'basic':
+      if (cfg.username && cfg.password) {
+        const b64 = Buffer.from(`${cfg.username}:${cfg.password}`).toString('base64');
+        headers.Authorization = `Basic ${b64}`;
+      }
+      break;
+    default:
+      break;
+  }
+  return headers;
+}
+
+function applyMapping(record: Record<string, unknown>, mapping: Record<string, string> | null): Record<string, unknown> {
+  if (!mapping || Object.keys(mapping).length === 0) return record;
+  const out: Record<string, unknown> = {};
+  for (const [source, value] of Object.entries(record)) {
+    const target = mapping[source] ?? source;
+    out[target] = value;
+  }
+  return out;
+}
+
+function pickEntityValidator(kind: ImportEntityKind) {
+  switch (kind) {
+    case 'product':
+      return productSchema;
+    case 'service':
+      return serviceSchema;
+    case 'faq':
+      return faqSchema;
+    case 'business_info':
+      return businessInfoSchema;
+  }
+}
+
+export function startSyncWorker() {
+  const worker = new Worker<SyncJobData>(
+    'sync',
+    async (job) => {
+      const { organizationId, connectorId, trigger } = job.data;
+      let { syncRunId } = job.data;
+
+      if (syncRunId === '__pending__') {
+        const created = await prisma.syncRun.create({
+          data: {
+            organizationId,
+            connectorId,
+            status: 'pending',
+            trigger: trigger ?? 'scheduled',
+          },
+          select: { id: true },
+        });
+        syncRunId = created.id;
+      }
+
+      const connector = await prisma.apiConnector.findUnique({ where: { id: connectorId } });
+      if (!connector || connector.status === 'disabled') {
+        await prisma.syncRun.update({
+          where: { id: syncRunId },
+          data: { status: 'failed', errorMessage: 'Connector missing or disabled.', finishedAt: new Date() },
+        });
+        return;
+      }
+      if (!connector.endpointUrl) {
+        await prisma.syncRun.update({
+          where: { id: syncRunId },
+          data: {
+            status: 'failed',
+            errorMessage: 'Connector has no endpointUrl (webhook-only).',
+            finishedAt: new Date(),
+          },
+        });
+        return;
+      }
+
+      await prisma.syncRun.update({
+        where: { id: syncRunId },
+        data: { status: 'running', startedAt: new Date() },
+      });
+
+      let fetched = 0;
+      let upserted = 0;
+      let failed = 0;
+      let errorMessage: string | null = null;
+      let records: Record<string, unknown>[] = [];
+
+      try {
+        const res = await undiciRequest(connector.endpointUrl, {
+          method: 'GET',
+          headers: buildHeaders(connector),
+          signal: AbortSignal.timeout(60_000),
+        });
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          throw new Error(`Upstream returned ${res.statusCode}`);
+        }
+        const json = (await res.body.json()) as unknown;
+        records = Array.isArray(json)
+          ? (json as Record<string, unknown>[])
+          : Array.isArray((json as { data?: unknown }).data)
+            ? ((json as { data: Record<string, unknown>[] }).data)
+            : [];
+        fetched = records.length;
+      } catch (err) {
+        errorMessage = err instanceof Error ? err.message : String(err);
+        await markFailed(connector, syncRunId, errorMessage);
+        throw err;
+      }
+
+      const mapping = (connector.columnMapping as Record<string, string> | null) ?? null;
+      const validator = pickEntityValidator(connector.entityKind);
+
+      for (const raw of records) {
+        const mapped = applyMapping(raw, mapping);
+        try {
+          validator.parse(mapped);
+          await withTenant(organizationId, (tx) =>
+            upsertOne(tx as PrismaClient, organizationId, connector.entityKind, mapped),
+          );
+          upserted++;
+        } catch {
+          failed++;
+        }
+      }
+
+      const finalStatus = failed === 0 ? 'succeeded' : upserted === 0 ? 'failed' : 'partial';
+      await prisma.$transaction([
+        prisma.syncRun.update({
+          where: { id: syncRunId },
+          data: {
+            status: finalStatus,
+            recordsFetched: fetched,
+            recordsUpserted: upserted,
+            recordsFailed: failed,
+            finishedAt: new Date(),
+          },
+        }),
+        prisma.apiConnector.update({
+          where: { id: connector.id },
+          data: {
+            lastRunAt: new Date(),
+            lastSuccessAt: finalStatus === 'failed' ? connector.lastSuccessAt : new Date(),
+            consecutiveFailures: finalStatus === 'failed' ? connector.consecutiveFailures + 1 : 0,
+            status:
+              finalStatus === 'failed' && connector.consecutiveFailures + 1 >= 5 ? 'failing' : connector.status,
+          },
+        }),
+      ]);
+    },
+    {
+      connection: getConnection(),
+      concurrency: env.SYNC_CONCURRENCY,
+    },
+  );
+  return worker;
+}
+
+async function markFailed(connector: ApiConnector, syncRunId: string, message: string): Promise<SyncRun> {
+  return prisma.$transaction(async (tx) => {
+    await tx.apiConnector.update({
+      where: { id: connector.id },
+      data: {
+        lastRunAt: new Date(),
+        consecutiveFailures: connector.consecutiveFailures + 1,
+        status: connector.consecutiveFailures + 1 >= 5 ? 'failing' : connector.status,
+      },
+    });
+    return tx.syncRun.update({
+      where: { id: syncRunId },
+      data: { status: 'failed', errorMessage: message, finishedAt: new Date() },
+    });
+  });
+}

@@ -2,7 +2,7 @@ FROM node:20-alpine AS deps
 RUN apk add --no-cache libc6-compat
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /repo
-COPY pnpm-workspace.yaml package.json .npmrc ./
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml .npmrc ./
 COPY turbo.json tsconfig.base.json ./
 COPY apps/api/package.json apps/api/
 COPY apps/worker/package.json apps/worker/

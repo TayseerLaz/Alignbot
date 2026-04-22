@@ -172,7 +172,7 @@ function RowItem({ row }: { row: ImportJobRowDto }) {
           </Badge>
         </div>
         {row.errors && row.errors.length > 0 ? (
-          <span className="truncate text-xs text-red-600">{row.errors[0].message}</span>
+          <span className="truncate text-xs text-red-600">{row.errors[0]?.message}</span>
         ) : null}
       </button>
       {open ? (

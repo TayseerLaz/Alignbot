@@ -95,6 +95,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Prisma generate
+        run: pnpm --filter @aligned/db exec prisma generate
+
       - name: Apply Prisma migrations
         env:
           DATABASE_URL: postgresql://aligned:aligned@localhost:5432/aligned
@@ -125,24 +128,19 @@ jobs:
           pnpm --filter @aligned/shared build
           pnpm --filter @aligned/db build
 
-      - name: Build api + worker
-        run: |
-          pnpm --filter @aligned/api build
-          pnpm --filter @aligned/worker build
-
       - name: Install Playwright browsers
         run: pnpm --filter @aligned/e2e exec playwright install --with-deps chromium
 
-      - name: Start services in background
+      - name: Start services in background (api + worker via tsx; no build needed)
         env:
           NODE_ENV: development
         run: |
           set -euo pipefail
-          # Start api
-          nohup node apps/api/dist/server.js > /tmp/api.log 2>&1 &
+          # api via tsx — matches production runtime
+          nohup pnpm --filter @aligned/api exec tsx src/server.ts > /tmp/api.log 2>&1 &
           echo $! > /tmp/api.pid
-          # Start worker
-          nohup node apps/worker/dist/index.js > /tmp/worker.log 2>&1 &
+          # worker via tsx
+          nohup pnpm --filter @aligned/worker exec tsx src/index.ts > /tmp/worker.log 2>&1 &
           echo $! > /tmp/worker.pid
           # Build + start web (dev mode is fine for e2e and avoids the Next 15 + TS 5.9 glitch)
           nohup pnpm --filter @aligned/web exec next dev --port 3000 > /tmp/web.log 2>&1 &

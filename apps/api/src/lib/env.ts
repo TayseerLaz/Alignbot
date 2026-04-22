@@ -28,6 +28,16 @@ const envSchema = z.object({
   EMAIL_FROM: z.string().default('ALIGNED <noreply@aligned.local>'),
   EMAIL_DEV_SMTP_HOST: z.string().default('localhost'),
   EMAIL_DEV_SMTP_PORT: z.coerce.number().int().positive().default(1025),
+  // Production SMTP (cPanel / SES / SendGrid / etc.) — used when RESEND_API_KEY is empty
+  // AND EMAIL_SMTP_HOST is set. Falls back to dev transport otherwise.
+  EMAIL_SMTP_HOST: z.string().optional(),
+  EMAIL_SMTP_PORT: z.coerce.number().int().positive().optional(),
+  EMAIL_SMTP_USER: z.string().optional(),
+  EMAIL_SMTP_PASS: z.string().optional(),
+  EMAIL_SMTP_SECURE: z
+    .string()
+    .optional()
+    .transform((s) => s === 'true'),
 
   // Wasabi (S3-compatible) — leave keys empty to disable in dev (uploads will 503).
   WASABI_ENDPOINT: z.string().url().default('https://s3.eu-central-1.wasabisys.com'),

@@ -52,7 +52,39 @@ async function main() {
     },
   });
 
-  console.warn(`[super-admin] ${user.id} ${user.email} is_aligned_admin=${user.isAlignedAdmin}`);
+  // Bootstrap the ALIGNED root org so the super-admin has a tenant to land in.
+  const rootSlug = process.env.INITIAL_ADMIN_ORG_SLUG?.trim().toLowerCase() || 'aligned';
+  const rootName = process.env.INITIAL_ADMIN_ORG_NAME?.trim() || 'ALIGNED';
+  const org = await prisma.organization.upsert({
+    where: { slug: rootSlug },
+    update: { name: rootName, status: 'active' },
+    create: { slug: rootSlug, name: rootName, status: 'active' },
+  });
+
+  // Idempotent membership — admin in the root org.
+  const existing = await prisma.membership.findFirst({
+    where: { userId: user.id, organizationId: org.id },
+    select: { id: true },
+  });
+  if (!existing) {
+    await prisma.membership.create({
+      data: {
+        userId: user.id,
+        organizationId: org.id,
+        role: 'admin',
+        isActive: true,
+      },
+    });
+  } else {
+    await prisma.membership.update({
+      where: { id: existing.id },
+      data: { role: 'admin', isActive: true },
+    });
+  }
+
+  console.warn(
+    `[super-admin] ${user.id} ${user.email} is_aligned_admin=${user.isAlignedAdmin} org=${org.slug}`,
+  );
 }
 
 main()

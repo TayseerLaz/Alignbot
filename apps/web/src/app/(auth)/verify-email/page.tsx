@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { api, ApiError } from '@/lib/api';
@@ -10,6 +10,14 @@ import { api, ApiError } from '@/lib/api';
 type State = 'idle' | 'loading' | 'success' | 'error';
 
 export default function VerifyEmailPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-foreground-muted">Loading…</div>}>
+      <VerifyEmailInner />
+    </Suspense>
+  );
+}
+
+function VerifyEmailInner() {
   const search = useSearchParams();
   const token = search.get('token') ?? '';
   const [state, setState] = useState<State>('idle');

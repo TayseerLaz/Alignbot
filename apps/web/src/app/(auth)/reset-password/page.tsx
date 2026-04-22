@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { resetPasswordBodySchema, type ResetPasswordBody } from '@aligned/shared';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
@@ -13,6 +14,16 @@ import { Label } from '@/components/ui/label';
 import { api, ApiError } from '@/lib/api';
 
 export default function ResetPasswordPage() {
+  // useSearchParams triggers a CSR bailout that Next 15 now requires to be
+  // wrapped in Suspense so the build can render a safe fallback.
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-foreground-muted">Loading…</div>}>
+      <ResetPasswordForm />
+    </Suspense>
+  );
+}
+
+function ResetPasswordForm() {
   const router = useRouter();
   const search = useSearchParams();
   const token = search.get('token') ?? '';

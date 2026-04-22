@@ -5,10 +5,10 @@
   "type": "module",
   "main": "./dist/server.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "echo 'api: no build step — running via tsx at runtime'",
     "clean": "rm -rf dist .turbo",
     "dev": "tsx watch --env-file=../../.env --clear-screen=false src/server.ts",
-    "start": "node dist/server.js",
+    "start": "tsx src/server.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

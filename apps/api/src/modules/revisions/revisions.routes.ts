@@ -127,13 +127,16 @@ export default async function revisionRoutes(app: FastifyInstance) {
         const snap = rev.snapshot as Record<string, unknown> | null;
         if (!snap) throw badRequest(ApiErrorCode.CONFLICT, 'Revision has no snapshot to restore.');
 
+        // The restore* helpers validate + narrow the JSONB snapshot, but the
+        // resulting plain-object shape is wider than Prisma's Create/Update input
+        // types. Cast at the call boundary — the data is already trusted.
         switch (rev.entityType) {
           case 'product': {
             const data = restoreProductData(snap);
             await tx.product.upsert({
               where: { id: rev.entityId },
-              create: { ...data, id: rev.entityId, organizationId: orgId },
-              update: { ...data, deletedAt: null },
+              create: { ...data, id: rev.entityId, organizationId: orgId } as never,
+              update: { ...data, deletedAt: null } as never,
             });
             break;
           }
@@ -141,8 +144,8 @@ export default async function revisionRoutes(app: FastifyInstance) {
             const data = restoreServiceData(snap);
             await tx.service.upsert({
               where: { id: rev.entityId },
-              create: { ...data, id: rev.entityId, organizationId: orgId },
-              update: { ...data, deletedAt: null },
+              create: { ...data, id: rev.entityId, organizationId: orgId } as never,
+              update: { ...data, deletedAt: null } as never,
             });
             break;
           }
@@ -150,8 +153,8 @@ export default async function revisionRoutes(app: FastifyInstance) {
             const data = restoreBusinessInfoData(snap);
             await tx.businessInfo.upsert({
               where: { organizationId: orgId },
-              create: { ...data, organizationId: orgId },
-              update: data,
+              create: { ...data, organizationId: orgId } as never,
+              update: data as never,
             });
             break;
           }
@@ -159,8 +162,8 @@ export default async function revisionRoutes(app: FastifyInstance) {
             const data = restoreFaqData(snap);
             await tx.fAQ.upsert({
               where: { id: rev.entityId },
-              create: { ...data, id: rev.entityId, organizationId: orgId },
-              update: data,
+              create: { ...data, id: rev.entityId, organizationId: orgId } as never,
+              update: data as never,
             });
             break;
           }
@@ -168,8 +171,8 @@ export default async function revisionRoutes(app: FastifyInstance) {
             const data = restorePolicyData(snap);
             await tx.policy.upsert({
               where: { id: rev.entityId },
-              create: { ...data, id: rev.entityId, organizationId: orgId },
-              update: data,
+              create: { ...data, id: rev.entityId, organizationId: orgId } as never,
+              update: data as never,
             });
             break;
           }

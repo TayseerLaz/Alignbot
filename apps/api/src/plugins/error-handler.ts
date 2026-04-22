@@ -38,7 +38,7 @@ export default fp(async function errorHandler(app: FastifyInstance) {
     }
 
     // Fastify rate-limit error.
-    if (err.statusCode === 429) {
+    if ((err as { statusCode?: number }).statusCode === 429) {
       const payload: ApiErrorPayload = {
         error: {
           code: ApiErrorCode.RATE_LIMITED,

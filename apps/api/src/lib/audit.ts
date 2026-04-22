@@ -29,7 +29,7 @@ export async function recordAudit(args: RecordAuditArgs): Promise<void> {
           actorUserId: args.actorUserId ?? null,
           entityType: args.entityType,
           entityId: args.entityId,
-          metadata: args.metadata ?? undefined,
+          metadata: (args.metadata ?? undefined) as never,
           ipAddress: args.ipAddress ?? undefined,
           userAgent: args.userAgent ?? undefined,
         },

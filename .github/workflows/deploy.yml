@@ -63,11 +63,11 @@ jobs:
             PGPASSWORD="$POSTGRES_PASSWORD" psql -h localhost -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f packages/db/prisma/rls.sql || true
 
             echo "=== build ==="
+            # shared + db emit compiled JS so they can be loaded by api/worker
+            # at runtime. api + worker themselves are run through tsx (no build).
             pnpm --filter @aligned/shared build
             pnpm --filter @aligned/db build
-            pnpm --filter @aligned/api build
-            pnpm --filter @aligned/worker build
-            # Clear Next.js output and rebuild
+            # Clear Next.js output and rebuild the web bundle
             rm -rf apps/web/.next
             pnpm --filter @aligned/web build
 

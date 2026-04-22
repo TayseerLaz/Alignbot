@@ -14,6 +14,7 @@ import {
   Download,
   FileSpreadsheet,
   Loader2,
+  Trash2,
   Upload,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -24,6 +25,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
   DialogContent,
@@ -66,6 +68,31 @@ export default function ImportsPage() {
         : false;
     },
   });
+
+  const deleteOne = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/imports/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['imports'] });
+      toast.success('Import removed');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Delete failed'),
+  });
+
+  const clearAll = useMutation({
+    mutationFn: (statuses?: ImportJobDto['status'][]) =>
+      api.post<{ data: { removed: number } }>('/api/v1/imports/clear', statuses ? { statuses } : {}),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['imports'] });
+      toast.success(`Cleared ${res.data.removed} import${res.data.removed === 1 ? '' : 's'}`);
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Clear failed'),
+  });
+
+  const jobs = list.data?.data ?? [];
+  const clearableCount = jobs.filter((j) =>
+    ['succeeded', 'partial', 'failed', 'cancelled'].includes(j.status),
+  ).length;
+  const failedCount = jobs.filter((j) => j.status === 'failed').length;
 
   return (
     <>
@@ -113,8 +140,57 @@ export default function ImportsPage() {
       </Card>
 
       <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Recent imports</CardTitle>
+        <CardHeader className="flex flex-row items-start justify-between gap-4">
+          <div>
+            <CardTitle>Recent imports</CardTitle>
+            <CardDescription>
+              Delete any import to clear history. Imported catalog data is NOT reverted.
+            </CardDescription>
+          </div>
+          {clearableCount > 0 ? (
+            <div className="flex items-center gap-2">
+              {failedCount > 0 ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  loading={clearAll.isPending && clearAll.variables?.length === 1}
+                  onClick={async () => {
+                    if (
+                      await confirmDialog({
+                        title: `Delete ${failedCount} failed import${failedCount === 1 ? '' : 's'}?`,
+                        body: 'Only jobs with status "failed" are removed. In-progress and successful jobs are kept.',
+                        confirmLabel: 'Delete failed',
+                        destructive: true,
+                      })
+                    ) {
+                      clearAll.mutate(['failed']);
+                    }
+                  }}
+                >
+                  <Trash2 className="size-3.5" /> Clear failed ({failedCount})
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={clearAll.isPending && !clearAll.variables?.length}
+                onClick={async () => {
+                  if (
+                    await confirmDialog({
+                      title: `Delete all ${clearableCount} finished import${clearableCount === 1 ? '' : 's'}?`,
+                      body: 'Removes every succeeded, partial, failed, and cancelled job. In-progress jobs are kept. Cannot be undone.',
+                      confirmLabel: 'Delete all',
+                      destructive: true,
+                    })
+                  ) {
+                    clearAll.mutate(undefined);
+                  }
+                }}
+              >
+                <Trash2 className="size-3.5" /> Clear all ({clearableCount})
+              </Button>
+            </div>
+          ) : null}
         </CardHeader>
         <CardContent className="p-0">
           {list.isLoading ? (
@@ -142,10 +218,10 @@ export default function ImportsPage() {
                       ? null
                       : 100;
                 return (
-                  <li key={job.id} className="px-6 py-4">
+                  <li key={job.id} className="flex items-center justify-between gap-4 px-6 py-4">
                     <Link
                       href={`/imports/${job.id}`}
-                      className="flex items-center justify-between gap-4"
+                      className="flex min-w-0 flex-1 items-center justify-between gap-4"
                     >
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
@@ -174,6 +250,28 @@ export default function ImportsPage() {
                         <ChevronRight className="size-4 text-foreground-subtle" />
                       </div>
                     </Link>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label="Delete import"
+                      loading={deleteOne.isPending && deleteOne.variables === job.id}
+                      onClick={async () => {
+                        if (
+                          await confirmDialog({
+                            title: `Delete this ${IMPORT_ENTITY_LABELS[job.entityKind]} import?`,
+                            body: inProgress
+                              ? 'This job is still running — it will be cancelled and removed. Imported data so far is NOT reverted.'
+                              : 'The job row and its per-row results will be removed. Imported catalog data is NOT reverted.',
+                            confirmLabel: 'Delete import',
+                            destructive: true,
+                          })
+                        ) {
+                          deleteOne.mutate(job.id);
+                        }
+                      }}
+                    >
+                      <Trash2 className="size-4 text-red-600" />
+                    </Button>
                   </li>
                 );
               })}

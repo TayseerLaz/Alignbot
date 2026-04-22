@@ -232,6 +232,75 @@ export default async function importRoutes(app: FastifyInstance) {
         return { ok: true as const };
       }),
   );
+
+  // ---------- DELETE /imports/:id ----------------------------------------
+  // Removes a single import job + its row records. Allowed for any status —
+  // including failed/cancelled — so operators can clear history.
+  // In-progress jobs are cancelled first (so the worker stops) then deleted.
+  r.delete(
+    '/imports/:id',
+    {
+      schema: {
+        tags: ['imports'],
+        summary: 'Delete an import job (any status). Imported data is NOT reverted.',
+        params: z.object({ id: uuidSchema }),
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const job = await tx.importJob.findUnique({ where: { id: req.params.id } });
+        if (!job) throw notFound('Import job not found.');
+        // importJobRow has ON DELETE CASCADE so rows go with the job.
+        await tx.importJob.delete({ where: { id: job.id } });
+        return { ok: true as const };
+      }),
+  );
+
+  // ---------- POST /imports/clear ---------------------------------------
+  // Bulk clear finished import jobs (any of succeeded/partial/failed/cancelled
+  // by default; pass `statuses: ['failed']` to scope). In-progress jobs are
+  // left alone — use per-row DELETE if you need to nuke one of those.
+  r.post(
+    '/imports/clear',
+    {
+      schema: {
+        tags: ['imports'],
+        summary: 'Delete all finished imports for the current org (succeeded, partial, failed, cancelled).',
+        body: z
+          .object({
+            statuses: z
+              .array(
+                z.enum([
+                  'pending',
+                  'validating',
+                  'processing',
+                  'succeeded',
+                  'partial',
+                  'failed',
+                  'cancelled',
+                ]),
+              )
+              .min(1)
+              .optional(),
+          })
+          .optional()
+          .nullable(),
+        response: { 200: itemEnvelopeSchema(z.object({ removed: z.number() })) },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) => {
+      const statuses = req.body?.statuses ?? ['succeeded', 'partial', 'failed', 'cancelled'];
+      return app.tenant(req, async (tx) => {
+        const result = await tx.importJob.deleteMany({
+          where: { status: { in: statuses as never } },
+        });
+        return { data: { removed: result.count } };
+      });
+    },
+  );
 }
 
 function serializeJob(job: {

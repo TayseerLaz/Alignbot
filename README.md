@@ -28,6 +28,26 @@ Mailhog UI: http://localhost:8025
 API docs: http://localhost:4000/docs
 Portal: http://localhost:3000
 
+## Production
+
+- **Portal:** https://alignbot.aligned-tech.com
+- **API:** https://api.aligned-tech.com
+- **API docs:** https://api.aligned-tech.com/docs (all routes) · https://api.aligned-tech.com/docs/chatbot (read-only API)
+
+### Accounts
+
+> WARNING: these are live production credentials. Rotate before making this repo public or granting external access.
+
+**ALIGNED super-admin** (controls every tenant, `/aligned-admin` access):
+
+- Email: `admin@aligned-tech.com`
+- Password: `Tayseer123!Aligned`
+
+**Demo client** (admin of its own `demo-client` org, no super-admin rights — use this to test the client experience):
+
+- Email: `demo@aligned-tech.com`
+- Password: `DemoClient123!`
+
 ## Repo layout
 
 See [CLAUDE.md](./CLAUDE.md) for the full plan, status, and architecture decisions.

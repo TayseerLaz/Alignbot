@@ -24,12 +24,10 @@ const envSchema = z.object({
     .default('false')
     .transform((s) => s === 'true'),
 
-  RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default('ALIGNED <noreply@aligned.local>'),
   EMAIL_DEV_SMTP_HOST: z.string().default('localhost'),
   EMAIL_DEV_SMTP_PORT: z.coerce.number().int().positive().default(1025),
-  // Production SMTP (cPanel / SES / SendGrid / etc.) — used when RESEND_API_KEY is empty
-  // AND EMAIL_SMTP_HOST is set. Falls back to dev transport otherwise.
+  // Production SMTP (AWS SES). Falls back to dev transport when EMAIL_SMTP_HOST is empty.
   EMAIL_SMTP_HOST: z.string().optional(),
   EMAIL_SMTP_PORT: z.coerce.number().int().positive().optional(),
   EMAIL_SMTP_USER: z.string().optional(),

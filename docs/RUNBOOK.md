@@ -135,7 +135,7 @@ Then send the client an invitation through the ALIGNED admin UI.
 |---|---|
 | `JWT_ACCESS_SECRET` | Generate new value, update `.env.production`, restart api. **Existing access tokens become invalid immediately**, users will reauthenticate via refresh cookie. |
 | `JWT_REFRESH_SECRET` | Same as above; **also forces a full re-login**. Coordinate with users. |
-| `RESEND_API_KEY` | Issue new key in Resend, update env, restart api. |
+| `EMAIL_SMTP_PASS` | In AWS IAM, delete the SES SMTP user's password and generate a new one. Update env, restart api. The `AKIA…` username stays the same. |
 | `WASABI_*` | Issue new keys, update env, restart api+worker. Existing presigned URLs (15-min TTL) keep working until they expire. |
 | API keys (per org) | Issue a new one in the portal `/api-keys`, hand to the bot operator, revoke the old. |
 | Webhook signing secrets | The portal allows recreating an endpoint to rotate. |

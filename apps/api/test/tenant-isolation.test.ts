@@ -8,8 +8,8 @@ import { getApp, prisma } from './setup.js';
 describe('tenant isolation', () => {
   it('a user in org A cannot read products from org B even with crafted IDs', async () => {
     const app = getApp();
-    const a = await seedOrgAndLogin(app, 'tenantA');
-    const b = await seedOrgAndLogin(app, 'tenantB');
+    const a = await seedOrgAndLogin(app, 'tenant-a');
+    const b = await seedOrgAndLogin(app, 'tenant-b');
 
     // Create a product in org B directly via the API.
     const createB = await app.inject({

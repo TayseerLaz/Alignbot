@@ -1,5 +1,4 @@
 import nodemailer from 'nodemailer';
-import { Resend } from 'resend';
 
 import { env } from './env.js';
 
@@ -11,11 +10,10 @@ interface SendArgs {
 }
 
 let transporter: nodemailer.Transporter | null = null;
-let resend: Resend | null = null;
 
 function smtpTransporter(): nodemailer.Transporter {
   if (transporter) return transporter;
-  // Prod SMTP (cPanel / SES / SendGrid / etc.) — authenticated, TLS-capable.
+  // Prod SMTP (AWS SES via STARTTLS on 587). Auth is required when EMAIL_SMTP_HOST is set.
   if (env.EMAIL_SMTP_HOST) {
     transporter = nodemailer.createTransport({
       host: env.EMAIL_SMTP_HOST,
@@ -39,12 +37,6 @@ function smtpTransporter(): nodemailer.Transporter {
 }
 
 export async function sendEmail({ to, subject, html, text }: SendArgs): Promise<void> {
-  // Preference order: Resend (best deliverability) → prod SMTP → dev SMTP (Mailpit).
-  if (env.RESEND_API_KEY) {
-    resend ??= new Resend(env.RESEND_API_KEY);
-    await resend.emails.send({ from: env.EMAIL_FROM, to, subject, html, text });
-    return;
-  }
   await smtpTransporter().sendMail({ from: env.EMAIL_FROM, to, subject, html, text });
 }
 

@@ -4,6 +4,7 @@ import {
   IMPORT_ENTITY_KINDS,
   IMPORT_ENTITY_LABELS,
   type ImportEntityKind,
+  type ImportFieldHint,
   type ImportJobDto,
 } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -336,6 +337,54 @@ async function downloadTemplate(kind: ImportEntityKind) {
 }
 
 // ---------- wizard ---------------------------------------------------------
+// Three steps:
+//   1) Pick entity + file
+//   2) Map columns (CSV only — for XLSX we trust the template; if your XLSX
+//      came from our downloadable template, the headers already match).
+//   3) Review + start
+//
+// The mapping step is skipped when every uploaded header matches a known
+// target field exactly — the common case when the user used our template.
+const MAPPING_KEEP = '__keep__';
+const MAPPING_IGNORE = '__ignore__';
+
+type WizardStep = 'pick' | 'map' | 'review';
+
+async function readCsvHeaders(file: File): Promise<string[] | null> {
+  if (!/\.csv$/i.test(file.name) && file.type !== 'text/csv') return null;
+  // Read only the first ~64 KB — enough for a header line in any realistic file.
+  const slice = file.slice(0, 64 * 1024);
+  const text = await slice.text();
+  const firstLine = text.split(/\r?\n/, 1)[0] ?? '';
+  if (!firstLine.trim()) return [];
+  // Minimal CSV header parser: handles "quoted,commas" and doubled quotes.
+  const headers: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < firstLine.length; i++) {
+    const ch = firstLine[i];
+    if (inQuotes) {
+      if (ch === '"' && firstLine[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      headers.push(cur.trim());
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  headers.push(cur.trim());
+  return headers.filter((h) => h.length > 0);
+}
+
 function ImportWizard({
   open,
   onOpenChange,
@@ -345,16 +394,83 @@ function ImportWizard({
   onOpenChange: (v: boolean) => void;
   onCreated: () => void;
 }) {
+  const [step, setStep] = useState<WizardStep>('pick');
   const [entityKind, setEntityKind] = useState<ImportEntityKind>('product');
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  const [uploadedHeaders, setUploadedHeaders] = useState<string[] | null>(null);
+  // `mapping[uploadedHeader] = targetField | MAPPING_IGNORE`.
+  const [mapping, setMapping] = useState<Record<string, string>>({});
   const fileInput = useRef<HTMLInputElement>(null);
 
+  const fieldsQuery = useQuery({
+    queryKey: ['import-fields', entityKind],
+    queryFn: () => api.get<{ data: ImportFieldHint[] }>(`/api/v1/imports/templates/${entityKind}/fields`),
+    enabled: open,
+  });
+
   const reset = () => {
+    setStep('pick');
     setFile(null);
     setEntityKind('product');
+    setUploadedHeaders(null);
+    setMapping({});
     if (fileInput.current) fileInput.current.value = '';
   };
+
+  // Proceed from pick → map (or straight to review if mapping not needed).
+  const nextFromPick = async () => {
+    if (!file) return;
+    const headers = await readCsvHeaders(file);
+    const targetFields = fieldsQuery.data?.data ?? [];
+    const targetNames = new Set(targetFields.map((f) => f.field));
+    if (!headers || headers.every((h) => targetNames.has(h))) {
+      // XLSX or already-matching CSV — skip the mapping step.
+      setUploadedHeaders(headers);
+      setMapping({});
+      setStep('review');
+      return;
+    }
+    // CSV with custom headers: pre-fill the mapping with best guesses
+    // (exact match preferred; otherwise lowercase-match).
+    const lowerToField: Record<string, string> = {};
+    for (const f of targetFields) lowerToField[f.field.toLowerCase()] = f.field;
+    const initial: Record<string, string> = {};
+    for (const h of headers) {
+      const loweredMatch = lowerToField[h.toLowerCase()];
+      if (targetNames.has(h)) initial[h] = h;
+      else if (loweredMatch) initial[h] = loweredMatch;
+      else initial[h] = MAPPING_IGNORE;
+    }
+    setUploadedHeaders(headers);
+    setMapping(initial);
+    setStep('map');
+  };
+
+  // Build the `columnMapping` body for POST /imports. Empty object when
+  // headers already match targets; null when nothing to send.
+  const buildColumnMapping = (): Record<string, string> | undefined => {
+    if (!uploadedHeaders || uploadedHeaders.length === 0) return undefined;
+    const out: Record<string, string> = {};
+    let hasNonIdentity = false;
+    for (const h of uploadedHeaders) {
+      const target = mapping[h] ?? MAPPING_IGNORE;
+      if (target === MAPPING_IGNORE) {
+        // Skip column: emit a rename to a sentinel the worker will ignore.
+        out[h] = '__ignored__';
+        hasNonIdentity = true;
+      } else {
+        out[h] = target;
+        if (target !== h) hasNonIdentity = true;
+      }
+    }
+    return hasNonIdentity ? out : undefined;
+  };
+
+  const requiredFields = (fieldsQuery.data?.data ?? []).filter((f) => f.required);
+  const missingRequired = requiredFields
+    .filter((f) => !Object.values(mapping).includes(f.field))
+    .map((f) => f.label);
 
   const start = async () => {
     if (!file) return;
@@ -379,6 +495,7 @@ function ImportWizard({
       await api.post(`/api/v1/imports`, {
         entityKind,
         sourceAssetId: upload.data.assetId,
+        columnMapping: buildColumnMapping(),
       });
       toast.success('Import started');
       onCreated();
@@ -398,74 +515,191 @@ function ImportWizard({
         if (!v) reset();
       }}
     >
-      <DialogContent>
+      <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>Start an import</DialogTitle>
+          <DialogTitle>
+            {step === 'pick' ? 'Start an import' : step === 'map' ? 'Map your columns' : 'Review & start'}
+          </DialogTitle>
           <DialogDescription>
-            We accept CSV and XLSX files up to 50 MB. Use the matching template for cleanest results.
+            {step === 'pick' &&
+              'CSV and XLSX up to 50 MB. Using our template guarantees headers match.'}
+            {step === 'map' &&
+              'Your CSV headers don’t all match our field names. Tell us which column maps to which field.'}
+            {step === 'review' && 'Looks good. Click Start to queue the import.'}
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="entityKind">What are you importing?</Label>
-            <Select value={entityKind} onValueChange={(v) => setEntityKind(v as ImportEntityKind)}>
-              <SelectTrigger id="entityKind">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {IMPORT_ENTITY_KINDS.map((k) => (
-                  <SelectItem key={k} value={k}>
-                    {IMPORT_ENTITY_LABELS[k]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>File</Label>
-            <button
-              type="button"
-              onClick={() => fileInput.current?.click()}
-              className="flex w-full flex-col items-center justify-center rounded-lg border-2 border-dashed border-border px-6 py-10 text-center text-sm text-foreground-muted transition-colors hover:border-brand-400 hover:bg-brand-50/30"
-            >
-              {file ? (
-                <>
-                  <CheckCircle2 className="mb-2 size-7 text-emerald-600" />
-                  <span className="font-medium text-foreground">{file.name}</span>
-                  <span className="mt-1 text-xs text-foreground-subtle">
-                    {(file.size / 1024).toFixed(1)} KB
-                  </span>
-                </>
-              ) : (
-                <>
-                  <Upload className="mb-2 size-7 text-foreground-subtle" />
-                  <span>Click to choose a CSV or XLSX</span>
-                </>
+
+        {/* Stepper */}
+        <ol className="flex items-center gap-2 text-xs">
+          {(['pick', 'map', 'review'] as WizardStep[]).map((s, i) => (
+            <li
+              key={s}
+              className={cn(
+                'flex items-center gap-2 rounded-md px-2 py-1',
+                step === s ? 'bg-brand-50 text-brand-700 font-medium' : 'text-foreground-subtle',
               )}
-            </button>
-            <input
-              ref={fileInput}
-              type="file"
-              accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              className="hidden"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
+            >
+              <span className="inline-flex size-5 items-center justify-center rounded-full border border-current text-[10px]">
+                {i + 1}
+              </span>
+              {s === 'pick' ? 'Choose file' : s === 'map' ? 'Map columns' : 'Review'}
+            </li>
+          ))}
+        </ol>
+
+        {step === 'pick' && (
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="entityKind">What are you importing?</Label>
+              <Select value={entityKind} onValueChange={(v) => setEntityKind(v as ImportEntityKind)}>
+                <SelectTrigger id="entityKind">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {IMPORT_ENTITY_KINDS.map((k) => (
+                    <SelectItem key={k} value={k}>
+                      {IMPORT_ENTITY_LABELS[k]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>File</Label>
+              <button
+                type="button"
+                onClick={() => fileInput.current?.click()}
+                className="flex w-full flex-col items-center justify-center rounded-lg border-2 border-dashed border-border px-6 py-10 text-center text-sm text-foreground-muted transition-colors hover:border-brand-400 hover:bg-brand-50/30"
+              >
+                {file ? (
+                  <>
+                    <CheckCircle2 className="mb-2 size-7 text-emerald-600" />
+                    <span className="font-medium text-foreground">{file.name}</span>
+                    <span className="mt-1 text-xs text-foreground-subtle">
+                      {(file.size / 1024).toFixed(1)} KB
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="mb-2 size-7 text-foreground-subtle" />
+                    <span>Click to choose a CSV or XLSX</span>
+                  </>
+                )}
+              </button>
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                className="hidden"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              />
+            </div>
+            <div className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+              <p>
+                Existing rows are matched by SKU (products), slug (services), or upserted by org
+                (business info). FAQs always create a new row — review your file before re-importing.
+              </p>
+            </div>
           </div>
-          <div className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            <AlertCircle className="mt-0.5 size-4 shrink-0" />
-            <p>
-              Existing rows are matched by SKU (products), slug (services), or upserted by org
-              (business info). FAQs always create a new row — review your file before re-importing.
+        )}
+
+        {step === 'map' && uploadedHeaders && (
+          <div className="space-y-3">
+            <p className="text-xs text-foreground-muted">
+              Found {uploadedHeaders.length} column{uploadedHeaders.length === 1 ? '' : 's'} in your file. Set
+              each to the matching ALIGNED field, or <em>Ignore</em> to skip it.
             </p>
+            <div className="max-h-80 space-y-2 overflow-auto rounded-md border border-border bg-surface-muted/20 p-2">
+              {uploadedHeaders.map((h) => (
+                <div key={h} className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                  <span className="truncate font-mono text-xs">{h}</span>
+                  <span className="text-foreground-subtle">→</span>
+                  <Select
+                    value={mapping[h] ?? MAPPING_IGNORE}
+                    onValueChange={(v) => setMapping({ ...mapping, [h]: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={MAPPING_IGNORE}>— Ignore this column —</SelectItem>
+                      {(fieldsQuery.data?.data ?? []).map((f) => (
+                        <SelectItem key={f.field} value={f.field}>
+                          {f.label}
+                          {f.required ? ' (required)' : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ))}
+            </div>
+            {missingRequired.length > 0 && (
+              <div
+                role="alert"
+                aria-live="polite"
+                className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800"
+              >
+                <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                <p>
+                  Required fields not yet mapped: <strong>{missingRequired.join(', ')}</strong>. Rows
+                  missing these values will fail validation.
+                </p>
+              </div>
+            )}
           </div>
-        </div>
+        )}
+
+        {step === 'review' && file && (
+          <div className="space-y-3 text-sm">
+            <div className="grid grid-cols-[120px_1fr] gap-y-1.5">
+              <span className="text-foreground-muted">Entity</span>
+              <span className="font-medium">{IMPORT_ENTITY_LABELS[entityKind]}</span>
+              <span className="text-foreground-muted">File</span>
+              <span className="font-mono text-xs">{file.name}</span>
+              <span className="text-foreground-muted">Size</span>
+              <span>{(file.size / 1024).toFixed(1)} KB</span>
+              <span className="text-foreground-muted">Mapping</span>
+              <span>
+                {buildColumnMapping() ? 'custom — applied to upload' : 'headers already match template'}
+              </span>
+            </div>
+          </div>
+        )}
+
         <DialogFooter>
-          <Button variant="secondary" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={start} loading={busy} disabled={!file}>
-            Start import
-          </Button>
+          {step === 'pick' && (
+            <>
+              <Button variant="secondary" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button onClick={nextFromPick} disabled={!file || fieldsQuery.isLoading}>
+                Next
+              </Button>
+            </>
+          )}
+          {step === 'map' && (
+            <>
+              <Button variant="secondary" onClick={() => setStep('pick')}>
+                Back
+              </Button>
+              <Button onClick={() => setStep('review')}>Next</Button>
+            </>
+          )}
+          {step === 'review' && (
+            <>
+              <Button
+                variant="secondary"
+                onClick={() => setStep(uploadedHeaders && uploadedHeaders.length > 0 && buildColumnMapping() ? 'map' : 'pick')}
+              >
+                Back
+              </Button>
+              <Button onClick={start} loading={busy}>
+                Start import
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

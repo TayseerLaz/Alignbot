@@ -1,23 +1,76 @@
 'use client';
 
-import { ArrowUpRight, Briefcase, Building2, KeyRound, Package, RefreshCw } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  Activity,
+  AlertTriangle,
+  ArrowUpRight,
+  Briefcase,
+  Building2,
+  CheckCircle2,
+  HelpCircle,
+  KeyRound,
+  Package,
+  Plug,
+  RefreshCw,
+  Webhook,
+} from 'lucide-react';
 import Link from 'next/link';
 
 import { PageHeader } from '@/components/shell/page-header';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { api } from '@/lib/api';
+import { formatRelative } from '@/lib/format';
 import { useSession } from '@/lib/session';
 import { fullName } from '@/lib/utils';
 
-interface MetricCardProps {
+interface DashboardSummary {
+  counts: {
+    products: number;
+    services: number;
+    faqs: number;
+    connectors: number;
+    apiKeys: number;
+    webhookEndpoints: number;
+  };
+  lastSyncAt: string | null;
+  connectorStatus: {
+    id: string;
+    name: string;
+    status: 'active' | 'disabled' | 'failing' | string;
+    lastRunAt: string | null;
+    lastSuccessAt: string | null;
+    consecutiveFailures: number;
+  }[];
+  recentAudits: {
+    id: string;
+    action: string;
+    entityType: string | null;
+    entityId: string | null;
+    actorName: string | null;
+    actorEmail: string | null;
+    createdAt: string;
+  }[];
+}
+
+const humanAction = (action: string) =>
+  action.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+function MetricCard({
+  title,
+  value,
+  hint,
+  href,
+  icon: Icon,
+}: {
   title: string;
   value: string | number;
   href: string;
   hint?: string;
   icon: React.ComponentType<{ className?: string }>;
-}
-
-function MetricCard({ title, value, hint, href, icon: Icon }: MetricCardProps) {
+}) {
   return (
     <Card className="transition-shadow hover:shadow-md">
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
@@ -29,10 +82,7 @@ function MetricCard({ title, value, hint, href, icon: Icon }: MetricCardProps) {
           <div className="text-3xl font-semibold tracking-tight">{value}</div>
           {hint ? <p className="mt-1 text-xs text-foreground-subtle">{hint}</p> : null}
         </div>
-        <Link
-          href={href}
-          className="flex items-center gap-1 text-xs text-brand-500 hover:underline"
-        >
+        <Link href={href} className="flex items-center gap-1 text-xs text-brand-500 hover:underline">
           Open <ArrowUpRight className="size-3" />
         </Link>
       </CardContent>
@@ -42,7 +92,18 @@ function MetricCard({ title, value, hint, href, icon: Icon }: MetricCardProps) {
 
 export default function DashboardPage() {
   const { session } = useSession();
+  const queryClient = useQueryClient();
   const greeting = session ? fullName(session.user.firstName, session.user.lastName, '').split(' ')[0] : '';
+
+  const summary = useQuery({
+    queryKey: ['dashboard-summary'],
+    queryFn: () => api.get<{ data: DashboardSummary }>('/api/v1/dashboard/summary'),
+    // Backend caches 30s — match on the client to avoid noisy refetches.
+    staleTime: 30_000,
+  });
+
+  const data = summary.data?.data;
+  const c = data?.counts;
 
   return (
     <>
@@ -50,107 +111,192 @@ export default function DashboardPage() {
         title={greeting ? `Welcome back, ${greeting}` : 'Welcome back'}
         description="Here's a snapshot of your organization's data health."
         actions={
-          <Button variant="secondary" size="sm">
+          <Button
+            variant="secondary"
+            size="sm"
+            loading={summary.isFetching}
+            onClick={() => queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] })}
+          >
             <RefreshCw className="size-4" /> Refresh
           </Button>
         }
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
-          title="Products"
-          value={0}
-          hint="Add your first product"
-          href="/products"
-          icon={Package}
-        />
-        <MetricCard
-          title="Services"
-          value={0}
-          hint="Add your first service"
-          href="/services"
-          icon={Briefcase}
-        />
-        <MetricCard
-          title="Business info"
-          value="Not set"
-          hint="Hours, locations, FAQs"
-          href="/business-info"
-          icon={Building2}
-        />
-        <MetricCard
-          title="API keys"
-          value={0}
-          hint="For your chatbot"
-          href="/api-keys"
-          icon={KeyRound}
-        />
+        <MetricCard title="Products" value={c?.products ?? '—'} href="/products" icon={Package} />
+        <MetricCard title="Services" value={c?.services ?? '—'} href="/services" icon={Briefcase} />
+        <MetricCard title="FAQs" value={c?.faqs ?? '—'} href="/business-info" icon={HelpCircle} />
+        <MetricCard title="API keys" value={c?.apiKeys ?? '—'} href="/api-keys" icon={KeyRound} />
       </div>
 
-      <section className="mt-10 grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Get started</CardTitle>
+      <section className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {/* Last sync */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+            <CardTitle className="text-sm font-medium text-foreground-muted">Last sync</CardTitle>
+            <Plug className="size-4 text-foreground-subtle" />
           </CardHeader>
-          <CardContent className="space-y-4 text-sm">
-            <div className="flex items-start justify-between gap-3 rounded-lg border border-dashed border-border p-4">
-              <div>
-                <p className="font-medium">Add your first products and services</p>
-                <p className="mt-1 text-xs text-foreground-muted">
-                  Manually create entries or bulk import from a spreadsheet on Day 3.
+          <CardContent>
+            {data?.lastSyncAt ? (
+              <>
+                <p className="text-lg font-semibold">{formatRelative(data.lastSyncAt)}</p>
+                <p className="mt-1 text-xs text-foreground-subtle">
+                  Most recent connector run across all sources.
                 </p>
-              </div>
-              <Button asChild size="sm" variant="secondary">
-                <Link href="/products">Open catalog</Link>
-              </Button>
-            </div>
-            <div className="flex items-start justify-between gap-3 rounded-lg border border-dashed border-border p-4">
-              <div>
-                <p className="font-medium">Invite your team</p>
-                <p className="mt-1 text-xs text-foreground-muted">
-                  Add admins, editors, or viewers to collaborate on your data.
+              </>
+            ) : (
+              <>
+                <p className="text-lg font-semibold text-foreground-subtle">Never</p>
+                <p className="mt-1 text-xs text-foreground-subtle">
+                  No connectors have synced yet.
                 </p>
-              </div>
-              <Button asChild size="sm" variant="secondary">
-                <Link href="/members">Manage members</Link>
-              </Button>
-            </div>
-            <div className="flex items-start justify-between gap-3 rounded-lg border border-dashed border-border p-4">
-              <div>
-                <p className="font-medium">Connect your WhatsApp chatbot</p>
-                <p className="mt-1 text-xs text-foreground-muted">
-                  Issue an API key so the chatbot can read your live catalog.
-                </p>
-              </div>
-              <Button asChild size="sm" variant="secondary">
-                <Link href="/api-keys">Create API key</Link>
-              </Button>
-            </div>
+              </>
+            )}
+            <Link
+              href="/connectors"
+              className="mt-3 inline-flex items-center gap-1 text-xs text-brand-500 hover:underline"
+            >
+              View connectors <ArrowUpRight className="size-3" />
+            </Link>
           </CardContent>
         </Card>
 
+        {/* API connection status */}
         <Card>
-          <CardHeader>
-            <CardTitle>System status</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+            <CardTitle className="text-sm font-medium text-foreground-muted">
+              API connection status
+            </CardTitle>
+            <Webhook className="size-4 text-foreground-subtle" />
           </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-foreground-muted">Last sync</span>
-              <span className="text-foreground-subtle">N/A</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-foreground-muted">API status</span>
-              <span className="inline-flex items-center gap-1.5 text-success">
-                <span className="size-2 rounded-full bg-success" /> Operational
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-foreground-muted">Active connections</span>
-              <span>0</span>
-            </div>
+          <CardContent>
+            {data && data.connectorStatus.length === 0 ? (
+              <p className="text-sm text-foreground-subtle">No connectors configured yet.</p>
+            ) : (
+              <ul className="space-y-2 text-sm">
+                {data?.connectorStatus.slice(0, 5).map((conn) => (
+                  <li key={conn.id} className="flex items-center justify-between gap-2">
+                    <span className="truncate font-medium">{conn.name}</span>
+                    <ConnectorStatusBadge status={conn.status} failures={conn.consecutiveFailures} />
+                  </li>
+                ))}
+                {data && data.connectorStatus.length > 5 ? (
+                  <li className="pt-1 text-xs text-foreground-subtle">
+                    + {data.connectorStatus.length - 5} more
+                  </li>
+                ) : null}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Recent activity */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+            <CardTitle className="text-sm font-medium text-foreground-muted">Recent activity</CardTitle>
+            <Activity className="size-4 text-foreground-subtle" />
+          </CardHeader>
+          <CardContent>
+            {data && data.recentAudits.length === 0 ? (
+              <p className="text-sm text-foreground-subtle">
+                No activity yet — changes will show up here.
+              </p>
+            ) : (
+              <ul className="space-y-2 text-xs">
+                {data?.recentAudits.slice(0, 6).map((a) => (
+                  <li key={a.id} className="flex items-start gap-2">
+                    <span className="mt-1 size-1.5 shrink-0 rounded-full bg-brand-400" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-foreground">{humanAction(a.action)}</p>
+                      <p className="truncate text-foreground-subtle">
+                        {a.actorName ?? a.actorEmail ?? 'system'} · {formatRelative(a.createdAt)}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <Link
+              href="/audit-log"
+              className="mt-3 inline-flex items-center gap-1 text-xs text-brand-500 hover:underline"
+            >
+              Open activity log <ArrowUpRight className="size-3" />
+            </Link>
           </CardContent>
         </Card>
       </section>
+
+      {c && c.products === 0 && c.services === 0 ? (
+        <section className="mt-8">
+          <Card>
+            <CardHeader>
+              <CardTitle>Get started</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm">
+              <GettingStartedItem
+                title="Add your first products and services"
+                body="Manually create entries or bulk import from a spreadsheet."
+                ctaLabel="Open catalog"
+                ctaHref="/products"
+              />
+              <GettingStartedItem
+                title="Invite your team"
+                body="Add admins, editors, or viewers to collaborate on your data."
+                ctaLabel="Manage members"
+                ctaHref="/members"
+              />
+              <GettingStartedItem
+                title="Connect your WhatsApp chatbot"
+                body="Issue an API key so the chatbot can read your live catalog."
+                ctaLabel="Create API key"
+                ctaHref="/api-keys"
+              />
+            </CardContent>
+          </Card>
+        </section>
+      ) : null}
     </>
+  );
+}
+
+function ConnectorStatusBadge({ status, failures }: { status: string; failures: number }) {
+  if (status === 'failing' || failures > 0) {
+    return (
+      <Badge variant="danger" className="gap-1">
+        <AlertTriangle className="size-3" /> Failing
+      </Badge>
+    );
+  }
+  if (status === 'disabled') {
+    return <Badge variant="muted">Disabled</Badge>;
+  }
+  return (
+    <Badge variant="success" className="gap-1">
+      <CheckCircle2 className="size-3" /> OK
+    </Badge>
+  );
+}
+
+function GettingStartedItem({
+  title,
+  body,
+  ctaLabel,
+  ctaHref,
+}: {
+  title: string;
+  body: string;
+  ctaLabel: string;
+  ctaHref: string;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-lg border border-dashed border-border p-4">
+      <div>
+        <p className="font-medium">{title}</p>
+        <p className="mt-1 text-xs text-foreground-muted">{body}</p>
+      </div>
+      <Button asChild size="sm" variant="secondary">
+        <Link href={ctaHref}>{ctaLabel}</Link>
+      </Button>
+    </div>
   );
 }

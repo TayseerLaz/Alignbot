@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { MarkdownEditor } from '@/components/ui/markdown-editor';
 import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError } from '@/lib/api';
 import { minorToMajorString, minutesToTime, parseMoneyMajor, timeToMinutes } from '@/lib/format';
@@ -70,6 +71,7 @@ export default function ServiceEditPage() {
           <DetailsCard service={service} categories={categoriesQuery.data?.data ?? []} />
           <PricingTiersCard service={service} />
           <AvailabilityCard service={service} />
+          <BookingRulesCard service={service} />
         </div>
         <div className="space-y-6">
           <Card>
@@ -257,11 +259,12 @@ function DetailsCard({ service, categories }: { service: Service; categories: Ca
         </div>
         <div className="space-y-1.5 sm:col-span-2">
           <Label htmlFor="description">Description</Label>
-          <Textarea
+          <MarkdownEditor
             id="description"
-            rows={6}
+            rows={8}
             value={draft.description}
-            onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+            placeholder="Use the toolbar for bold, italic, headings, lists, and links. Stored as markdown."
+            onChange={(next) => setDraft({ ...draft, description: next })}
           />
         </div>
       </CardContent>
@@ -531,4 +534,120 @@ function buildRows(windows: AvailabilityWindow[]): WeeklyRow[] {
       end: w ? minutesToTime(w.endMinute) : '17:00',
     };
   });
+}
+
+// ---------- Booking rules -------------------------------------------------
+// Typed subset of the freeform `bookingRules` JSONB on the service. The
+// chatbot can quote any of these back to customers when answering "can I
+// cancel?" / "how far in advance?" / "do I need to pay upfront?".
+interface BookingRulesForm {
+  depositRequired: boolean;
+  depositPercent: number | null;
+  cancellationWindowHours: number | null;
+  leadTimeHours: number | null;
+  minPartySize: number | null;
+  maxPartySize: number | null;
+  notes: string;
+}
+
+function readBookingRules(raw: Record<string, unknown> | null): BookingRulesForm {
+  const get = (k: string) => (raw && k in raw ? raw[k] : undefined);
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  return {
+    depositRequired: get('depositRequired') === true,
+    depositPercent: num(get('depositPercent')),
+    cancellationWindowHours: num(get('cancellationWindowHours')),
+    leadTimeHours: num(get('leadTimeHours')),
+    minPartySize: num(get('minPartySize')),
+    maxPartySize: num(get('maxPartySize')),
+    notes: typeof get('notes') === 'string' ? (get('notes') as string) : '',
+  };
+}
+
+function BookingRulesCard({ service }: { service: Service }) {
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState<BookingRulesForm>(() => readBookingRules(service.bookingRules));
+  useEffect(() => setForm(readBookingRules(service.bookingRules)), [service]);
+
+  const save = useMutation({
+    mutationFn: () => {
+      // Strip null/empty fields so the stored JSONB stays compact and the
+      // chatbot only sees the rules the client actually set.
+      const payload: Record<string, unknown> = {};
+      if (form.depositRequired) payload.depositRequired = true;
+      if (form.depositPercent != null) payload.depositPercent = form.depositPercent;
+      if (form.cancellationWindowHours != null)
+        payload.cancellationWindowHours = form.cancellationWindowHours;
+      if (form.leadTimeHours != null) payload.leadTimeHours = form.leadTimeHours;
+      if (form.minPartySize != null) payload.minPartySize = form.minPartySize;
+      if (form.maxPartySize != null) payload.maxPartySize = form.maxPartySize;
+      if (form.notes.trim()) payload.notes = form.notes.trim();
+      return api.patch(`/api/v1/services/${service.id}`, { bookingRules: payload });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['service', service.id] });
+      toast.success('Booking rules saved');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
+  });
+
+  const intField = (key: keyof BookingRulesForm, label: string, placeholder?: string) => (
+    <div className="space-y-1.5">
+      <Label htmlFor={`br-${String(key)}`}>{label}</Label>
+      <Input
+        id={`br-${String(key)}`}
+        type="number"
+        min={0}
+        inputMode="numeric"
+        placeholder={placeholder}
+        value={form[key] == null ? '' : String(form[key])}
+        onChange={(e) => {
+          const raw = e.target.value.trim();
+          setForm({ ...form, [key]: raw === '' ? null : Math.max(0, Number(raw)) });
+        }}
+      />
+    </div>
+  );
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Booking rules</CardTitle>
+      </CardHeader>
+      <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5 sm:col-span-2">
+          <label htmlFor="br-depositRequired" className="flex items-center gap-2 text-sm">
+            <input
+              id="br-depositRequired"
+              type="checkbox"
+              checked={form.depositRequired}
+              onChange={(e) => setForm({ ...form, depositRequired: e.target.checked })}
+              className="size-4 rounded border-border text-brand-500 focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2"
+            />
+            <span>Deposit required to book</span>
+          </label>
+        </div>
+        {intField('depositPercent', 'Deposit percent (%)', 'e.g. 25')}
+        {intField('cancellationWindowHours', 'Cancellation window (hours)', 'e.g. 24')}
+        {intField('leadTimeHours', 'Minimum lead time (hours)', 'e.g. 2')}
+        {intField('minPartySize', 'Minimum party size')}
+        {intField('maxPartySize', 'Maximum party size')}
+        <div className="space-y-1.5 sm:col-span-2">
+          <Label htmlFor="br-notes">Notes for customers</Label>
+          <Textarea
+            id="br-notes"
+            rows={3}
+            placeholder="Anything else the chatbot should mention when someone asks about booking rules."
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+          />
+        </div>
+        <div className="sm:col-span-2">
+          <Button onClick={() => save.mutate()} loading={save.isPending}>
+            Save booking rules
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }

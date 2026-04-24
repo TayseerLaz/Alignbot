@@ -17,7 +17,10 @@ import {
 import { env } from './lib/env.js';
 import { getRedis } from './lib/redis.js';
 import { initSentry } from './lib/sentry.js';
+import accountRoutes from './modules/account/account.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
+import auditRoutes from './modules/audit/audit.routes.js';
+import dashboardRoutes from './modules/dashboard/dashboard.routes.js';
 import apiKeyRoutes from './modules/api-keys/api-keys.routes.js';
 import authRoutes from './modules/auth/auth.routes.js';
 import businessInfoRoutes from './modules/catalog/business-info.routes.js';
@@ -198,6 +201,9 @@ export async function buildServer() {
   await app.register(apiKeyRoutes, { prefix: '/api/v1' });
   await app.register(revisionRoutes, { prefix: '/api/v1' });
   await app.register(notificationRoutes, { prefix: '/api/v1' });
+  await app.register(dashboardRoutes, { prefix: '/api/v1' });
+  await app.register(auditRoutes, { prefix: '/api/v1' });
+  await app.register(accountRoutes, { prefix: '/api/v1' });
   await app.register(adminRoutes, { prefix: '/api/v1' });
 
   // Routes — public (HMAC-verified, no JWT)

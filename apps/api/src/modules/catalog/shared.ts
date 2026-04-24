@@ -16,6 +16,27 @@ export async function resolveAssetUrl(storageKey: string): Promise<string> {
 }
 
 /**
+ * Strip HTML tags from text destined for the chatbot. Descriptions are
+ * stored as markdown today, but we call this defensively in the read API so
+ * a client accidentally pasting HTML (from Word, Notion, Shopify, etc.)
+ * doesn't leak angle-bracket noise into WhatsApp replies. Plain markdown
+ * goes through unchanged because it contains no `<…>` tokens.
+ */
+export function stripHtmlForBot(input: string | null | undefined): string | null {
+  if (input == null) return null;
+  return input
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+/**
  * Cursor pagination using opaque base64-encoded JSON cursors.
  * Used by product/service list endpoints.
  */

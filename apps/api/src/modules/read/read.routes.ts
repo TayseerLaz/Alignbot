@@ -24,7 +24,7 @@ import { z } from 'zod';
 import { withTenant } from '../../lib/db.js';
 import { forbidden, notFound } from '../../lib/errors.js';
 import { readCacheGet, readCacheSet } from '../../lib/read-cache.js';
-import { resolveAssetUrl } from '../catalog/shared.js';
+import { resolveAssetUrl, stripHtmlForBot } from '../catalog/shared.js';
 
 // Helper: cache-aware loader. Hits Redis first; on miss, runs `loader` and stores.
 // Sets `x-cache: HIT|STALE|MISS` on the reply so clients (and e2e tests) can
@@ -106,8 +106,8 @@ export default async function readApiRoutes(app: FastifyInstance) {
               sku: p.sku,
               name: p.name,
               slug: p.slug,
-              description: p.description,
-              shortDescription: p.shortDescription,
+              description: stripHtmlForBot(p.description),
+              shortDescription: stripHtmlForBot(p.shortDescription),
               priceMinor: p.priceMinor,
               currency: p.currency,
               available: p.isAvailable,
@@ -161,8 +161,8 @@ export default async function readApiRoutes(app: FastifyInstance) {
               sku: p.sku,
               name: p.name,
               slug: p.slug,
-              description: p.description,
-              shortDescription: p.shortDescription,
+              description: stripHtmlForBot(p.description),
+              shortDescription: stripHtmlForBot(p.shortDescription),
               priceMinor: p.priceMinor,
               currency: p.currency,
               available: p.isAvailable,
@@ -230,8 +230,8 @@ export default async function readApiRoutes(app: FastifyInstance) {
               id: s.id,
               slug: s.slug,
               name: s.name,
-              description: s.description,
-              shortDescription: s.shortDescription,
+              description: stripHtmlForBot(s.description),
+              shortDescription: stripHtmlForBot(s.shortDescription),
               durationMinutes: s.durationMinutes,
               basePriceMinor: s.basePriceMinor,
               currency: s.currency,
@@ -240,7 +240,7 @@ export default async function readApiRoutes(app: FastifyInstance) {
               categoryName: s.category?.name ?? null,
               pricingTiers: s.pricingTiers.map((t) => ({
                 name: t.name,
-                description: t.description,
+                description: stripHtmlForBot(t.description),
                 priceMinor: t.priceMinor,
                 currency: t.currency,
                 priceUnit: t.priceUnit,
@@ -291,8 +291,8 @@ export default async function readApiRoutes(app: FastifyInstance) {
               id: s.id,
               slug: s.slug,
               name: s.name,
-              description: s.description,
-              shortDescription: s.shortDescription,
+              description: stripHtmlForBot(s.description),
+              shortDescription: stripHtmlForBot(s.shortDescription),
               durationMinutes: s.durationMinutes,
               basePriceMinor: s.basePriceMinor,
               currency: s.currency,
@@ -301,7 +301,7 @@ export default async function readApiRoutes(app: FastifyInstance) {
               categoryName: s.category?.name ?? null,
               pricingTiers: s.pricingTiers.map((t) => ({
                 name: t.name,
-                description: t.description,
+                description: stripHtmlForBot(t.description),
                 priceMinor: t.priceMinor,
                 currency: t.currency,
                 priceUnit: t.priceUnit,
@@ -345,7 +345,7 @@ export default async function readApiRoutes(app: FastifyInstance) {
             data: {
               legalName: info.legalName,
               tagline: info.tagline,
-              about: info.about,
+              about: stripHtmlForBot(info.about),
               websiteUrl: info.websiteUrl,
               timezone: info.timezone,
               currency: info.currency,
@@ -405,7 +405,7 @@ export default async function readApiRoutes(app: FastifyInstance) {
             data: rows.map((f) => ({
               id: f.id,
               question: f.question,
-              answer: f.answer,
+              answer: stripHtmlForBot(f.answer) ?? '',
               tags: f.tags,
             })),
             nextCursor: null,
@@ -436,7 +436,7 @@ export default async function readApiRoutes(app: FastifyInstance) {
             orderBy: { sortOrder: 'asc' },
           });
           return {
-            data: rows.map((p) => ({ kind: p.kind, title: p.title, content: p.content })),
+            data: rows.map((p) => ({ kind: p.kind, title: p.title, content: stripHtmlForBot(p.content) ?? '' })),
             nextCursor: null,
           };
         }), reply);
@@ -506,21 +506,21 @@ export default async function readApiRoutes(app: FastifyInstance) {
                 type: 'product' as const,
                 id: p.id,
                 title: p.name,
-                snippet: p.shortDescription,
+                snippet: stripHtmlForBot(p.shortDescription),
                 url: null,
               })),
               ...services.map((s) => ({
                 type: 'service' as const,
                 id: s.id,
                 title: s.name,
-                snippet: s.shortDescription,
+                snippet: stripHtmlForBot(s.shortDescription),
                 url: null,
               })),
               ...faqs.map((f) => ({
                 type: 'faq' as const,
                 id: f.id,
                 title: f.question,
-                snippet: f.answer.slice(0, 200),
+                snippet: (stripHtmlForBot(f.answer) ?? '').slice(0, 200),
                 url: null,
               })),
             ].slice(0, req.query.limit),

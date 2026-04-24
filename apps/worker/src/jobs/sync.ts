@@ -11,6 +11,7 @@
 // minutes" simple specs in the API's repeatable-job registration; arbitrary cron
 // is handled by BullMQ's repeat option set when the connector is created.
 import type { ApiConnector, ImportEntityKind, PrismaClient, SyncRun } from '@aligned/db';
+import { assertSafeOutboundUrl, UrlGuardError } from '@aligned/shared';
 
 import { Worker } from 'bullmq';
 import { request as undiciRequest } from 'undici';
@@ -19,7 +20,7 @@ import { z } from 'zod';
 import { env } from '../lib/env.js';
 import { getConnection } from '../lib/redis.js';
 
-import { prisma, withTenant } from './db.js';
+import { prisma, withRlsBypass, withTenant } from './db.js';
 
 interface SyncJobData {
   organizationId: string;
@@ -57,6 +58,43 @@ function buildHeaders(connector: ApiConnector): Record<string, string> {
       break;
   }
   return headers;
+}
+
+// Emit an org-wide bell notification when a scheduled/manual sync finishes
+// in a non-success state. Mirrors the pattern used by the import worker so
+// operators can catch failing connectors without polling the connectors
+// page. Failures are silenced in the catch so a notification hiccup never
+// masks the underlying sync-run error.
+async function notifySyncResult(args: {
+  organizationId: string;
+  connectorId: string;
+  connectorName: string;
+  status: 'succeeded' | 'partial' | 'failed';
+  counts: { fetched: number; upserted: number; failed: number };
+  errorMessage?: string | null;
+}): Promise<void> {
+  if (args.status === 'succeeded') return; // only notify on noise
+  const severity = args.status === 'failed' ? 'error' : 'warning';
+  const title =
+    args.status === 'failed' ? 'Connector sync failed' : 'Connector sync finished with errors';
+  const body =
+    args.status === 'failed'
+      ? `${args.connectorName}: ${args.errorMessage ?? 'sync failed'}`
+      : `${args.connectorName}: ${args.counts.upserted} of ${args.counts.fetched} records upserted, ${args.counts.failed} failed.`;
+  await withRlsBypass((tx) =>
+    tx.notification.create({
+      data: {
+        organizationId: args.organizationId,
+        kind: args.status === 'failed' ? 'sync_failed' : 'generic',
+        severity,
+        title,
+        body,
+        link: `/connectors`,
+        entityType: 'api_connector',
+        entityId: args.connectorId,
+      },
+    }),
+  ).catch((err) => console.error('[sync] notify failed', err));
 }
 
 function applyMapping(record: Record<string, unknown>, mapping: Record<string, string> | null): Record<string, unknown> {
@@ -110,6 +148,20 @@ export function startSyncWorker() {
         });
         return;
       }
+      // Defence in depth: if the job payload's orgId doesn't match the
+      // connector's orgId (stale repeatable job, data corruption), refuse
+      // rather than notify/upsert into the wrong tenant.
+      if (connector.organizationId !== organizationId) {
+        await prisma.syncRun.update({
+          where: { id: syncRunId },
+          data: {
+            status: 'failed',
+            errorMessage: 'Connector does not belong to the job organization.',
+            finishedAt: new Date(),
+          },
+        });
+        return;
+      }
       if (!connector.endpointUrl) {
         await prisma.syncRun.update({
           where: { id: syncRunId },
@@ -134,6 +186,10 @@ export function startSyncWorker() {
       let records: Record<string, unknown>[] = [];
 
       try {
+        // Defence in depth: connectors created before the URL guard shipped
+        // might still have loopback / private-IP endpoints in the DB.
+        // Reject at fetch time so the worker can't be used as an SSRF proxy.
+        assertSafeOutboundUrl(connector.endpointUrl);
         const res = await undiciRequest(connector.endpointUrl, {
           method: 'GET',
           headers: buildHeaders(connector),
@@ -152,6 +208,14 @@ export function startSyncWorker() {
       } catch (err) {
         errorMessage = err instanceof Error ? err.message : String(err);
         await markFailed(connector, syncRunId, errorMessage);
+        await notifySyncResult({
+          organizationId,
+          connectorId: connector.id,
+          connectorName: connector.name,
+          status: 'failed',
+          counts: { fetched, upserted, failed },
+          errorMessage,
+        });
         throw err;
       }
 
@@ -194,6 +258,14 @@ export function startSyncWorker() {
           },
         }),
       ]);
+
+      await notifySyncResult({
+        organizationId,
+        connectorId: connector.id,
+        connectorName: connector.name,
+        status: finalStatus,
+        counts: { fetched, upserted, failed },
+      });
     },
     {
       connection: getConnection(),

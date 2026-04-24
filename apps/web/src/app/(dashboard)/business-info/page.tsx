@@ -35,6 +35,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { MarkdownEditor } from '@/components/ui/markdown-editor';
 import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError } from '@/lib/api';
 
@@ -804,7 +805,12 @@ function PoliciesPanel() {
           </div>
           <div className="space-y-1.5">
             <Label>Content</Label>
-            <Textarea rows={10} value={content} onChange={(e) => setContent(e.target.value)} />
+            <MarkdownEditor
+              rows={10}
+              value={content}
+              placeholder="Use the toolbar for formatting. Stored as markdown."
+              onChange={setContent}
+            />
           </div>
           <Button onClick={() => upsert.mutate()} loading={upsert.isPending} disabled={!title || !content}>
             <Save className="size-4" /> Save policy

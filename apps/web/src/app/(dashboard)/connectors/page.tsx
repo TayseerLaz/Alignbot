@@ -11,8 +11,11 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
+  AlertTriangle,
   Check,
+  CheckCircle2,
   Copy,
+  PauseCircle,
   PlayCircle,
   PlugZap,
   Plus,
@@ -80,12 +83,26 @@ export default function ConnectorsPage() {
 
   const test = useMutation({
     mutationFn: (id: string) =>
-      api.post<{ data: { ok: boolean; status: number | null; error: string | null } }>(
-        `/api/v1/connectors/${id}/test`,
-      ),
+      api.post<{
+        data: {
+          ok: boolean;
+          status: number | null;
+          error: string | null;
+          recordCount: number | null;
+          bodySample: string | null;
+        };
+      }>(`/api/v1/connectors/${id}/test`),
     onSuccess: (res) => {
-      if (res.data.ok) toast.success(`Reachable (HTTP ${res.data.status})`);
-      else toast.error(res.data.error ?? 'Connection failed');
+      const d = res.data;
+      if (d.ok) {
+        const countMsg =
+          d.recordCount == null
+            ? 'response parsed but no records array found'
+            : `${d.recordCount} record${d.recordCount === 1 ? '' : 's'} found`;
+        toast.success(`Connected · ${countMsg}`);
+      } else {
+        toast.error(d.error ?? `HTTP ${d.status ?? '—'}`);
+      }
     },
   });
 
@@ -101,7 +118,9 @@ export default function ConnectorsPage() {
         }
       />
 
-      <Card>
+      <ConnectorsRollup connectors={list.data?.data ?? []} />
+
+      <Card className="mt-6">
         <CardHeader>
           <CardTitle>Connectors</CardTitle>
         </CardHeader>
@@ -218,6 +237,78 @@ export default function ConnectorsPage() {
         }}
       />
     </>
+  );
+}
+
+function ConnectorsRollup({ connectors }: { connectors: ConnectorDto[] }) {
+  if (connectors.length === 0) return null;
+
+  const active = connectors.filter((c) => c.status === 'active').length;
+  const failing = connectors.filter((c) => c.status === 'failing').length;
+  const disabled = connectors.filter((c) => c.status === 'disabled').length;
+  // `lastRunAt` is the most recent upstream poll across every connector —
+  // gives operators one timestamp to scan for staleness instead of reading
+  // each row below.
+  const lastRunAt = connectors
+    .map((c) => c.lastRunAt)
+    .filter((d): d is string => !!d)
+    .sort()
+    .reverse()[0];
+
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+      <RollupTile
+        icon={CheckCircle2}
+        label="Active"
+        value={active}
+        tone={active > 0 ? 'good' : 'muted'}
+      />
+      <RollupTile
+        icon={AlertTriangle}
+        label="Failing"
+        value={failing}
+        tone={failing > 0 ? 'warn' : 'muted'}
+      />
+      <RollupTile icon={PauseCircle} label="Disabled" value={disabled} tone="muted" />
+      <RollupTile
+        icon={Activity}
+        label="Last sync"
+        value={lastRunAt ? formatRelative(lastRunAt) : '—'}
+        tone="muted"
+      />
+    </div>
+  );
+}
+
+function RollupTile({
+  icon: Icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string | number;
+  tone: 'good' | 'warn' | 'muted';
+}) {
+  const colour =
+    tone === 'good'
+      ? 'text-emerald-600'
+      : tone === 'warn'
+        ? 'text-amber-600'
+        : 'text-foreground';
+  return (
+    <Card>
+      <CardContent className="flex items-start justify-between py-4">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-foreground-subtle">
+            {label}
+          </p>
+          <p className={`mt-1 text-xl font-semibold ${colour}`}>{value}</p>
+        </div>
+        <Icon className="size-4 text-foreground-subtle" />
+      </CardContent>
+    </Card>
   );
 }
 

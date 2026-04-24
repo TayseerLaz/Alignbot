@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { MarkdownEditor } from '@/components/ui/markdown-editor';
 import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError } from '@/lib/api';
 import { minorToMajorString, parseMoneyMajor } from '@/lib/format';
@@ -296,12 +297,12 @@ function DetailsCard({ product, categories }: { product: Product; categories: Ca
         </div>
         <div className="space-y-1.5 sm:col-span-2">
           <Label htmlFor="description">Description</Label>
-          <Textarea
+          <MarkdownEditor
             id="description"
-            rows={6}
+            rows={8}
             value={draft.description}
-            placeholder="Markdown supported."
-            onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+            placeholder="Use the toolbar for bold, italic, headings, lists, and links. Stored as markdown."
+            onChange={(next) => setDraft({ ...draft, description: next })}
           />
         </div>
       </CardContent>

@@ -53,6 +53,11 @@ const envSchema = z.object({
   SENTRY_DSN: z.string().optional(),
   SENTRY_ENVIRONMENT: z.string().default('development'),
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0.1),
+
+  // UptimeRobot — read-only API key ("monitor-specific" or "main" account
+  // key). Leave empty to hide the uptime tile in the admin panel.
+  UPTIMEROBOT_API_KEY: z.string().optional(),
+  UPTIMEROBOT_MONITOR_IDS: z.string().optional(), // csv of monitor ids
 });
 
 export type Env = z.infer<typeof envSchema>;

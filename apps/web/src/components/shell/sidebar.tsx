@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  Activity,
   BarChart3,
   Briefcase,
   Building2,
@@ -65,6 +66,7 @@ const groups: NavGroup[] = [
     label: 'Workspace',
     items: [
       { href: '/members', label: 'Members', icon: Users },
+      { href: '/audit-log', label: 'Activity log', icon: Activity },
       { href: '/settings', label: 'Settings', icon: Settings },
     ],
   },
@@ -73,6 +75,7 @@ const groups: NavGroup[] = [
 const alignedAdminItems: NavItem[] = [
   { href: '/aligned-admin', label: 'Tenants', icon: ShieldCheck },
   { href: '/aligned-admin/system', label: 'System health', icon: Code2 },
+  { href: '/aligned-admin/audit', label: 'Cross-tenant audit', icon: Activity },
 ];
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {

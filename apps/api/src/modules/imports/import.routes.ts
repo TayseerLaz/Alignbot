@@ -209,6 +209,75 @@ export default async function importRoutes(app: FastifyInstance) {
       }),
   );
 
+  // ---------- GET /imports/:id/errors.csv ---------------------------------
+  // Downloadable CSV of failed rows — per PDF spec §3.1.2 task 7.7.
+  // Columns: row_number, errors, <original headers…>. Errors are joined with
+  // "; " so Excel renders them on a single line.
+  r.get(
+    '/imports/:id/errors.csv',
+    {
+      schema: {
+        tags: ['imports'],
+        summary: 'Download failed rows for an import job as a CSV file.',
+        params: z.object({ id: uuidSchema }),
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req, reply) =>
+      app.tenant(req, async (tx) => {
+        const job = await tx.importJob.findUnique({ where: { id: req.params.id } });
+        if (!job) throw notFound('Import job not found.');
+        const rows = await tx.importJobRow.findMany({
+          where: { importJobId: job.id, status: 'failed' },
+          orderBy: { rowNumber: 'asc' },
+        });
+
+        // Collect the union of raw-data keys across all failed rows to form
+        // the CSV header. Preserves first-seen ordering.
+        const keys: string[] = [];
+        const seen = new Set<string>();
+        for (const r of rows) {
+          const raw = (r.rawData ?? {}) as Record<string, unknown>;
+          for (const k of Object.keys(raw)) {
+            if (!seen.has(k)) {
+              seen.add(k);
+              keys.push(k);
+            }
+          }
+        }
+
+        // CSV-escape AND neutralise spreadsheet formula injection. Excel,
+        // LibreOffice, and Sheets all treat leading =, +, -, @, and TAB as
+        // a formula. Prepending a single quote forces the cell to render as
+        // text. Conservative — costs one byte, kills a whole class of
+        // attacks that start in user-supplied catalog rows.
+        const esc = (v: unknown) => {
+          let s = v == null ? '' : String(v);
+          if (s.length > 0 && /^[=+\-@\t\r]/.test(s)) {
+            s = `'${s}`;
+          }
+          return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+
+        const header = ['row_number', 'errors', ...keys];
+        const lines: string[] = [header.map(esc).join(',')];
+        for (const r of rows) {
+          const raw = (r.rawData ?? {}) as Record<string, unknown>;
+          const errors = (r.errors ?? []) as { path: string; message: string }[] | null;
+          const errorStr = errors
+            ? errors.map((e) => (e.path ? `${e.path}: ${e.message}` : e.message)).join('; ')
+            : '';
+          lines.push([r.rowNumber, errorStr, ...keys.map((k) => raw[k])].map(esc).join(','));
+        }
+
+        const filename = `aligned-import-${job.id.slice(0, 8)}-errors.csv`;
+        reply
+          .header('Content-Type', 'text/csv; charset=utf-8')
+          .header('Content-Disposition', `attachment; filename="${filename}"`);
+        return reply.send(lines.join('\n'));
+      }),
+  );
+
   // ---------- POST /imports/:id/cancel ------------------------------------
   r.post(
     '/imports/:id/cancel',

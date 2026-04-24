@@ -1,5 +1,7 @@
 'use client';
 
+import { Download, Trash2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -13,13 +15,17 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, getAccessToken } from '@/lib/api';
 import { useSession } from '@/lib/session';
 
 export default function ProfilePage() {
   const { session, refresh } = useSession();
+  const router = useRouter();
+  const [exporting, setExporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Name form state — seeded from session; re-seeded whenever session changes.
   const [firstName, setFirstName] = useState(session?.user.firstName ?? '');
@@ -50,6 +56,53 @@ export default function ProfilePage() {
       else toast.error("Couldn't save. Please try again.");
     } finally {
       setSavingName(false);
+    }
+  }
+
+  async function exportMyData() {
+    setExporting(true);
+    try {
+      const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/account/export`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${getAccessToken() ?? ''}` },
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error(`Export failed (${res.status})`);
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `aligned-account-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+      toast.success('Your data has been downloaded.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function deleteMyAccount() {
+    const confirmed = await confirmDialog({
+      title: 'Delete your account?',
+      body:
+        'This is permanent. Your sessions end immediately, your memberships are revoked, and your profile is anonymised. ' +
+        'If you are the last admin of any organization this will be refused — transfer admin first.',
+      confirmLabel: 'Delete my account',
+      destructive: true,
+    });
+    if (!confirmed) return;
+    setDeleting(true);
+    try {
+      await api.delete('/api/v1/account');
+      toast.success('Account deleted. You will be signed out.');
+      router.push('/login');
+    } catch (err) {
+      if (err instanceof ApiError) toast.error(err.payload.message);
+      else toast.error('Delete failed.');
+      setDeleting(false);
     }
   }
 
@@ -199,6 +252,34 @@ export default function ProfilePage() {
               </Button>
             </CardFooter>
           </form>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Export your data</CardTitle>
+            <CardDescription>
+              Download a JSON file containing your profile, memberships, sessions, issued API keys, and the audit entries you authored. Does not include other tenants&apos; data.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="secondary" loading={exporting} onClick={exportMyData}>
+              <Download className="size-4" /> Download my data
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="border-red-200">
+          <CardHeader>
+            <CardTitle className="text-red-700">Delete your account</CardTitle>
+            <CardDescription>
+              Permanently anonymise your profile, revoke every session, and deactivate every membership. Refused if you are the last admin of any organization.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="danger" loading={deleting} onClick={deleteMyAccount}>
+              <Trash2 className="size-4" /> Delete my account
+            </Button>
+          </CardContent>
         </Card>
       </div>
     </>

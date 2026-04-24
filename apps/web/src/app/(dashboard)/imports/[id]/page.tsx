@@ -6,7 +6,7 @@ import {
   type ImportJobRowDto,
 } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Ban, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { ArrowLeft, Ban, ChevronDown, ChevronRight, Download, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState } from 'react';
@@ -16,7 +16,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, getAccessToken } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
 export default function ImportDetailPage() {
@@ -97,7 +97,14 @@ export default function ImportDetailPage() {
         <Card className="mt-6">
           <CardContent className="flex items-center gap-3 py-4">
             <Loader2 className="size-4 animate-spin text-brand-500" />
-            <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-muted">
+            <div
+              role="progressbar"
+              aria-label={`Import progress: ${pct}%`}
+              aria-valuenow={pct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              className="h-2 flex-1 overflow-hidden rounded-full bg-surface-muted"
+            >
               <div className="h-full bg-brand-500 transition-[width] duration-500" style={{ width: `${pct}%` }} />
             </div>
             <span className="text-sm font-medium tabular-nums">{pct}%</span>
@@ -119,9 +126,16 @@ export default function ImportDetailPage() {
       <Card className="mt-6">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Rows</CardTitle>
-          <Button variant="ghost" size="sm" onClick={() => setShowFailedOnly((v) => !v)}>
-            {showFailedOnly ? 'Show all' : 'Show failed only'}
-          </Button>
+          <div className="flex items-center gap-2">
+            {j.failedRows > 0 ? (
+              <Button variant="secondary" size="sm" onClick={() => downloadErrorsCsv(j.id)}>
+                <Download className="size-4" /> Download errors CSV
+              </Button>
+            ) : null}
+            <Button variant="ghost" size="sm" onClick={() => setShowFailedOnly((v) => !v)}>
+              {showFailedOnly ? 'Show all' : 'Show failed only'}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           {rows.isLoading ? (
@@ -196,6 +210,26 @@ function RowItem({ row }: { row: ImportJobRowDto }) {
       ) : null}
     </li>
   );
+}
+
+async function downloadErrorsCsv(jobId: string) {
+  const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/imports/${jobId}/errors.csv`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${getAccessToken() ?? ''}` },
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    toast.error(`Download failed (${res.status})`);
+    return;
+  }
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `aligned-import-${jobId.slice(0, 8)}-errors.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
 }
 
 function StatCard({

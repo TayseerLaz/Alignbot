@@ -40,6 +40,39 @@ interface SystemHealth {
   redis: { connected: boolean; opsPerSec: number | null };
 }
 
+interface UptimeSnapshot {
+  configured: boolean;
+  monitors: {
+    id: number;
+    name: string;
+    url: string;
+    status: 'up' | 'seems_down' | 'down' | 'paused' | 'unknown' | string;
+    uptimeRatio: number | null;
+  }[];
+}
+
+interface TrafficSnapshot {
+  totalRequests: number;
+  byStatusClass: {
+    '2xx': number;
+    '3xx': number;
+    '4xx': number;
+    '5xx': number;
+    other: number;
+  };
+  errorRate: number;
+  uptimeSeconds: number;
+  processStartTime: string | null;
+  topRoutes: { route: string; method: string; count: number }[];
+}
+
+function formatUptime(s: number): string {
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
+}
+
 function StatCard({
   icon: Icon,
   label,
@@ -124,6 +157,18 @@ export default function AlignedAdminSystemPage() {
     queryKey: ['admin-system'],
     queryFn: () => api.get<{ data: SystemHealth }>('/api/v1/aligned-admin/system'),
     refetchInterval: 10_000,
+  });
+
+  const traffic = useQuery({
+    queryKey: ['admin-traffic'],
+    queryFn: () => api.get<{ data: TrafficSnapshot }>('/api/v1/aligned-admin/traffic'),
+    refetchInterval: 15_000,
+  });
+
+  const uptime = useQuery({
+    queryKey: ['admin-uptime'],
+    queryFn: () => api.get<{ data: UptimeSnapshot }>('/api/v1/aligned-admin/uptime'),
+    refetchInterval: 60_000,
   });
 
   const drainFailed = useMutation({
@@ -237,6 +282,117 @@ export default function AlignedAdminSystemPage() {
           )}
         </CardContent>
       </Card>
+
+      {uptime.data?.data.configured ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="size-4" /> Uptime
+            </CardTitle>
+            <CardDescription>Proxied from UptimeRobot. 24-hour uptime ratio shown.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {uptime.data.data.monitors.length === 0 ? (
+              <p className="text-sm text-foreground-muted">No monitors configured.</p>
+            ) : (
+              <ul className="space-y-2">
+                {uptime.data.data.monitors.map((m) => (
+                  <li
+                    key={m.id}
+                    className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{m.name}</p>
+                      <p className="truncate text-xs font-mono text-foreground-subtle">{m.url}</p>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs">
+                      <span>
+                        <span className="text-foreground-subtle">24h</span>{' '}
+                        <span className="font-mono">{m.uptimeRatio != null ? `${m.uptimeRatio}%` : '—'}</span>
+                      </span>
+                      <Badge variant={m.status === 'up' ? 'success' : m.status === 'paused' ? 'muted' : 'danger'}>
+                        {m.status}
+                      </Badge>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="size-4" /> API traffic
+          </CardTitle>
+          <CardDescription>
+            Live counters from the API process. For a real time-series, point a Prometheus scrape at <code>/metrics</code>.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!traffic.data ? (
+            <p className="text-sm text-foreground-muted">Loading…</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+                <StatCard
+                  icon={Activity}
+                  label="Total requests"
+                  value={traffic.data.data.totalRequests.toLocaleString()}
+                  sub={`since ${formatUptime(traffic.data.data.uptimeSeconds)} ago`}
+                />
+                <StatCard
+                  icon={CheckCircle2}
+                  label="Success"
+                  value={traffic.data.data.byStatusClass['2xx'].toLocaleString()}
+                  sub={pct(traffic.data.data.byStatusClass['2xx'], traffic.data.data.totalRequests)}
+                  tone="good"
+                />
+                <StatCard
+                  icon={AlertCircle}
+                  label="Client errors (4xx)"
+                  value={traffic.data.data.byStatusClass['4xx'].toLocaleString()}
+                  sub={pct(traffic.data.data.byStatusClass['4xx'], traffic.data.data.totalRequests)}
+                />
+                <StatCard
+                  icon={AlertCircle}
+                  label="Server errors (5xx)"
+                  value={traffic.data.data.byStatusClass['5xx'].toLocaleString()}
+                  sub={`${(traffic.data.data.errorRate * 100).toFixed(3)}% error rate`}
+                  tone={traffic.data.data.byStatusClass['5xx'] > 0 ? 'warn' : 'good'}
+                />
+              </div>
+              <div className="rounded-md border border-border bg-surface-muted/40 p-3">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-foreground-subtle">
+                  Top routes
+                </p>
+                {traffic.data.data.topRoutes.length === 0 ? (
+                  <p className="text-xs text-foreground-muted">No traffic yet.</p>
+                ) : (
+                  <ul className="space-y-1 text-sm">
+                    {traffic.data.data.topRoutes.slice(0, 8).map((r) => (
+                      <li key={`${r.method}-${r.route}`} className="flex items-center justify-between gap-3">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <Badge variant="muted">{r.method}</Badge>
+                          <span className="truncate font-mono text-xs">{r.route}</span>
+                        </span>
+                        <span className="font-mono text-xs tabular-nums">{r.count.toLocaleString()}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
     </>
   );
+}
+
+function pct(n: number, total: number): string {
+  if (total === 0) return '—';
+  return `${((n / total) * 100).toFixed(1)}%`;
 }

@@ -27,6 +27,7 @@ import { generateOpaqueToken } from '../../lib/crypto.js';
 import { env } from '../../lib/env.js';
 import { badRequest, conflict, notFound } from '../../lib/errors.js';
 import { getSyncQueue } from '../../lib/queues.js';
+import { assertSafeOutboundUrl, UrlGuardError } from '@aligned/shared';
 
 function webhookUrlFor(connectorId: string, hasSecret: boolean): string | null {
   if (!hasSecret) return null;
@@ -91,6 +92,18 @@ export default async function connectorRoutes(app: FastifyInstance) {
           ApiErrorCode.VALIDATION_ERROR,
           'A connector needs either an endpointUrl (pull) or enableInboundWebhook (push).',
         );
+      }
+      // Refuse to save SSRF-prone endpoint URLs at create time — better to
+      // reject here than discover the problem on first sync.
+      if (req.body.endpointUrl) {
+        try {
+          assertSafeOutboundUrl(req.body.endpointUrl);
+        } catch (err) {
+          throw badRequest(
+            ApiErrorCode.VALIDATION_ERROR,
+            err instanceof UrlGuardError ? err.message : 'Refusing that endpoint URL.',
+          );
+        }
       }
       const webhookSecret = req.body.enableInboundWebhook
         ? `whsec_in_${generateOpaqueToken(24)}`
@@ -159,6 +172,16 @@ export default async function connectorRoutes(app: FastifyInstance) {
     },
     async (req) => {
       const orgId = req.auth!.organizationId;
+      if (req.body.endpointUrl) {
+        try {
+          assertSafeOutboundUrl(req.body.endpointUrl);
+        } catch (err) {
+          throw badRequest(
+            ApiErrorCode.VALIDATION_ERROR,
+            err instanceof UrlGuardError ? err.message : 'Refusing that endpoint URL.',
+          );
+        }
+      }
       return app.tenant(req, async (tx) => {
         const existing = await tx.apiConnector.findUnique({ where: { id: req.params.id } });
         if (!existing) throw notFound('Connector not found.');
@@ -245,16 +268,27 @@ export default async function connectorRoutes(app: FastifyInstance) {
   );
 
   // ---------- POST /connectors/:id/test -----------------------------------
-  // Quick reachability check — returns the upstream HTTP status.
+  // End-to-end probe: calls the upstream with real credentials, parses the
+  // JSON body, and returns how many records we saw. Matches the shape the
+  // sync worker uses (array or `{ data: [...] }`) so "green test → sync
+  // will work" is a reliable signal, not just "endpoint responded 200".
   r.post(
     '/connectors/:id/test',
     {
       schema: {
         tags: ['connectors'],
-        summary: 'Probe the upstream endpoint to confirm credentials work.',
+        summary: 'Probe the upstream endpoint, parse the response, and return a record count.',
         params: z.object({ id: uuidSchema }),
         response: {
-          200: itemEnvelopeSchema(z.object({ ok: z.boolean(), status: z.number().nullable(), error: z.string().nullable() })),
+          200: itemEnvelopeSchema(
+            z.object({
+              ok: z.boolean(),
+              status: z.number().nullable(),
+              error: z.string().nullable(),
+              recordCount: z.number().int().nullable(),
+              bodySample: z.string().nullable(),
+            }),
+          ),
         },
       },
       preHandler: [app.requireRole('admin')],
@@ -265,7 +299,30 @@ export default async function connectorRoutes(app: FastifyInstance) {
       );
       if (!connector) throw notFound('Connector not found.');
       if (!connector.endpointUrl) {
-        return { data: { ok: false, status: null, error: 'No endpointUrl configured.' } };
+        return {
+          data: {
+            ok: false,
+            status: null,
+            error: 'No endpointUrl configured.',
+            recordCount: null,
+            bodySample: null,
+          },
+        };
+      }
+      // SSRF guard — reject loopback, RFC1918, link-local (AWS IMDS),
+      // non-http(s), credential-bearing URLs. See lib/url-guard.ts.
+      try {
+        assertSafeOutboundUrl(connector.endpointUrl);
+      } catch (err) {
+        return {
+          data: {
+            ok: false,
+            status: null,
+            error: err instanceof UrlGuardError ? err.message : 'Refusing outbound request.',
+            recordCount: null,
+            bodySample: null,
+          },
+        };
       }
       const cfg = (connector.authConfig ?? {}) as Record<string, string>;
       const headers: Record<string, string> = { Accept: 'application/json' };
@@ -290,9 +347,47 @@ export default async function connectorRoutes(app: FastifyInstance) {
           headers,
           signal: AbortSignal.timeout(15000),
         });
-        return { data: { ok: res.ok, status: res.status, error: res.ok ? null : res.statusText } };
+        if (!res.ok) {
+          const snippet = await safeBodyText(res);
+          return {
+            data: {
+              ok: false,
+              status: res.status,
+              error: res.statusText || `Upstream returned ${res.status}`,
+              recordCount: null,
+              bodySample: snippet,
+            },
+          };
+        }
+        // Read body as text first so we can return a preview on parse failure.
+        const text = await res.text();
+        let recordCount: number | null = null;
+        let parseError: string | null = null;
+        try {
+          const parsed = JSON.parse(text) as unknown;
+          recordCount = countRecords(parsed);
+        } catch (err) {
+          parseError = err instanceof Error ? err.message : 'Invalid JSON';
+        }
+        return {
+          data: {
+            ok: parseError == null,
+            status: res.status,
+            error: parseError,
+            recordCount,
+            bodySample: text.slice(0, 500) || null,
+          },
+        };
       } catch (err) {
-        return { data: { ok: false, status: null, error: err instanceof Error ? err.message : String(err) } };
+        return {
+          data: {
+            ok: false,
+            status: null,
+            error: err instanceof Error ? err.message : String(err),
+            recordCount: null,
+            bodySample: null,
+          },
+        };
       }
     },
   );
@@ -419,5 +514,27 @@ async function unregisterScheduledSync(connectorId: string, cron: string | null)
     await getSyncQueue().removeRepeatable('sync', { pattern: cron }, `connector:${connectorId}`);
   } catch {
     // ignore — repeatable might already be gone
+  }
+}
+
+// Count records the same way the sync worker does: top-level array or an
+// object wrapping an array under `data`. Anything else is "0 records" —
+// rather than zero, we return null so the UI can say "couldn't infer a
+// count" without implying the upstream is empty.
+function countRecords(parsed: unknown): number | null {
+  if (Array.isArray(parsed)) return parsed.length;
+  if (parsed && typeof parsed === 'object' && 'data' in parsed) {
+    const d = (parsed as { data?: unknown }).data;
+    if (Array.isArray(d)) return d.length;
+  }
+  return null;
+}
+
+async function safeBodyText(res: Response): Promise<string | null> {
+  try {
+    const t = await res.text();
+    return t ? t.slice(0, 500) : null;
+  } catch {
+    return null;
   }
 }

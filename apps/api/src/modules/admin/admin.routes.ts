@@ -15,6 +15,7 @@ import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
 import { withRlsBypass } from '../../lib/db.js';
+import { env } from '../../lib/env.js';
 import { notFound } from '../../lib/errors.js';
 import { getImportQueue, getSyncQueue, getWebhookQueue } from '../../lib/queues.js';
 import { getRedis } from '../../lib/redis.js';
@@ -222,6 +223,211 @@ export default async function adminRoutes(app: FastifyInstance) {
           redis: { connected, opsPerSec },
         },
       };
+    },
+  );
+
+  // ---------- GET /aligned-admin/traffic ----------------------------------
+  // Live traffic snapshot parsed from the API's own /metrics endpoint.
+  // Returns cumulative counters since the process started — for a real
+  // historical chart, scrape /metrics into Prometheus externally.
+  r.get(
+    '/aligned-admin/traffic',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Parsed snapshot of the API process’s Prometheus counters.',
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              totalRequests: z.number(),
+              byStatusClass: z.object({
+                '2xx': z.number(),
+                '3xx': z.number(),
+                '4xx': z.number(),
+                '5xx': z.number(),
+                other: z.number(),
+              }),
+              errorRate: z.number(),
+              uptimeSeconds: z.number(),
+              processStartTime: z.string().datetime().nullable(),
+              topRoutes: z.array(
+                z.object({ route: z.string(), method: z.string(), count: z.number() }),
+              ),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async () => {
+      // Fetch our own /metrics. The metrics endpoint runs in-process so
+      // localhost is always safe here. Use the validated `env.API_PORT`
+      // rather than raw process.env so a runtime mutation cannot redirect.
+      let text = '';
+      try {
+        const r = await fetch(`http://127.0.0.1:${env.API_PORT}/metrics`, {
+          signal: AbortSignal.timeout(2000),
+        });
+        text = await r.text();
+      } catch {
+        // Fall through with empty text — zeros will be returned.
+      }
+
+      const buckets = { '2xx': 0, '3xx': 0, '4xx': 0, '5xx': 0, other: 0 };
+      const byRoute = new Map<string, { method: string; count: number }>();
+      let totalRequests = 0;
+      let processStartTimeSec: number | null = null;
+
+      for (const line of text.split('\n')) {
+        if (line.startsWith('#') || !line.trim()) continue;
+        if (line.startsWith('process_start_time_seconds')) {
+          const m = line.match(/\s([\d.e+-]+)$/);
+          if (m) processStartTimeSec = Number(m[1]);
+          continue;
+        }
+        if (line.startsWith('http_requests_total{')) {
+          const labelMatch = line.match(/\{([^}]+)\}\s+([\d.e+-]+)/);
+          if (!labelMatch) continue;
+          const labelStr = labelMatch[1] ?? '';
+          const value = Number(labelMatch[2]);
+          if (!Number.isFinite(value)) continue;
+
+          const labels: Record<string, string> = {};
+          for (const pair of labelStr.split(',')) {
+            const [k, v] = pair.split('=');
+            if (k && v) labels[k.trim()] = v.replace(/^"|"$/g, '');
+          }
+          const status = labels.status ?? '';
+          const method = labels.method ?? 'GET';
+          const route = labels.route ?? '?';
+          const statusDigit = status.charAt(0);
+          const bucket =
+            statusDigit === '2'
+              ? '2xx'
+              : statusDigit === '3'
+                ? '3xx'
+                : statusDigit === '4'
+                  ? '4xx'
+                  : statusDigit === '5'
+                    ? '5xx'
+                    : 'other';
+          buckets[bucket as keyof typeof buckets] += value;
+          totalRequests += value;
+
+          const key = `${method} ${route}`;
+          const existing = byRoute.get(key);
+          if (existing) existing.count += value;
+          else byRoute.set(key, { method, count: value });
+        }
+      }
+
+      const topRoutes = [...byRoute.entries()]
+        .map(([key, v]) => ({ route: key.split(' ').slice(1).join(' '), method: v.method, count: v.count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10);
+
+      const errorRate = totalRequests > 0 ? buckets['5xx'] / totalRequests : 0;
+      const uptimeSeconds = processStartTimeSec
+        ? Math.max(0, Math.floor(Date.now() / 1000 - processStartTimeSec))
+        : 0;
+
+      return {
+        data: {
+          totalRequests,
+          byStatusClass: buckets,
+          errorRate,
+          uptimeSeconds,
+          processStartTime: processStartTimeSec ? new Date(processStartTimeSec * 1000).toISOString() : null,
+          topRoutes,
+        },
+      };
+    },
+  );
+
+  // ---------- GET /aligned-admin/uptime -----------------------------------
+  // Proxies a read-only snapshot from UptimeRobot. Returns `{ configured:
+  // false }` when the env keys are missing — UI hides the tile in that
+  // case. We proxy (rather than calling UptimeRobot from the browser) so
+  // the API key never leaves the server.
+  r.get(
+    '/aligned-admin/uptime',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Uptime snapshot proxied from UptimeRobot (if configured).',
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              configured: z.boolean(),
+              monitors: z.array(
+                z.object({
+                  id: z.number(),
+                  name: z.string(),
+                  url: z.string(),
+                  status: z.string(),
+                  uptimeRatio: z.number().nullable(),
+                }),
+              ),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async () => {
+      if (!env.UPTIMEROBOT_API_KEY) {
+        return { data: { configured: false, monitors: [] } };
+      }
+      const params = new URLSearchParams({
+        api_key: env.UPTIMEROBOT_API_KEY,
+        format: 'json',
+        custom_uptime_ratios: '1-7-30', // 24h / 7d / 30d
+        logs: '0',
+      });
+      if (env.UPTIMEROBOT_MONITOR_IDS) {
+        params.set('monitors', env.UPTIMEROBOT_MONITOR_IDS);
+      }
+      try {
+        const res = await fetch('https://api.uptimerobot.com/v2/getMonitors', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cache-Control': 'no-cache',
+          },
+          body: params.toString(),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) {
+          return { data: { configured: true, monitors: [] } };
+        }
+        const body = (await res.json()) as {
+          stat?: string;
+          monitors?: {
+            id: number;
+            friendly_name?: string;
+            url?: string;
+            status?: number;
+            custom_uptime_ratio?: string;
+          }[];
+        };
+        // UptimeRobot status code mapping → human labels.
+        const statusLabel = (n: number | undefined) =>
+          n === 2 ? 'up' : n === 8 ? 'seems_down' : n === 9 ? 'down' : n === 0 ? 'paused' : 'unknown';
+        const monitors = (body.monitors ?? []).map((m) => {
+          const firstRatio = m.custom_uptime_ratio?.split('-')[0];
+          const ratio = firstRatio ? Number(firstRatio) : null;
+          return {
+            id: m.id,
+            name: m.friendly_name ?? `Monitor ${m.id}`,
+            url: m.url ?? '',
+            status: statusLabel(m.status),
+            uptimeRatio: ratio != null && Number.isFinite(ratio) ? ratio : null,
+          };
+        });
+        return { data: { configured: true, monitors } };
+      } catch {
+        return { data: { configured: true, monitors: [] } };
+      }
     },
   );
 

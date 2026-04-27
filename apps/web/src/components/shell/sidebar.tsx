@@ -9,6 +9,7 @@ import {
   KeyRound,
   LayoutDashboard,
   type LucideIcon,
+  MessageCircle,
   Package,
   PlugZap,
   Settings,
@@ -60,6 +61,7 @@ const groups: NavGroup[] = [
     items: [
       { href: '/api-keys', label: 'API keys', icon: KeyRound },
       { href: '/webhooks', label: 'Webhooks', icon: BarChart3 },
+      { href: '/whatsapp', label: 'WhatsApp', icon: MessageCircle },
     ],
   },
   {

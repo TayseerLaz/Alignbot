@@ -1,0 +1,640 @@
+'use client';
+
+import type {
+  WhatsAppChannelDto,
+  WhatsAppMessageDto,
+  WhatsAppTestSendResult,
+  WhatsAppVerifyResult,
+} from '@aligned/shared';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Copy,
+  ExternalLink,
+  MessageCircle,
+  Phone,
+  PowerOff,
+  Send,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
+
+import { PageHeader } from '@/components/shell/page-header';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { api, ApiError } from '@/lib/api';
+import { formatRelative } from '@/lib/format';
+
+type FormState = {
+  wabaId: string;
+  phoneNumberId: string;
+  displayPhoneNumber: string;
+  appId: string;
+  accessToken: string; // empty = leave alone, '__clear__' sentinel handled below
+  appSecret: string;
+  greetingMessage: string;
+  businessName: string;
+  businessAbout: string;
+  businessAddress: string;
+  businessEmail: string;
+  isActive: boolean;
+};
+
+function formFromChannel(c: WhatsAppChannelDto): FormState {
+  return {
+    wabaId: c.wabaId ?? '',
+    phoneNumberId: c.phoneNumberId ?? '',
+    displayPhoneNumber: c.displayPhoneNumber ?? '',
+    appId: c.appId ?? '',
+    accessToken: '',
+    appSecret: '',
+    greetingMessage: c.greetingMessage ?? '',
+    businessName: c.businessName ?? '',
+    businessAbout: c.businessAbout ?? '',
+    businessAddress: c.businessAddress ?? '',
+    businessEmail: c.businessEmail ?? '',
+    isActive: c.isActive,
+  };
+}
+
+async function copyToClipboard(value: string, label: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    toast.success(`${label} copied`);
+  } catch {
+    toast.error("Couldn't copy — click the field and copy manually.");
+  }
+}
+
+export default function WhatsAppPage() {
+  const queryClient = useQueryClient();
+
+  const channelQ = useQuery({
+    queryKey: ['whatsapp-channel'],
+    queryFn: () => api.get<{ data: WhatsAppChannelDto }>('/api/v1/whatsapp'),
+  });
+  const messagesQ = useQuery({
+    queryKey: ['whatsapp-messages'],
+    queryFn: () => api.get<{ data: WhatsAppMessageDto[] }>('/api/v1/whatsapp/messages?limit=20'),
+    refetchInterval: 10_000,
+  });
+
+  const channel = channelQ.data?.data;
+
+  const [form, setForm] = useState<FormState | null>(null);
+  useEffect(() => {
+    if (channel) setForm(formFromChannel(channel));
+  }, [channel]);
+
+  const save = useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      api.put<{ data: WhatsAppChannelDto }>('/api/v1/whatsapp', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['whatsapp-channel'] });
+      toast.success('Saved');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
+  });
+
+  const verify = useMutation({
+    mutationFn: () => api.post<{ data: WhatsAppVerifyResult }>('/api/v1/whatsapp/verify'),
+    onSuccess: (res) => {
+      const r = res.data;
+      if (r.ok) {
+        toast.success(
+          `Connected to Meta · ${r.verifiedDisplayPhoneNumber ?? 'phone'}${r.verifiedQualityRating ? ' · ' + r.verifiedQualityRating + ' quality' : ''}`,
+        );
+      } else {
+        toast.error(`Verification failed (${r.status})${r.errorMessage ? ': ' + r.errorMessage : ''}`);
+      }
+      queryClient.invalidateQueries({ queryKey: ['whatsapp-channel'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Verify failed'),
+  });
+
+  const testSend = useMutation({
+    mutationFn: (to: string) =>
+      api.post<{ data: WhatsAppTestSendResult }>('/api/v1/whatsapp/test-send', { to }),
+    onSuccess: (res) => {
+      const r = res.data;
+      if (r.ok) toast.success('hello_world template sent');
+      else toast.error(r.errorMessage ?? 'Send failed');
+      queryClient.invalidateQueries({ queryKey: ['whatsapp-messages'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Send failed'),
+  });
+
+  const disconnect = useMutation({
+    mutationFn: () => api.delete('/api/v1/whatsapp'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['whatsapp-channel'] });
+      toast.success('Disconnected');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Disconnect failed'),
+  });
+
+  if (!channel || !form) {
+    return <div className="text-sm text-foreground-muted">Loading…</div>;
+  }
+
+  const credsComplete = channel.hasAccessToken && !!channel.phoneNumberId;
+  const verifiedOk = channel.lastVerifyStatus === 'success';
+  const verifiedRecently =
+    !!channel.lastVerifiedAt &&
+    Date.now() - new Date(channel.lastVerifiedAt).getTime() < 7 * 24 * 60 * 60 * 1000;
+
+  // Build the PUT body. Empty string for secrets = clear; non-empty = update;
+  // unchanged form value = leave alone (field omitted).
+  const buildPayload = (): Record<string, unknown> => {
+    const initial = formFromChannel(channel);
+    const out: Record<string, unknown> = {};
+    const keys = Object.keys(form) as (keyof FormState)[];
+    for (const k of keys) {
+      if (k === 'accessToken' || k === 'appSecret') {
+        // Secrets: omit unless the user typed something.
+        if (form[k] !== '') out[k] = form[k];
+        continue;
+      }
+      if (form[k] !== initial[k]) out[k] = form[k];
+    }
+    return out;
+  };
+
+  return (
+    <>
+      <PageHeader
+        title="WhatsApp"
+        description="Connect your Meta WhatsApp Business number so the platform can verify credentials and receive inbound messages."
+        actions={
+          <div className="flex items-center gap-2">
+            <Badge variant={verifiedOk && channel.isActive ? 'success' : 'muted'} className="gap-1">
+              {verifiedOk && channel.isActive ? (
+                <>
+                  <CheckCircle2 className="size-3" /> Live
+                </>
+              ) : verifiedOk ? (
+                <>
+                  <CheckCircle2 className="size-3" /> Connected · paused
+                </>
+              ) : credsComplete ? (
+                <>
+                  <AlertTriangle className="size-3" /> Not yet verified
+                </>
+              ) : (
+                'Not configured'
+              )}
+            </Badge>
+          </div>
+        }
+      />
+
+      {/* Honesty banner — Phase 1.5 only stores credentials + verifies + receives;
+          autonomous bot replies still belong to your bot runtime. */}
+      <Card className="mb-6 border-amber-200 bg-amber-50/30">
+        <CardContent className="flex items-start gap-3 py-3 text-xs text-amber-900">
+          <MessageCircle className="mt-0.5 size-4 shrink-0" />
+          <div>
+            <p className="font-medium">This page connects credentials, not conversations.</p>
+            <p className="mt-0.5">
+              The platform will verify your token, expose a webhook URL Meta can call, and persist
+              inbound messages for the audit log. <strong>Auto-responding to customers</strong> is
+              still done by your bot runtime — Landbot, an in-house bridge, or Phase 2 when it
+              ships. See the{' '}
+              <a className="underline" href="/docs/NO_CODE_CHATBOT_PLAYBOOK.md">
+                no-code playbook
+              </a>{' '}
+              for the wiring.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          {/* ----- Webhook info Meta needs ----- */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldCheck className="size-4" /> Meta webhook configuration
+              </CardTitle>
+              <CardDescription>
+                Paste these into{' '}
+                <span className="font-mono">developers.facebook.com → your app → WhatsApp →
+                Configuration → Webhooks</span>
+                . Then subscribe the app to the WhatsApp Business Account and tick the{' '}
+                <span className="font-mono">messages</span> field.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="callback-url">Callback URL</Label>
+                <div className="flex gap-2">
+                  <Input id="callback-url" readOnly value={channel.webhookCallbackUrl} className="font-mono text-xs" />
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    aria-label="Copy callback URL"
+                    onClick={() => copyToClipboard(channel.webhookCallbackUrl, 'Callback URL')}
+                  >
+                    <Copy className="size-4" />
+                  </Button>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="verify-token">Verify token</Label>
+                <div className="flex gap-2">
+                  <Input id="verify-token" readOnly value={channel.webhookVerifyToken} className="font-mono text-xs" />
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    aria-label="Copy verify token"
+                    onClick={() => copyToClipboard(channel.webhookVerifyToken, 'Verify token')}
+                  >
+                    <Copy className="size-4" />
+                  </Button>
+                </div>
+              </div>
+              <p className="text-xs text-foreground-subtle">
+                Meta sends a one-time GET to the callback URL with this verify token. The platform
+                echoes the challenge back when the token matches.
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* ----- Credentials ----- */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Phone className="size-4" /> Meta credentials
+              </CardTitle>
+              <CardDescription>
+                Find these in{' '}
+                <a
+                  href="https://business.facebook.com/"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="text-brand-500 underline"
+                >
+                  Meta Business Settings
+                </a>{' '}
+                <ExternalLink className="inline size-3" /> → WhatsApp → API Setup. The access token
+                must be a <strong>System User</strong> token (non-expiring). The app secret is on
+                the app dashboard → Settings → Basic.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="wabaId">WhatsApp Business Account ID (WABA ID)</Label>
+                <Input
+                  id="wabaId"
+                  value={form.wabaId}
+                  onChange={(e) => setForm({ ...form, wabaId: e.target.value.trim() })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="phoneNumberId">Phone number ID</Label>
+                <Input
+                  id="phoneNumberId"
+                  value={form.phoneNumberId}
+                  onChange={(e) => setForm({ ...form, phoneNumberId: e.target.value.trim() })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="displayPhoneNumber">Display phone number (optional)</Label>
+                <Input
+                  id="displayPhoneNumber"
+                  placeholder="+14155551234"
+                  value={form.displayPhoneNumber}
+                  onChange={(e) => setForm({ ...form, displayPhoneNumber: e.target.value.trim() })}
+                />
+                <p className="text-xs text-foreground-subtle">
+                  Auto-populated by a successful verify.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="appId">Meta App ID</Label>
+                <Input
+                  id="appId"
+                  value={form.appId}
+                  onChange={(e) => setForm({ ...form, appId: e.target.value.trim() })}
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="accessToken">
+                  System User access token{' '}
+                  {channel.hasAccessToken ? (
+                    <span className="ml-1 text-foreground-subtle">
+                      (current: <span className="font-mono">{channel.accessTokenMasked}</span>)
+                    </span>
+                  ) : null}
+                </Label>
+                <Input
+                  id="accessToken"
+                  type="password"
+                  autoComplete="off"
+                  placeholder={channel.hasAccessToken ? 'Leave blank to keep current' : 'EAAxxxxxxxxx…'}
+                  value={form.accessToken}
+                  onChange={(e) => setForm({ ...form, accessToken: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="appSecret">
+                  App secret{' '}
+                  {channel.hasAppSecret ? (
+                    <span className="ml-1 text-foreground-subtle">
+                      (current: <span className="font-mono">{channel.appSecretMasked}</span>)
+                    </span>
+                  ) : null}
+                </Label>
+                <Input
+                  id="appSecret"
+                  type="password"
+                  autoComplete="off"
+                  placeholder={channel.hasAppSecret ? 'Leave blank to keep current' : '32-char hex from Meta'}
+                  value={form.appSecret}
+                  onChange={(e) => setForm({ ...form, appSecret: e.target.value })}
+                />
+                <p className="text-xs text-foreground-subtle">
+                  Used to verify the <span className="font-mono">X-Hub-Signature-256</span> header
+                  on inbound webhooks.
+                </p>
+              </div>
+              <div className="sm:col-span-2 flex flex-wrap items-center gap-2">
+                <Button onClick={() => save.mutate(buildPayload())} loading={save.isPending}>
+                  Save credentials
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => verify.mutate()}
+                  loading={verify.isPending}
+                  disabled={!credsComplete}
+                >
+                  <ShieldCheck className="size-4" /> Verify with Meta
+                </Button>
+                {channel.lastVerifiedAt ? (
+                  <span className="text-xs text-foreground-subtle">
+                    last checked {formatRelative(channel.lastVerifiedAt)} ·{' '}
+                    <span className={verifiedOk ? 'text-emerald-700' : 'text-red-600'}>
+                      {channel.lastVerifyStatus}
+                    </span>
+                  </span>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ----- Bot profile + greeting ----- */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Business profile + greeting</CardTitle>
+              <CardDescription>
+                Stored alongside your catalog. Your bot runtime can pull them via the read API.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="businessName">Business name</Label>
+                <Input
+                  id="businessName"
+                  value={form.businessName}
+                  onChange={(e) => setForm({ ...form, businessName: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="businessEmail">Business email</Label>
+                <Input
+                  id="businessEmail"
+                  type="email"
+                  value={form.businessEmail}
+                  onChange={(e) => setForm({ ...form, businessEmail: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="businessAddress">Business address</Label>
+                <Input
+                  id="businessAddress"
+                  value={form.businessAddress}
+                  onChange={(e) => setForm({ ...form, businessAddress: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="businessAbout">About</Label>
+                <Textarea
+                  id="businessAbout"
+                  rows={2}
+                  value={form.businessAbout}
+                  onChange={(e) => setForm({ ...form, businessAbout: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="greetingMessage">Greeting message</Label>
+                <Textarea
+                  id="greetingMessage"
+                  rows={3}
+                  placeholder="Hi! Welcome to <Your Business>. Ask about hours, products, or bookings."
+                  value={form.greetingMessage}
+                  onChange={(e) => setForm({ ...form, greetingMessage: e.target.value })}
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <Button onClick={() => save.mutate(buildPayload())} loading={save.isPending}>
+                  Save profile
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ----- Inbound + test message log ----- */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MessageCircle className="size-4" /> Recent messages
+              </CardTitle>
+              <CardDescription>
+                Inbound messages are persisted whenever Meta posts to the webhook URL. Test
+                outbound sends also appear here.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {(messagesQ.data?.data ?? []).length === 0 ? (
+                <p className="px-6 py-6 text-center text-sm text-foreground-muted">
+                  Nothing yet. Try the test send or message your number from a tester phone.
+                </p>
+              ) : (
+                <ul className="divide-y divide-border">
+                  {messagesQ.data?.data.map((m) => (
+                    <li key={m.id} className="grid grid-cols-[auto_1fr_auto] items-start gap-3 px-6 py-3 text-sm">
+                      <Badge variant={m.direction === 'inbound' ? 'success' : 'muted'} className="mt-0.5">
+                        {m.direction}
+                      </Badge>
+                      <div className="min-w-0">
+                        <p className="truncate">
+                          <span className="font-mono text-xs text-foreground-subtle">
+                            {m.fromNumber ?? m.toNumber ?? '—'}
+                          </span>{' '}
+                          · {m.messageType ?? 'unknown'}
+                        </p>
+                        {m.body ? (
+                          <p className="mt-0.5 whitespace-pre-wrap break-words text-foreground">
+                            {m.body}
+                          </p>
+                        ) : null}
+                      </div>
+                      <span className="whitespace-nowrap text-xs text-foreground-subtle">
+                        {formatRelative(m.receivedAt)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* ----- Sidebar column ----- */}
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Status</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <Row label="Credentials" value={credsComplete ? 'configured' : 'incomplete'} ok={credsComplete} />
+              <Row
+                label="Last verify"
+                value={channel.lastVerifyStatus ?? 'never'}
+                ok={verifiedOk}
+                warn={!verifiedRecently && !!channel.lastVerifyStatus}
+              />
+              <Row
+                label="Inbound webhook"
+                value={channel.hasAppSecret ? 'ready' : 'app secret missing'}
+                ok={channel.hasAppSecret}
+              />
+              <Row label="Live" value={channel.isActive ? 'ON' : 'OFF'} ok={channel.isActive} />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Live toggle</CardTitle>
+              <CardDescription>
+                Marks the channel as active in this platform. Your bot runtime is responsible for
+                actually replying — the toggle does not start a bot.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                variant={channel.isActive ? 'secondary' : 'primary'}
+                onClick={() => save.mutate({ isActive: !channel.isActive })}
+                loading={save.isPending}
+                disabled={!verifiedOk}
+              >
+                <PowerOff className="size-4" /> {channel.isActive ? 'Set OFF' : 'Set Live'}
+              </Button>
+              {!verifiedOk ? (
+                <p className="mt-2 text-xs text-foreground-subtle">
+                  Verify with Meta first.
+                </p>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Send a test</CardTitle>
+              <CardDescription>
+                Sends the <span className="font-mono">hello_world</span> template. The recipient
+                must be added as a tester in Meta until business verification is complete.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <TestSendForm
+                onSend={(to) => testSend.mutate(to)}
+                loading={testSend.isPending}
+                disabled={!verifiedOk}
+              />
+            </CardContent>
+          </Card>
+
+          <Card className="border-red-200">
+            <CardHeader>
+              <CardTitle className="text-red-700">Disconnect</CardTitle>
+              <CardDescription>
+                Clears credentials and marks the channel inactive. Re-paste your token to reconnect.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                variant="danger"
+                onClick={async () => {
+                  if (
+                    await confirmDialog({
+                      title: 'Disconnect WhatsApp?',
+                      body: 'Stored credentials will be cleared. The webhook URL + verify token stay the same so you can reconnect later.',
+                      confirmLabel: 'Disconnect',
+                      destructive: true,
+                    })
+                  ) {
+                    disconnect.mutate();
+                  }
+                }}
+                loading={disconnect.isPending}
+                disabled={!channel.hasAccessToken && !channel.hasAppSecret}
+              >
+                <Trash2 className="size-4" /> Disconnect
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function Row({ label, value, ok, warn }: { label: string; value: string; ok?: boolean; warn?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-foreground-muted">{label}</span>
+      <span
+        className={
+          ok ? 'text-emerald-700 font-medium' : warn ? 'text-amber-700 font-medium' : 'text-foreground-subtle'
+        }
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function TestSendForm({
+  onSend,
+  loading,
+  disabled,
+}: {
+  onSend: (to: string) => void;
+  loading: boolean;
+  disabled: boolean;
+}) {
+  const [to, setTo] = useState('');
+  return (
+    <div className="space-y-2">
+      <Input
+        placeholder="+14155551234"
+        value={to}
+        onChange={(e) => setTo(e.target.value)}
+        disabled={disabled}
+      />
+      <Button onClick={() => onSend(to)} loading={loading} disabled={disabled || to.trim().length < 6}>
+        <Send className="size-4" /> Send hello_world
+      </Button>
+    </div>
+  );
+}

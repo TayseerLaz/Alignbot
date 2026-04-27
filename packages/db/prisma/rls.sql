@@ -102,6 +102,9 @@ SELECT _aligned_apply_tenant_rls('webhook_deliveries');
 -- ---------- versioning + notifications (Day 4) ------------------------------
 SELECT _aligned_apply_tenant_rls('catalog_revisions');
 SELECT _aligned_apply_tenant_rls('notifications');
+-- Phase 1.5
+SELECT _aligned_apply_tenant_rls('whatsapp_channels');
+SELECT _aligned_apply_tenant_rls('whatsapp_messages');
 
 -- ---------- pg_trgm GIN indexes for fast search (Prisma can't express) ------
 CREATE INDEX IF NOT EXISTS products_search_trgm_idx

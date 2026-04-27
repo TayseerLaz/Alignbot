@@ -280,6 +280,8 @@ model Organization {
   // Day 4
   catalogRevisions CatalogRevision[]
   notifications    Notification[]
+  // Phase 1.5
+  whatsappChannel  WhatsAppChannel?
 
   @@index([status])
   @@map("organizations")
@@ -1009,4 +1011,73 @@ model Notification {
   @@index([organizationId, createdAt(sort: Desc)])
   @@index([organizationId, targetUserId, createdAt(sort: Desc)])
   @@map("notifications")
+}
+
+
+// ============================================================================
+// PHASE 1.5
+// ----------------------------------------------------------------------------
+// WhatsAppChannel — per-org WhatsApp Cloud API config. Stores Meta credentials
+// (WABA ID, phone number ID, app secret, system-user access token), the
+// platform-generated webhook verify token, and the bot's greeting/profile
+// fields. One row per organisation.
+//
+// Security note: accessToken + appSecret are stored plain in this column.
+// Same model as ApiConnector.authConfig — RLS-isolated, never returned over
+// the API except masked. Encryption-at-rest is the disk's job; encryption
+// at the application layer is a TODO before broad rollout.
+// ----------------------------------------------------------------------------
+
+model WhatsAppChannel {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String   @unique @map("organization_id") @db.Uuid
+  // ---- Meta-side identifiers (visible-ish, copied from Meta dashboard) ----
+  wabaId              String?  @map("waba_id")
+  phoneNumberId       String?  @map("phone_number_id")
+  displayPhoneNumber  String?  @map("display_phone_number") // E.164, for UI
+  appId               String?  @map("app_id")
+  // ---- Secrets — never returned plain in API responses ---------------------
+  accessToken         String?  @map("access_token")
+  appSecret           String?  @map("app_secret")
+  // ---- Platform-generated, given to client to paste into Meta -------------
+  webhookVerifyToken  String   @map("webhook_verify_token")
+  // ---- Bot profile + behaviour --------------------------------------------
+  greetingMessage     String?  @map("greeting_message")
+  businessName        String?  @map("business_name")
+  businessAbout       String?  @map("business_about")
+  businessAddress     String?  @map("business_address")
+  businessEmail       String?  @map("business_email")
+  // ---- Operational state ---------------------------------------------------
+  isActive            Boolean  @default(false) @map("is_active")
+  lastVerifiedAt      DateTime? @map("last_verified_at")
+  lastVerifyStatus    String?  @map("last_verify_status") // 'success' | 'token_invalid' | 'phone_not_found' | network error string
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("whatsapp_channels")
+}
+
+// WhatsAppMessage — every inbound message Meta delivers to our webhook is
+// persisted here for support / debugging. Outbound replies (sent via
+// /whatsapp/test-send for now) are also persisted with direction='outbound'.
+// Phase 1.5 does not yet auto-respond — this is just an audit table.
+
+model WhatsAppMessage {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  direction       String   // 'inbound' | 'outbound'
+  // Meta's wamid for inbound; for outbound, the messages[0].id from the response.
+  metaMessageId   String?  @map("meta_message_id")
+  fromNumber      String?  @map("from_number")
+  toNumber        String?  @map("to_number")
+  messageType     String?  @map("message_type") // 'text' | 'template' | 'image' | ...
+  body            String?
+  // Full payload from Meta (or what we sent) — for debugging.
+  rawPayload      Json?    @map("raw_payload")
+  receivedAt      DateTime @default(now()) @map("received_at")
+
+  @@index([organizationId, receivedAt(sort: Desc)])
+  @@map("whatsapp_messages")
 }

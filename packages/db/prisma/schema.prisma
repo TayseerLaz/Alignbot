@@ -282,6 +282,7 @@ model Organization {
   notifications    Notification[]
   // Phase 1.5 / Phase 3
   whatsappChannels WhatsAppChannel[]
+  whatsappThreads  WhatsAppThread[]
 
   @@index([status])
   @@map("organizations")
@@ -317,6 +318,8 @@ model User {
   invitationsSent     Invitation[] @relation("InvitedBy")
   invitationsAccepted Invitation[] @relation("AcceptedBy")
   auditLogs           AuditLog[]   @relation("AuditActor")
+  // Phase 3
+  assignedThreads     WhatsAppThread[] @relation("WhatsAppThreadAssignee")
 
   @@index([status])
   @@map("users")
@@ -1074,6 +1077,9 @@ model WhatsAppChannel {
 model WhatsAppMessage {
   id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId  String   @map("organization_id") @db.Uuid
+  // Phase 3 §5.1.1 — every message belongs to exactly one thread (per
+  // customer phone). Set by the inbound webhook + outbound send paths.
+  threadId        String?  @map("thread_id") @db.Uuid
   direction       String   // 'inbound' | 'outbound'
   // Meta's wamid for inbound; for outbound, the messages[0].id from the response.
   metaMessageId   String?  @map("meta_message_id")
@@ -1081,10 +1087,123 @@ model WhatsAppMessage {
   toNumber        String?  @map("to_number")
   messageType     String?  @map("message_type") // 'text' | 'template' | 'image' | ...
   body            String?
+  // Phase 3: when message has media, the asset row holding the file we
+  // received from Meta or sent through Meta. NULL for text messages.
+  mediaAssetId    String?  @map("media_asset_id") @db.Uuid
   // Full payload from Meta (or what we sent) — for debugging.
   rawPayload      Json?    @map("raw_payload")
   receivedAt      DateTime @default(now()) @map("received_at")
 
+  thread WhatsAppThread? @relation(fields: [threadId], references: [id], onDelete: SetNull)
+
   @@index([organizationId, receivedAt(sort: Desc)])
+  @@index([threadId, receivedAt(sort: Asc)])
   @@map("whatsapp_messages")
+}
+
+// ----------------------------------------------------------------------------
+// Phase 3 §5.1.1 — Conversation inbox.
+// One WhatsAppThread per (org, customer phone). Messages are linked via
+// `whatsapp_messages.thread_id`. Status / assignment / tags / internal
+// notes hang off the thread.
+// ----------------------------------------------------------------------------
+
+enum WhatsAppThreadStatus {
+  open
+  pending
+  resolved
+  escalated
+}
+
+model WhatsAppThread {
+  id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String                @map("organization_id") @db.Uuid
+  customerPhone       String                @map("customer_phone")
+  // Optional friendly name set by an agent (or auto-detected from contact lookups later).
+  customerName        String?               @map("customer_name")
+  status              WhatsAppThreadStatus  @default(open)
+  assignedToUserId    String?               @map("assigned_to_user_id") @db.Uuid
+  lastMessageAt       DateTime              @default(now()) @map("last_message_at")
+  lastMessagePreview  String?               @map("last_message_preview")
+  inboundCount        Int                   @default(0) @map("inbound_count")
+  outboundCount       Int                   @default(0) @map("outbound_count")
+  // Search blob — concatenation of recent messages, kept up-to-date by the
+  // upsert path. pg_trgm GIN index added in the migration.
+  searchText          String                @default("") @map("search_text")
+  createdAt           DateTime              @default(now()) @map("created_at")
+  updatedAt           DateTime              @updatedAt              @map("updated_at")
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignedTo   User?            @relation("WhatsAppThreadAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  messages     WhatsAppMessage[]
+  tags         WhatsAppThreadTag[]
+  notes        WhatsAppNote[]
+
+  @@unique([organizationId, customerPhone])
+  @@index([organizationId, lastMessageAt(sort: Desc)])
+  @@index([organizationId, status, lastMessageAt(sort: Desc)])
+  @@map("whatsapp_threads")
+}
+
+model WhatsAppThreadTag {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  threadId        String   @map("thread_id") @db.Uuid
+  tag             String
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  thread WhatsAppThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@unique([threadId, tag])
+  @@index([organizationId, tag])
+  @@map("whatsapp_thread_tags")
+}
+
+// Internal notes — visible to agents only, never sent to Meta.
+model WhatsAppNote {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  threadId        String   @map("thread_id") @db.Uuid
+  authorUserId    String?  @map("author_user_id") @db.Uuid
+  body            String
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  thread WhatsAppThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt(sort: Asc)])
+  @@map("whatsapp_notes")
+}
+
+// Per-org canned response template for fast agent replies.
+model CannedResponse {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  shortcut        String   // e.g. "/hours" — typed in the reply box
+  body            String
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt              @map("updated_at")
+
+  @@unique([organizationId, shortcut])
+  @@index([organizationId])
+  @@map("canned_responses")
+}
+
+// Phase 3 §5.1.2 — submitted WhatsApp message templates with their Meta
+// approval status. Required for sending outside the 24h customer window.
+model WhatsAppTemplate {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  name            String   // Meta-side template name
+  language        String   @default("en_US")
+  category        String   // 'MARKETING' | 'UTILITY' | 'AUTHENTICATION'
+  bodyText        String   @map("body_text")
+  status          String   @default("draft") // 'draft' | 'pending' | 'approved' | 'rejected'
+  rejectionReason String?  @map("rejection_reason")
+  metaTemplateId  String?  @map("meta_template_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt              @map("updated_at")
+
+  @@unique([organizationId, name, language])
+  @@index([organizationId])
+  @@map("whatsapp_templates")
 }

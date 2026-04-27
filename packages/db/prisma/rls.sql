@@ -105,6 +105,12 @@ SELECT _aligned_apply_tenant_rls('notifications');
 -- Phase 1.5
 SELECT _aligned_apply_tenant_rls('whatsapp_channels');
 SELECT _aligned_apply_tenant_rls('whatsapp_messages');
+-- Session 4 (Phase 3 inbox)
+SELECT _aligned_apply_tenant_rls('whatsapp_threads');
+SELECT _aligned_apply_tenant_rls('whatsapp_thread_tags');
+SELECT _aligned_apply_tenant_rls('whatsapp_notes');
+SELECT _aligned_apply_tenant_rls('canned_responses');
+SELECT _aligned_apply_tenant_rls('whatsapp_templates');
 
 -- ---------- pg_trgm GIN indexes for fast search (Prisma can't express) ------
 CREATE INDEX IF NOT EXISTS products_search_trgm_idx

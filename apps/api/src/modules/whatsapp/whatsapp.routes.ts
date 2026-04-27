@@ -42,6 +42,24 @@ import { generateOpaqueToken } from '../../lib/crypto.js';
 import { withRlsBypass } from '../../lib/db.js';
 import { env } from '../../lib/env.js';
 import { badRequest, notFound } from '../../lib/errors.js';
+import { getRedis } from '../../lib/redis.js';
+
+// Outbound token-bucket rate limiter — 80 messages per second per org by
+// default (Meta's default is 80 mps for tier 1 numbers; clients tier up
+// over time). Backed by Redis INCR + EXPIRE so it survives restarts.
+async function consumeSendToken(orgId: string): Promise<{ ok: boolean; retryAfterMs: number }> {
+  const redis = getRedis();
+  const key = `wasend:${orgId}:${Math.floor(Date.now() / 1000)}`;
+  const limit = 80;
+  const count = await redis.incr(key);
+  if (count === 1) {
+    await redis.expire(key, 2);
+  }
+  if (count > limit) {
+    return { ok: false, retryAfterMs: 1000 };
+  }
+  return { ok: true, retryAfterMs: 0 };
+}
 
 // ---- helpers --------------------------------------------------------------
 
@@ -505,6 +523,13 @@ export default async function whatsappRoutes(app: FastifyInstance) {
           'Channel is not active — flip the Live toggle first.',
         );
       }
+      const bucket = await consumeSendToken(orgId);
+      if (!bucket.ok) {
+        throw badRequest(
+          ApiErrorCode.RATE_LIMITED,
+          `Outbound rate limit hit — retry in ${bucket.retryAfterMs}ms.`,
+        );
+      }
       const to = req.body.to.replace(/[^\d+]/g, '').replace(/^\+/, '');
       const payload = {
         messaging_product: 'whatsapp',
@@ -565,9 +590,28 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       const messages = (parsed.messages ?? []) as { id?: string }[];
       const metaMessageId = messages[0]?.id ?? null;
 
-      await withRlsBypass((tx) =>
-        tx.whatsAppMessage.create({
+      await withRlsBypass(async (tx) => {
+        const thread = await tx.whatsAppThread.upsert({
+          where: { organizationId_customerPhone: { organizationId: orgId, customerPhone: to } },
+          create: {
+            organizationId: orgId,
+            customerPhone: to,
+            status: 'open',
+            lastMessageAt: new Date(),
+            lastMessagePreview: req.body.body.slice(0, 200),
+            inboundCount: 0,
+            outboundCount: 1,
+            searchText: req.body.body,
+          },
+          update: {
+            lastMessageAt: new Date(),
+            lastMessagePreview: req.body.body.slice(0, 200),
+            outboundCount: { increment: 1 },
+          },
+        });
+        await tx.whatsAppMessage.create({
           data: {
+            threadId: thread.id,
             organizationId: orgId,
             direction: 'outbound',
             metaMessageId,
@@ -576,8 +620,8 @@ export default async function whatsappRoutes(app: FastifyInstance) {
             body: req.body.body,
             rawPayload: payload as never,
           },
-        }),
-      ).catch(() => undefined);
+        });
+      }).catch(() => undefined);
 
       await recordAudit({
         action: 'business_info_updated',
@@ -592,96 +636,9 @@ export default async function whatsappRoutes(app: FastifyInstance) {
     },
   );
 
-  // ---------- GET /whatsapp/threads -------------------------------------
-  // Returns one entry per customer phone number with a preview of the last
-  // message + count + timestamps. Drives the /inbox page; cheap because we
-  // index whatsapp_messages on (organization_id, received_at DESC).
-  r.get(
-    '/whatsapp/threads',
-    {
-      schema: {
-        tags: ['whatsapp'],
-        summary: 'List WhatsApp conversation threads grouped by customer phone number.',
-      },
-      preHandler: [app.requireRole('viewer')],
-    },
-    async (req) =>
-      app.tenant(req, async (tx) => {
-        const messages = await tx.whatsAppMessage.findMany({
-          orderBy: { receivedAt: 'desc' },
-          take: 1000,
-        });
-        // Group by the "other party" — for inbound that's `from`, for
-        // outbound that's `to`. Same phone in either direction = one thread.
-        const threadsMap = new Map<
-          string,
-          {
-            phone: string;
-            lastDirection: 'inbound' | 'outbound';
-            lastBody: string | null;
-            lastAt: string;
-            inboundCount: number;
-            outboundCount: number;
-          }
-        >();
-        for (const m of messages) {
-          const phone = (m.direction === 'inbound' ? m.fromNumber : m.toNumber) ?? '';
-          if (!phone) continue;
-          const existing = threadsMap.get(phone);
-          if (!existing) {
-            threadsMap.set(phone, {
-              phone,
-              lastDirection: m.direction === 'outbound' ? 'outbound' : 'inbound',
-              lastBody: m.body,
-              lastAt: m.receivedAt.toISOString(),
-              inboundCount: m.direction === 'inbound' ? 1 : 0,
-              outboundCount: m.direction === 'outbound' ? 1 : 0,
-            });
-          } else {
-            if (m.direction === 'inbound') existing.inboundCount += 1;
-            else existing.outboundCount += 1;
-          }
-        }
-        const threads = [...threadsMap.values()].sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1));
-        return { data: threads };
-      }),
-  );
-
-  // ---------- GET /whatsapp/threads/:phone ------------------------------
-  // Returns the full message history for one phone — both inbound and
-  // outbound. Phone is URL-encoded by the client.
-  r.get(
-    '/whatsapp/threads/:phone',
-    {
-      schema: {
-        tags: ['whatsapp'],
-        summary: 'Full message history for one phone number.',
-        params: z.object({ phone: z.string().min(3) }),
-      },
-      preHandler: [app.requireRole('viewer')],
-    },
-    async (req) =>
-      app.tenant(req, async (tx) => {
-        const phone = decodeURIComponent(req.params.phone);
-        const messages = await tx.whatsAppMessage.findMany({
-          where: { OR: [{ fromNumber: phone }, { toNumber: phone }] },
-          orderBy: { receivedAt: 'asc' },
-          take: 500,
-        });
-        return {
-          data: messages.map((m) => ({
-            id: m.id,
-            direction: m.direction === 'outbound' ? ('outbound' as const) : ('inbound' as const),
-            metaMessageId: m.metaMessageId,
-            fromNumber: m.fromNumber,
-            toNumber: m.toNumber,
-            messageType: m.messageType,
-            body: m.body,
-            receivedAt: m.receivedAt.toISOString(),
-          })),
-        };
-      }),
-  );
+  // Thread routes moved to apps/api/src/modules/whatsapp-inbox/inbox.routes.ts
+  // (Session 4 — Phase 3 §5.1.1). The new endpoints are id-keyed and
+  // support status, tags, assignment, internal notes, and search.
 
   // ---------- GET /whatsapp/messages ------------------------------------
   // Audit log of inbound + test-outbound messages.
@@ -1007,20 +964,97 @@ export default async function whatsappRoutes(app: FastifyInstance) {
               bodyText: m.text?.body ?? null,
               metaId: m.id ?? null,
             });
-            await withRlsBypass((tx) =>
-              tx.whatsAppMessage.create({
+            // Upsert the thread + persist the message + bump the
+            // thread's preview/counts in one transaction. RLS bypassed
+            // because the public webhook can't carry tenant context —
+            // we write into channel.organizationId derived from the URL.
+            await withRlsBypass(async (tx) => {
+              const phone = m.from ?? null;
+              if (!phone) {
+                await tx.whatsAppMessage.create({
+                  data: {
+                    organizationId: channel.organizationId,
+                    direction: 'inbound',
+                    metaMessageId: m.id ?? null,
+                    fromNumber: null,
+                    toNumber: value.metadata?.display_phone_number ?? null,
+                    messageType: m.type ?? null,
+                    body: m.text?.body ?? null,
+                    rawPayload: m as never,
+                  },
+                });
+                return;
+              }
+              const preview = (m.text?.body ?? `[${m.type ?? 'media'}]`).slice(0, 200);
+              const thread = await tx.whatsAppThread.upsert({
+                where: {
+                  organizationId_customerPhone: {
+                    organizationId: channel.organizationId,
+                    customerPhone: phone,
+                  },
+                },
+                create: {
+                  organizationId: channel.organizationId,
+                  customerPhone: phone,
+                  status: 'open',
+                  lastMessageAt: new Date(),
+                  lastMessagePreview: preview,
+                  inboundCount: 1,
+                  outboundCount: 0,
+                  searchText: m.text?.body ?? '',
+                },
+                update: {
+                  lastMessageAt: new Date(),
+                  lastMessagePreview: preview,
+                  inboundCount: { increment: 1 },
+                  // Reopen if previously resolved.
+                  status: 'open',
+                  // Append to the rolling search blob, capped at ~16 KB.
+                  searchText: { set: '' }, // see post-update below
+                },
+              });
+              // Two-step search-text update so we keep the existing blob
+              // bounded without a stored procedure.
+              if (m.text?.body) {
+                await tx.$executeRawUnsafe(
+                  `UPDATE whatsapp_threads
+                     SET search_text = LEFT(COALESCE(search_text,'') || ' ' || $1, 16000)
+                     WHERE id = $2`,
+                  m.text.body,
+                  thread.id,
+                );
+              }
+              await tx.whatsAppMessage.create({
                 data: {
+                  threadId: thread.id,
                   organizationId: channel.organizationId,
                   direction: 'inbound',
                   metaMessageId: m.id ?? null,
-                  fromNumber: m.from ?? null,
+                  fromNumber: phone,
                   toNumber: value.metadata?.display_phone_number ?? null,
                   messageType: m.type ?? null,
                   body: m.text?.body ?? null,
                   rawPayload: m as never,
                 },
-              }),
-            ).catch((err) => req.log.error({ err }, '[whatsapp] persist failed'));
+              });
+              // Notify on first inbound from this customer (thread.inboundCount
+              // == 1 means this insert just created it). Cheap to over-notify;
+              // bell collapses dups by entityId.
+              if (thread.inboundCount === 0) {
+                await tx.notification.create({
+                  data: {
+                    organizationId: channel.organizationId,
+                    kind: 'generic',
+                    severity: 'info',
+                    title: 'New conversation',
+                    body: `New WhatsApp message from ${phone}`,
+                    link: '/inbox',
+                    entityType: 'whatsapp_thread',
+                    entityId: thread.id,
+                  },
+                });
+              }
+            }).catch((err) => req.log.error({ err }, '[whatsapp] persist failed'));
           }
         }
       }

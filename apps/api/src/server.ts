@@ -22,7 +22,9 @@ import adminRoutes from './modules/admin/admin.routes.js';
 import auditRoutes from './modules/audit/audit.routes.js';
 import dashboardRoutes from './modules/dashboard/dashboard.routes.js';
 import orgRoutes from './modules/org/org.routes.js';
+import inboxRoutes from './modules/whatsapp-inbox/inbox.routes.js';
 import whatsappRoutes from './modules/whatsapp/whatsapp.routes.js';
+import whatsappTemplatesRoutes from './modules/whatsapp-templates/templates.routes.js';
 import apiKeyRoutes from './modules/api-keys/api-keys.routes.js';
 import authRoutes from './modules/auth/auth.routes.js';
 import businessInfoRoutes from './modules/catalog/business-info.routes.js';
@@ -208,6 +210,8 @@ export async function buildServer() {
   await app.register(accountRoutes, { prefix: '/api/v1' });
   await app.register(orgRoutes, { prefix: '/api/v1' });
   await app.register(whatsappRoutes, { prefix: '/api/v1' });
+  await app.register(inboxRoutes, { prefix: '/api/v1' });
+  await app.register(whatsappTemplatesRoutes, { prefix: '/api/v1' });
   await app.register(adminRoutes, { prefix: '/api/v1' });
 
   // Routes — public (HMAC-verified, no JWT)

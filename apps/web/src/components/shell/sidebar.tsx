@@ -63,7 +63,9 @@ const groups: NavGroup[] = [
       { href: '/api-keys', label: 'API keys', icon: KeyRound },
       { href: '/webhooks', label: 'Webhooks', icon: BarChart3 },
       { href: '/whatsapp', label: 'WhatsApp', icon: MessageCircle },
+      { href: '/whatsapp/templates', label: 'Templates', icon: BarChart3 },
       { href: '/inbox', label: 'Inbox', icon: Inbox },
+      { href: '/inbox/canned', label: 'Canned replies', icon: Inbox },
     ],
   },
   {

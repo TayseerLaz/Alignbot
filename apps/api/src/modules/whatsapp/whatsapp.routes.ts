@@ -1059,8 +1059,157 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         }
       }
 
+      // Bot runtime — fire-and-forget. Conditions: bot is deployed, the
+      // org has an Anthropic key, the thread isn't already assigned to a
+      // human, and the message has body text. Reply latency is paid by
+      // Meta's reply window so we don't block the webhook 200 on this.
+      void (async () => {
+        try {
+          await maybeReplyAsBot({
+            organizationId: channel.organizationId,
+            messages: persisted,
+            log: req.log,
+          });
+        } catch (err) {
+          req.log.error({ err }, '[whatsapp] bot reply failed');
+        }
+      })();
+
       reply.code(200);
       return { received: persisted.length };
     },
   );
+}
+
+// Phase 2 — auto-reply hook called from the inbound webhook. Looks up the
+// bot config + thread, asks the LLM via bot-engine, sends through the
+// existing /whatsapp/send token-bucket. No-ops cleanly when:
+//   - ANTHROPIC_API_KEY is not configured
+//   - BotConfig.deployedAt is null
+//   - the thread has been assigned to a human (operator owns it now)
+//   - the inbound message has no text (image/template/system event)
+async function maybeReplyAsBot(args: {
+  organizationId: string;
+  messages: { from: string; type: string; bodyText: string | null; metaId: string | null }[];
+  log: { error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
+}): Promise<void> {
+  const { isAnthropicConfigured } = await import('../../lib/anthropic.js');
+  if (!isAnthropicConfigured()) return;
+
+  const { withRlsBypass } = await import('../../lib/db.js');
+  const { buildBotResponse } = await import('../../lib/bot-engine.js');
+
+  for (const m of args.messages) {
+    if (!m.bodyText || !m.from) continue;
+
+    const { reply, channel } = (await withRlsBypass(async (tx) => {
+      const config = await tx.botConfig.findUnique({
+        where: { organizationId: args.organizationId },
+      });
+      if (!config?.deployedAt) return null;
+
+      const thread = await tx.whatsAppThread.findFirst({
+        where: { organizationId: args.organizationId, customerPhone: m.from },
+      });
+      if (!thread) return null;
+      // Don't reply if a human owns it.
+      if (thread.assignedToUserId) return null;
+
+      const ch = await tx.whatsAppChannel.findFirst({
+        where: { organizationId: args.organizationId, isPrimary: true },
+      });
+      if (!ch || !ch.accessToken || !ch.phoneNumberId || !ch.isActive) return null;
+
+      // Pull recent thread history (last 10 msgs) for short-term memory.
+      const history = await tx.whatsAppMessage.findMany({
+        where: { threadId: thread.id, body: { not: null } },
+        orderBy: { receivedAt: 'desc' },
+        take: 10,
+      });
+      const reversed = history.reverse();
+
+      const result = await buildBotResponse(tx as never, {
+        organizationId: args.organizationId,
+        userMessage: m.bodyText!,
+        history: reversed.map((h) => ({
+          role: h.direction === 'outbound' ? ('assistant' as const) : ('user' as const),
+          content: h.body ?? '',
+        })),
+      }).catch((err) => {
+        args.log.warn({ err }, '[whatsapp] bot-engine failed');
+        return null;
+      });
+      if (!result) return null;
+
+      return { reply: result.text, channel: ch };
+    })) ?? { reply: null, channel: null };
+
+    if (!reply || !channel) continue;
+
+    // Send via Meta directly (we're in the worker-equivalent path; reusing
+    // the in-process token bucket from the /send route is fine — both
+    // share the same Redis key).
+    try {
+      const payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: m.from,
+        type: 'text',
+        text: { preview_url: false, body: reply },
+      };
+      const res = await fetch(
+        `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${channel.accessToken!}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      const text = await res.text();
+      if (!res.ok) {
+        args.log.warn({ status: res.status, text: text.slice(0, 200) }, '[whatsapp] bot send failed');
+        continue;
+      }
+      let metaMessageId: string | null = null;
+      try {
+        const parsed = JSON.parse(text) as { messages?: { id?: string }[] };
+        metaMessageId = parsed.messages?.[0]?.id ?? null;
+      } catch {
+        /* ignore */
+      }
+      // Persist outbound + bump thread.
+      await withRlsBypass(async (tx) => {
+        const thread = await tx.whatsAppThread.findFirst({
+          where: { organizationId: args.organizationId, customerPhone: m.from },
+        });
+        if (!thread) return;
+        await tx.whatsAppMessage.create({
+          data: {
+            threadId: thread.id,
+            organizationId: args.organizationId,
+            direction: 'outbound',
+            metaMessageId,
+            toNumber: m.from,
+            messageType: 'text',
+            body: reply,
+            rawPayload: { sentBy: 'bot' } as never,
+          },
+        });
+        await tx.whatsAppThread.update({
+          where: { id: thread.id },
+          data: {
+            lastMessageAt: new Date(),
+            lastMessagePreview: reply.slice(0, 200),
+            outboundCount: { increment: 1 },
+          },
+        });
+      });
+    } catch (err) {
+      args.log.warn({ err }, '[whatsapp] bot send threw');
+    }
+  }
 }

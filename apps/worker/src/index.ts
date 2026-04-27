@@ -5,6 +5,7 @@ import pino from 'pino';
 import { collectDefaultMetrics, Counter, Gauge, Registry } from 'prom-client';
 
 import { env } from './lib/env.js';
+import { startCrawlWorker } from './jobs/crawl.js';
 import { startImportWorker } from './jobs/import.js';
 import { startSyncWorker } from './jobs/sync.js';
 import { startWebhookDeliveryWorker } from './jobs/webhook-delivery.js';
@@ -71,7 +72,12 @@ async function main() {
     log.info({ port: process.env.WORKER_METRICS_PORT ?? 9100 }, 'metrics server listening'),
   );
 
-  const workers = [startImportWorker(), startSyncWorker(), startWebhookDeliveryWorker()];
+  const workers = [
+    startImportWorker(),
+    startSyncWorker(),
+    startWebhookDeliveryWorker(),
+    startCrawlWorker(),
+  ];
 
   for (const w of workers) {
     w.on('ready', () => log.info({ name: w.name }, 'worker ready'));

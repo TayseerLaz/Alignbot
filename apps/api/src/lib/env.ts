@@ -58,6 +58,12 @@ const envSchema = z.object({
   // key). Leave empty to hide the uptime tile in the admin panel.
   UPTIMEROBOT_API_KEY: z.string().optional(),
   UPTIMEROBOT_MONITOR_IDS: z.string().optional(), // csv of monitor ids
+
+  // Phase 2 — Anthropic API key for the AI bot builder + bot runtime.
+  // Leave empty to disable AI features (analyze + simulate + scenarios all
+  // 503; the rest of the platform keeps working).
+  ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-6'),
 });
 
 export type Env = z.infer<typeof envSchema>;

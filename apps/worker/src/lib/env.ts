@@ -24,6 +24,11 @@ const envSchema = z.object({
   SYNC_CONCURRENCY: z.coerce.number().int().positive().default(4),
   WEBHOOK_CONCURRENCY: z.coerce.number().int().positive().default(8),
   EMAIL_CONCURRENCY: z.coerce.number().int().positive().default(4),
+  CRAWL_CONCURRENCY: z.coerce.number().int().positive().default(2),
+
+  // Phase 2 — Anthropic for crawl analysis. Worker no-ops AI step if missing.
+  ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-6'),
 });
 
 export type Env = z.infer<typeof envSchema>;

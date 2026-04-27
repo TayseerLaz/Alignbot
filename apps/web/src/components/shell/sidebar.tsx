@@ -3,6 +3,7 @@
 import {
   Activity,
   BarChart3,
+  Bot,
   Briefcase,
   Building2,
   Code2,
@@ -66,6 +67,7 @@ const groups: NavGroup[] = [
       { href: '/whatsapp/templates', label: 'Templates', icon: BarChart3 },
       { href: '/inbox', label: 'Inbox', icon: Inbox },
       { href: '/inbox/canned', label: 'Canned replies', icon: Inbox },
+      { href: '/bot', label: 'AI bot builder', icon: Bot },
     ],
   },
   {

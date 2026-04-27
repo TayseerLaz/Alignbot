@@ -20,6 +20,7 @@ import { initSentry } from './lib/sentry.js';
 import accountRoutes from './modules/account/account.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
 import auditRoutes from './modules/audit/audit.routes.js';
+import botRoutes from './modules/bot/bot.routes.js';
 import dashboardRoutes from './modules/dashboard/dashboard.routes.js';
 import orgRoutes from './modules/org/org.routes.js';
 import inboxRoutes from './modules/whatsapp-inbox/inbox.routes.js';
@@ -212,6 +213,7 @@ export async function buildServer() {
   await app.register(whatsappRoutes, { prefix: '/api/v1' });
   await app.register(inboxRoutes, { prefix: '/api/v1' });
   await app.register(whatsappTemplatesRoutes, { prefix: '/api/v1' });
+  await app.register(botRoutes, { prefix: '/api/v1' });
   await app.register(adminRoutes, { prefix: '/api/v1' });
 
   // Routes — public (HMAC-verified, no JWT)

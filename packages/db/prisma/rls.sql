@@ -111,6 +111,13 @@ SELECT _aligned_apply_tenant_rls('whatsapp_thread_tags');
 SELECT _aligned_apply_tenant_rls('whatsapp_notes');
 SELECT _aligned_apply_tenant_rls('canned_responses');
 SELECT _aligned_apply_tenant_rls('whatsapp_templates');
+-- Phase 2 (AI bot builder)
+SELECT _aligned_apply_tenant_rls('bot_configs');
+SELECT _aligned_apply_tenant_rls('crawl_jobs');
+SELECT _aligned_apply_tenant_rls('crawl_pages');
+SELECT _aligned_apply_tenant_rls('knowledge_base_entries');
+SELECT _aligned_apply_tenant_rls('bot_test_runs');
+SELECT _aligned_apply_tenant_rls('bot_simulation_turns');
 
 -- ---------- pg_trgm GIN indexes for fast search (Prisma can't express) ------
 CREATE INDEX IF NOT EXISTS products_search_trgm_idx

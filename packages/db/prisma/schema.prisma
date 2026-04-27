@@ -283,6 +283,8 @@ model Organization {
   // Phase 1.5 / Phase 3
   whatsappChannels WhatsAppChannel[]
   whatsappThreads  WhatsAppThread[]
+  // Phase 2
+  botConfig        BotConfig?
 
   @@index([status])
   @@map("organizations")
@@ -1206,4 +1208,156 @@ model WhatsAppTemplate {
   @@unique([organizationId, name, language])
   @@index([organizationId])
   @@map("whatsapp_templates")
+}
+
+// ============================================================================
+// PHASE 2 — AI Bot Builder
+// ----------------------------------------------------------------------------
+// BotConfig holds the per-org bot personality, conversation flow, response
+// templates, languages, and escalation rules. KnowledgeBase rows are the
+// LLM-extracted facts (FAQs, products, policies) the bot answers from.
+// CrawlJob + CrawlPage track the website-analysis pipeline.
+// BotSimulationSession persists test transcripts so accuracy scores can be
+// re-shown without re-running the LLM.
+// ============================================================================
+
+enum CrawlJobStatus {
+  pending
+  running
+  succeeded
+  partial
+  failed
+}
+
+model BotConfig {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String   @unique @map("organization_id") @db.Uuid
+  // Personality preset name + free-form override.
+  personality         String?  // 'formal' | 'casual' | 'friendly' | 'clinical' | custom
+  customPersonality   String?  @map("custom_personality")
+  // Detected by the LLM during analysis. Used to seed the personality picker.
+  detectedTone        String?  @map("detected_tone")
+  // The greeting text the bot opens with.
+  greeting            String?
+  // Comma-separated language codes the bot replies in. Default 'en'.
+  languages           String   @default("en")
+  // Escalation rules — what triggers a handoff to a human, business hours, etc.
+  escalationRules     Json?    @map("escalation_rules")
+  // Conversation flow — for now a JSON object keyed by intent (greeting,
+  // product_inquiry, booking, support, escalation) with prompt overrides.
+  // Drag-and-drop editor shipping later replaces this with a node graph.
+  conversationFlow    Json?    @map("conversation_flow")
+  // Pre-generated response templates: { intent_key: "template text" }
+  responseTemplates   Json?    @map("response_templates")
+  // True once the client clicks "Deploy". Inbound webhook's bot-runtime
+  // hook only fires when this is set + WhatsAppChannel.isActive is true.
+  deployedAt          DateTime? @map("deployed_at")
+  // Simple version counter, bumped on every PUT. Surfaced in the UI so
+  // the operator can see when something changed.
+  version             Int      @default(1)
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt        @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("bot_configs")
+}
+
+// One CrawlJob per analyze request. It walks pages, extracts text, and
+// fans out LLM analysis. Done once per onboarding; clients re-run when
+// their site changes.
+model CrawlJob {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String         @map("organization_id") @db.Uuid
+  rootUrl         String         @map("root_url")
+  status          CrawlJobStatus @default(pending)
+  // Limits: max pages crawled (cap on cost) + how deep to follow links.
+  maxPages        Int            @default(30) @map("max_pages")
+  maxDepth        Int            @default(2)  @map("max_depth")
+  pagesCrawled    Int            @default(0)  @map("pages_crawled")
+  pagesFailed     Int            @default(0)  @map("pages_failed")
+  errorMessage    String?        @map("error_message")
+  startedAt       DateTime?      @map("started_at")
+  finishedAt      DateTime?      @map("finished_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+
+  pages CrawlPage[]
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@map("crawl_jobs")
+}
+
+model CrawlPage {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  crawlJobId      String   @map("crawl_job_id") @db.Uuid
+  url             String
+  title           String?
+  // Cleaned text — boilerplate stripped. Capped at 100 KB per page.
+  bodyText        String?  @map("body_text")
+  fetchStatus     Int?     @map("fetch_status")
+  errorMessage    String?  @map("error_message")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  crawlJob CrawlJob @relation(fields: [crawlJobId], references: [id], onDelete: Cascade)
+
+  @@index([crawlJobId])
+  @@map("crawl_pages")
+}
+
+// Knowledge-base entries the bot answers from. Sourced by LLM extraction
+// from the crawl + Phase 1 catalog data. Each row is one FAQ-shaped fact.
+model KnowledgeBaseEntry {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  // 'faq' | 'product' | 'policy' | 'service' | 'business_info' | 'custom'
+  kind            String
+  question        String
+  answer          String
+  // Where it came from, for trust & traceability.
+  sourceUrl       String?  @map("source_url")
+  sourceType      String   @default("ai")  @map("source_type") // 'ai' | 'manual'
+  // The client can edit AI-generated entries; we mark approved=true once
+  // they've reviewed the row.
+  approved        Boolean  @default(false)
+  // pg_trgm-indexed search blob = question || ' ' || answer.
+  searchText      String   @default("") @map("search_text")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt        @map("updated_at")
+
+  @@index([organizationId, kind])
+  @@index([organizationId, approved])
+  @@map("knowledge_base_entries")
+}
+
+// Test scenarios: pre-defined transcripts the operator runs to score the
+// bot before deploy. We persist the LAST run so the UI can show last
+// scores without re-spending LLM tokens on every page load.
+model BotTestRun {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  scenarioKey     String   @map("scenario_key") // e.g. 'product_question'
+  scenarioPrompt  String   @map("scenario_prompt")
+  botResponse     String   @map("bot_response")
+  // 0..100 — LLM-as-judge score against expected behaviour.
+  score           Int?
+  judgeNotes      String?  @map("judge_notes")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, scenarioKey, createdAt(sort: Desc)])
+  @@map("bot_test_runs")
+}
+
+// Live preview — every simulator turn is persisted so we can replay it.
+// Threaded by sessionId (a client-side uuid).
+model BotSimulationTurn {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  sessionId       String   @map("session_id")
+  role            String   // 'user' | 'assistant'
+  body            String
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, sessionId, createdAt])
+  @@map("bot_simulation_turns")
 }

@@ -18,6 +18,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import { FlowEditor } from '@/components/bot/flow-editor';
 import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -531,61 +532,49 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
 }
 
 // ---------- Flow + templates -----------------------------------------------
-const FLOW_INTENTS = ['greeting', 'product_inquiry', 'booking', 'support', 'escalation'];
-
 function FlowAndTemplatesCard({ config }: { config: BotConfig | null }) {
   const qc = useQueryClient();
-  const [flow, setFlow] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    if (!config) return;
-    const f = (config.conversationFlow ?? {}) as Record<string, string>;
-    setFlow(f);
-  }, [config]);
 
   const save = useMutation({
-    mutationFn: () =>
-      api.put('/api/v1/bot/config', {
-        conversationFlow: flow,
-        responseTemplates: flow, // keep them aligned for v1
-      }),
+    mutationFn: (snapshot: {
+      nodes: { id: string; intent: string; label: string; response: string; x: number; y: number }[];
+      edges: { id: string; source: string; target: string }[];
+    }) => {
+      // Keep responseTemplates as a flat intent → response map so the bot
+      // engine (which reads response templates) still works without a
+      // graph-aware planner.
+      const responseTemplates: Record<string, string> = {};
+      for (const n of snapshot.nodes) {
+        if (n.intent && n.response) responseTemplates[n.intent] = n.response;
+      }
+      return api.put('/api/v1/bot/config', {
+        conversationFlow: snapshot,
+        responseTemplates,
+      });
+    },
     onSuccess: () => {
-      toast.success('Flow + templates saved');
+      toast.success('Flow saved');
       qc.invalidateQueries({ queryKey: ['bot-config'] });
     },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
   });
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Conversation flow + templates</CardTitle>
+        <CardTitle>Conversation flow</CardTitle>
         <CardDescription>
-          One-line guidance per canonical intent. Drag-and-drop graph editor coming later — this
-          form covers the same five paths the bot needs to handle.
+          Drag intents around, connect them with fallthrough edges, and edit each node's response
+          template in the side panel. Drag from a node's right handle to another node's left handle
+          to add an edge.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {FLOW_INTENTS.map((intent) => (
-          <div key={intent} className="space-y-1.5">
-            <Label htmlFor={`flow-${intent}`} className="capitalize">
-              {intent.replace(/_/g, ' ')}
-            </Label>
-            <Textarea
-              id={`flow-${intent}`}
-              rows={2}
-              placeholder={
-                intent === 'escalation'
-                  ? 'When asked, escalate to a human via the inbox.'
-                  : `Sample reply / guidance for ${intent.replace(/_/g, ' ')}…`
-              }
-              value={flow[intent] ?? ''}
-              onChange={(e) => setFlow((f) => ({ ...f, [intent]: e.target.value }))}
-            />
-          </div>
-        ))}
-        <Button onClick={() => save.mutate()} loading={save.isPending}>
-          Save flow
-        </Button>
+      <CardContent>
+        <FlowEditor
+          initial={{ conversationFlow: config?.conversationFlow ?? null }}
+          onSave={(snapshot) => save.mutate(snapshot)}
+          saving={save.isPending}
+        />
       </CardContent>
     </Card>
   );

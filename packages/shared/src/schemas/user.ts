@@ -11,6 +11,7 @@ export const memberSchema = z.object({
   lastName: z.string().nullable(),
   avatarUrl: z.string().url().nullable(),
   role: z.nativeEnum(OrgRole),
+  skills: z.array(z.string()).default([]),
   status: z.nativeEnum(UserStatus),
   isActive: z.boolean(),
   lastLoginAt: z.string().datetime().nullable(),
@@ -22,6 +23,13 @@ export const updateMemberRoleBodySchema = z.object({
   role: z.nativeEnum(OrgRole),
 });
 export type UpdateMemberRoleBody = z.infer<typeof updateMemberRoleBodySchema>;
+
+export const updateMemberSkillsBodySchema = z.object({
+  skills: z.array(
+    z.string().trim().toLowerCase().max(40).regex(/^[a-z0-9_-]+$/i, 'Use letters, numbers, _ or -.'),
+  ),
+});
+export type UpdateMemberSkillsBody = z.infer<typeof updateMemberSkillsBodySchema>;
 
 export const updateProfileBodySchema = z.object({
   firstName: z.string().trim().min(1).max(80).optional(),

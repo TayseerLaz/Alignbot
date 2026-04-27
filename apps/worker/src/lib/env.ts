@@ -29,6 +29,27 @@ const envSchema = z.object({
   // Phase 2 — Anthropic for crawl analysis. Worker no-ops AI step if missing.
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-6'),
+
+  // SMTP — used by the data-export worker to email the recipient a signed
+  // download link. Same env var shape as the API. Falls back to Mailpit/Mailhog
+  // when EMAIL_SMTP_HOST is unset.
+  EMAIL_FROM: z.string().default('ALIGNED <noreply@aligned.local>'),
+  EMAIL_DEV_SMTP_HOST: z.string().default('localhost'),
+  EMAIL_DEV_SMTP_PORT: z.coerce.number().int().positive().default(1025),
+  EMAIL_SMTP_HOST: z.string().optional(),
+  EMAIL_SMTP_PORT: z.coerce.number().int().positive().optional(),
+  EMAIL_SMTP_USER: z.string().optional(),
+  EMAIL_SMTP_PASS: z.string().optional(),
+  EMAIL_SMTP_SECURE: z
+    .string()
+    .optional()
+    .transform((s) => s === 'true'),
+
+  // Same env var as the API portal — used in the export-ready email so the
+  // user can deep-link back to the portal.
+  WEB_PUBLIC_URL: z.string().url().default('http://localhost:3000'),
+
+  DATA_EXPORT_CONCURRENCY: z.coerce.number().int().positive().default(1),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -18,6 +18,7 @@ export const QUEUE_SYNC = 'sync';
 export const QUEUE_WEBHOOK_DELIVERY = 'webhook-delivery';
 export const QUEUE_EMAIL = 'email';
 export const QUEUE_CRAWL = 'crawl';
+export const QUEUE_DATA_EXPORT = 'data-export';
 
 // ----- Job payload types (single source of truth shared with worker) ------
 export interface ImportJobPayload {
@@ -47,6 +48,13 @@ export interface EmailJobPayload {
 export interface CrawlJobPayload {
   organizationId: string;
   crawlJobId: string;
+}
+
+export interface DataExportPayload {
+  organizationId: string;
+  requestedByUserId: string;
+  requestedByEmail: string;
+  exportId: string;
 }
 
 // ----- Queue singletons (lazy) --------------------------------------------
@@ -83,6 +91,14 @@ let crawlQueue: Queue<CrawlJobPayload> | null = null;
 export function getCrawlQueue(): Queue<CrawlJobPayload> {
   if (!crawlQueue) crawlQueue = new Queue(QUEUE_CRAWL, { connection: getConnection() });
   return crawlQueue;
+}
+
+let dataExportQueue: Queue<DataExportPayload> | null = null;
+export function getDataExportQueue(): Queue<DataExportPayload> {
+  if (!dataExportQueue) {
+    dataExportQueue = new Queue(QUEUE_DATA_EXPORT, { connection: getConnection() });
+  }
+  return dataExportQueue;
 }
 
 // QueueEvents — used by API to subscribe to progress (e.g. for SSE on imports).

@@ -153,6 +153,12 @@ export default function SettingsPage() {
               title="Branding"
               description="White-label: accent colour, footer, custom CNAME."
             />
+            <SettingsLink
+              href="/settings/data-export"
+              icon={Download}
+              title="Data export"
+              description="Download all your products, conversations, and bot config (GDPR)."
+            />
             <div className="rounded-lg border border-dashed border-border p-4">
               <p className="text-sm font-medium text-foreground-muted">
                 Organization name, logo & billing

@@ -536,6 +536,26 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         );
       }
       const to = req.body.to.replace(/[^\d+]/g, '').replace(/^\+/, '');
+
+      // §5.1.2 24-hour session window. Meta only allows free-form text
+      // when the customer messaged in the last 24h; otherwise the agent
+      // must use an approved template. Enforce client-side so the user
+      // gets a clear error before we burn a Meta API call (and to surface
+      // the requirement in the UI rather than buried in a raw Meta error).
+      const lastInbound = await app.tenant(req, (tx) =>
+        tx.whatsAppMessage.findFirst({
+          where: { direction: 'inbound', fromNumber: to },
+          orderBy: { receivedAt: 'desc' },
+          select: { receivedAt: true },
+        }),
+      );
+      const ageMs = lastInbound ? Date.now() - lastInbound.receivedAt.getTime() : Infinity;
+      if (ageMs > 24 * 60 * 60 * 1000) {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'Outside the 24-hour session window. Send an approved template message instead — free-form replies require an inbound message from this customer in the last 24 hours.',
+        );
+      }
       const payload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
@@ -796,6 +816,27 @@ export default async function whatsappRoutes(app: FastifyInstance) {
 
       // Step 3: send the message.
       const to = req.body.to.replace(/[^\d+]/g, '').replace(/^\+/, '');
+
+      // §5.1.2 24-hour session window — same rule as /whatsapp/send. Media
+      // messages also count as free-form for Meta's purposes; outside the
+      // window an agent has to use a template.
+      const lastInboundMedia = await app.tenant(req, (tx) =>
+        tx.whatsAppMessage.findFirst({
+          where: { direction: 'inbound', fromNumber: to },
+          orderBy: { receivedAt: 'desc' },
+          select: { receivedAt: true },
+        }),
+      );
+      const ageMsMedia = lastInboundMedia
+        ? Date.now() - lastInboundMedia.receivedAt.getTime()
+        : Infinity;
+      if (ageMsMedia > 24 * 60 * 60 * 1000) {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'Outside the 24-hour session window. Send an approved template message instead — media replies require an inbound message from this customer in the last 24 hours.',
+        );
+      }
+
       const payload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
@@ -1145,7 +1186,9 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         return 'invalid signature';
       }
 
-      // Walk Meta's payload structure: entry[].changes[].value.messages[].
+      // Walk Meta's payload structure: entry[].changes[].value.messages[]
+      // for inbound, entry[].changes[].value.statuses[] for delivery /
+      // read receipts on outbound messages we previously sent.
       const body = (req.body ?? {}) as {
         entry?: {
           changes?: {
@@ -1159,10 +1202,40 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 text?: { body?: string };
                 timestamp?: string;
               }[];
+              statuses?: {
+                id?: string; // wamid of the outbound message
+                status?: 'sent' | 'delivered' | 'read' | 'failed';
+                timestamp?: string;
+                recipient_id?: string;
+              }[];
             };
           }[];
         }[];
       };
+
+      // Read-receipt path — process status events first so the inbound
+      // path's transaction work doesn't block them.
+      for (const entry of body.entry ?? []) {
+        for (const change of entry.changes ?? []) {
+          for (const s of change.value?.statuses ?? []) {
+            if (!s.id || !s.status) continue;
+            await withRlsBypass((tx) =>
+              tx.whatsAppMessage.updateMany({
+                where: {
+                  organizationId: channel.organizationId,
+                  metaMessageId: s.id!,
+                },
+                data: {
+                  metaStatus: s.status!,
+                  metaStatusAt: s.timestamp
+                    ? new Date(Number(s.timestamp) * 1000)
+                    : new Date(),
+                },
+              }),
+            ).catch((err) => req.log.error({ err }, '[whatsapp] status update failed'));
+          }
+        }
+      }
 
       const persisted: { from: string; type: string; bodyText: string | null; metaId: string | null }[] = [];
       for (const entry of body.entry ?? []) {

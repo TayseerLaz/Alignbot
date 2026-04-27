@@ -24,6 +24,7 @@ const threadDtoSchema = z.object({
   status: threadStatusSchema,
   assignedToUserId: uuidSchema.nullable(),
   assignedToName: z.string().nullable(),
+  requiredSkill: z.string().nullable(),
   lastMessageAt: z.string().datetime(),
   lastMessagePreview: z.string().nullable(),
   inboundCount: z.number().int(),
@@ -68,6 +69,7 @@ function serializeThread(t: {
   customerName: string | null;
   status: string;
   assignedToUserId: string | null;
+  requiredSkill?: string | null;
   lastMessageAt: Date;
   lastMessagePreview: string | null;
   inboundCount: number;
@@ -88,6 +90,7 @@ function serializeThread(t: {
         ? [t.assignedTo.firstName, t.assignedTo.lastName].filter(Boolean).join(' ') ||
           t.assignedTo.email
         : null,
+    requiredSkill: t.requiredSkill ?? null,
     lastMessageAt: t.lastMessageAt.toISOString(),
     lastMessagePreview: t.lastMessagePreview,
     inboundCount: t.inboundCount,
@@ -279,31 +282,43 @@ export default async function inboxRoutes(app: FastifyInstance) {
   );
 
   // ---------- POST /inbox/threads/:id/auto-assign ----------------------
-  // Round-robin pick the next active org member who has the fewest open
-  // threads currently. Cheap deterministic round-robin: order members by
-  // (open thread count ASC, joinedAt ASC) and take the first.
+  // Pick the next active org member who has the fewest open threads.
+  // Skill-aware: if the thread carries `requiredSkill`, only members
+  // whose `skills[]` includes it are eligible. Falls back to all active
+  // members if no one has the skill (with a clear error message instead
+  // of silently dumping it on a random agent).
   r.post(
     '/inbox/threads/:id/auto-assign',
     {
       schema: {
         tags: ['inbox'],
-        summary: 'Auto-assign this thread round-robin to the lightest-loaded member.',
+        summary: 'Auto-assign this thread to the lightest-loaded eligible member (skill-aware).',
         params: z.object({ id: uuidSchema }),
       },
       preHandler: [app.requireRole('editor')],
     },
     async (req) =>
       app.tenant(req, async (tx) => {
-        // Active members, ordered by current open-thread load.
-        const members = await tx.membership.findMany({
-          where: { isActive: true },
-          select: { userId: true, createdAt: true },
+        const thread = await tx.whatsAppThread.findUnique({ where: { id: req.params.id } });
+        if (!thread) throw notFound('Thread not found.');
+
+        const candidates = await tx.membership.findMany({
+          where: {
+            isActive: true,
+            ...(thread.requiredSkill ? { skills: { has: thread.requiredSkill } } : {}),
+          },
+          select: { userId: true, createdAt: true, skills: true },
         });
-        if (members.length === 0) {
-          throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'No active members to assign.');
+        if (candidates.length === 0) {
+          throw badRequest(
+            ApiErrorCode.VALIDATION_ERROR,
+            thread.requiredSkill
+              ? `No active members carry the "${thread.requiredSkill}" skill. Add it on /members or clear the thread's required skill.`
+              : 'No active members to assign.',
+          );
         }
         const loads = await Promise.all(
-          members.map(async (m) => ({
+          candidates.map(async (m) => ({
             userId: m.userId,
             joinedAt: m.createdAt,
             load: await tx.whatsAppThread.count({
@@ -323,6 +338,40 @@ export default async function inboxRoutes(app: FastifyInstance) {
           },
         });
         return { data: serializeThread(updated) };
+      }),
+  );
+
+  // ---------- PATCH /inbox/threads/:id/required-skill ------------------
+  r.patch(
+    '/inbox/threads/:id/required-skill',
+    {
+      schema: {
+        tags: ['inbox'],
+        summary: 'Set or clear the required skill that auto-assign should match.',
+        params: z.object({ id: uuidSchema }),
+        body: z.object({
+          requiredSkill: z
+            .string()
+            .trim()
+            .max(40)
+            .regex(/^[a-z0-9_-]+$/i, 'Use letters, numbers, _ or -.')
+            .nullable(),
+        }),
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        await tx.whatsAppThread.update({
+          where: { id: req.params.id },
+          data: {
+            requiredSkill: req.body.requiredSkill
+              ? req.body.requiredSkill.toLowerCase()
+              : null,
+          },
+        });
+        return { ok: true as const };
       }),
   );
 
@@ -501,6 +550,84 @@ export default async function inboxRoutes(app: FastifyInstance) {
           },
         });
         return { ok: true as const };
+      });
+    },
+  );
+
+  // ===================================================================
+  // AGENT-TYPING PRESENCE
+  // ===================================================================
+  // When agent A is typing into thread X, the client POSTs /typing every
+  // 2 s. Server sets a Redis key with 5 s TTL. Other agents on /inbox SSE
+  // see the key in the next tick and render an "agent X is typing…"
+  // indicator. We can't surface customer-typing — Meta's WhatsApp Cloud
+  // API does not emit typing events for inbound from customers.
+  r.post(
+    '/inbox/threads/:id/typing',
+    {
+      schema: {
+        tags: ['inbox'],
+        summary: 'Heartbeat: this agent is typing in this thread.',
+        params: z.object({ id: uuidSchema }),
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const userId = req.auth!.userId;
+      const { getRedis } = await import('../../lib/redis.js');
+      const redis = getRedis();
+      const key = `inbox:typing:${orgId}:${req.params.id}:${userId}`;
+      // 5 s TTL — client beats every 2 s. Meta-style timing.
+      await redis.set(key, '1', 'EX', 5);
+      return { ok: true as const };
+    },
+  );
+
+  // Returns the set of {userId, displayName} currently typing in a
+  // thread. Polled (or read on every SSE tick) by clients viewing that
+  // thread. Cheap because we read at most ~10 keys per request.
+  r.get(
+    '/inbox/threads/:id/typing',
+    {
+      schema: {
+        tags: ['inbox'],
+        summary: 'Who is currently typing in this thread (excluding me).',
+        params: z.object({ id: uuidSchema }),
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const me = req.auth!.userId;
+      const { getRedis } = await import('../../lib/redis.js');
+      const redis = getRedis();
+      const pattern = `inbox:typing:${orgId}:${req.params.id}:*`;
+      const keys: string[] = [];
+      let cursor = '0';
+      do {
+        const [next, batch] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 50);
+        cursor = next;
+        keys.push(...batch);
+      } while (cursor !== '0' && keys.length < 50);
+      const userIds = keys
+        .map((k) => k.split(':').pop())
+        .filter((u): u is string => !!u && u !== me);
+      if (userIds.length === 0) return { data: [] as { userId: string; name: string }[] };
+      return app.tenant(req, async (tx) => {
+        const users = await tx.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, firstName: true, lastName: true, email: true },
+        });
+        return {
+          data: users.map((u) => ({
+            userId: u.id,
+            name:
+              [u.firstName, u.lastName].filter(Boolean).join(' ') ||
+              u.email.split('@')[0]!,
+          })),
+        };
       });
     },
   );

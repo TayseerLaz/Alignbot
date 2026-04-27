@@ -6,6 +6,7 @@ import { collectDefaultMetrics, Counter, Gauge, Registry } from 'prom-client';
 
 import { env } from './lib/env.js';
 import { startCrawlWorker } from './jobs/crawl.js';
+import { startDataExportWorker } from './jobs/data-export.js';
 import { startImportWorker } from './jobs/import.js';
 import { startSyncWorker } from './jobs/sync.js';
 import { startUptimeProbe } from './jobs/uptime-probe.js';
@@ -82,6 +83,7 @@ async function main() {
     startSyncWorker(),
     startWebhookDeliveryWorker(),
     startCrawlWorker(),
+    startDataExportWorker(),
   ];
 
   for (const w of workers) {

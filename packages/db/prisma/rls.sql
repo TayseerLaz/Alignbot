@@ -124,6 +124,7 @@ SELECT _aligned_apply_tenant_rls('usage_events');
 SELECT _aligned_apply_tenant_rls('usage_monthly');
 SELECT _aligned_apply_tenant_rls('branding_configs');
 SELECT _aligned_apply_tenant_rls('meta_onboarding_steps');
+SELECT _aligned_apply_tenant_rls('data_exports');
 -- plans is GLOBAL (no organization_id) — no RLS needed; access via API only.
 
 -- ---------- pg_trgm GIN indexes for fast search (Prisma can't express) ------

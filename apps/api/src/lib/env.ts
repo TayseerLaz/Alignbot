@@ -72,6 +72,11 @@ const envSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_PORTAL_RETURN_URL: z.string().url().optional(),
   TRIAL_LENGTH_DAYS: z.coerce.number().int().positive().default(14),
+
+  // Phase 3 §5.1.4 — custom CNAMEs. Customers point a CNAME at this host;
+  // we verify with `dns.promises.resolveCname` before the row goes
+  // 'verified' (which is the gate for Caddy on-demand TLS).
+  CUSTOM_CNAME_TARGET: z.string().default('alignbot.aligned-tech.com'),
 });
 
 export type Env = z.infer<typeof envSchema>;

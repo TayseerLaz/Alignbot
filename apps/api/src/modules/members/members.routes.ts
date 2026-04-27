@@ -7,6 +7,7 @@ import {
   memberSchema,
   successSchema,
   updateMemberRoleBodySchema,
+  updateMemberSkillsBodySchema,
   uuidSchema,
 } from '@aligned/shared';
 import type { FastifyInstance } from 'fastify';
@@ -47,6 +48,7 @@ export default async function memberRoutes(app: FastifyInstance) {
             lastName: m.user.lastName,
             avatarUrl: m.user.avatarUrl,
             role: m.role,
+            skills: m.skills,
             status: m.user.status,
             isActive: m.isActive,
             lastLoginAt: m.user.lastLoginAt?.toISOString() ?? null,
@@ -56,6 +58,29 @@ export default async function memberRoutes(app: FastifyInstance) {
         };
       });
     },
+  );
+
+  // ---------- PATCH /members/:id/skills ------------------------------------
+  r.patch(
+    '/members/:id/skills',
+    {
+      schema: {
+        tags: ['members'],
+        summary: 'Replace the member’s skill tags. Used by skill-based routing.',
+        params: z.object({ id: uuidSchema }),
+        body: updateMemberSkillsBodySchema,
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        await tx.membership.update({
+          where: { id: req.params.id },
+          data: { skills: req.body.skills },
+        });
+        return { ok: true as const };
+      }),
   );
 
   // ---------- PATCH /members/:id/role --------------------------------------
@@ -106,6 +131,7 @@ export default async function memberRoutes(app: FastifyInstance) {
             lastName: updated.user.lastName,
             avatarUrl: updated.user.avatarUrl,
             role: updated.role,
+            skills: updated.skills,
             status: updated.user.status,
             isActive: updated.isActive,
             lastLoginAt: updated.user.lastLoginAt?.toISOString() ?? null,

@@ -1,12 +1,23 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ImageIcon, Palette, Trash2, Upload } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CheckCircle2,
+  Clock,
+  ImageIcon,
+  Palette,
+  RefreshCw,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shell/page-header';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -21,6 +32,11 @@ interface Branding {
   logoUrl?: string | null;
   accentColor: string | null;
   customCname: string | null;
+  cnameStatus: 'pending' | 'verified' | 'failed' | null;
+  cnameVerifiedAt: string | null;
+  cnameLastCheckAt?: string | null;
+  cnameError: string | null;
+  cnameTarget: string;
   footerText: string | null;
   updatedAt: string;
 }
@@ -173,9 +189,12 @@ export default function BrandingPage() {
               onChange={(e) => setCname(e.target.value)}
             />
             <p className="text-xs text-foreground-muted">
-              Point a CNAME at <span className="font-mono">alignbot.aligned-tech.com</span> on your
-              DNS provider, then enter it here. We don't manage your DNS — just store the value.
+              Point a CNAME at{' '}
+              <span className="font-mono">{q.data?.data.cnameTarget ?? 'alignbot.aligned-tech.com'}</span>{' '}
+              on your DNS provider, then save and click <strong>Verify now</strong>. We issue a TLS
+              cert via Caddy on-demand once verification succeeds.
             </p>
+            <CnameStatus branding={q.data?.data ?? null} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="footer">Footer text</Label>
@@ -193,5 +212,73 @@ export default function BrandingPage() {
         </CardContent>
       </Card>
     </>
+  );
+}
+
+function CnameStatus({ branding }: { branding: Branding | null }) {
+  const qc = useQueryClient();
+  const verify = useMutation({
+    mutationFn: () =>
+      api.post<{ ok: boolean; status: string; resolved: string[]; error: string | null }>(
+        '/api/v1/branding/cname/verify',
+      ),
+    onSuccess: (res) => {
+      if (res.ok) toast.success('CNAME verified — TLS cert will issue on first visit.');
+      else toast.error(`Verification failed: ${res.error ?? 'check DNS'}`);
+      qc.invalidateQueries({ queryKey: ['branding'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Verify failed'),
+  });
+
+  if (!branding?.customCname) return null;
+
+  const status = branding.cnameStatus;
+  const badge =
+    status === 'verified' ? (
+      <Badge variant="success" className="gap-1">
+        <CheckCircle2 className="size-3" /> Verified
+      </Badge>
+    ) : status === 'failed' ? (
+      <Badge variant="danger" className="gap-1">
+        <AlertTriangle className="size-3" /> Failed
+      </Badge>
+    ) : (
+      <Badge variant="muted" className="gap-1">
+        <Clock className="size-3" /> Pending
+      </Badge>
+    );
+
+  return (
+    <div className="mt-2 rounded-md border border-border bg-surface-muted/40 p-3 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {badge}
+          {branding.cnameVerifiedAt ? (
+            <span className="text-foreground-subtle">
+              verified {new Date(branding.cnameVerifiedAt).toLocaleString()}
+            </span>
+          ) : null}
+        </div>
+        <Button
+          size="sm"
+          variant="secondary"
+          loading={verify.isPending}
+          onClick={() => verify.mutate()}
+        >
+          <RefreshCw className="size-3.5" /> Verify now
+        </Button>
+      </div>
+      {status === 'failed' && branding.cnameError ? (
+        <p className="mt-2 text-amber-700">
+          {branding.cnameError}. DNS changes can take a few minutes to propagate.
+        </p>
+      ) : null}
+      {status === 'pending' ? (
+        <p className="mt-2 text-foreground-muted">
+          Add the CNAME at your DNS provider, then click Verify. We re-check every time you click —
+          no background polling.
+        </p>
+      ) : null}
+    </div>
   );
 }

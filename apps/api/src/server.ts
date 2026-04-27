@@ -23,8 +23,10 @@ import auditRoutes from './modules/audit/audit.routes.js';
 import billingRoutes from './modules/billing/billing.routes.js';
 import botRoutes from './modules/bot/bot.routes.js';
 import dashboardRoutes from './modules/dashboard/dashboard.routes.js';
+import dataExportRoutes from './modules/data-export/data-export.routes.js';
 import orgRoutes from './modules/org/org.routes.js';
 import saasRoutes from './modules/saas/saas.routes.js';
+import statusRoutes from './modules/status/status.routes.js';
 import inboxRoutes from './modules/whatsapp-inbox/inbox.routes.js';
 import whatsappRoutes from './modules/whatsapp/whatsapp.routes.js';
 import whatsappTemplatesRoutes from './modules/whatsapp-templates/templates.routes.js';
@@ -211,6 +213,7 @@ export async function buildServer() {
   await app.register(dashboardRoutes, { prefix: '/api/v1' });
   await app.register(auditRoutes, { prefix: '/api/v1' });
   await app.register(accountRoutes, { prefix: '/api/v1' });
+  await app.register(dataExportRoutes, { prefix: '/api/v1' });
   await app.register(orgRoutes, { prefix: '/api/v1' });
   await app.register(whatsappRoutes, { prefix: '/api/v1' });
   await app.register(inboxRoutes, { prefix: '/api/v1' });
@@ -222,6 +225,9 @@ export async function buildServer() {
 
   // Routes — public (HMAC-verified, no JWT)
   await app.register(inboundWebhookRoutes, { prefix: '/api/v1' });
+
+  // Routes — public status page data (no auth). Mounted at /api/v1/status.
+  await app.register(statusRoutes, { prefix: '/api/v1' });
 
   // Routes — chatbot read API (X-Aligned-Api-Key)
   await app.register(readApiRoutes, { prefix: '/api/v1' });

@@ -2,6 +2,13 @@
 # Override domains via environment when needed; defaults match a typical layout.
 {
     email {$ACME_EMAIL:ops@aligned.example}
+
+    # On-demand TLS for tenant-supplied custom CNAMEs. Caddy hits the
+    # API's /api/v1/caddy/ask?domain=<host> and only issues a cert when
+    # the domain is `verified` in the branding_configs table.
+    on_demand_tls {
+        ask http://api:4000/api/v1/caddy/ask
+    }
 }
 
 # Portal
@@ -35,6 +42,29 @@
     }
     reverse_proxy api:4000 {
         health_uri /health
+        health_interval 10s
+    }
+}
+
+# Tenant custom CNAMEs — on-demand TLS gated by /caddy/ask. Any hostname
+# that isn't matched by a static block above falls into here. Caddy asks
+# the API whether it should issue a cert; the API checks branding_configs
+# for `cnameStatus = 'verified'`. Verified custom domains land on the
+# portal (the inbox lives at app.*/<inbox>; the chatbot read API lives at
+# api.*/api/v1/read — those keep their own domains).
+:443 {
+    tls {
+        on_demand
+    }
+    encode zstd gzip
+    header {
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+    reverse_proxy web:3000 {
+        health_uri /
         health_interval 10s
     }
 }

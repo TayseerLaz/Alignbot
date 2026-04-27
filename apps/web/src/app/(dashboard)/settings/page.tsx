@@ -1,9 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowRight, Building2, Key, PlugZap, User, Users, Webhook } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { ArrowRight, Building2, Download, Key, PlugZap, Trash2, User, Users, Webhook } from 'lucide-react';
+import { useState } from 'react';
+import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shell/page-header';
+import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
@@ -11,6 +15,8 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { api, ApiError, getAccessToken } from '@/lib/api';
 import { useSession } from '@/lib/session';
 
 function SettingsLink({
@@ -47,8 +53,59 @@ function SettingsLink({
 
 export default function SettingsPage() {
   const { session } = useSession();
+  const router = useRouter();
   const organization = session?.organization;
   const user = session?.user;
+  const isOrgAdmin = organization?.role === 'admin';
+  const [exporting, setExporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  async function exportOrgData() {
+    setExporting(true);
+    try {
+      const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/organization/export`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${getAccessToken() ?? ''}` },
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error(`Export failed (${res.status})`);
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `aligned-org-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+      toast.success('Organization archive downloaded.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function deleteOrganization() {
+    const confirmed = await confirmDialog({
+      title: `Permanently delete ${organization?.name ?? 'this organization'}?`,
+      body:
+        'This is irreversible. Every product, service, FAQ, audit entry, member, API key, webhook endpoint, connector, and WhatsApp message will be deleted. ' +
+        'Other organizations are unaffected. You will be signed out.',
+      confirmLabel: 'Delete organization',
+      destructive: true,
+    });
+    if (!confirmed) return;
+    setDeleting(true);
+    try {
+      await api.delete('/api/v1/organization');
+      toast.success('Organization deleted.');
+      router.push('/login');
+    } catch (err) {
+      if (err instanceof ApiError) toast.error(err.payload.message);
+      else toast.error('Delete failed.');
+      setDeleting(false);
+    }
+  }
 
   return (
     <>
@@ -147,6 +204,46 @@ export default function SettingsPage() {
             />
           </CardContent>
         </Card>
+
+        {isOrgAdmin ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Organization data</CardTitle>
+              <CardDescription>
+                Export everything about <strong>{organization?.name}</strong> as JSON, or
+                permanently delete the organisation. Org-admin only.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Button variant="secondary" loading={exporting} onClick={exportOrgData}>
+                <Download className="size-4" /> Download organization archive
+              </Button>
+              <p className="text-xs text-foreground-muted">
+                Includes products, services, business info, FAQs, policies, members (without
+                password hashes), audit log, webhook endpoints, connectors, and WhatsApp config.
+                API keys + WhatsApp tokens are <em>not</em> included — those are issued, not
+                portable.
+              </p>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {isOrgAdmin ? (
+          <Card className="border-red-200">
+            <CardHeader>
+              <CardTitle className="text-red-700">Delete organization</CardTitle>
+              <CardDescription>
+                Hard-delete this organisation and every entity inside it. Other organisations are
+                unaffected. Refused if a member of this org is the last admin somewhere else.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="danger" loading={deleting} onClick={deleteOrganization}>
+                <Trash2 className="size-4" /> Delete organization
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
     </>
   );

@@ -56,9 +56,12 @@ export default function LoginPage() {
             autoComplete="email"
             {...form.register('email')}
             aria-invalid={!!form.formState.errors.email}
+            aria-describedby={form.formState.errors.email ? 'email-error' : undefined}
           />
           {form.formState.errors.email ? (
-            <p className="text-xs text-red-600">{form.formState.errors.email.message}</p>
+            <p id="email-error" role="alert" className="text-xs text-red-600">
+              {form.formState.errors.email.message}
+            </p>
           ) : null}
         </div>
 
@@ -78,9 +81,12 @@ export default function LoginPage() {
             autoComplete="current-password"
             {...form.register('password')}
             aria-invalid={!!form.formState.errors.password}
+            aria-describedby={form.formState.errors.password ? 'password-error' : undefined}
           />
           {form.formState.errors.password ? (
-            <p className="text-xs text-red-600">{form.formState.errors.password.message}</p>
+            <p id="password-error" role="alert" className="text-xs text-red-600">
+              {form.formState.errors.password.message}
+            </p>
           ) : null}
         </div>
 

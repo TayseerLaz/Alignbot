@@ -91,6 +91,19 @@ export const whatsappTestSendResultSchema = z.object({
 export type WhatsAppTestSendBody = z.infer<typeof whatsappTestSendBodySchema>;
 export type WhatsAppTestSendResult = z.infer<typeof whatsappTestSendResultSchema>;
 
+// Send a free-form text message to a customer who has messaged you in the
+// last 24 hours (Meta's "session" window). Outside that window, only
+// approved templates are allowed — use the test-send endpoint or build a
+// templates module.
+export const whatsappSendTextBodySchema = z.object({
+  to: z
+    .string()
+    .trim()
+    .regex(/^\+?[0-9]{6,16}$/, 'Use E.164 digits only, e.g. +14155551234.'),
+  body: z.string().trim().min(1).max(4096),
+});
+export type WhatsAppSendTextBody = z.infer<typeof whatsappSendTextBodySchema>;
+
 // Inbound message row for the audit table.
 export const whatsappMessageSchema = z.object({
   id: uuidSchema,

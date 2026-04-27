@@ -21,6 +21,7 @@ import accountRoutes from './modules/account/account.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
 import auditRoutes from './modules/audit/audit.routes.js';
 import dashboardRoutes from './modules/dashboard/dashboard.routes.js';
+import orgRoutes from './modules/org/org.routes.js';
 import whatsappRoutes from './modules/whatsapp/whatsapp.routes.js';
 import apiKeyRoutes from './modules/api-keys/api-keys.routes.js';
 import authRoutes from './modules/auth/auth.routes.js';
@@ -205,6 +206,7 @@ export async function buildServer() {
   await app.register(dashboardRoutes, { prefix: '/api/v1' });
   await app.register(auditRoutes, { prefix: '/api/v1' });
   await app.register(accountRoutes, { prefix: '/api/v1' });
+  await app.register(orgRoutes, { prefix: '/api/v1' });
   await app.register(whatsappRoutes, { prefix: '/api/v1' });
   await app.register(adminRoutes, { prefix: '/api/v1' });
 

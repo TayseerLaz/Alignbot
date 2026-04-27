@@ -6,6 +6,7 @@ import { generateOpaqueToken, hashPassword, hashToken, verifyPassword } from '..
 import { prisma, withRlsBypass } from '../../lib/db.js';
 import {
   emailVerifyTemplate,
+  welcomeTemplate,
   invitationTemplate,
   passwordResetTemplate,
   sendEmail,
@@ -75,6 +76,18 @@ export async function signup(args: SignupArgs) {
     const tpl = emailVerifyTemplate({ firstName: user.firstName, url: verifyUrl });
     await sendEmail({ to: user.email, ...tpl }).catch((err) =>
       console.error('[auth] verify email send failed', err),
+    );
+
+    // Welcome email — separate from verify so the inbox feels populated +
+    // the user has a checklist of next steps. Send unconditionally; failure
+    // is non-fatal.
+    const welcomeTpl = welcomeTemplate({
+      firstName: user.firstName,
+      organizationName: organization.name,
+      portalUrl: env.WEB_PUBLIC_URL,
+    });
+    await sendEmail({ to: user.email, ...welcomeTpl }).catch((err) =>
+      console.error('[auth] welcome email send failed', err),
     );
 
     await recordAudit({

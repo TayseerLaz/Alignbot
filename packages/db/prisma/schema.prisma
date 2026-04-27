@@ -280,8 +280,8 @@ model Organization {
   // Day 4
   catalogRevisions CatalogRevision[]
   notifications    Notification[]
-  // Phase 1.5
-  whatsappChannel  WhatsAppChannel?
+  // Phase 1.5 / Phase 3
+  whatsappChannels WhatsAppChannel[]
 
   @@index([status])
   @@map("organizations")
@@ -1030,7 +1030,13 @@ model Notification {
 
 model WhatsAppChannel {
   id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId      String   @unique @map("organization_id") @db.Uuid
+  organizationId      String   @map("organization_id") @db.Uuid
+  // Multiple numbers per org are supported (Phase 3 §5.1.2). Exactly ONE
+  // row per org is marked primary; the partial unique index in the
+  // accompanying migration enforces this.
+  isPrimary           Boolean  @default(true) @map("is_primary")
+  // Human-readable label shown in the UI when an org has > 1 number.
+  label               String?
   // ---- Meta-side identifiers (visible-ish, copied from Meta dashboard) ----
   wabaId              String?  @map("waba_id")
   phoneNumberId       String?  @map("phone_number_id")
@@ -1056,6 +1062,7 @@ model WhatsAppChannel {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  @@index([organizationId])
   @@map("whatsapp_channels")
 }
 

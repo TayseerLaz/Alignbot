@@ -29,6 +29,7 @@ import {
   whatsappMessageSchema,
   whatsappTestSendBodySchema,
   whatsappTestSendResultSchema,
+  whatsappSendTextBodySchema,
   whatsappVerifyResultSchema,
 } from '@aligned/shared';
 import crypto from 'node:crypto';
@@ -128,9 +129,9 @@ export default async function whatsappRoutes(app: FastifyInstance) {
     async (req) => {
       const orgId = req.auth!.organizationId;
       return app.tenant(req, async (tx) => {
-        let row = await tx.whatsAppChannel.findUnique({ where: { organizationId: orgId } });
+        let row = await tx.whatsAppChannel.findFirst({ where: { organizationId: orgId, isPrimary: true } });
         if (!row) {
-          row = await tx.whatsAppChannel.create({ data: newDefaults(orgId) });
+          row = await tx.whatsAppChannel.create({ data: { ...newDefaults(orgId), isPrimary: true } });
         }
         return { data: serializeChannel(row) };
       });
@@ -154,8 +155,8 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       const b = req.body;
       return app.tenant(req, async (tx) => {
         const existing =
-          (await tx.whatsAppChannel.findUnique({ where: { organizationId: orgId } })) ??
-          (await tx.whatsAppChannel.create({ data: newDefaults(orgId) }));
+          (await tx.whatsAppChannel.findFirst({ where: { organizationId: orgId, isPrimary: true } })) ??
+          (await tx.whatsAppChannel.create({ data: { ...newDefaults(orgId), isPrimary: true } }));
 
         // Helper: undefined = leave alone, '' = clear, else set.
         const update = <T>(v: T | undefined): T | null | undefined =>
@@ -254,7 +255,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
     async (req) => {
       const orgId = req.auth!.organizationId;
       const channel = await app.tenant(req, (tx) =>
-        tx.whatsAppChannel.findUnique({ where: { organizationId: orgId } }),
+        tx.whatsAppChannel.findFirst({ where: { organizationId: orgId, isPrimary: true } }),
       );
       if (!channel) throw notFound('WhatsApp channel not configured.');
       if (!channel.accessToken || !channel.phoneNumberId) {
@@ -382,7 +383,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
     async (req) => {
       const orgId = req.auth!.organizationId;
       const channel = await app.tenant(req, (tx) =>
-        tx.whatsAppChannel.findUnique({ where: { organizationId: orgId } }),
+        tx.whatsAppChannel.findFirst({ where: { organizationId: orgId, isPrimary: true } }),
       );
       if (!channel) throw notFound('WhatsApp channel not configured.');
       if (!channel.accessToken || !channel.phoneNumberId) {
@@ -470,6 +471,218 @@ export default async function whatsappRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- POST /whatsapp/send ---------------------------------------
+  // Send a free-form text reply to a customer. Meta only accepts non-template
+  // messages within a 24-hour session window after the customer's last
+  // inbound message. We don't enforce that here — Meta will return an error
+  // and we surface it. Persists outbound to the audit log.
+  r.post(
+    '/whatsapp/send',
+    {
+      schema: {
+        tags: ['whatsapp'],
+        summary: 'Send a free-form text reply (must be inside the 24h customer-session window).',
+        body: whatsappSendTextBodySchema,
+        response: { 200: itemEnvelopeSchema(whatsappTestSendResultSchema) },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const channel = await app.tenant(req, (tx) =>
+        tx.whatsAppChannel.findFirst({ where: { organizationId: orgId, isPrimary: true } }),
+      );
+      if (!channel) throw notFound('WhatsApp channel not configured.');
+      if (!channel.accessToken || !channel.phoneNumberId) {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'Set the access token and phone number ID before sending.',
+        );
+      }
+      if (!channel.isActive) {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'Channel is not active — flip the Live toggle first.',
+        );
+      }
+      const to = req.body.to.replace(/[^\d+]/g, '').replace(/^\+/, '');
+      const payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to,
+        type: 'text',
+        text: { preview_url: true, body: req.body.body },
+      };
+
+      let resBody = '';
+      let resStatus = 0;
+      try {
+        const res = await fetch(
+          `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId)}/messages`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${channel.accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(10_000),
+          },
+        );
+        resStatus = res.status;
+        resBody = await res.text();
+      } catch (err) {
+        return {
+          data: {
+            ok: false,
+            metaMessageId: null,
+            errorMessage: err instanceof Error ? err.message : 'fetch failed',
+          },
+        };
+      }
+
+      let parsed: Record<string, unknown> | null = null;
+      try {
+        parsed = JSON.parse(resBody) as Record<string, unknown>;
+      } catch {
+        parsed = null;
+      }
+
+      if (resStatus < 200 || resStatus >= 300 || !parsed) {
+        const errObj = (parsed?.error ?? {}) as Record<string, unknown>;
+        return {
+          data: {
+            ok: false,
+            metaMessageId: null,
+            errorMessage:
+              typeof errObj.message === 'string'
+                ? errObj.message
+                : `HTTP ${resStatus} — ${resBody.slice(0, 200)}`,
+          },
+        };
+      }
+
+      const messages = (parsed.messages ?? []) as { id?: string }[];
+      const metaMessageId = messages[0]?.id ?? null;
+
+      await withRlsBypass((tx) =>
+        tx.whatsAppMessage.create({
+          data: {
+            organizationId: orgId,
+            direction: 'outbound',
+            metaMessageId,
+            toNumber: to,
+            messageType: 'text',
+            body: req.body.body,
+            rawPayload: payload as never,
+          },
+        }),
+      ).catch(() => undefined);
+
+      await recordAudit({
+        action: 'business_info_updated',
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        entityType: 'whatsapp_message',
+        entityId: metaMessageId ?? undefined,
+        metadata: { event: 'whatsapp_send_text', to },
+      });
+
+      return { data: { ok: true, metaMessageId, errorMessage: null } };
+    },
+  );
+
+  // ---------- GET /whatsapp/threads -------------------------------------
+  // Returns one entry per customer phone number with a preview of the last
+  // message + count + timestamps. Drives the /inbox page; cheap because we
+  // index whatsapp_messages on (organization_id, received_at DESC).
+  r.get(
+    '/whatsapp/threads',
+    {
+      schema: {
+        tags: ['whatsapp'],
+        summary: 'List WhatsApp conversation threads grouped by customer phone number.',
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const messages = await tx.whatsAppMessage.findMany({
+          orderBy: { receivedAt: 'desc' },
+          take: 1000,
+        });
+        // Group by the "other party" — for inbound that's `from`, for
+        // outbound that's `to`. Same phone in either direction = one thread.
+        const threadsMap = new Map<
+          string,
+          {
+            phone: string;
+            lastDirection: 'inbound' | 'outbound';
+            lastBody: string | null;
+            lastAt: string;
+            inboundCount: number;
+            outboundCount: number;
+          }
+        >();
+        for (const m of messages) {
+          const phone = (m.direction === 'inbound' ? m.fromNumber : m.toNumber) ?? '';
+          if (!phone) continue;
+          const existing = threadsMap.get(phone);
+          if (!existing) {
+            threadsMap.set(phone, {
+              phone,
+              lastDirection: m.direction === 'outbound' ? 'outbound' : 'inbound',
+              lastBody: m.body,
+              lastAt: m.receivedAt.toISOString(),
+              inboundCount: m.direction === 'inbound' ? 1 : 0,
+              outboundCount: m.direction === 'outbound' ? 1 : 0,
+            });
+          } else {
+            if (m.direction === 'inbound') existing.inboundCount += 1;
+            else existing.outboundCount += 1;
+          }
+        }
+        const threads = [...threadsMap.values()].sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1));
+        return { data: threads };
+      }),
+  );
+
+  // ---------- GET /whatsapp/threads/:phone ------------------------------
+  // Returns the full message history for one phone — both inbound and
+  // outbound. Phone is URL-encoded by the client.
+  r.get(
+    '/whatsapp/threads/:phone',
+    {
+      schema: {
+        tags: ['whatsapp'],
+        summary: 'Full message history for one phone number.',
+        params: z.object({ phone: z.string().min(3) }),
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const phone = decodeURIComponent(req.params.phone);
+        const messages = await tx.whatsAppMessage.findMany({
+          where: { OR: [{ fromNumber: phone }, { toNumber: phone }] },
+          orderBy: { receivedAt: 'asc' },
+          take: 500,
+        });
+        return {
+          data: messages.map((m) => ({
+            id: m.id,
+            direction: m.direction === 'outbound' ? ('outbound' as const) : ('inbound' as const),
+            metaMessageId: m.metaMessageId,
+            fromNumber: m.fromNumber,
+            toNumber: m.toNumber,
+            messageType: m.messageType,
+            body: m.body,
+            receivedAt: m.receivedAt.toISOString(),
+          })),
+        };
+      }),
+  );
+
   // ---------- GET /whatsapp/messages ------------------------------------
   // Audit log of inbound + test-outbound messages.
   r.get(
@@ -505,6 +718,141 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       }),
   );
 
+  // ---------- GET /whatsapp/numbers ------------------------------------
+  // Lists every channel for the org. Used by the "Numbers" section of the
+  // /whatsapp page when a client has more than one Meta phone number.
+  r.get(
+    '/whatsapp/numbers',
+    {
+      schema: {
+        tags: ['whatsapp'],
+        summary: 'List every WhatsApp channel (number) configured for the org.',
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const rows = await tx.whatsAppChannel.findMany({
+          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+        });
+        return {
+          data: rows.map((c) => ({
+            ...serializeChannel(c),
+            isPrimary: c.isPrimary,
+            label: c.label,
+          })),
+        };
+      }),
+  );
+
+  // ---------- POST /whatsapp/numbers -----------------------------------
+  // Create a *secondary* number. The first channel an org gets is created
+  // implicitly via GET /whatsapp; this endpoint is for additional ones.
+  r.post(
+    '/whatsapp/numbers',
+    {
+      schema: {
+        tags: ['whatsapp'],
+        summary: 'Add an additional (non-primary) WhatsApp number to the org.',
+        body: z.object({ label: z.string().trim().min(1).max(80).optional() }),
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      return app.tenant(req, async (tx) => {
+        // Ensure a primary already exists; if not, the first call should be
+        // GET /whatsapp not this one.
+        const primary = await tx.whatsAppChannel.findFirst({
+          where: { organizationId: orgId, isPrimary: true },
+        });
+        if (!primary) {
+          throw badRequest(
+            ApiErrorCode.VALIDATION_ERROR,
+            'Configure the primary number first by visiting /whatsapp.',
+          );
+        }
+        const created = await tx.whatsAppChannel.create({
+          data: {
+            ...newDefaults(orgId),
+            isPrimary: false,
+            label: req.body.label ?? null,
+          },
+        });
+        return { data: { ...serializeChannel(created), isPrimary: false, label: created.label } };
+      });
+    },
+  );
+
+  // ---------- POST /whatsapp/numbers/:id/promote ------------------------
+  // Switch which channel is the org's primary. Wrapped in a transaction so
+  // the partial unique index never sees two primaries momentarily.
+  r.post(
+    '/whatsapp/numbers/:id/promote',
+    {
+      schema: {
+        tags: ['whatsapp'],
+        summary: 'Mark a channel as the org\'s primary number.',
+        params: z.object({ id: uuidSchema }),
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      return app.tenant(req, async (tx) => {
+        const target = await tx.whatsAppChannel.findFirst({
+          where: { id: req.params.id, organizationId: orgId },
+        });
+        if (!target) throw notFound('Channel not found.');
+        if (target.isPrimary) return { ok: true as const };
+        // Demote the existing primary first.
+        await tx.whatsAppChannel.updateMany({
+          where: { organizationId: orgId, isPrimary: true },
+          data: { isPrimary: false },
+        });
+        await tx.whatsAppChannel.update({
+          where: { id: target.id },
+          data: { isPrimary: true },
+        });
+        return { ok: true as const };
+      });
+    },
+  );
+
+  // ---------- DELETE /whatsapp/numbers/:id -----------------------------
+  // Remove a non-primary channel. Removing the primary is refused — promote
+  // another number first.
+  r.delete(
+    '/whatsapp/numbers/:id',
+    {
+      schema: {
+        tags: ['whatsapp'],
+        summary: 'Remove a non-primary WhatsApp channel.',
+        params: z.object({ id: uuidSchema }),
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      return app.tenant(req, async (tx) => {
+        const target = await tx.whatsAppChannel.findFirst({
+          where: { id: req.params.id, organizationId: orgId },
+        });
+        if (!target) throw notFound('Channel not found.');
+        if (target.isPrimary) {
+          throw badRequest(
+            ApiErrorCode.CONFLICT,
+            'Cannot remove the primary channel — promote another number first.',
+          );
+        }
+        await tx.whatsAppChannel.delete({ where: { id: target.id } });
+        return { ok: true as const };
+      });
+    },
+  );
+
   // -----------------------------------------------------------------
   // Public webhook surfaces — no JWT, signature-verified.
   // -----------------------------------------------------------------
@@ -530,8 +878,13 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       logLevel: 'warn', // these are noisy in dev
     },
     async (req, reply) => {
+      // Use the org's primary channel's verify token. Meta verifies the
+      // webhook URL once per WABA, so the primary number's token is the
+      // canonical one for the whole org's subscription.
       const channel = await withRlsBypass((tx) =>
-        tx.whatsAppChannel.findUnique({ where: { organizationId: req.params.orgId } }),
+        tx.whatsAppChannel.findFirst({
+          where: { organizationId: req.params.orgId, isPrimary: true },
+        }),
       );
       const mode = req.query['hub.mode'];
       const token = req.query['hub.verify_token'];
@@ -575,9 +928,26 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       // Fastify exposes request.rawBody when this option is set on the schema.
     },
     async (req, reply) => {
-      const channel = await withRlsBypass((tx) =>
-        tx.whatsAppChannel.findUnique({ where: { organizationId: req.params.orgId } }),
-      );
+      // For multi-number orgs we resolve the channel by the inbound
+      // payload's `metadata.phone_number_id`, falling back to the primary.
+      // The HMAC must validate against THAT channel's appSecret because
+      // Meta uses the app-level secret (which is the same across all
+      // numbers under one app, but we keep it per-channel for flexibility).
+      const inferredPhoneId = ((req.body ?? {}) as {
+        entry?: { changes?: { value?: { metadata?: { phone_number_id?: string } } }[] }[];
+      }).entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
+
+      const channel = await withRlsBypass(async (tx) => {
+        if (inferredPhoneId) {
+          const byPhone = await tx.whatsAppChannel.findFirst({
+            where: { organizationId: req.params.orgId, phoneNumberId: inferredPhoneId },
+          });
+          if (byPhone) return byPhone;
+        }
+        return tx.whatsAppChannel.findFirst({
+          where: { organizationId: req.params.orgId, isPrimary: true },
+        });
+      });
       if (!channel || !channel.appSecret) {
         // Without an app secret we can't authenticate the request — refuse
         // rather than persist a potentially-spoofed message.

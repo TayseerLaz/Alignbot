@@ -6,6 +6,7 @@ import {
   Briefcase,
   Building2,
   Code2,
+  Inbox,
   KeyRound,
   LayoutDashboard,
   type LucideIcon,
@@ -62,6 +63,7 @@ const groups: NavGroup[] = [
       { href: '/api-keys', label: 'API keys', icon: KeyRound },
       { href: '/webhooks', label: 'Webhooks', icon: BarChart3 },
       { href: '/whatsapp', label: 'WhatsApp', icon: MessageCircle },
+      { href: '/inbox', label: 'Inbox', icon: Inbox },
     ],
   },
   {

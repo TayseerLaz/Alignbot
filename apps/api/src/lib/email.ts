@@ -82,6 +82,28 @@ export function emailVerifyTemplate(args: { firstName: string | null; url: strin
   return { subject: 'Verify your ALIGNED email', html, text };
 }
 
+export function welcomeTemplate(args: {
+  firstName: string | null;
+  organizationName: string;
+  portalUrl: string;
+}) {
+  const greeting = args.firstName ? `Welcome ${args.firstName},` : 'Welcome,';
+  const html = wrap(`
+    <p>${greeting}</p>
+    <p>Your <strong>${args.organizationName}</strong> workspace on ALIGNED is ready. Here are the things most clients want to do first:</p>
+    <ol>
+      <li><strong>Add your products and services</strong> — paste from a spreadsheet or import a CSV.</li>
+      <li><strong>Fill business info</strong> — opening hours, contact channels, FAQs.</li>
+      <li><strong>Issue an API key</strong> for your chatbot to read your live catalog.</li>
+      <li><strong>Connect WhatsApp</strong> — paste your Meta credentials and verify.</li>
+    </ol>
+    <p><a class="btn" href="${args.portalUrl}/dashboard">Open your dashboard</a></p>
+    <p>Need a hand? Reply to this email and we'll help.</p>
+  `);
+  const text = `${greeting}\n\nYour ${args.organizationName} workspace on ALIGNED is ready.\n\nFirst things to do:\n  1. Add products and services\n  2. Fill business info\n  3. Issue an API key for your chatbot\n  4. Connect WhatsApp\n\nDashboard: ${args.portalUrl}/dashboard\n\nReply to this email if you need help.`;
+  return { subject: `Welcome to ALIGNED, ${args.organizationName}`, html, text };
+}
+
 export function passwordResetTemplate(args: { firstName: string | null; url: string }) {
   const greeting = args.firstName ? `Hi ${args.firstName},` : 'Hello,';
   const html = wrap(`

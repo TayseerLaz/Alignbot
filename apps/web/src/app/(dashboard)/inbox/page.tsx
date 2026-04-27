@@ -8,6 +8,7 @@ import {
   Clock,
   Inbox,
   MessageCircle,
+  Paperclip,
   Phone,
   Send,
   Sparkles,
@@ -612,7 +613,10 @@ function ReplyBox({
   const [body, setBody] = useState('');
   const [mode, setMode] = useState<'reply' | 'note'>('reply');
   const [showCanned, setShowCanned] = useState(false);
+  const [attaching, setAttaching] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const qc = useQueryClient();
 
   const insertCanned = (cr: CannedResponse) => {
     // {first_name}, {phone} substitution — first_name is left empty for the
@@ -622,6 +626,43 @@ function ReplyBox({
     setShowCanned(false);
     requestAnimationFrame(() => taRef.current?.focus());
   };
+
+  async function attachAndSend(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 16 * 1024 * 1024) {
+      toast.error('Files must be under 16 MB.');
+      return;
+    }
+    setAttaching(true);
+    try {
+      const isImage = file.type.startsWith('image/');
+      const { uploadFile } = await import('@/lib/upload');
+      const { assetId } = await uploadFile(file, isImage ? 'image' : 'document');
+      const res = await api.post<{ data: { ok: boolean; errorMessage: string | null } }>(
+        '/api/v1/whatsapp/send-media',
+        {
+          to,
+          assetId,
+          mediaType: isImage ? 'image' : 'document',
+          caption: body.trim() || undefined,
+        },
+      );
+      if (res.data.ok) {
+        toast.success('Media sent');
+        setBody('');
+        qc.invalidateQueries({ queryKey: ['inbox-thread'] });
+        qc.invalidateQueries({ queryKey: ['inbox-threads'] });
+      } else {
+        toast.error(res.data.errorMessage ?? 'Send failed');
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setAttaching(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
 
   const submit = () => {
     const v = body.trim();
@@ -658,7 +699,25 @@ function ReplyBox({
         >
           <StickyNote className="mr-1 inline size-3" /> Internal note
         </button>
-        <div className="ml-auto relative">
+        <div className="ml-auto flex items-center gap-1">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,application/pdf"
+            className="hidden"
+            onChange={attachAndSend}
+          />
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={mode === 'note' || attaching}
+            loading={attaching}
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Attach file"
+          >
+            <Paperclip className="size-3.5" /> Attach
+          </Button>
+          <div className="relative">
           <Button
             size="sm"
             variant="ghost"
@@ -690,6 +749,7 @@ function ReplyBox({
               )}
             </div>
           ) : null}
+          </div>
         </div>
       </div>
       <div className="p-3">

@@ -104,6 +104,20 @@ export const whatsappSendTextBodySchema = z.object({
 });
 export type WhatsAppSendTextBody = z.infer<typeof whatsappSendTextBodySchema>;
 
+// Send a media message (image / document) using a previously-uploaded
+// Asset id. The server uploads the bytes to Meta to obtain a media_id,
+// then sends the message. Caption is optional.
+export const whatsappSendMediaBodySchema = z.object({
+  to: z
+    .string()
+    .trim()
+    .regex(/^\+?[0-9]{6,16}$/, 'Use E.164 digits only, e.g. +14155551234.'),
+  assetId: uuidSchema,
+  mediaType: z.enum(['image', 'document', 'audio', 'video']),
+  caption: z.string().trim().max(1024).optional(),
+});
+export type WhatsAppSendMediaBody = z.infer<typeof whatsappSendMediaBodySchema>;
+
 // Inbound message row for the audit table.
 export const whatsappMessageSchema = z.object({
   id: uuidSchema,

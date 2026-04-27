@@ -431,6 +431,73 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- GET /aligned-admin/self-uptime ----------------------------
+  // Reads the worker's self-uptime probe ZSET and computes 24h / 7d
+  // availability + p95 latency. NOT a substitute for external monitoring
+  // — the worker can't observe the VM being entirely down. Surfaced
+  // alongside (or in absence of) the UptimeRobot tile.
+  r.get(
+    '/aligned-admin/self-uptime',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Worker-process self-probe of the API /health endpoint.',
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async () => {
+      const redis = getRedis();
+      const now = Date.now();
+      const day = 24 * 60 * 60 * 1000;
+      const cutoff7d = now - 7 * day;
+      const cutoff24h = now - day;
+
+      // ZSET members are formatted "<ts>:<ok>:<status>:<latency>".
+      let raw: string[] = [];
+      try {
+        raw = await redis.zrangebyscore('uptime:api', cutoff7d, now);
+      } catch {
+        raw = [];
+      }
+      const samples = raw
+        .map((m) => {
+          const [tsStr, okStr, statusStr, latencyStr] = m.split(':');
+          return {
+            ts: Number(tsStr),
+            ok: okStr === '1',
+            status: Number(statusStr),
+            latency: Number(latencyStr),
+          };
+        })
+        .filter((s) => Number.isFinite(s.ts));
+
+      function uptimePct(since: number) {
+        const slice = samples.filter((s) => s.ts >= since);
+        if (slice.length === 0) return null;
+        const ok = slice.filter((s) => s.ok).length;
+        return Number(((ok / slice.length) * 100).toFixed(3));
+      }
+      function p95Latency(since: number) {
+        const slice = samples.filter((s) => s.ts >= since && Number.isFinite(s.latency));
+        if (slice.length === 0) return null;
+        const sorted = [...slice].sort((a, b) => a.latency - b.latency);
+        return sorted[Math.floor(sorted.length * 0.95)]?.latency ?? null;
+      }
+
+      return {
+        data: {
+          configured: samples.length > 0,
+          window7dPct: uptimePct(cutoff7d),
+          window24hPct: uptimePct(cutoff24h),
+          p95Latency24h: p95Latency(cutoff24h),
+          totalSamples: samples.length,
+          oldestSample: samples[0]?.ts ?? null,
+          newestSample: samples[samples.length - 1]?.ts ?? null,
+        },
+      };
+    },
+  );
+
   // ---------- POST /aligned-admin/queues/:queue/drain-failed ---------------
   // Clears all failed jobs on a queue. Useful for wiping out orphan repeatable
   // jobs that reference deleted orgs (they re-fire forever otherwise).

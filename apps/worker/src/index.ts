@@ -8,6 +8,7 @@ import { env } from './lib/env.js';
 import { startCrawlWorker } from './jobs/crawl.js';
 import { startImportWorker } from './jobs/import.js';
 import { startSyncWorker } from './jobs/sync.js';
+import { startUptimeProbe } from './jobs/uptime-probe.js';
 import { startWebhookDeliveryWorker } from './jobs/webhook-delivery.js';
 import { prisma } from './jobs/db.js';
 
@@ -71,6 +72,10 @@ async function main() {
   metricsServer.listen(Number(process.env.WORKER_METRICS_PORT ?? 9100), () =>
     log.info({ port: process.env.WORKER_METRICS_PORT ?? 9100 }, 'metrics server listening'),
   );
+
+  // Start the uptime probe — separate from the BullMQ workers list because
+  // it's not a queue worker, it's a recurring self-ping interval.
+  startUptimeProbe();
 
   const workers = [
     startImportWorker(),

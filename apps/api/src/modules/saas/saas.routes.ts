@@ -67,10 +67,20 @@ export default async function saasRoutes(app: FastifyInstance) {
       return app.tenant(req, async (tx) => {
         let row = await tx.brandingConfig.findUnique({ where: { organizationId: orgId } });
         if (!row) row = await tx.brandingConfig.create({ data: { organizationId: orgId } });
+        // Resolve a public/signed URL when a logo asset is attached.
+        let logoUrl: string | null = null;
+        if (row.logoAssetId) {
+          const asset = await tx.asset.findUnique({ where: { id: row.logoAssetId } });
+          if (asset) {
+            const { resolveAssetUrl } = await import('../catalog/shared.js');
+            logoUrl = await resolveAssetUrl(asset.storageKey);
+          }
+        }
         return {
           data: {
             id: row.id,
             logoAssetId: row.logoAssetId,
+            logoUrl,
             accentColor: row.accentColor,
             customCname: row.customCname,
             footerText: row.footerText,

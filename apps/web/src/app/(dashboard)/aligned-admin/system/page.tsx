@@ -171,6 +171,21 @@ export default function AlignedAdminSystemPage() {
     refetchInterval: 60_000,
   });
 
+  const selfUptime = useQuery({
+    queryKey: ['admin-self-uptime'],
+    queryFn: () =>
+      api.get<{
+        data: {
+          configured: boolean;
+          window7dPct: number | null;
+          window24hPct: number | null;
+          p95Latency24h: number | null;
+          totalSamples: number;
+        };
+      }>('/api/v1/aligned-admin/self-uptime'),
+    refetchInterval: 60_000,
+  });
+
   const drainFailed = useMutation({
     mutationFn: (queue: 'import' | 'sync' | 'webhook') =>
       api.post(`/api/v1/aligned-admin/queues/${queue}/drain-failed`),
@@ -282,6 +297,68 @@ export default function AlignedAdminSystemPage() {
           )}
         </CardContent>
       </Card>
+
+      {selfUptime.data?.data.configured ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="size-4" /> Process uptime (self-probe)
+            </CardTitle>
+            <CardDescription>
+              Worker pings the API /health every 60 s. Catches "API process crashed but VM is up"
+              cases. <strong>Not a substitute for external monitoring</strong> — if the whole VM is
+              down, neither side can record. Wire UptimeRobot for the truthful picture.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <StatCard
+              icon={CheckCircle2}
+              label="24-h uptime"
+              value={
+                selfUptime.data.data.window24hPct == null
+                  ? '—'
+                  : `${selfUptime.data.data.window24hPct.toFixed(2)}%`
+              }
+              tone={
+                selfUptime.data.data.window24hPct == null
+                  ? 'default'
+                  : selfUptime.data.data.window24hPct >= 99.9
+                    ? 'good'
+                    : 'warn'
+              }
+            />
+            <StatCard
+              icon={Activity}
+              label="7-day uptime"
+              value={
+                selfUptime.data.data.window7dPct == null
+                  ? '—'
+                  : `${selfUptime.data.data.window7dPct.toFixed(2)}%`
+              }
+              tone={
+                selfUptime.data.data.window7dPct == null
+                  ? 'default'
+                  : selfUptime.data.data.window7dPct >= 99.9
+                    ? 'good'
+                    : 'warn'
+              }
+            />
+            <StatCard
+              icon={AlertCircle}
+              label="p95 latency (24 h)"
+              value={selfUptime.data.data.p95Latency24h == null ? '—' : `${selfUptime.data.data.p95Latency24h} ms`}
+              sub={`${selfUptime.data.data.totalSamples} samples in 7 d`}
+              tone={
+                selfUptime.data.data.p95Latency24h == null
+                  ? 'default'
+                  : selfUptime.data.data.p95Latency24h < 200
+                    ? 'good'
+                    : 'warn'
+              }
+            />
+          </CardContent>
+        </Card>
+      ) : null}
 
       {uptime.data?.data.configured ? (
         <Card>

@@ -30,6 +30,7 @@ import {
   whatsappTestSendBodySchema,
   whatsappTestSendResultSchema,
   whatsappSendTextBodySchema,
+  whatsappSendMediaBodySchema,
   whatsappVerifyResultSchema,
 } from '@aligned/shared';
 import crypto from 'node:crypto';
@@ -682,6 +683,208 @@ export default async function whatsappRoutes(app: FastifyInstance) {
           nextCursor: null,
         };
       }),
+  );
+
+  // ---------- POST /whatsapp/send-media -------------------------------
+  // Two-step send: download the asset bytes from Wasabi → POST to Meta's
+  // /media endpoint to obtain a media_id → POST /messages with that id.
+  // Persists the outbound message in the audit log + thread.
+  r.post(
+    '/whatsapp/send-media',
+    {
+      schema: {
+        tags: ['whatsapp'],
+        summary: 'Send a media message (image/document) using an uploaded Asset id.',
+        body: whatsappSendMediaBodySchema,
+        response: { 200: itemEnvelopeSchema(whatsappTestSendResultSchema) },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const channel = await app.tenant(req, (tx) =>
+        tx.whatsAppChannel.findFirst({ where: { organizationId: orgId, isPrimary: true } }),
+      );
+      if (!channel) throw notFound('WhatsApp channel not configured.');
+      if (!channel.accessToken || !channel.phoneNumberId) {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'Set the access token and phone number ID before sending.',
+        );
+      }
+      if (!channel.isActive) {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'Channel is not active — flip the Live toggle first.',
+        );
+      }
+
+      // Look up the asset (RLS will enforce tenant isolation).
+      const asset = await app.tenant(req, (tx) =>
+        tx.asset.findUnique({ where: { id: req.body.assetId } }),
+      );
+      if (!asset) throw notFound('Asset not found.');
+
+      // Rate limit + cap.
+      const { capCheck, bumpUsage } = await import('../../lib/billing.js');
+      const { prisma } = await import('../../lib/db.js');
+      await app.tenant(req, (tx) => capCheck(tx as never, orgId, 'monthly_message'));
+      const bucket = await consumeSendToken(orgId);
+      if (!bucket.ok) {
+        throw badRequest(
+          ApiErrorCode.RATE_LIMITED,
+          `Outbound rate limit hit — retry in ${bucket.retryAfterMs}ms.`,
+        );
+      }
+
+      // Step 1: fetch the asset bytes from object storage.
+      const { presignGetUrl, publicUrlFor } = await import('../../lib/storage.js');
+      const fileUrl = publicUrlFor(asset.storageKey) ?? (await presignGetUrl(asset.storageKey));
+      let fileBytes: Buffer;
+      try {
+        const r = await fetch(fileUrl, { signal: AbortSignal.timeout(15_000) });
+        if (!r.ok) throw new Error(`asset fetch ${r.status}`);
+        const ab = await r.arrayBuffer();
+        fileBytes = Buffer.from(ab);
+      } catch (err) {
+        return {
+          data: {
+            ok: false,
+            metaMessageId: null,
+            errorMessage: err instanceof Error ? err.message : 'asset fetch failed',
+          },
+        };
+      }
+
+      // Step 2: upload to Meta as multipart/form-data → media_id.
+      let metaMediaId: string | null = null;
+      try {
+        const fd = new FormData();
+        const blob = new Blob([fileBytes], { type: asset.contentType ?? 'application/octet-stream' });
+        fd.set('file', blob, asset.metadata && (asset.metadata as { filename?: string }).filename ? (asset.metadata as { filename: string }).filename : 'upload.bin');
+        fd.set('messaging_product', 'whatsapp');
+        fd.set('type', asset.contentType ?? 'application/octet-stream');
+        const upRes = await fetch(
+          `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId)}/media`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${channel.accessToken}` },
+            body: fd,
+            signal: AbortSignal.timeout(20_000),
+          },
+        );
+        const upText = await upRes.text();
+        if (!upRes.ok) {
+          return {
+            data: { ok: false, metaMessageId: null, errorMessage: `Meta media upload ${upRes.status}: ${upText.slice(0, 200)}` },
+          };
+        }
+        const upJson = JSON.parse(upText) as { id?: string };
+        metaMediaId = upJson.id ?? null;
+      } catch (err) {
+        return {
+          data: {
+            ok: false,
+            metaMessageId: null,
+            errorMessage: err instanceof Error ? err.message : 'Meta upload failed',
+          },
+        };
+      }
+      if (!metaMediaId) {
+        return { data: { ok: false, metaMessageId: null, errorMessage: 'Meta returned no media id' } };
+      }
+
+      // Step 3: send the message.
+      const to = req.body.to.replace(/[^\d+]/g, '').replace(/^\+/, '');
+      const payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to,
+        type: req.body.mediaType,
+        [req.body.mediaType]: {
+          id: metaMediaId,
+          ...(req.body.caption ? { caption: req.body.caption } : {}),
+        },
+      };
+      let sendBody = '';
+      let sendStatus = 0;
+      try {
+        const res = await fetch(
+          `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId)}/messages`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${channel.accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(10_000),
+          },
+        );
+        sendStatus = res.status;
+        sendBody = await res.text();
+      } catch (err) {
+        return {
+          data: {
+            ok: false,
+            metaMessageId: null,
+            errorMessage: err instanceof Error ? err.message : 'send failed',
+          },
+        };
+      }
+
+      let parsedSend: Record<string, unknown> | null = null;
+      try {
+        parsedSend = JSON.parse(sendBody) as Record<string, unknown>;
+      } catch {
+        parsedSend = null;
+      }
+      if (sendStatus < 200 || sendStatus >= 300 || !parsedSend) {
+        const err = (parsedSend?.error ?? {}) as { message?: string };
+        return {
+          data: { ok: false, metaMessageId: null, errorMessage: err.message ?? `HTTP ${sendStatus}` },
+        };
+      }
+      const messages = (parsedSend.messages ?? []) as { id?: string }[];
+      const metaMessageId = messages[0]?.id ?? null;
+
+      await withRlsBypass(async (tx) => {
+        const thread = await tx.whatsAppThread.upsert({
+          where: { organizationId_customerPhone: { organizationId: orgId, customerPhone: to } },
+          create: {
+            organizationId: orgId,
+            customerPhone: to,
+            status: 'open',
+            lastMessageAt: new Date(),
+            lastMessagePreview: `[${req.body.mediaType}] ${req.body.caption ?? ''}`.slice(0, 200),
+            inboundCount: 0,
+            outboundCount: 1,
+          },
+          update: {
+            lastMessageAt: new Date(),
+            lastMessagePreview: `[${req.body.mediaType}] ${req.body.caption ?? ''}`.slice(0, 200),
+            outboundCount: { increment: 1 },
+          },
+        });
+        await tx.whatsAppMessage.create({
+          data: {
+            threadId: thread.id,
+            organizationId: orgId,
+            direction: 'outbound',
+            metaMessageId,
+            toNumber: to,
+            messageType: req.body.mediaType,
+            body: req.body.caption ?? null,
+            mediaAssetId: asset.id,
+            rawPayload: payload as never,
+          },
+        });
+      }).catch(() => undefined);
+
+      void bumpUsage(prisma as never, orgId, 'message_outbound');
+
+      return { data: { ok: true, metaMessageId, errorMessage: null } };
+    },
   );
 
   // ---------- GET /whatsapp/numbers ------------------------------------

@@ -55,7 +55,11 @@ jobs:
             # prompt (which hangs the SSH action because there's no TTY to
             # answer it). Cheap on a 4-vCPU box; takes ~30 s extra.
             rm -rf node_modules apps/*/node_modules packages/*/node_modules
-            pnpm install --frozen-lockfile
+            # NODE_ENV=production was sourced from .env.production above,
+            # which makes pnpm skip devDependencies (incl. prisma CLI,
+            # tsx, typescript, tiptap). Force include them for the install
+            # step only — runtime envs aren't affected by this override.
+            NODE_ENV=development pnpm install --frozen-lockfile
 
             echo "=== clear stale tsbuildinfo + dists (prevents incremental ghost builds) ==="
             find . -name "*.tsbuildinfo" -not -path "*/node_modules/*" -delete || true

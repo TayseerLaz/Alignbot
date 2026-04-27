@@ -50,7 +50,12 @@ jobs:
             git reset --hard origin/main
 
             echo "=== pnpm install ==="
-            pnpm install --frozen-lockfile --prefer-offline
+            # Clear node_modules first so pnpm doesn't hit its
+            # "modules directories will be removed and reinstalled — Proceed?"
+            # prompt (which hangs the SSH action because there's no TTY to
+            # answer it). Cheap on a 4-vCPU box; takes ~30 s extra.
+            rm -rf node_modules apps/*/node_modules packages/*/node_modules
+            pnpm install --frozen-lockfile
 
             echo "=== clear stale tsbuildinfo + dists (prevents incremental ghost builds) ==="
             find . -name "*.tsbuildinfo" -not -path "*/node_modules/*" -delete || true

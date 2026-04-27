@@ -64,6 +64,14 @@ const envSchema = z.object({
   // 503; the rest of the platform keeps working).
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-6'),
+
+  // Phase 3 §5.1.3 — Stripe billing. Empty values disable billing surfaces:
+  // /billing/checkout 503s, /webhooks/stripe rejects, cap middleware
+  // skips. Existing orgs stay on whatever subscription state they had.
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_PORTAL_RETURN_URL: z.string().url().optional(),
+  TRIAL_LENGTH_DAYS: z.coerce.number().int().positive().default(14),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -523,6 +523,10 @@ export default async function whatsappRoutes(app: FastifyInstance) {
           'Channel is not active — flip the Live toggle first.',
         );
       }
+      // Phase 3 cap check — block sends when the monthly message cap is hit.
+      const { capCheck } = await import('../../lib/billing.js');
+      await app.tenant(req, (tx) => capCheck(tx as never, orgId, 'monthly_message'));
+
       const bucket = await consumeSendToken(orgId);
       if (!bucket.ok) {
         throw badRequest(
@@ -622,6 +626,11 @@ export default async function whatsappRoutes(app: FastifyInstance) {
           },
         });
       }).catch(() => undefined);
+
+      // Phase 3 — count this send against the monthly message cap.
+      const { bumpUsage } = await import('../../lib/billing.js');
+      const { prisma } = await import('../../lib/db.js');
+      void bumpUsage(prisma as never, orgId, 'message_outbound');
 
       await recordAudit({
         action: 'business_info_updated',

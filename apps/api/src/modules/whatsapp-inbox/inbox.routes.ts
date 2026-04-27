@@ -506,6 +506,53 @@ export default async function inboxRoutes(app: FastifyInstance) {
   );
 
   // ===================================================================
+  // SSE REALTIME
+  // ===================================================================
+  // Server-Sent Events stream that ticks every 2s with a tiny "you should
+  // refetch" signal. Cheaper than WebSockets, avoids socket.io overhead,
+  // and the React Query layer in the client treats the tick as an
+  // invalidation trigger so threads + active thread auto-refresh
+  // sub-1-second perceived. True bidirectional WebSockets remain a
+  // future polish item if the SSE poll proves too coarse.
+  r.get(
+    '/inbox/sse',
+    {
+      schema: { tags: ['inbox'], summary: 'SSE: emits a ping every 2s for inbox refresh.' },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req, reply) => {
+      const orgId = req.auth!.organizationId;
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      reply.raw.write(`retry: 5000\n\n`);
+      reply.raw.write(`event: hello\ndata: ${JSON.stringify({ orgId })}\n\n`);
+      const interval = setInterval(() => {
+        try {
+          reply.raw.write(`event: tick\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
+        } catch {
+          /* socket likely closed */
+        }
+      }, 2000);
+      const cleanup = () => {
+        clearInterval(interval);
+        try {
+          reply.raw.end();
+        } catch {
+          /* noop */
+        }
+      };
+      req.raw.on('close', cleanup);
+      req.raw.on('error', cleanup);
+      // Fastify needs us to keep the reply alive; do not return.
+      return reply;
+    },
+  );
+
+  // ===================================================================
   // CANNED RESPONSES
   // ===================================================================
 

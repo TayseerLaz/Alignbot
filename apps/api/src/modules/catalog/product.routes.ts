@@ -20,6 +20,7 @@ import { z } from 'zod';
 
 import type { Prisma } from '../../lib/db.js';
 import { recordAudit } from '../../lib/audit.js';
+import { capCheck } from '../../lib/billing.js';
 import { conflict, notFound } from '../../lib/errors.js';
 import { recordRevision } from '../../lib/versioning.js';
 import { emitWebhookEvent } from '../../lib/webhooks.js';
@@ -130,6 +131,7 @@ export default async function productRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const orgId = req.auth!.organizationId;
       return app.tenant(req, async (tx) => {
+        await capCheck(tx as never, orgId, 'product');
         const slug = req.body.slug ?? slugify(req.body.name);
         const dupes = await tx.product.findFirst({
           where: { OR: [{ sku: req.body.sku }, { slug }], deletedAt: null },

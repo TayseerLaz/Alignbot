@@ -285,6 +285,9 @@ model Organization {
   whatsappThreads  WhatsAppThread[]
   // Phase 2
   botConfig        BotConfig?
+  // Phase 3 §5.1.3 + §5.1.4
+  subscription     Subscription?
+  branding         BrandingConfig?
 
   @@index([status])
   @@map("organizations")
@@ -1360,4 +1363,137 @@ model BotSimulationTurn {
 
   @@index([organizationId, sessionId, createdAt])
   @@map("bot_simulation_turns")
+}
+
+// ============================================================================
+// PHASE 3 §5.1.3 — Subscription & billing.
+// ----------------------------------------------------------------------------
+// Plan seeded once per environment (Starter/Growth/Enterprise + Free).
+// Subscription is per-org, mirrors Stripe state.
+// UsageEvent is append-only; UsageMonthly is a roll-up so cap checks are O(1).
+// ============================================================================
+
+enum SubscriptionStatus {
+  trialing
+  active
+  past_due
+  cancelled
+  free          // post-trial without payment — read-only soft cap
+  paused
+}
+
+model Plan {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Stable code used in env-driven seeds + Stripe Price metadata.
+  code              String   @unique
+  name              String
+  isActive          Boolean  @default(true) @map("is_active")
+  // Caps — null = unlimited.
+  productCap        Int?     @map("product_cap")
+  serviceCap        Int?     @map("service_cap")
+  memberCap         Int?     @map("member_cap")
+  monthlyMessageCap Int?     @map("monthly_message_cap")
+  monthlyImportCap  Int?     @map("monthly_import_cap")
+  apiKeyCap         Int?     @map("api_key_cap")
+  webhookCap        Int?     @map("webhook_cap")
+  // Pricing display + Stripe wiring.
+  priceMonthlyMinor Int?     @map("price_monthly_minor")
+  priceYearlyMinor  Int?     @map("price_yearly_minor")
+  currency          String   @default("USD")
+  stripePriceMonthlyId String? @map("stripe_price_monthly_id")
+  stripePriceYearlyId  String? @map("stripe_price_yearly_id")
+  // UI copy.
+  description       String?
+  highlights        String[] @default([])
+  sortOrder         Int      @default(100) @map("sort_order")
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model Subscription {
+  id                    String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId        String              @unique @map("organization_id") @db.Uuid
+  planId                String              @map("plan_id") @db.Uuid
+  status                SubscriptionStatus  @default(trialing)
+  // Stripe identifiers — only set once a real payment method is attached.
+  stripeCustomerId      String?             @map("stripe_customer_id")
+  stripeSubscriptionId  String?             @map("stripe_subscription_id")
+  trialEndsAt           DateTime?           @map("trial_ends_at")
+  currentPeriodEnd      DateTime?           @map("current_period_end")
+  cancelAtPeriodEnd     Boolean             @default(false) @map("cancel_at_period_end")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt        @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         Plan         @relation(fields: [planId], references: [id])
+
+  @@map("subscriptions")
+}
+
+// Append-only event log.
+model UsageEvent {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  // 'message_outbound', 'message_inbound', 'product_write', 'service_write',
+  // 'import_started', 'api_call', etc.
+  kind            String
+  count           Int      @default(1)
+  occurredAt      DateTime @default(now()) @map("occurred_at")
+
+  @@index([organizationId, kind, occurredAt(sort: Desc)])
+  @@map("usage_events")
+}
+
+// Per-org-per-month roll-up populated by a daily worker job.
+model UsageMonthly {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  // YYYY-MM key, lex-sortable.
+  yearMonth       String   @map("year_month")
+  kind            String
+  count           Int      @default(0)
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([organizationId, yearMonth, kind])
+  @@index([organizationId, yearMonth])
+  @@map("usage_monthly")
+}
+
+// ============================================================================
+// PHASE 3 §5.1.4 — Branding (white-label) + Meta onboarding progress.
+// ============================================================================
+
+model BrandingConfig {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @unique @map("organization_id") @db.Uuid
+  // Logo asset id (uploaded via existing Asset table).
+  logoAssetId     String?  @map("logo_asset_id") @db.Uuid
+  // Hex string, e.g. "#0070C9".
+  accentColor     String?  @map("accent_color")
+  // Custom domain like inbox.theircompany.com — DNS is the client's job.
+  customCname     String?  @map("custom_cname")
+  // Free-form footer or signature.
+  footerText      String?  @map("footer_text")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt        @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("branding_configs")
+}
+
+// One row per (org, step). Tracks the client's progress through Meta's
+// 7-step business-verification + WhatsApp-onboarding workflow.
+model MetaOnboardingStep {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  stepKey         String   @map("step_key")
+  completedAt     DateTime? @map("completed_at")
+  notes           String?
+
+  @@unique([organizationId, stepKey])
+  @@index([organizationId])
+  @@map("meta_onboarding_steps")
 }

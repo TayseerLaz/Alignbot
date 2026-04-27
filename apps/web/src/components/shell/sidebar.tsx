@@ -7,6 +7,7 @@ import {
   Briefcase,
   Building2,
   Code2,
+  CreditCard,
   Inbox,
   KeyRound,
   LayoutDashboard,
@@ -16,6 +17,7 @@ import {
   PlugZap,
   Settings,
   ShieldCheck,
+  TrendingUp,
   Upload,
   Users,
 } from 'lucide-react';
@@ -65,9 +67,11 @@ const groups: NavGroup[] = [
       { href: '/webhooks', label: 'Webhooks', icon: BarChart3 },
       { href: '/whatsapp', label: 'WhatsApp', icon: MessageCircle },
       { href: '/whatsapp/templates', label: 'Templates', icon: BarChart3 },
+      { href: '/whatsapp/onboarding', label: 'Meta verification', icon: ShieldCheck },
       { href: '/inbox', label: 'Inbox', icon: Inbox },
       { href: '/inbox/canned', label: 'Canned replies', icon: Inbox },
       { href: '/bot', label: 'AI bot builder', icon: Bot },
+      { href: '/analytics', label: 'Analytics', icon: TrendingUp },
     ],
   },
   {
@@ -84,6 +88,7 @@ const alignedAdminItems: NavItem[] = [
   { href: '/aligned-admin', label: 'Tenants', icon: ShieldCheck },
   { href: '/aligned-admin/system', label: 'System health', icon: Code2 },
   { href: '/aligned-admin/audit', label: 'Cross-tenant audit', icon: Activity },
+  { href: '/aligned-admin/revenue', label: 'Revenue', icon: CreditCard },
 ];
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {

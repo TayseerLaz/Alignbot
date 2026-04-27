@@ -118,6 +118,13 @@ SELECT _aligned_apply_tenant_rls('crawl_pages');
 SELECT _aligned_apply_tenant_rls('knowledge_base_entries');
 SELECT _aligned_apply_tenant_rls('bot_test_runs');
 SELECT _aligned_apply_tenant_rls('bot_simulation_turns');
+-- Phase 3 §5.1.3 + §5.1.4
+SELECT _aligned_apply_tenant_rls('subscriptions');
+SELECT _aligned_apply_tenant_rls('usage_events');
+SELECT _aligned_apply_tenant_rls('usage_monthly');
+SELECT _aligned_apply_tenant_rls('branding_configs');
+SELECT _aligned_apply_tenant_rls('meta_onboarding_steps');
+-- plans is GLOBAL (no organization_id) — no RLS needed; access via API only.
 
 -- ---------- pg_trgm GIN indexes for fast search (Prisma can't express) ------
 CREATE INDEX IF NOT EXISTS products_search_trgm_idx

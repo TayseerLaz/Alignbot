@@ -20,10 +20,15 @@ declare module 'fastify' {
 
 function bearerFrom(req: FastifyRequest): string | null {
   const header = req.headers.authorization;
-  if (!header) return null;
-  const [scheme, token] = header.split(' ');
-  if (scheme?.toLowerCase() !== 'bearer' || !token) return null;
-  return token;
+  if (header) {
+    const [scheme, token] = header.split(' ');
+    if (scheme?.toLowerCase() === 'bearer' && token) return token;
+  }
+  // EventSource (SSE) doesn't support setting headers, so accept the
+  // access token via ?token= query string. Used by the inbox SSE stream.
+  const q = req.query as { token?: string } | undefined;
+  if (q?.token && typeof q.token === 'string') return q.token;
+  return null;
 }
 
 export default fp(async function authPlugin(app: FastifyInstance) {

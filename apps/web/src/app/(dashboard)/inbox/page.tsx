@@ -27,7 +27,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, getAccessToken } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 import { useSession } from '@/lib/session';
 import { cn } from '@/lib/utils';
@@ -108,8 +108,16 @@ export default function InboxPage() {
   const threadsQ = useQuery({
     queryKey: ['inbox-threads', filterQ, filterStatus, filterTag],
     queryFn: () => api.get<{ data: Thread[] }>(`/api/v1/inbox/threads?${params.toString()}`),
-    refetchInterval: 8_000,
+    // 30 s background poll as a fallback. The SSE hook below invalidates
+    // on every server tick so the perceived freshness is sub-2s.
+    refetchInterval: 30_000,
   });
+
+  // SSE realtime: every 2s tick from the server invalidates the thread
+  // queries so they refetch. Cheap for the server (one timer per
+  // connected client, no per-event fan-out yet) and works fine through
+  // Caddy's HTTP/2 reverse proxy.
+  useInboxSSE();
 
   const threads = threadsQ.data?.data ?? [];
   const active = threads.find((t) => t.id === activeId) ?? null;
@@ -726,4 +734,26 @@ function ReplyBox({
       </div>
     </div>
   );
+}
+
+// ---------- SSE realtime hook ---------------------------------------------
+// EventSource doesn't support setting Authorization headers, so we pass
+// the access token as a query string. The server treats `?token=` the same
+// way it treats the bearer header for SSE-only routes (added in inbox.routes).
+function useInboxSSE() {
+  const qc = useQueryClient();
+  useEffect(() => {
+    const token = getAccessToken();
+    if (!token) return;
+    const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/inbox/sse?token=${encodeURIComponent(token)}`;
+    const es = new EventSource(url, { withCredentials: true });
+    es.addEventListener('tick', () => {
+      qc.invalidateQueries({ queryKey: ['inbox-threads'] });
+      qc.invalidateQueries({ queryKey: ['inbox-thread'] });
+    });
+    es.onerror = () => {
+      // EventSource auto-reconnects per `retry: 5000` from the server.
+    };
+    return () => es.close();
+  }, [qc]);
 }

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Building2, Download, Key, PlugZap, Trash2, User, Users, Webhook } from 'lucide-react';
+import { ArrowRight, Building2, CreditCard, Download, Key, Palette, PlugZap, Trash2, User, Users, Webhook } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -140,6 +140,18 @@ export default function SettingsPage() {
               icon={Users}
               title="Members"
               description="Invite teammates, assign roles, deactivate users."
+            />
+            <SettingsLink
+              href="/settings/billing"
+              icon={CreditCard}
+              title="Billing & plan"
+              description="Subscription, usage caps, Stripe self-serve management."
+            />
+            <SettingsLink
+              href="/settings/branding"
+              icon={Palette}
+              title="Branding"
+              description="White-label: accent colour, footer, custom CNAME."
             />
             <div className="rounded-lg border border-dashed border-border p-4">
               <p className="text-sm font-medium text-foreground-muted">

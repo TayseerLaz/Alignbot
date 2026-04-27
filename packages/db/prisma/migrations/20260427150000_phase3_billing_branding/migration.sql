@@ -23,7 +23,8 @@ CREATE TABLE "plans" (
     "stripe_price_yearly_id"   TEXT,
     "description"              TEXT,
     "highlights"               TEXT[] NOT NULL DEFAULT '{}',
-    "sort_order"               INT NOT NULL DEFAULT 100
+    "sort_order"               INT NOT NULL DEFAULT 100,
+    "updated_at"               TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE "subscriptions" (

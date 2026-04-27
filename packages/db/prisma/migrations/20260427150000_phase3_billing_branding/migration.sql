@@ -98,26 +98,21 @@ CREATE INDEX "meta_onboarding_steps_org_idx"
 INSERT INTO "plans" ("code", "name", "is_active", "product_cap", "service_cap",
     "member_cap", "monthly_message_cap", "monthly_import_cap", "api_key_cap",
     "webhook_cap", "price_monthly_minor", "currency",
-    "description", "highlights", "sort_order", "updated_at")
+    "description", "highlights", "sort_order")
 VALUES
     ('free',       'Free',         TRUE, 25,   10,   2,    500,    5,   2,  2,
         0,    'USD', 'Try the platform with limited usage.',
-        ARRAY['25 products','500 messages/mo','2 team members'], 10, NULL),
+        ARRAY['25 products','500 messages/mo','2 team members'], 10),
     ('starter',    'Starter',      TRUE, 250,  100,  5,    5000,   50,  10, 10,
         4900, 'USD', 'For small businesses just starting on WhatsApp.',
-        ARRAY['250 products','5,000 messages/mo','5 team members','Email support'], 20, NULL),
+        ARRAY['250 products','5,000 messages/mo','5 team members','Email support'], 20),
     ('growth',     'Growth',       TRUE, 2500, 1000, 20,   50000,  500, 50, 50,
         14900,'USD', 'For scaling teams with real volume.',
-        ARRAY['2,500 products','50,000 messages/mo','20 team members','Priority support','API connectors'], 30, NULL),
+        ARRAY['2,500 products','50,000 messages/mo','20 team members','Priority support','API connectors'], 30),
     ('enterprise', 'Enterprise',   TRUE, NULL, NULL, NULL, NULL,   NULL,NULL,NULL,
         NULL, 'USD', 'Unlimited everything. Custom contract.',
-        ARRAY['Unlimited products','Unlimited messages','Unlimited team','SLA + dedicated support','SSO + audit'], 40, NULL)
+        ARRAY['Unlimited products','Unlimited messages','Unlimited team','SLA + dedicated support','SSO + audit'], 40)
 ON CONFLICT ("code") DO NOTHING;
-
--- Postgres requires a NOT NULL value for updated_at on insert; we set it
--- after the fact since we couldn't reference DEFAULT CURRENT_TIMESTAMP in
--- the CREATE TABLE due to the @updatedAt mechanic.
-UPDATE "plans" SET "updated_at" = CURRENT_TIMESTAMP WHERE "updated_at" IS NULL;
 
 -- Backfill: every existing org gets a 14-day trial on the Free plan.
 INSERT INTO "subscriptions" ("organization_id", "plan_id", "status",

@@ -58,6 +58,13 @@ jobs:
 
             echo "=== prisma generate + migrate deploy + RLS ==="
             pnpm --filter @aligned/db exec prisma generate
+            # Recover from a previously-failed migration whose body has been
+            # fixed in this commit. Idempotent: if the migration is absent
+            # or already applied, the resolve errors out and we swallow it.
+            # The migration is then retried by `migrate deploy`.
+            pnpm --filter @aligned/db exec prisma migrate resolve \
+              --rolled-back 20260427120000_inbox_threads_tags_notes_canned_templates \
+              2>/dev/null || true
             pnpm --filter @aligned/db exec prisma migrate deploy
             # RLS is idempotent — safe to re-apply every deploy.
             PGPASSWORD="$POSTGRES_PASSWORD" psql -h localhost -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f packages/db/prisma/rls.sql || true

@@ -113,9 +113,35 @@ ALTER TABLE "whatsapp_messages"
 CREATE INDEX IF NOT EXISTS "whatsapp_messages_thread_received_idx"
     ON "whatsapp_messages" ("thread_id", "received_at" ASC);
 
--- Backfill: every existing message becomes its own thread row (one per
--- distinct customer phone within an org). Cheap because today the volume
--- is tiny — this would be batched in a real migration.
+-- Backfill: group existing messages into one thread per customer phone.
+-- Use a CTE with ROW_NUMBER to grab the latest body without correlating a
+-- subquery to a grouped outer query (that's the bug Postgres rejects).
+WITH ranked AS (
+  SELECT
+    m.organization_id,
+    COALESCE(m.from_number, m.to_number) AS phone,
+    m.direction,
+    m.body,
+    m.received_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY m.organization_id, COALESCE(m.from_number, m.to_number)
+      ORDER BY m.received_at DESC
+    ) AS rn
+  FROM "whatsapp_messages" m
+  WHERE COALESCE(m.from_number, m.to_number) IS NOT NULL
+),
+agg AS (
+  SELECT
+    organization_id,
+    phone,
+    MAX(received_at) AS last_message_at,
+    MIN(received_at) AS first_message_at,
+    SUM(CASE WHEN direction = 'inbound'  THEN 1 ELSE 0 END) AS inbound_count,
+    SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) AS outbound_count,
+    COALESCE(LEFT(STRING_AGG(body, ' ' ORDER BY received_at DESC), 16000), '') AS search_text
+  FROM ranked
+  GROUP BY organization_id, phone
+)
 INSERT INTO "whatsapp_threads" (
     "id", "organization_id", "customer_phone", "status",
     "last_message_at", "last_message_preview",
@@ -123,25 +149,21 @@ INSERT INTO "whatsapp_threads" (
 )
 SELECT
     gen_random_uuid(),
-    m.organization_id,
-    COALESCE(m.from_number, m.to_number) AS phone,
+    a.organization_id,
+    a.phone,
     'open',
-    MAX(m.received_at),
-    -- Last body across all messages with the customer.
-    (
-      SELECT m2.body FROM "whatsapp_messages" m2
-      WHERE m2.organization_id = m.organization_id
-        AND COALESCE(m2.from_number, m2.to_number) = COALESCE(m.from_number, m.to_number)
-      ORDER BY m2.received_at DESC LIMIT 1
-    ),
-    SUM(CASE WHEN m.direction = 'inbound' THEN 1 ELSE 0 END),
-    SUM(CASE WHEN m.direction = 'outbound' THEN 1 ELSE 0 END),
-    COALESCE(STRING_AGG(m.body, ' ' ORDER BY m.received_at DESC), ''),
-    MIN(m.received_at),
-    MAX(m.received_at)
-FROM "whatsapp_messages" m
-WHERE COALESCE(m.from_number, m.to_number) IS NOT NULL
-GROUP BY m.organization_id, COALESCE(m.from_number, m.to_number)
+    a.last_message_at,
+    last_body.body,
+    a.inbound_count,
+    a.outbound_count,
+    a.search_text,
+    a.first_message_at,
+    a.last_message_at
+FROM agg a
+LEFT JOIN ranked last_body
+  ON last_body.organization_id = a.organization_id
+  AND last_body.phone = a.phone
+  AND last_body.rn = 1
 ON CONFLICT ("organization_id", "customer_phone") DO NOTHING;
 
 -- Wire each existing message to its newly-created thread.

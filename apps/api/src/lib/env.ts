@@ -59,11 +59,11 @@ const envSchema = z.object({
   UPTIMEROBOT_API_KEY: z.string().optional(),
   UPTIMEROBOT_MONITOR_IDS: z.string().optional(), // csv of monitor ids
 
-  // Phase 2 — Anthropic API key for the AI bot builder + bot runtime.
+  // Phase 2 — OpenAI API key for the AI bot builder + bot runtime.
   // Leave empty to disable AI features (analyze + simulate + scenarios all
   // 503; the rest of the platform keeps working).
-  ANTHROPIC_API_KEY: z.string().optional(),
-  ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-6'),
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_MODEL: z.string().default('gpt-4o-mini'),
 
   // Phase 3 §5.1.3 — Stripe billing. Empty values disable billing surfaces:
   // /billing/checkout 503s, /webhooks/stripe rejects, cap middleware

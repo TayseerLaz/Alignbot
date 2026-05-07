@@ -264,6 +264,16 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
         // time inside the fanout worker.
         if (body.audienceKind === 'manual' && body.manualPhones) {
           const dedup = Array.from(new Set(body.manualPhones));
+          // Soft cap — refuse manual audiences over the per-org limit
+          // (default 50K). CSV / segment audiences go through fanout where
+          // the limit is enforced by Meta-side rate caps in practice.
+          const SOFT_CAP = Number(process.env.BROADCAST_MAX_RECIPIENTS ?? 50_000);
+          if (dedup.length > SOFT_CAP) {
+            throw badRequest(
+              ApiErrorCode.VALIDATION_ERROR,
+              `Manual audience exceeds the per-broadcast cap of ${SOFT_CAP.toLocaleString()} recipients. Use a CSV or segment for larger sends.`,
+            );
+          }
           await tx.broadcastRecipient.createMany({
             data: dedup.map((phone) => ({
               organizationId: orgId,
@@ -727,6 +737,195 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
           nextCursor: null,
         };
       }),
+  );
+
+  // ---------- GET /broadcasts/:id/recipients.csv ----------------------------
+  // Streams a CSV of every recipient with status + Meta error codes for
+  // operator triage. No pagination — even 100K rows is small enough to ship
+  // in one request, and the worker is the bottleneck not this download.
+  r.get(
+    '/broadcasts/:id/recipients.csv',
+    {
+      schema: {
+        tags: ['broadcasts'],
+        summary: 'Export all recipients with status + error codes as CSV.',
+        params: z.object({ id: uuidSchema }),
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req, reply) => {
+      const id = req.params.id;
+      const orgId = req.auth!.organizationId;
+      const broadcast = await app.tenant(req, (tx) =>
+        tx.broadcast.findUnique({ where: { id } }),
+      );
+      if (!broadcast) throw notFound('Broadcast not found.');
+
+      reply.header('Content-Type', 'text/csv; charset=utf-8');
+      reply.header(
+        'Content-Disposition',
+        `attachment; filename="broadcast-${id.slice(0, 8)}-recipients.csv"`,
+      );
+      const escape = (v: string | null | undefined) => {
+        if (v == null) return '';
+        const s = String(v);
+        if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+        return s;
+      };
+      const lines: string[] = [
+        'phone_e164,variant,status,meta_message_id,meta_error_code,meta_error_message,sent_at,delivered_at,read_at,failed_at,attempt_count',
+      ];
+      // Page through to avoid loading 100K+ rows in one go.
+      let cursor: string | undefined;
+      while (true) {
+        const batch = await app.tenant(req, (tx) =>
+          tx.broadcastRecipient.findMany({
+            where: { broadcastId: id, organizationId: orgId },
+            take: 1000,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+            orderBy: { id: 'asc' },
+          }),
+        );
+        if (batch.length === 0) break;
+        for (const r of batch) {
+          lines.push(
+            [
+              escape(r.phoneE164),
+              escape(r.variant),
+              escape(r.status),
+              escape(r.metaMessageId),
+              escape(r.metaErrorCode),
+              escape(r.metaErrorMessage),
+              escape(r.sentAt?.toISOString() ?? null),
+              escape(r.deliveredAt?.toISOString() ?? null),
+              escape(r.readAt?.toISOString() ?? null),
+              escape(r.failedAt?.toISOString() ?? null),
+              String(r.attemptCount),
+            ].join(','),
+          );
+        }
+        if (batch.length < 1000) break;
+        cursor = batch[batch.length - 1]!.id;
+      }
+      return reply.send(lines.join('\n'));
+    },
+  );
+
+  // ---------- POST /broadcasts/:id/rerun-failed ------------------------------
+  // Re-queue all `failed` recipients of a completed (or paused) broadcast.
+  // Resets their state to `pending`, clears error fields, re-enqueues fanout.
+  // Useful after fixing a template / token issue.
+  r.post(
+    '/broadcasts/:id/rerun-failed',
+    {
+      schema: {
+        tags: ['broadcasts'],
+        summary: 'Re-queue all failed recipients of this broadcast.',
+        params: z.object({ id: uuidSchema }),
+        response: {
+          200: z.object({ data: z.object({ requeued: z.number().int().nonnegative() }) }),
+        },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const id = req.params.id;
+      const requeued = await app.tenant(req, async (tx) => {
+        const existing = await tx.broadcast.findUnique({ where: { id } });
+        if (!existing) throw notFound('Broadcast not found.');
+        if (existing.status === 'cancelled') {
+          throw conflict('Cannot re-run a cancelled broadcast. Clone it instead.');
+        }
+        const updated = await tx.broadcastRecipient.updateMany({
+          where: { broadcastId: id, status: 'failed' },
+          data: {
+            status: 'pending',
+            metaErrorCode: null,
+            metaErrorMessage: null,
+            failedAt: null,
+            attemptCount: 0,
+          },
+        });
+        if (updated.count > 0) {
+          await tx.broadcast.update({
+            where: { id },
+            data: {
+              status: 'sending',
+              failedCount: { decrement: updated.count },
+              completedAt: null,
+            },
+          });
+          await tx.broadcastEvent.create({
+            data: {
+              organizationId: orgId,
+              broadcastId: id,
+              kind: 'resumed',
+              detail: { reason: 'rerun-failed', requeued: updated.count },
+            },
+          });
+        }
+        return updated.count;
+      });
+      if (requeued > 0) {
+        await getBroadcastFanoutQueue().add(
+          'fanout',
+          { organizationId: orgId, broadcastId: id },
+          { jobId: `broadcast:${id}:rerun:${Date.now()}` },
+        );
+      }
+      return { data: { requeued } };
+    },
+  );
+
+  // ---------- GET /broadcasts/:id/sse --------------------------------------
+  // Tick every 2 seconds with a "refetch" signal. The detail page in the web
+  // app turns this into React Query invalidation so counters/recipients/timeline
+  // refresh sub-second. Cheap; no real-time payload — just a poke.
+  r.get(
+    '/broadcasts/:id/sse',
+    {
+      schema: {
+        tags: ['broadcasts'],
+        summary: 'SSE: emits a tick every 2s telling the UI to refetch.',
+        params: z.object({ id: uuidSchema }),
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req, reply) => {
+      const id = req.params.id;
+      // Confirm access (RLS would block; this gives a clean 404).
+      const exists = await app.tenant(req, (tx) =>
+        tx.broadcast.findUnique({ where: { id }, select: { id: true } }),
+      );
+      if (!exists) throw notFound('Broadcast not found.');
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      reply.raw.write(`retry: 5000\n\n`);
+      reply.raw.write(`event: hello\ndata: ${JSON.stringify({ id })}\n\n`);
+      const interval = setInterval(() => {
+        try {
+          reply.raw.write(`event: tick\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
+        } catch {
+          /* socket closed */
+        }
+      }, 2000);
+      const cleanup = () => {
+        clearInterval(interval);
+        try {
+          reply.raw.end();
+        } catch {
+          /* noop */
+        }
+      };
+      req.raw.on('close', cleanup);
+      req.raw.on('error', cleanup);
+      return reply;
+    },
   );
 }
 

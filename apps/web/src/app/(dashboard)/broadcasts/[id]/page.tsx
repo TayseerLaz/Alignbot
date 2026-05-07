@@ -11,19 +11,21 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronLeft,
+  Download,
   Pause,
   Play,
+  RefreshCw,
   StopCircle,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, getAccessToken } from '@/lib/api';
 
 const STATUS_CLASS: Record<RecipientStatus, string> = {
   pending: 'bg-slate-100 text-slate-600',
@@ -45,8 +47,35 @@ export default function BroadcastDetailPage() {
   const broadcastQuery = useQuery({
     queryKey: ['broadcast', id],
     queryFn: () => api.get<{ data: BroadcastDto }>(`/api/v1/broadcasts/${id}`),
-    refetchInterval: 3000,
+    // SSE drives invalidation; this is a slow-poll backstop.
+    refetchInterval: 15_000,
   });
+
+  // SSE: tick every 2s → invalidate counters/recipients/timeline.
+  useEffect(() => {
+    const url =
+      `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}` +
+      `/api/v1/broadcasts/${id}/sse?token=${encodeURIComponent(getAccessToken() ?? '')}`;
+    // EventSource doesn't allow custom headers, so we pass the token in the
+    // query string. The api accepts both — see plugins/auth.ts.
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource(url, { withCredentials: true });
+      es.addEventListener('tick', () => {
+        qc.invalidateQueries({ queryKey: ['broadcast', id] });
+        qc.invalidateQueries({ queryKey: ['broadcast-recipients', id] });
+        qc.invalidateQueries({ queryKey: ['broadcast-timeline', id] });
+      });
+      es.addEventListener('error', () => {
+        // Browser auto-reconnects with backoff; nothing to do.
+      });
+    } catch {
+      // SSE unsupported / blocked — slow-poll keeps it usable.
+    }
+    return () => {
+      es?.close();
+    };
+  }, [id, qc]);
 
   const recipientsQuery = useQuery({
     queryKey: ['broadcast-recipients', id, statusFilter],
@@ -92,6 +121,38 @@ export default function BroadcastDetailPage() {
     onSuccess: () => toast.success('Cancelled'),
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Cancel failed'),
   });
+  const rerunMutation = useMutation({
+    mutationFn: () =>
+      api.post<{ data: { requeued: number } }>(`/api/v1/broadcasts/${id}/rerun-failed`),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['broadcast', id] });
+      qc.invalidateQueries({ queryKey: ['broadcast-recipients', id] });
+      qc.invalidateQueries({ queryKey: ['broadcasts'] });
+      toast.success(`Re-queued ${res.data.requeued} recipient${res.data.requeued === 1 ? '' : 's'}`);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Re-run failed'),
+  });
+
+  const exportCsv = () => {
+    const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/broadcasts/${id}/recipients.csv`;
+    fetch(url, {
+      headers: { Authorization: `Bearer ${getAccessToken() ?? ''}` },
+      credentials: 'include',
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text());
+        const blob = await res.blob();
+        const a = document.createElement('a');
+        const objUrl = URL.createObjectURL(blob);
+        a.href = objUrl;
+        a.download = `broadcast-${id.slice(0, 8)}-recipients.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(objUrl);
+      })
+      .catch((err) => toast.error(err instanceof Error ? err.message : 'Export failed'));
+  };
 
   const b = broadcastQuery.data?.data;
 
@@ -131,6 +192,27 @@ export default function BroadcastDetailPage() {
                 }}
               >
                 <StopCircle className="size-4" /> Cancel
+              </Button>
+            ) : null}
+            {b && b.failedCount > 0 ? (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `Re-queue ${b.failedCount} failed recipient${b.failedCount === 1 ? '' : 's'}?`,
+                    )
+                  )
+                    rerunMutation.mutate();
+                }}
+                disabled={rerunMutation.isPending}
+              >
+                <RefreshCw className="size-4" /> Re-run failed
+              </Button>
+            ) : null}
+            {b && b.totalRecipients > 0 ? (
+              <Button variant="ghost" onClick={exportCsv}>
+                <Download className="size-4" /> Export CSV
               </Button>
             ) : null}
           </div>

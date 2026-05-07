@@ -1,33 +1,31 @@
-// Thin wrapper around the Anthropic SDK so route + worker code stays
-// short and so we centralise prompt-caching + token-cap policy here.
+// Thin wrapper around the OpenAI SDK so route + worker code stays
+// short and so we centralise token-cap policy here.
 //
-// Strategy:
-//   - System prompt is sent with `cache_control: { type: "ephemeral" }` so
-//     the same KB blob doesn't re-bill on every turn within a 5-minute
-//     window. (This costs roughly 1.25× write but every cached re-use
-//     reads at 0.10×, so amortises after ~3 uses.)
+// Notes:
+//   - OpenAI auto-caches identical prompt prefixes >1024 tokens, so the
+//     long system prompt (KB blob) doesn't need an explicit cache flag.
 //   - Per-org daily token budget is enforced in Redis to bound spend.
 //   - When the env var is missing we throw a SERVICE_UNAVAILABLE so
 //     callers can 503 cleanly.
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 
 import { env } from './env.js';
 import { getRedis } from './redis.js';
 
-let _client: Anthropic | null = null;
-function client(): Anthropic {
-  if (!env.ANTHROPIC_API_KEY) {
-    const err = new Error('ANTHROPIC_API_KEY is not configured.');
+let _client: OpenAI | null = null;
+function client(): OpenAI {
+  if (!env.OPENAI_API_KEY) {
+    const err = new Error('OPENAI_API_KEY is not configured.');
     (err as Error & { code?: string }).code = 'NO_KEY';
     throw err;
   }
   if (_client) return _client;
-  _client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  _client = new OpenAI({ apiKey: env.OPENAI_API_KEY });
   return _client;
 }
 
-export function isAnthropicConfigured(): boolean {
-  return !!env.ANTHROPIC_API_KEY;
+export function isOpenAIConfigured(): boolean {
+  return !!env.OPENAI_API_KEY;
 }
 
 const DAILY_TOKEN_LIMIT_PER_ORG = 200_000;
@@ -49,7 +47,6 @@ interface CompleteArgs {
   messages: { role: 'user' | 'assistant'; content: string }[];
   maxTokens?: number;
   temperature?: number;
-  cacheSystem?: boolean;
 }
 
 export async function complete(args: CompleteArgs): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
@@ -67,35 +64,21 @@ export async function complete(args: CompleteArgs): Promise<{ text: string; inpu
   }
 
   const c = client();
-  // Cache the system prompt when it's > ~1KB and the caller asks for it.
-  const systemBlocks =
-    args.cacheSystem && args.systemPrompt.length > 1024
-      ? [
-          {
-            type: 'text' as const,
-            text: args.systemPrompt,
-            cache_control: { type: 'ephemeral' as const },
-          },
-        ]
-      : args.systemPrompt;
-
-  const res = await c.messages.create({
-    model: env.ANTHROPIC_MODEL,
+  const res = await c.chat.completions.create({
+    model: env.OPENAI_MODEL,
     max_tokens: args.maxTokens ?? 1024,
     temperature: args.temperature ?? 0.4,
-    system: systemBlocks as never,
-    messages: args.messages,
+    messages: [
+      { role: 'system', content: args.systemPrompt },
+      ...args.messages,
+    ],
   });
 
-  const text = res.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('\n')
-    .trim();
+  const text = (res.choices[0]?.message.content ?? '').trim();
 
   return {
     text,
-    inputTokens: res.usage.input_tokens,
-    outputTokens: res.usage.output_tokens,
+    inputTokens: res.usage?.prompt_tokens ?? 0,
+    outputTokens: res.usage?.completion_tokens ?? 0,
   };
 }

@@ -20,7 +20,7 @@ import { Worker } from 'bullmq';
 import * as cheerio from 'cheerio';
 import { request as undiciRequest } from 'undici';
 
-import { isAnthropicConfigured, workerComplete } from '../lib/anthropic.js';
+import { isOpenAIConfigured, workerComplete } from '../lib/openai.js';
 import { env } from '../lib/env.js';
 import { getConnection } from '../lib/redis.js';
 
@@ -172,7 +172,7 @@ export function startCrawlWorker() {
 
         // Run LLM analysis if configured. Otherwise mark partial.
         let analysisOK = false;
-        if (isAnthropicConfigured() && cleanCorpus.length > 0) {
+        if (isOpenAIConfigured() && cleanCorpus.length > 0) {
           analysisOK = await analyzeAndPersist(organizationId, cleanCorpus).catch((err) => {
             console.error('[crawl] analysis failed', err);
             return false;
@@ -186,8 +186,8 @@ export function startCrawlWorker() {
             pagesCrawled: crawled,
             pagesFailed: failed,
             finishedAt: new Date(),
-            errorMessage: !isAnthropicConfigured()
-              ? 'ANTHROPIC_API_KEY not configured — pages crawled but no KB generated.'
+            errorMessage: !isOpenAIConfigured()
+              ? 'OPENAI_API_KEY not configured — pages crawled but no KB generated.'
               : null,
           },
         });

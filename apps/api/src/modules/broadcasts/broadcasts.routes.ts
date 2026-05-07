@@ -53,6 +53,12 @@ interface BroadcastRow {
   scheduledFor: Date | null;
   startedAt: Date | null;
   completedAt: Date | null;
+  sendWindowStartHour: number | null;
+  sendWindowEndHour: number | null;
+  sendWindowTimezone: string | null;
+  abWinnerStrategy: string | null;
+  abWinnerVariant: BroadcastVariant | null;
+  abWinnerDecidedAt: Date | null;
   totalRecipients: number;
   queuedCount: number;
   sentCount: number;
@@ -83,6 +89,12 @@ function toDto(row: BroadcastRow) {
     scheduledFor: row.scheduledFor?.toISOString() ?? null,
     startedAt: row.startedAt?.toISOString() ?? null,
     completedAt: row.completedAt?.toISOString() ?? null,
+    sendWindowStartHour: row.sendWindowStartHour,
+    sendWindowEndHour: row.sendWindowEndHour,
+    sendWindowTimezone: row.sendWindowTimezone,
+    abWinnerStrategy: row.abWinnerStrategy,
+    abWinnerVariant: row.abWinnerVariant,
+    abWinnerDecidedAt: row.abWinnerDecidedAt?.toISOString() ?? null,
     totalRecipients: row.totalRecipients,
     queuedCount: row.queuedCount,
     sentCount: row.sentCount,
@@ -255,6 +267,10 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
             variantBVariables: body.variantBVariables
               ? (body.variantBVariables as never)
               : undefined,
+            sendWindowStartHour: body.sendWindowStartHour ?? null,
+            sendWindowEndHour: body.sendWindowEndHour ?? null,
+            sendWindowTimezone: body.sendWindowTimezone ?? null,
+            abWinnerStrategy: body.abWinnerStrategy ?? null,
             createdByUserId: req.auth!.userId,
           },
         });

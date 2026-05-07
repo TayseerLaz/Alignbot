@@ -8,11 +8,11 @@
 //
 // Builds a system prompt from the org's BotConfig + KnowledgeBase entries
 // + a small slice of the catalog (top products / services / FAQs / hours)
-// and asks Claude to reply in the configured personality. We deliberately
+// and asks the LLM to reply in the configured personality. We deliberately
 // pull from the in-platform data, not Phase 1's chatbot read API, because
 // we already have the Prisma client + don't want to round-trip through HTTP.
 
-import { complete } from './anthropic.js';
+import { complete } from './openai.js';
 
 const PERSONALITY_DESCRIPTIONS: Record<string, string> = {
   formal: 'Professional, precise, no contractions. Address customer with full sentences.',
@@ -146,7 +146,6 @@ export async function buildBotResponse(
     messages,
     maxTokens: 600,
     temperature: 0.4,
-    cacheSystem: true, // long + reused = good cache candidate
   });
 
   return { text: result.text, usedKbCount: kb.length };

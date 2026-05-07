@@ -46,6 +46,37 @@ const PERMANENT_META_CODES = new Set([
   '132068', // flow blocked
 ]);
 
+// Phase 5.3 — TZ helpers. Use Intl.DateTimeFormat with the tz to get the
+// hour/minute "as the recipient sees it"; avoids pulling in luxon/date-fns.
+function nowInTz(tz: string): { hour: number; minute: number } {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const parts = fmt.formatToParts(new Date());
+    const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+    const m = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+    // Some locales render "24" for midnight — normalize to 0.
+    return { hour: h % 24, minute: m };
+  } catch {
+    const d = new Date();
+    return { hour: d.getUTCHours(), minute: d.getUTCMinutes() };
+  }
+}
+
+function msUntilHour(tz: string, targetHour: number): number {
+  // How many milliseconds until the next time the local clock in `tz`
+  // shows targetHour:00. Conservative — clamps to ≤ 24h, ≥ 60s.
+  const { hour, minute } = nowInTz(tz);
+  let hoursToWait = (targetHour - hour + 24) % 24;
+  if (hoursToWait === 0 && minute > 0) hoursToWait = 24; // already past this hour today
+  const ms = hoursToWait * 3600 * 1000 - minute * 60 * 1000;
+  return Math.max(60_000, Math.min(ms, 24 * 3600 * 1000));
+}
+
 async function consumeSendToken(orgId: string): Promise<{ ok: boolean; retryAfterMs: number }> {
   const redis = getConnection();
   const key = `wasend:${orgId}:${Math.floor(Date.now() / 1000)}`;
@@ -206,10 +237,45 @@ export function startBroadcastSendWorker() {
 
       const recipient = await prisma.broadcastRecipient.findUnique({
         where: { id: recipientId },
+        include: { contact: { select: { optedOutAt: true, timezone: true } } },
       });
       if (!recipient) return;
       if (recipient.status === 'sent' || recipient.status === 'delivered' || recipient.status === 'read') {
         return; // Already handled.
+      }
+
+      // Phase 5.3 — opt-out gate. Skip without retry; counts as failed-soft.
+      if (recipient.contact?.optedOutAt) {
+        await prisma.broadcastRecipient.update({
+          where: { id: recipientId },
+          data: {
+            status: 'skipped',
+            metaErrorCode: 'opted_out',
+            metaErrorMessage: 'Recipient opted out of broadcasts.',
+          },
+        });
+        return;
+      }
+
+      // Phase 5.3 — send-window enforcement. If outside the configured
+      // window, requeue the job to fire at the next window-open.
+      if (broadcast.sendWindowStartHour != null && broadcast.sendWindowEndHour != null) {
+        const tz =
+          recipient.contact?.timezone ||
+          broadcast.sendWindowTimezone ||
+          'UTC';
+        const nowParts = nowInTz(tz);
+        const startH = broadcast.sendWindowStartHour;
+        const endH = broadcast.sendWindowEndHour;
+        const hour = nowParts.hour;
+        const inWindow =
+          startH <= endH ? hour >= startH && hour < endH : hour >= startH || hour < endH;
+        if (!inWindow) {
+          // Compute milliseconds until the window opens.
+          const delayMs = msUntilHour(tz, startH);
+          if (job.token) await job.moveToDelayed(Date.now() + delayMs, job.token);
+          throw new DelayedError();
+        }
       }
 
       const channel = await prisma.whatsAppChannel.findUnique({
@@ -395,15 +461,52 @@ export function startBroadcastSendWorker() {
     const b = await prisma.broadcast.findUnique({ where: { id: data.broadcastId } });
     if (!b) return;
     if (b.status === 'sending') {
+      // Phase 5.3 — A/B winner determination, post-hoc.
+      let abWinnerVariant: 'A' | 'B' | null = null;
+      if (b.abTest && b.abWinnerStrategy && b.abWinnerStrategy !== 'manual') {
+        const grouped = await prisma.broadcastRecipient.groupBy({
+          by: ['variant'],
+          where: { broadcastId: b.id },
+          _count: { _all: true },
+          _sum: undefined,
+        });
+        // Compute per-variant counters via a follow-up query (cheap).
+        const counters = await Promise.all(
+          ['A', 'B'].map(async (v) => {
+            const total = await prisma.broadcastRecipient.count({
+              where: { broadcastId: b.id, variant: v as 'A' | 'B' },
+            });
+            const reads = await prisma.broadcastRecipient.count({
+              where: { broadcastId: b.id, variant: v as 'A' | 'B', status: 'read' },
+            });
+            return { v, total, reads };
+          }),
+        );
+        const a = counters.find((c) => c.v === 'A')!;
+        const bVar = counters.find((c) => c.v === 'B')!;
+        if (a.total > 0 && bVar.total > 0) {
+          const aRate = a.reads / a.total;
+          const bRate = bVar.reads / bVar.total;
+          abWinnerVariant = aRate >= bRate ? 'A' : 'B';
+        }
+        void grouped;
+      }
       await prisma.broadcast.update({
         where: { id: b.id },
-        data: { status: 'completed', completedAt: new Date() },
+        data: {
+          status: 'completed',
+          completedAt: new Date(),
+          ...(abWinnerVariant
+            ? { abWinnerVariant, abWinnerDecidedAt: new Date() }
+            : {}),
+        },
       });
       await prisma.broadcastEvent.create({
         data: {
           organizationId: data.organizationId,
           broadcastId: b.id,
           kind: 'completed',
+          detail: abWinnerVariant ? { abWinnerVariant } : undefined,
         },
       });
       await emitWebhookEvent({
@@ -417,6 +520,7 @@ export function startBroadcastSendWorker() {
           deliveredCount: b.deliveredCount,
           readCount: b.readCount,
           failedCount: b.failedCount,
+          abWinnerVariant,
         },
       });
     }

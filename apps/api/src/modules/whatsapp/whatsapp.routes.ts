@@ -1290,6 +1290,34 @@ export default async function whatsappRoutes(app: FastifyInstance) {
               bodyText: m.text?.body ?? null,
               metaId: m.id ?? null,
             });
+
+            // Phase 5.3 — STOP-keyword opt-out. Match common unsubscribe
+            // verbs (locale-agnostic). On match, set the contact's
+            // opted_out_at so future broadcasts skip them.
+            const STOP_RE = /^\s*(stop|unsubscribe|quit|cancel|end|opt\s*out|alto|para|arr[eê]ter|stopper|اوقف|إيقاف)\s*\.?\s*$/i;
+            const bodyText = m.text?.body ?? '';
+            if (m.from && STOP_RE.test(bodyText)) {
+              await withRlsBypass(async (tx) => {
+                const e164 = `+${m.from}`;
+                await tx.contact.upsert({
+                  where: {
+                    organizationId_phoneE164: {
+                      organizationId: channel.organizationId,
+                      phoneE164: e164,
+                    },
+                  },
+                  create: {
+                    organizationId: channel.organizationId,
+                    phoneE164: e164,
+                    optedOutAt: new Date(),
+                    source: 'inbox_auto',
+                  },
+                  update: { optedOutAt: new Date() },
+                });
+              }).catch((err) =>
+                req.log.error({ err }, '[whatsapp] STOP opt-out failed'),
+              );
+            }
             // Upsert the thread + persist the message + bump the
             // thread's preview/counts in one transaction. RLS bypassed
             // because the public webhook can't carry tenant context —
@@ -1386,7 +1414,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       }
 
       // Bot runtime — fire-and-forget. Conditions: bot is deployed, the
-      // org has an Anthropic key, the thread isn't already assigned to a
+      // org has an OpenAI key, the thread isn't already assigned to a
       // human, and the message has body text. Reply latency is paid by
       // Meta's reply window so we don't block the webhook 200 on this.
       void (async () => {
@@ -1410,7 +1438,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
 // Phase 2 — auto-reply hook called from the inbound webhook. Looks up the
 // bot config + thread, asks the LLM via bot-engine, sends through the
 // existing /whatsapp/send token-bucket. No-ops cleanly when:
-//   - ANTHROPIC_API_KEY is not configured
+//   - OPENAI_API_KEY is not configured
 //   - BotConfig.deployedAt is null
 //   - the thread has been assigned to a human (operator owns it now)
 //   - the inbound message has no text (image/template/system event)
@@ -1419,8 +1447,8 @@ async function maybeReplyAsBot(args: {
   messages: { from: string; type: string; bodyText: string | null; metaId: string | null }[];
   log: { error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
 }): Promise<void> {
-  const { isAnthropicConfigured } = await import('../../lib/anthropic.js');
-  if (!isAnthropicConfigured()) return;
+  const { isOpenAIConfigured } = await import('../../lib/openai.js');
+  if (!isOpenAIConfigured()) return;
 
   const { withRlsBypass } = await import('../../lib/db.js');
   const { buildBotResponse } = await import('../../lib/bot-engine.js');

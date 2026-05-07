@@ -24,7 +24,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
-import { complete, isAnthropicConfigured } from '../../lib/anthropic.js';
+import { complete, isOpenAIConfigured } from '../../lib/openai.js';
 import { recordAudit } from '../../lib/audit.js';
 import { buildBotResponse } from '../../lib/bot-engine.js';
 import { withTenant } from '../../lib/db.js';
@@ -548,10 +548,10 @@ export default async function botRoutes(app: FastifyInstance) {
       preHandler: [app.requireRole('viewer')],
     },
     async (req) => {
-      if (!isAnthropicConfigured()) {
+      if (!isOpenAIConfigured()) {
         throw badRequest(
           ApiErrorCode.SERVICE_UNAVAILABLE,
-          'AI bot is unavailable: ANTHROPIC_API_KEY is not configured on this deployment.',
+          'AI bot is unavailable: OPENAI_API_KEY is not configured on this deployment.',
         );
       }
       const orgId = req.auth!.organizationId;
@@ -593,10 +593,10 @@ export default async function botRoutes(app: FastifyInstance) {
       preHandler: [app.requireRole('admin')],
     },
     async (req) => {
-      if (!isAnthropicConfigured()) {
+      if (!isOpenAIConfigured()) {
         throw badRequest(
           ApiErrorCode.SERVICE_UNAVAILABLE,
-          'AI bot is unavailable: ANTHROPIC_API_KEY is not configured.',
+          'AI bot is unavailable: OPENAI_API_KEY is not configured.',
         );
       }
       const orgId = req.auth!.organizationId;

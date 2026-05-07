@@ -259,6 +259,9 @@ export default async function segmentsRoutes(app: FastifyInstance) {
               phoneE164: c.phoneE164,
               displayName: c.displayName,
               locale: c.locale,
+              optedInAt: c.optedInAt?.toISOString() ?? null,
+              optedOutAt: c.optedOutAt?.toISOString() ?? null,
+              timezone: c.timezone,
               attributes:
                 c.attributes && typeof c.attributes === 'object'
                   ? (c.attributes as Record<string, string | number | boolean | null>)

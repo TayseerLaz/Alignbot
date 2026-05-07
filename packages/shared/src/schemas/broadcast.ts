@@ -33,6 +33,9 @@ export const contactDtoSchema = z.object({
   phoneE164: z.string(),
   displayName: z.string().nullable(),
   locale: z.string().nullable(),
+  optedInAt: z.string().datetime().nullable(),
+  optedOutAt: z.string().datetime().nullable(),
+  timezone: z.string().nullable(),
   attributes: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
   source: z.enum(CONTACT_SOURCES as [ContactSource, ...ContactSource[]]),
   tags: z.array(z.string()),
@@ -47,6 +50,9 @@ export const createContactBodySchema = z.object({
   phoneE164: phoneE164Schema,
   displayName: z.string().trim().max(120).optional().nullable(),
   locale: z.string().trim().max(20).optional().nullable(),
+  timezone: z.string().trim().max(60).optional().nullable(),
+  optedIn: z.boolean().optional(),
+  optedOut: z.boolean().optional(),
   attributes: z
     .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
     .optional(),
@@ -173,6 +179,12 @@ export const broadcastDtoSchema = z.object({
   scheduledFor: z.string().datetime().nullable(),
   startedAt: z.string().datetime().nullable(),
   completedAt: z.string().datetime().nullable(),
+  sendWindowStartHour: z.number().int().nullable(),
+  sendWindowEndHour: z.number().int().nullable(),
+  sendWindowTimezone: z.string().nullable(),
+  abWinnerStrategy: z.string().nullable(),
+  abWinnerVariant: z.enum(['A', 'B']).nullable(),
+  abWinnerDecidedAt: z.string().datetime().nullable(),
   totalRecipients: z.number().int().nonnegative(),
   queuedCount: z.number().int().nonnegative(),
   sentCount: z.number().int().nonnegative(),
@@ -199,6 +211,13 @@ export const createBroadcastBodySchema = z.object({
   variantBTemplateId: uuidSchema.optional().nullable(),
   variantAVariables: variableMappingSchema.default({}),
   variantBVariables: variableMappingSchema.optional().nullable(),
+  // Phase 5.3 — quiet-hours: skip sends to recipients whose local hour is
+  // outside [start, end). Both 0-23 inclusive. Timezone defaults to channel
+  // timezone if a recipient's contact has none.
+  sendWindowStartHour: z.number().int().min(0).max(23).optional().nullable(),
+  sendWindowEndHour: z.number().int().min(0).max(23).optional().nullable(),
+  sendWindowTimezone: z.string().trim().max(60).optional().nullable(),
+  abWinnerStrategy: z.enum(['read_rate', 'response_rate', 'manual']).optional().nullable(),
 });
 export type CreateBroadcastBody = z.infer<typeof createBroadcastBodySchema>;
 

@@ -23,8 +23,8 @@
    - `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` set in `/srv/aligned/.env.production`
    - Stripe webhook endpoint configured at `/api/v1/webhooks/stripe`
    - Plans synced via `/aligned-admin/plans/sync-stripe`
-3. **Confirm Anthropic is live** (only required for the AI bot builder).
-   - `ANTHROPIC_API_KEY` set in env
+3. **Confirm OpenAI is live** (only required for the AI bot builder).
+   - `OPENAI_API_KEY` set in env
    - `/bot/simulate` doesn't 503
 4. **Backups** — last cron run succeeded, restore tested in the last 30 days.
 
@@ -239,7 +239,7 @@ If any are red at Day 14, the pilot has not converted. Either extend by 1 week w
 | Bot replies are wrong / generic | `/bot/scenarios → Run all` — average score | <60: rerun website analysis + add more KB entries. 60–85: edit specific KB entries that scored low. |
 | Customer messages don't show in inbox | `/aligned-admin/system` → API traffic / Sentry | Most likely cause: Meta webhook not subscribed, or signature mismatch. Re-verify webhook in Meta. |
 | "Plan cap reached" error | `/settings/billing` → usage bars | Upgrade plan via Stripe Checkout, or wait for the next month-roll. |
-| Slow replies (>5 s bot latency) | Anthropic dashboard for token-budget rate limits | Either upgrade Anthropic tier or simplify the bot's KB to keep prompts smaller. |
+| Slow replies (>5 s bot latency) | OpenAI dashboard for token-budget rate limits | Either upgrade OpenAI tier or simplify the bot's KB to keep prompts smaller. |
 | Inbox shows stale data | Browser console for SSE errors | EventSource auto-reconnects; if persistent, check Caddy/proxy buffering. |
 
 ---

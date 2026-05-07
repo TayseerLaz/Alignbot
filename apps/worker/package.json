@@ -15,7 +15,6 @@
   "dependencies": {
     "@aligned/db": "workspace:*",
     "@aligned/shared": "workspace:*",
-    "@anthropic-ai/sdk": "^0.91.1",
     "@aws-sdk/client-s3": "^3.717.0",
     "@prisma/client": "^6.1.0",
     "@sentry/node": "^8.50.0",
@@ -25,6 +24,7 @@
     "exceljs": "^4.4.0",
     "ioredis": "^5.4.2",
     "nodemailer": "^6.9.16",
+    "openai": "^4.77.0",
     "pino": "^9.5.0",
     "pino-pretty": "^13.0.0",
     "prom-client": "^15.1.3",

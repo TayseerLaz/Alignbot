@@ -1637,6 +1637,11 @@ model Contact {
   phoneE164      String        @map("phone_e164")
   displayName    String?       @map("display_name")
   locale         String? // BCP 47 tag (e.g. en, en_US)
+  // Phase 5.3 — opt-in/out + IANA timezone for send-window enforcement.
+  // optedInAt is informational; optedOutAt blocks future sends.
+  optedInAt      DateTime?     @map("opted_in_at")
+  optedOutAt     DateTime?     @map("opted_out_at")
+  timezone       String? // IANA timezone (e.g. "America/Los_Angeles")
   attributes     Json          @default("{}")
   source         ContactSource @default(manual)
   lastInboundAt  DateTime?     @map("last_inbound_at")
@@ -1714,6 +1719,16 @@ model Broadcast {
   scheduledFor       DateTime?             @map("scheduled_for")
   startedAt          DateTime?             @map("started_at")
   completedAt        DateTime?             @map("completed_at")
+  // Phase 5.3 — send window in the channel's timezone (or per-contact if set).
+  // Hours stored as 0-23. Send worker requeues recipients outside the window.
+  sendWindowStartHour Int?                 @map("send_window_start_hour")
+  sendWindowEndHour   Int?                 @map("send_window_end_hour")
+  sendWindowTimezone  String?              @map("send_window_timezone")
+  // Phase 5.3 — post-hoc A/B winner determination. Set when broadcast completes.
+  // Strategy: 'read_rate' | 'response_rate' | 'manual' | null (no determination).
+  abWinnerStrategy    String?              @map("ab_winner_strategy")
+  abWinnerVariant     BroadcastVariant?    @map("ab_winner_variant")
+  abWinnerDecidedAt   DateTime?            @map("ab_winner_decided_at")
   // Counters — kept consistent by the fanout/send workers + webhook handler.
   totalRecipients    Int                   @default(0) @map("total_recipients")
   queuedCount        Int                   @default(0) @map("queued_count")

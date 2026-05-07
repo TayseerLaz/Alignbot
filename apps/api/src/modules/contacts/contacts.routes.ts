@@ -29,6 +29,9 @@ interface ContactRow {
   phoneE164: string;
   displayName: string | null;
   locale: string | null;
+  optedInAt: Date | null;
+  optedOutAt: Date | null;
+  timezone: string | null;
   attributes: unknown;
   source: ContactSource;
   lastInboundAt: Date | null;
@@ -44,6 +47,9 @@ function toContactDto(row: ContactRow) {
     phoneE164: row.phoneE164,
     displayName: row.displayName,
     locale: row.locale,
+    optedInAt: row.optedInAt?.toISOString() ?? null,
+    optedOutAt: row.optedOutAt?.toISOString() ?? null,
+    timezone: row.timezone,
     attributes:
       row.attributes && typeof row.attributes === 'object'
         ? (row.attributes as Record<string, string | number | boolean | null>)
@@ -125,6 +131,9 @@ export default async function contactsRoutes(app: FastifyInstance) {
         if (existing && !existing.deletedAt) {
           throw conflict('A contact with this phone number already exists.');
         }
+        const optedInAt = body.optedIn === true ? new Date() : body.optedIn === false ? null : undefined;
+        const optedOutAt =
+          body.optedOut === true ? new Date() : body.optedOut === false ? null : undefined;
         const upserted = await tx.contact.upsert({
           where: { organizationId_phoneE164: { organizationId: orgId, phoneE164: body.phoneE164 } },
           create: {
@@ -132,6 +141,9 @@ export default async function contactsRoutes(app: FastifyInstance) {
             phoneE164: body.phoneE164,
             displayName: body.displayName ?? null,
             locale: body.locale ?? null,
+            timezone: body.timezone ?? null,
+            optedInAt: optedInAt ?? null,
+            optedOutAt: optedOutAt ?? null,
             attributes: (body.attributes ?? {}) as never,
             source: 'manual',
           },
@@ -139,6 +151,9 @@ export default async function contactsRoutes(app: FastifyInstance) {
             deletedAt: null,
             displayName: body.displayName ?? null,
             locale: body.locale ?? null,
+            timezone: body.timezone ?? undefined,
+            optedInAt,
+            optedOutAt,
             attributes: (body.attributes ?? {}) as never,
           },
           include: { tags: { select: { tag: true } } },

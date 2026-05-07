@@ -26,9 +26,9 @@ const envSchema = z.object({
   EMAIL_CONCURRENCY: z.coerce.number().int().positive().default(4),
   CRAWL_CONCURRENCY: z.coerce.number().int().positive().default(2),
 
-  // Phase 2 — Anthropic for crawl analysis. Worker no-ops AI step if missing.
-  ANTHROPIC_API_KEY: z.string().optional(),
-  ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-6'),
+  // Phase 2 — OpenAI for crawl analysis. Worker no-ops AI step if missing.
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_MODEL: z.string().default('gpt-4o-mini'),
 
   // SMTP — used by the data-export worker to email the recipient a signed
   // download link. Same env var shape as the API. Falls back to Mailpit/Mailhog

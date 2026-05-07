@@ -8,8 +8,9 @@
 // Auto-pause: after RECIPIENT_FAIL_BURST consecutive recipient failures inside
 // a short window, the broadcast is paused and a `recipient_failed_burst` event
 // is emitted.
-import { Worker } from 'bullmq';
+import { DelayedError, Worker } from 'bullmq';
 
+import { emitWebhookEvent } from '../lib/emit-webhook.js';
 import { getConnection } from '../lib/redis.js';
 
 import { prisma } from './db.js';
@@ -175,15 +176,26 @@ export function startBroadcastSendWorker() {
     async (job) => {
       const { organizationId, broadcastId, recipientId } = job.data;
 
-      // Re-check broadcast status. If paused/cancelled, mark recipient skipped.
+      // Re-check broadcast status.
+      // - cancelled → terminal: mark recipient skipped, don't retry.
+      // - paused → don't send, but leave recipient `queued` so resume picks
+      //   it up. We move the BullMQ job back to delayed (~5 min) instead of
+      //   failing it, so it self-retries when the operator un-pauses.
       const broadcast = await prisma.broadcast.findUnique({ where: { id: broadcastId } });
       if (!broadcast) return;
-      if (broadcast.status === 'paused' || broadcast.status === 'cancelled') {
+      if (broadcast.status === 'cancelled') {
         await prisma.broadcastRecipient.updateMany({
           where: { id: recipientId, status: { in: ['queued', 'pending'] } },
           data: { status: 'skipped' },
         });
         return;
+      }
+      if (broadcast.status === 'paused') {
+        // Re-queue with a 30s delay so the job self-retries when the operator
+        // un-pauses. moveToDelayed + DelayedError is the BullMQ v5 idiom for
+        // "park this job; don't count an attempt."
+        if (job.token) await job.moveToDelayed(Date.now() + 30_000, job.token);
+        throw new DelayedError();
       }
 
       // Token bucket — if exhausted, throw to let BullMQ retry with backoff.
@@ -304,6 +316,17 @@ export function startBroadcastSendWorker() {
           where: { id: broadcastId },
           data: { failedCount: { increment: 1 } },
         });
+        await emitWebhookEvent({
+          organizationId,
+          eventKind: 'broadcast_recipient_failed',
+          payload: {
+            broadcastId,
+            recipientId,
+            phoneE164: recipient.phoneE164,
+            metaErrorCode: out.metaErrorCode,
+            metaErrorMessage: out.metaErrorMessage,
+          },
+        });
         const burst = await bumpFailureBurst(organizationId, broadcastId);
         if (burst >= RECIPIENT_FAIL_BURST) {
           await prisma.broadcast.update({
@@ -381,6 +404,19 @@ export function startBroadcastSendWorker() {
           organizationId: data.organizationId,
           broadcastId: b.id,
           kind: 'completed',
+        },
+      });
+      await emitWebhookEvent({
+        organizationId: data.organizationId,
+        eventKind: 'broadcast_completed',
+        payload: {
+          broadcastId: b.id,
+          name: b.name,
+          totalRecipients: b.totalRecipients,
+          sentCount: b.sentCount,
+          deliveredCount: b.deliveredCount,
+          readCount: b.readCount,
+          failedCount: b.failedCount,
         },
       });
     }

@@ -625,6 +625,14 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
         });
         return updated;
       });
+      // Best-effort: remove any still-delayed fanout job. If it has already
+      // fired or doesn't exist, BullMQ returns 0 — harmless.
+      try {
+        const job = await getBroadcastFanoutQueue().getJob(`broadcast:${id}`);
+        if (job) await job.remove();
+      } catch (err) {
+        req.log.warn({ err, id }, '[broadcasts] failed to remove delayed fanout job');
+      }
       await recordAudit({
         action: 'broadcast_cancelled',
         organizationId: orgId,

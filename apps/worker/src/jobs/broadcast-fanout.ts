@@ -11,6 +11,7 @@ import { Queue, Worker } from 'bullmq';
 import type { Prisma } from '@prisma/client';
 import { parse } from 'csv-parse';
 
+import { emitWebhookEvent } from '../lib/emit-webhook.js';
 import { env } from '../lib/env.js';
 import { getConnection } from '../lib/redis.js';
 import { getObjectStream } from '../lib/storage.js';
@@ -290,6 +291,26 @@ export function startBroadcastFanoutWorker() {
         await prisma.broadcastEvent.create({
           data: { organizationId, broadcastId, kind: 'started' },
         });
+        await emitWebhookEvent({
+          organizationId,
+          eventKind: 'broadcast_started',
+          payload: {
+            broadcastId,
+            name: broadcast.name,
+            scheduledFor: broadcast.scheduledFor?.toISOString() ?? null,
+          },
+        });
+      } else if (broadcast.status === 'sending' && !broadcast.startedAt) {
+        // Send-now path — mark started + emit on first fanout.
+        await prisma.broadcast.update({
+          where: { id: broadcastId },
+          data: { startedAt: new Date() },
+        });
+        await emitWebhookEvent({
+          organizationId,
+          eventKind: 'broadcast_started',
+          payload: { broadcastId, name: broadcast.name, scheduledFor: null },
+        });
       }
 
       const variantA = (broadcast.variantAVariables ?? {}) as unknown as VariableMapping;
@@ -369,6 +390,34 @@ export function startBroadcastFanoutWorker() {
     },
   );
   worker.on('error', (err) => console.error('[broadcast-fanout] worker error', err));
+  // After max retries, BullMQ marks the job failed. Mark the broadcast failed
+  // (terminal) and emit the broadcast_failed webhook so subscribers know.
+  worker.on('failed', async (job, err) => {
+    if (!job) return;
+    if (job.attemptsMade < (job.opts.attempts ?? 1)) return;
+    const { organizationId, broadcastId } = job.data;
+    try {
+      await prisma.broadcast.update({
+        where: { id: broadcastId },
+        data: { status: 'failed', completedAt: new Date() },
+      });
+      await prisma.broadcastEvent.create({
+        data: {
+          organizationId,
+          broadcastId,
+          kind: 'failed',
+          detail: { error: err.message?.slice(0, 500) ?? 'fanout exhausted' },
+        },
+      });
+      await emitWebhookEvent({
+        organizationId,
+        eventKind: 'broadcast_failed',
+        payload: { broadcastId, error: err.message?.slice(0, 500) ?? 'fanout exhausted' },
+      });
+    } catch (e) {
+      console.error('[broadcast-fanout] failed-handler error', e);
+    }
+  });
   return worker;
 }
 

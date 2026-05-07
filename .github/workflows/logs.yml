@@ -1,0 +1,50 @@
+name: Server logs (manual)
+
+# Fire from the GH Actions UI or `gh workflow run logs.yml`.
+# Tail the last N minutes of journalctl for each service unit.
+# Output appears inline in the workflow log so you can read it from
+# `gh run view <id> --log`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'How far back (e.g. "10 minutes ago", "1 hour ago", "today")'
+        required: false
+        default: '15 minutes ago'
+      lines:
+        description: 'Max lines per unit'
+        required: false
+        default: '300'
+      grep:
+        description: 'Optional grep filter (regex). Empty = no filter.'
+        required: false
+        default: ''
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Tail journalctl
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 5m
+          script: |
+            set -uo pipefail
+            SINCE='${{ inputs.since }}'
+            LINES='${{ inputs.lines }}'
+            GREP='${{ inputs.grep }}'
+            for unit in aligned-api aligned-worker aligned-web; do
+              echo ""
+              echo "================== $unit =================="
+              if [ -n "$GREP" ]; then
+                sudo journalctl -u "$unit" --no-pager --since "$SINCE" -n "$LINES" | grep -E "$GREP" || echo "(no matches)"
+              else
+                sudo journalctl -u "$unit" --no-pager --since "$SINCE" -n "$LINES"
+              fi
+            done

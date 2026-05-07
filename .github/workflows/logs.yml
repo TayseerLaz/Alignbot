@@ -66,10 +66,17 @@ jobs:
             done
 
             echo ""
-            echo "================== api log file tail (if any) =================="
-            for f in /var/log/aligned/api.log /opt/aligned/logs/api.log /opt/aligned/app/logs/api.log /opt/aligned/app/api.log; do
+            echo "================== app log file tails =================="
+            for f in /var/log/aligned-api.log /var/log/aligned-worker.log /var/log/aligned-web.log; do
               if [ -f "$f" ]; then
-                echo "--- $f (last $LINES) ---"
-                sudo tail -n "$LINES" "$f" | { [ -n "$GREP" ] && grep -E "$GREP" || cat; } | tail -n "$LINES"
+                echo ""
+                echo "--- $f (last $LINES lines) ---"
+                if [ -n "$GREP" ]; then
+                  sudo tail -n "$LINES" "$f" | grep -E "$GREP" || echo "(no matches)"
+                else
+                  sudo tail -n "$LINES" "$f"
+                fi
+              else
+                echo "(missing: $f)"
               fi
             done

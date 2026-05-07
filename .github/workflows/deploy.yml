@@ -30,6 +30,9 @@ jobs:
 
       - name: Deploy to server
         uses: appleboy/ssh-action@v1
+        env:
+          NEW_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NEW_OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           port: ${{ secrets.DEPLOY_PORT }}
@@ -37,9 +40,33 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           command_timeout: 20m
           script_stop: true
+          envs: NEW_OPENAI_API_KEY,NEW_OPENAI_MODEL
           script: |
             set -euo pipefail
             cd /opt/aligned/app
+
+            echo "=== ensure OPENAI_* lines in .env.production (idempotent) ==="
+            # Driven by GH secrets so we never have to touch the server file
+            # by hand. Existing lines are replaced; new ones are appended.
+            python3 - <<'PY'
+            import os, re
+            updates = {
+                'OPENAI_API_KEY': os.environ.get('NEW_OPENAI_API_KEY', ''),
+                'OPENAI_MODEL': os.environ.get('NEW_OPENAI_MODEL', '') or 'gpt-4o-mini',
+            }
+            path = '.env.production'
+            with open(path) as f:
+                content = f.read()
+            for key, val in updates.items():
+                if not val and key == 'OPENAI_API_KEY':
+                    continue  # don't blank an existing key when secret is unset
+                pat = re.compile(rf'^{re.escape(key)}=.*$', re.M)
+                line = f'{key}={val}'
+                content = pat.sub(line, content) if pat.search(content) else content.rstrip() + '\n' + line + '\n'
+            with open(path, 'w') as f:
+                f.write(content)
+            PY
+            chmod 600 .env.production
 
             # Load production env before any pnpm/prisma commands so DATABASE_URL
             # etc. are available to the build scripts.

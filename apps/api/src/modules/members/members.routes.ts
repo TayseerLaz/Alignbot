@@ -23,24 +23,48 @@ export default async function memberRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
 
   // ---------- GET /members --------------------------------------------------
+  // Phase 5.6 — added cursor pagination + search to handle orgs with hundreds
+  // of members without bloating the response.
   r.get(
     '/members',
     {
       schema: {
         tags: ['members'],
-        summary: 'List members of the active organization.',
+        summary: 'List members of the active organization (cursor-paginated).',
+        querystring: z.object({
+          search: z.string().trim().max(120).optional(),
+          cursor: z.string().optional(),
+          limit: z.coerce.number().int().min(1).max(200).default(50),
+        }),
         response: { 200: listEnvelopeSchema(memberSchema) },
       },
       preHandler: [app.requireRole('viewer')],
     },
     async (req) => {
       return app.tenant(req, async (tx) => {
+        const { search, cursor, limit } = req.query;
+        const where: Record<string, unknown> = {};
+        if (search) {
+          const trimmed = search.trim();
+          where.user = {
+            OR: [
+              { email: { contains: trimmed, mode: 'insensitive' } },
+              { firstName: { contains: trimmed, mode: 'insensitive' } },
+              { lastName: { contains: trimmed, mode: 'insensitive' } },
+            ],
+          };
+        }
         const memberships = await tx.membership.findMany({
-          orderBy: { createdAt: 'asc' },
+          where,
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
           include: { user: true },
+          take: limit + 1,
+          ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
         });
+        const hasMore = memberships.length > limit;
+        const slice = hasMore ? memberships.slice(0, limit) : memberships;
         return {
-          data: memberships.map((m) => ({
+          data: slice.map((m) => ({
             membershipId: m.id,
             userId: m.userId,
             email: m.user.email,
@@ -54,7 +78,7 @@ export default async function memberRoutes(app: FastifyInstance) {
             lastLoginAt: m.user.lastLoginAt?.toISOString() ?? null,
             createdAt: m.createdAt.toISOString(),
           })),
-          nextCursor: null,
+          nextCursor: hasMore ? (slice[slice.length - 1]?.id ?? null) : null,
         };
       });
     },

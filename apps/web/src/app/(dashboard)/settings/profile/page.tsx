@@ -254,6 +254,8 @@ export default function ProfilePage() {
           </form>
         </Card>
 
+        <TwoFactorCard />
+
         <Card>
           <CardHeader>
             <CardTitle>Export your data</CardTitle>
@@ -283,5 +285,150 @@ export default function ProfilePage() {
         </Card>
       </div>
     </>
+  );
+}
+
+// ---------- TwoFactorCard ---------------------------------------------------
+// Phase 5.5 — TOTP 2FA self-service. Setup → enable → recovery codes.
+function TwoFactorCard() {
+  const [status, setStatus] = useState<{ enabled: boolean; recoveryCodesRemaining: number } | null>(null);
+  const [setupOtpUri, setSetupOtpUri] = useState<string | null>(null);
+  const [setupSecret, setSetupSecret] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = async () => {
+    try {
+      const res = await api.get<{ data: { enabled: boolean; recoveryCodesRemaining: number } }>(
+        '/api/v1/account/2fa/status',
+      );
+      setStatus(res.data);
+    } catch {
+      setStatus({ enabled: false, recoveryCodesRemaining: 0 });
+    }
+  };
+
+  // Fetch on first render.
+  if (status === null && !busy) {
+    void refresh();
+  }
+
+  const beginSetup = async () => {
+    setBusy(true);
+    try {
+      const res = await api.post<{ data: { secret: string; otpauthUri: string } }>(
+        '/api/v1/account/2fa/setup',
+      );
+      setSetupSecret(res.data.secret);
+      setSetupOtpUri(res.data.otpauthUri);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.payload.message : '2FA setup failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const enable = async () => {
+    setBusy(true);
+    try {
+      const res = await api.post<{ data: { recoveryCodes: string[] } }>(
+        '/api/v1/account/2fa/enable',
+        { code },
+      );
+      setRecoveryCodes(res.data.recoveryCodes);
+      setSetupOtpUri(null);
+      setSetupSecret(null);
+      setCode('');
+      toast.success('Two-factor authentication enabled');
+      void refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.payload.message : 'Could not verify code');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disable = async () => {
+    const c = window.prompt('Enter your current 6-digit 2FA code to disable.');
+    if (!c) return;
+    setBusy(true);
+    try {
+      await api.post('/api/v1/account/2fa/disable', { code: c });
+      toast.success('Two-factor authentication disabled');
+      void refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.payload.message : 'Disable failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Two-factor authentication</CardTitle>
+        <CardDescription>
+          Add a second factor (TOTP) so a stolen password isn&apos;t enough to log in.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {status?.enabled ? (
+          <>
+            <p className="text-sm">
+              <strong>Enabled.</strong>{' '}
+              <span className="text-foreground-muted">
+                {status.recoveryCodesRemaining} recovery code
+                {status.recoveryCodesRemaining === 1 ? '' : 's'} remaining.
+              </span>
+            </p>
+            <Button variant="danger" onClick={disable} loading={busy}>
+              Disable 2FA
+            </Button>
+          </>
+        ) : setupOtpUri ? (
+          <>
+            <p className="text-sm">
+              Scan this URI with your authenticator app, or paste the secret manually.
+            </p>
+            <pre className="break-all rounded bg-surface-muted p-2 text-xs">{setupOtpUri}</pre>
+            <p className="text-xs text-foreground-muted">
+              Manual secret: <code className="font-mono">{setupSecret}</code>
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="otp-code">Enter the 6-digit code from your app</Label>
+              <Input
+                id="otp-code"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="000000"
+              />
+            </div>
+            <Button onClick={enable} loading={busy} disabled={code.length !== 6}>
+              Verify &amp; enable
+            </Button>
+          </>
+        ) : recoveryCodes ? (
+          <>
+            <p className="text-sm">
+              <strong>Save these recovery codes.</strong> Each can be used once if you lose your
+              authenticator. They won&apos;t be shown again.
+            </p>
+            <pre className="rounded bg-surface-muted p-3 font-mono text-sm">
+              {recoveryCodes.join('\n')}
+            </pre>
+            <Button variant="secondary" onClick={() => setRecoveryCodes(null)}>
+              I&apos;ve saved them
+            </Button>
+          </>
+        ) : (
+          <Button onClick={beginSetup} loading={busy}>
+            Enable 2FA
+          </Button>
+        )}
+      </CardContent>
+    </Card>
   );
 }

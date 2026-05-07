@@ -52,6 +52,7 @@ const groups: NavGroup[] = [
     items: [
       { href: '/products', label: 'Products', icon: Package },
       { href: '/services', label: 'Services', icon: Briefcase },
+      { href: '/categories', label: 'Categories', icon: Building2 },
       { href: '/business-info', label: 'Business info', icon: Building2 },
     ],
   },
@@ -82,6 +83,7 @@ const groups: NavGroup[] = [
       { href: '/contacts', label: 'Contacts', icon: ContactIcon },
       { href: '/segments', label: 'Segments', icon: Users },
       { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone },
+      { href: '/sequences', label: 'Sequences', icon: Activity },
     ],
   },
   {

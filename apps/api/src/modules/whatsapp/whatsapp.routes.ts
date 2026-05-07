@@ -1451,12 +1451,14 @@ async function maybeReplyAsBot(args: {
   if (!isOpenAIConfigured()) return;
 
   const { withRlsBypass } = await import('../../lib/db.js');
-  const { buildBotResponse } = await import('../../lib/bot-engine.js');
+  const { buildBotResponse, gatherBotData } = await import('../../lib/bot-engine.js');
 
   for (const m of args.messages) {
     if (!m.bodyText || !m.from) continue;
 
-    const { reply, channel } = (await withRlsBypass(async (tx) => {
+    // tx1: read everything we need to decide whether to reply + the prompt
+    // data. No LLM call inside.
+    const ctx = await withRlsBypass(async (tx) => {
       const config = await tx.botConfig.findUnique({
         where: { organizationId: args.organizationId },
       });
@@ -1480,25 +1482,28 @@ async function maybeReplyAsBot(args: {
         orderBy: { receivedAt: 'desc' },
         take: 10,
       });
-      const reversed = history.reverse();
+      const data = await gatherBotData(tx as never, args.organizationId);
 
-      const result = await buildBotResponse(tx as never, {
-        organizationId: args.organizationId,
-        userMessage: m.bodyText!,
-        history: reversed.map((h) => ({
-          role: h.direction === 'outbound' ? ('assistant' as const) : ('user' as const),
-          content: h.body ?? '',
-        })),
-      }).catch((err) => {
-        args.log.warn({ err }, '[whatsapp] bot-engine failed');
-        return null;
-      });
-      if (!result) return null;
+      return { history: history.reverse(), data, channel: ch };
+    });
+    if (!ctx) continue;
 
-      return { reply: result.text, channel: ch };
-    })) ?? { reply: null, channel: null };
-
-    if (!reply || !channel) continue;
+    // OpenAI call — outside the tx. Safe to be slow.
+    const result = await buildBotResponse({
+      organizationId: args.organizationId,
+      userMessage: m.bodyText!,
+      history: ctx.history.map((h) => ({
+        role: h.direction === 'outbound' ? ('assistant' as const) : ('user' as const),
+        content: h.body ?? '',
+      })),
+      data: ctx.data,
+    }).catch((err) => {
+      args.log.warn({ err }, '[whatsapp] bot-engine failed');
+      return null;
+    });
+    const reply = result?.text ?? null;
+    const channel = ctx.channel;
+    if (!reply) continue;
 
     // Send via Meta directly (we're in the worker-equivalent path; reusing
     // the in-process token bucket from the /send route is fine — both

@@ -26,7 +26,7 @@ import { z } from 'zod';
 
 import { complete, isOpenAIConfigured } from '../../lib/openai.js';
 import { recordAudit } from '../../lib/audit.js';
-import { buildBotResponse } from '../../lib/bot-engine.js';
+import { buildBotResponse, gatherBotData } from '../../lib/bot-engine.js';
 import { withTenant } from '../../lib/db.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 import { getCrawlQueue } from '../../lib/queues.js';
@@ -555,29 +555,42 @@ export default async function botRoutes(app: FastifyInstance) {
         );
       }
       const orgId = req.auth!.organizationId;
-      // Pull recent turns for this session (capped at last 10) so the bot
-      // has minimal short-term memory in the preview.
-      const result = await app.tenant(req, async (tx) => {
-        const history = await tx.botSimulationTurn.findMany({
-          where: { organizationId: orgId, sessionId: req.body.sessionId },
-          orderBy: { createdAt: 'desc' },
-          take: 10,
-        });
-        const reversed = history.reverse();
-        const reply = await buildBotResponse(tx, {
-          organizationId: orgId,
-          userMessage: req.body.message,
-          history: reversed.map((h) => ({ role: h.role as 'user' | 'assistant', content: h.body })),
-        });
+      // tx1: gather all data (history + KB + catalog) and persist the user
+      // turn. Read-heavy, no network — closes well under the 5s tx timeout.
+      const { data, history } = await app.tenant(req, async (tx) => {
+        const [data, history] = await Promise.all([
+          gatherBotData(tx, orgId),
+          tx.botSimulationTurn.findMany({
+            where: { organizationId: orgId, sessionId: req.body.sessionId },
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+          }),
+        ]);
         await tx.botSimulationTurn.create({
           data: { organizationId: orgId, sessionId: req.body.sessionId, role: 'user', body: req.body.message },
         });
+        return { data, history: history.reverse() };
+      });
+
+      // OpenAI call — outside any tx, can take 5–15s without breaking
+      // anything.
+      const reply = await buildBotResponse({
+        organizationId: orgId,
+        userMessage: req.body.message,
+        history: history.map((h) => ({ role: h.role as 'user' | 'assistant', content: h.body })),
+        data,
+      });
+
+      // tx2: persist the assistant turn. Fire-and-forget'ish — if this
+      // fails the user still got their reply, but we log + propagate so
+      // the route returns 500 instead of a phantom-success.
+      await app.tenant(req, async (tx) => {
         await tx.botSimulationTurn.create({
           data: { organizationId: orgId, sessionId: req.body.sessionId, role: 'assistant', body: reply.text },
         });
-        return reply;
       });
-      return { data: { reply: result.text, usedKbCount: result.usedKbCount } };
+
+      return { data: { reply: reply.text, usedKbCount: reply.usedKbCount } };
     },
   );
 
@@ -602,10 +615,16 @@ export default async function botRoutes(app: FastifyInstance) {
       const orgId = req.auth!.organizationId;
       const out: { key: string; prompt: string; reply: string; score: number; notes: string }[] = [];
 
+      // Gather data once for the whole run — same KB/catalog/business info
+      // applies to every scenario. Saves ~5 round trips per scenario.
+      const data = await app.tenant(req, (tx) => gatherBotData(tx, orgId));
+
       for (const s of SCENARIOS) {
-        const reply = await app.tenant(req, (tx) =>
-          buildBotResponse(tx, { organizationId: orgId, userMessage: s.prompt }),
-        );
+        const reply = await buildBotResponse({
+          organizationId: orgId,
+          userMessage: s.prompt,
+          data,
+        });
         // LLM-as-judge: score the bot's reply against the expectation.
         const judgeSys =
           'You are a strict QA judge. Score the bot reply 0–100 against the expectation. Return STRICT JSON: {"score": <int>, "notes": "<one short sentence>"}. No prose, no markdown.';

@@ -11,6 +11,15 @@
 // and asks the LLM to reply in the configured personality. We deliberately
 // pull from the in-platform data, not Phase 1's chatbot read API, because
 // we already have the Prisma client + don't want to round-trip through HTTP.
+//
+// Important: the LLM call (`complete`) is NEVER held inside a Prisma
+// interactive transaction. Prisma's default tx timeout is 5s; OpenAI calls
+// routinely take longer than that, which would expire the tx before the
+// post-LLM writes can run. So this module is split:
+//   1. `gatherBotData(tx, orgId)` — runs the DB reads inside the caller's tx
+//   2. `buildBotResponse({...data})`   — composes prompt + calls the LLM
+//                                        with NO tx held
+// Call sites do tx1 → release → LLM → tx2.
 
 import { complete } from './openai.js';
 
@@ -22,22 +31,50 @@ const PERSONALITY_DESCRIPTIONS: Record<string, string> = {
   professional: 'Polite and direct. Optimised for clarity over warmth.',
 };
 
-interface BotContext {
-  organizationId: string;
-  userMessage: string;
-  history?: { role: 'user' | 'assistant'; content: string }[];
+export interface BotData {
+  config: {
+    personality: string | null;
+    customPersonality: string | null;
+    detectedTone: string | null;
+    greeting: string | null;
+    escalationRules: unknown;
+  } | null;
+  kb: { question: string; answer: string }[];
+  products: {
+    name: string;
+    sku: string;
+    priceMinor: number | null;
+    currency: string | null;
+    shortDescription: string | null;
+  }[];
+  services: {
+    name: string;
+    basePriceMinor: number | null;
+    currency: string | null;
+    durationMinutes: number | null;
+    shortDescription: string | null;
+  }[];
+  biz: {
+    legalName: string | null;
+    tagline: string | null;
+    about: string | null;
+    websiteUrl: string | null;
+    timezone: string | null;
+    operatingHours: unknown;
+  } | null;
+  faqs: { question: string; answer: string }[];
+  policies: { kind: string; title: string; content: string }[];
 }
 
-// `tx` is any Prisma-shaped client (tenant transaction or RLS-bypass) — the
-// concrete type narrows further than what the call site needs and pulling
-// in Prisma's internal $TransactionClient just to make TS happy isn't worth
-// it. Call sites stay type-safe against the model methods we use.
+// Pulls every prompt-relevant row for one org. MUST run inside whatever
+// tenant/RLS-bypass transaction the caller is using; this function does
+// only DB reads and returns immediately so the caller can release the tx
+// before the slow LLM step.
+//
+// `tx` is any Prisma-shaped client — we accept the wider type because the
+// concrete tenant transaction client narrows further than we need.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function buildBotResponse(
-  tx: any,
-  ctx: BotContext,
-): Promise<{ text: string; usedKbCount: number }> {
-  const orgId = ctx.organizationId;
+export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
   const [config, kb, products, services, biz, faqs, policies] = (await Promise.all([
     tx.botConfig.findUnique({ where: { organizationId: orgId } }),
     tx.knowledgeBaseEntry.findMany({
@@ -66,15 +103,22 @@ export async function buildBotResponse(
       select: { kind: true, title: true, content: true },
       take: 10,
     }),
-  ])) as [
-    { personality: string | null; customPersonality: string | null; detectedTone: string | null; greeting: string | null; escalationRules: unknown } | null,
-    { question: string; answer: string }[],
-    { name: string; sku: string; priceMinor: number | null; currency: string | null; shortDescription: string | null }[],
-    { name: string; basePriceMinor: number | null; currency: string | null; durationMinutes: number | null; shortDescription: string | null }[],
-    { legalName: string | null; tagline: string | null; about: string | null; websiteUrl: string | null; timezone: string | null; operatingHours: unknown } | null,
-    { question: string; answer: string }[],
-    { kind: string; title: string; content: string }[],
-  ];
+  ])) as [BotData['config'], BotData['kb'], BotData['products'], BotData['services'], BotData['biz'], BotData['faqs'], BotData['policies']];
+
+  return { config, kb, products, services, biz, faqs, policies };
+}
+
+interface BotResponseArgs {
+  organizationId: string;
+  userMessage: string;
+  history?: { role: 'user' | 'assistant'; content: string }[];
+  data: BotData;
+}
+
+// Composes the system prompt from gathered data + asks the LLM. NO Prisma
+// tx is held here — callers MUST have already exited their gather-data tx.
+export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: string; usedKbCount: number }> {
+  const { config, kb, products, services, biz, faqs, policies } = args.data;
 
   const personalityKey = config?.personality ?? config?.detectedTone ?? 'friendly';
   const personalityHint =
@@ -136,12 +180,12 @@ export async function buildBotResponse(
     .join('\n');
 
   const messages: { role: 'user' | 'assistant'; content: string }[] = [
-    ...(ctx.history ?? []),
-    { role: 'user', content: ctx.userMessage },
+    ...(args.history ?? []),
+    { role: 'user', content: args.userMessage },
   ];
 
   const result = await complete({
-    organizationId: orgId,
+    organizationId: args.organizationId,
     systemPrompt: sys,
     messages,
     maxTokens: 600,

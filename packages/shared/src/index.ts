@@ -16,5 +16,6 @@ export * from './schemas/read-api.js';
 export * from './schemas/revision.js';
 export * from './schemas/notification.js';
 export * from './schemas/whatsapp.js';
+export * from './schemas/broadcast.js';
 export * from './types/api-error.js';
 export * from './util-url-guard.js';

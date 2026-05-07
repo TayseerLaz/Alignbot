@@ -1,3 +1,5 @@
+import type { Readable } from 'node:stream';
+
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -86,4 +88,14 @@ export function publicUrlFor(storageKey: string): string | null {
     return `${base}/${storageKey}`;
   }
   return null;
+}
+
+/** Stream the contents of a stored object. Used by CSV-driven flows that
+ * parse small-to-medium files synchronously inside an API route. */
+export async function getObjectStream(storageKey: string): Promise<Readable> {
+  const out = await getClient().send(
+    new GetObjectCommand({ Bucket: env.WASABI_BUCKET, Key: storageKey }),
+  );
+  if (!out.Body) throw new Error(`Empty body for ${storageKey}`);
+  return out.Body as Readable;
 }

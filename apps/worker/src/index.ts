@@ -5,6 +5,8 @@ import pino from 'pino';
 import { collectDefaultMetrics, Counter, Gauge, Registry } from 'prom-client';
 
 import { env } from './lib/env.js';
+import { startBroadcastFanoutWorker } from './jobs/broadcast-fanout.js';
+import { startBroadcastSendWorker } from './jobs/broadcast-send.js';
 import { startCrawlWorker } from './jobs/crawl.js';
 import { startDataExportWorker } from './jobs/data-export.js';
 import { startImportWorker } from './jobs/import.js';
@@ -84,6 +86,8 @@ async function main() {
     startWebhookDeliveryWorker(),
     startCrawlWorker(),
     startDataExportWorker(),
+    startBroadcastFanoutWorker(),
+    startBroadcastSendWorker(),
   ];
 
   for (const w of workers) {

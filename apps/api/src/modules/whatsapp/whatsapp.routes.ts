@@ -1219,20 +1219,61 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         for (const change of entry.changes ?? []) {
           for (const s of change.value?.statuses ?? []) {
             if (!s.id || !s.status) continue;
-            await withRlsBypass((tx) =>
-              tx.whatsAppMessage.updateMany({
+            const ts = s.timestamp ? new Date(Number(s.timestamp) * 1000) : new Date();
+            await withRlsBypass(async (tx) => {
+              await tx.whatsAppMessage.updateMany({
                 where: {
                   organizationId: channel.organizationId,
                   metaMessageId: s.id!,
                 },
                 data: {
                   metaStatus: s.status!,
-                  metaStatusAt: s.timestamp
-                    ? new Date(Number(s.timestamp) * 1000)
-                    : new Date(),
+                  metaStatusAt: ts,
                 },
-              }),
-            ).catch((err) => req.log.error({ err }, '[whatsapp] status update failed'));
+              });
+
+              // Phase 4 — also propagate to BroadcastRecipient (lookup by wamid).
+              const recipient = await tx.broadcastRecipient.findFirst({
+                where: {
+                  organizationId: channel.organizationId,
+                  metaMessageId: s.id!,
+                },
+              });
+              if (!recipient) return;
+              const updates: Record<string, unknown> = {};
+              const counterDelta: Record<string, number> = {};
+              if (s.status === 'delivered' && recipient.status !== 'read') {
+                updates.status = 'delivered';
+                updates.deliveredAt = ts;
+                counterDelta.deliveredCount = 1;
+              } else if (s.status === 'read') {
+                updates.status = 'read';
+                updates.readAt = ts;
+                if (!recipient.deliveredAt) {
+                  updates.deliveredAt = ts;
+                  counterDelta.deliveredCount = 1;
+                }
+                counterDelta.readCount = 1;
+              } else if (s.status === 'failed' && recipient.status !== 'failed') {
+                updates.status = 'failed';
+                updates.failedAt = ts;
+                counterDelta.failedCount = 1;
+              }
+              if (Object.keys(updates).length > 0) {
+                await tx.broadcastRecipient.update({
+                  where: { id: recipient.id },
+                  data: updates,
+                });
+              }
+              if (Object.keys(counterDelta).length > 0) {
+                await tx.broadcast.update({
+                  where: { id: recipient.broadcastId },
+                  data: Object.fromEntries(
+                    Object.entries(counterDelta).map(([k, v]) => [k, { increment: v }]),
+                  ),
+                });
+              }
+            }).catch((err) => req.log.error({ err }, '[whatsapp] status update failed'));
           }
         }
       }

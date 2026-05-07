@@ -3,6 +3,7 @@
 export * from './catalog.js';
 export * from './day3.js';
 export * from './day4.js';
+export * from './phase4.js';
 
 
 

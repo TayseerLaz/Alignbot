@@ -50,5 +50,18 @@ export type {
   Notification,
   NotificationKind,
   NotificationSeverity,
+  // Phase 4 — Broadcasts
+  Contact,
+  ContactTag,
+  ContactSource,
+  Segment,
+  Broadcast,
+  BroadcastStatus,
+  BroadcastAudienceKind,
+  BroadcastVariant,
+  BroadcastRecipient,
+  RecipientStatus,
+  BroadcastEvent,
+  BroadcastEventKind,
   Prisma,
 } from '@prisma/client';

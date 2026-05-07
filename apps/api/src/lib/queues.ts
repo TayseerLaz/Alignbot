@@ -19,6 +19,9 @@ export const QUEUE_WEBHOOK_DELIVERY = 'webhook-delivery';
 export const QUEUE_EMAIL = 'email';
 export const QUEUE_CRAWL = 'crawl';
 export const QUEUE_DATA_EXPORT = 'data-export';
+// Phase 4 — Broadcasts.
+export const QUEUE_BROADCAST_FANOUT = 'broadcast-fanout';
+export const QUEUE_BROADCAST_SEND = 'broadcast-send';
 
 // ----- Job payload types (single source of truth shared with worker) ------
 export interface ImportJobPayload {
@@ -55,6 +58,22 @@ export interface DataExportPayload {
   requestedByUserId: string;
   requestedByEmail: string;
   exportId: string;
+}
+
+// Phase 4 — Broadcasts.
+// One job per broadcast — materializes recipients then enqueues per-recipient
+// send jobs. Restart-safe: the worker filters by `BroadcastRecipient.status`
+// when re-running so already-sent recipients are skipped.
+export interface BroadcastFanoutPayload {
+  organizationId: string;
+  broadcastId: string;
+}
+
+// One job per recipient — calls Meta `/messages` for the chosen template.
+export interface BroadcastSendPayload {
+  organizationId: string;
+  broadcastId: string;
+  recipientId: string;
 }
 
 // ----- Queue singletons (lazy) --------------------------------------------
@@ -99,6 +118,23 @@ export function getDataExportQueue(): Queue<DataExportPayload> {
     dataExportQueue = new Queue(QUEUE_DATA_EXPORT, { connection: getConnection() });
   }
   return dataExportQueue;
+}
+
+// Phase 4 — Broadcast queues.
+let broadcastFanoutQueue: Queue<BroadcastFanoutPayload> | null = null;
+export function getBroadcastFanoutQueue(): Queue<BroadcastFanoutPayload> {
+  if (!broadcastFanoutQueue) {
+    broadcastFanoutQueue = new Queue(QUEUE_BROADCAST_FANOUT, { connection: getConnection() });
+  }
+  return broadcastFanoutQueue;
+}
+
+let broadcastSendQueue: Queue<BroadcastSendPayload> | null = null;
+export function getBroadcastSendQueue(): Queue<BroadcastSendPayload> {
+  if (!broadcastSendQueue) {
+    broadcastSendQueue = new Queue(QUEUE_BROADCAST_SEND, { connection: getConnection() });
+  }
+  return broadcastSendQueue;
 }
 
 // QueueEvents — used by API to subscribe to progress (e.g. for SSE on imports).

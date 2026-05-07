@@ -160,6 +160,23 @@ Then send the client an invitation through the ALIGNED admin UI.
 2. Endpoints auto-disable after 25 consecutive failures.
 3. Manual retry from the deliveries log if the customer's endpoint is back up.
 
+### Broadcast stuck in `sending` with no progress
+1. Check worker logs: `docker logs aligned-worker | grep broadcast`.
+2. Verify the `broadcast-fanout` and `broadcast-send` queues are draining: ALIGNED admin → System health.
+3. Check the WhatsApp channel is active (`/whatsapp` page) — token expiry or Meta-side disable.
+4. Pause the broadcast (button on detail page), fix the underlying issue, then Resume.
+5. The send worker auto-pauses after 25 consecutive recipient failures inside a 60s window; look for a `recipient_failed_burst` event in the timeline.
+
+---
+
+## Operating broadcasts
+
+- **Audience materialization**: manual + segment recipients land in `broadcast_recipients` immediately on send. CSV recipients land in the fanout worker (streaming, restart-safe).
+- **Per-org rate limit**: the send worker honors `WHATSAPP_SEND_TOKENS_PER_SECOND` (default 80). Bump after Meta tier upgrades.
+- **Permanent vs transient errors**: the send worker classifies Meta error codes into permanent (skip + count as failed) and transient (BullMQ retries with exponential backoff up to 5 attempts).
+- **Status updates**: delivered/read/failed on a recipient row are driven by the existing `message_status` webhook, joined by `meta_message_id`.
+- **A/B tests**: 50/50 deterministic split by phone hash. Variant counters are inferred by filtering recipients on the detail page.
+
 ---
 
 ## Pilot onboarding checklist

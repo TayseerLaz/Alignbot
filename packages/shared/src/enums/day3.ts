@@ -87,6 +87,11 @@ export const WebhookEventKind = {
   faq_changed: 'faq_changed',
   policy_changed: 'policy_changed',
   catalog_changed: 'catalog_changed',
+  // Phase 4 — Broadcasts
+  broadcast_started: 'broadcast_started',
+  broadcast_completed: 'broadcast_completed',
+  broadcast_failed: 'broadcast_failed',
+  broadcast_recipient_failed: 'broadcast_recipient_failed',
 } as const;
 export type WebhookEventKind = (typeof WebhookEventKind)[keyof typeof WebhookEventKind];
 

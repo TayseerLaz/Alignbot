@@ -125,6 +125,13 @@ SELECT _aligned_apply_tenant_rls('usage_monthly');
 SELECT _aligned_apply_tenant_rls('branding_configs');
 SELECT _aligned_apply_tenant_rls('meta_onboarding_steps');
 SELECT _aligned_apply_tenant_rls('data_exports');
+-- Phase 4 — Broadcasts
+SELECT _aligned_apply_tenant_rls('contacts');
+SELECT _aligned_apply_tenant_rls('contact_tags');
+SELECT _aligned_apply_tenant_rls('segments');
+SELECT _aligned_apply_tenant_rls('broadcasts');
+SELECT _aligned_apply_tenant_rls('broadcast_recipients');
+SELECT _aligned_apply_tenant_rls('broadcast_events');
 -- plans is GLOBAL (no organization_id) — no RLS needed; access via API only.
 
 -- ---------- pg_trgm GIN indexes for fast search (Prisma can't express) ------
@@ -136,6 +143,12 @@ CREATE INDEX IF NOT EXISTS services_search_trgm_idx
 
 CREATE INDEX IF NOT EXISTS faqs_search_trgm_idx
   ON faqs USING gin (search_text gin_trgm_ops);
+
+-- Phase 4 — search across phone + display_name for contacts
+CREATE INDEX IF NOT EXISTS contacts_search_trgm_idx
+  ON contacts USING gin (
+    (lower(coalesce(phone_e164, '') || ' ' || coalesce(display_name, ''))) gin_trgm_ops
+  );
 
 -- Auto-maintain search_text on products, services, faqs.
 CREATE OR REPLACE FUNCTION _aligned_set_product_search_text() RETURNS trigger

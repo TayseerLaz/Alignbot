@@ -1,0 +1,680 @@
+'use client';
+
+import {
+  type CreateBroadcastBody,
+  type SegmentDto,
+  type VariableMapping,
+  type VariableSource,
+} from '@aligned/shared';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { ArrowLeft, ArrowRight, ChevronLeft, Send } from 'lucide-react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
+
+import { PageHeader } from '@/components/shell/page-header';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
+import { api, ApiError, getAccessToken } from '@/lib/api';
+
+interface Template {
+  id: string;
+  name: string;
+  language: string;
+  category: string;
+  bodyText: string;
+  status: string;
+}
+
+interface Channel {
+  id: string;
+  displayPhoneNumber: string | null;
+  isActive: boolean;
+}
+
+type AudienceKind = 'csv' | 'segment' | 'manual';
+
+const STEPS = ['Basics', 'Audience', 'Personalization', 'Review'] as const;
+
+// Extract {{1}}, {{2}}, ... from a template body. Returns sorted unique indices.
+function extractTemplateParams(body: string): number[] {
+  const matches = body.matchAll(/\{\{(\d+)\}\}/g);
+  const set = new Set<number>();
+  for (const m of matches) set.add(Number(m[1]));
+  return [...set].sort((a, b) => a - b);
+}
+
+export default function NewBroadcastPage() {
+  const router = useRouter();
+  const [step, setStep] = useState(0);
+
+  // Step 1 state
+  const [name, setName] = useState('');
+  const [channelId, setChannelId] = useState<string | null>(null);
+  const [variantATemplateId, setVariantATemplateId] = useState<string | null>(null);
+  const [abTest, setAbTest] = useState(false);
+  const [variantBTemplateId, setVariantBTemplateId] = useState<string | null>(null);
+
+  // Step 2 state
+  const [audienceKind, setAudienceKind] = useState<AudienceKind>('manual');
+  const [csvAssetId, setCsvAssetId] = useState<string | null>(null);
+  const [csvFilename, setCsvFilename] = useState<string | null>(null);
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [segmentId, setSegmentId] = useState<string | null>(null);
+  const [manualPhonesRaw, setManualPhonesRaw] = useState('');
+
+  // Step 3 state
+  const [variantAVariables, setVariantAVariables] = useState<VariableMapping>({});
+  const [variantBVariables, setVariantBVariables] = useState<VariableMapping>({});
+
+  // Step 4
+  const [scheduleLater, setScheduleLater] = useState(false);
+  const [scheduleAt, setScheduleAt] = useState('');
+
+  // Data
+  const channelsQuery = useQuery({
+    queryKey: ['whatsapp-channel'],
+    queryFn: () => api.get<{ data: Channel }>('/api/v1/whatsapp'),
+  });
+
+  useEffect(() => {
+    if (channelsQuery.data?.data.id && !channelId) setChannelId(channelsQuery.data.data.id);
+  }, [channelsQuery.data, channelId]);
+
+  const templatesQuery = useQuery({
+    queryKey: ['whatsapp-templates'],
+    queryFn: () => api.get<{ data: Template[] }>('/api/v1/whatsapp/templates'),
+  });
+  const approvedTemplates = useMemo(
+    () => (templatesQuery.data?.data ?? []).filter((t) => t.status === 'approved'),
+    [templatesQuery.data],
+  );
+
+  const segmentsQuery = useQuery({
+    queryKey: ['segments'],
+    queryFn: () => api.get<{ data: SegmentDto[] }>('/api/v1/segments'),
+  });
+
+  const variantATemplate = approvedTemplates.find((t) => t.id === variantATemplateId);
+  const variantBTemplate = approvedTemplates.find((t) => t.id === variantBTemplateId);
+  const paramsA = variantATemplate ? extractTemplateParams(variantATemplate.bodyText) : [];
+  const paramsB = variantBTemplate ? extractTemplateParams(variantBTemplate.bodyText) : [];
+
+  // Wipe variable mapping if template changes.
+  useEffect(() => {
+    setVariantAVariables({});
+  }, [variantATemplateId]);
+  useEffect(() => {
+    setVariantBVariables({});
+  }, [variantBTemplateId]);
+
+  const sendMutation = useMutation({
+    mutationFn: async () => {
+      const manualPhones =
+        audienceKind === 'manual'
+          ? manualPhonesRaw
+              .split(/[\n,;]/)
+              .map((p) => p.trim())
+              .filter(Boolean)
+          : undefined;
+      const body: CreateBroadcastBody = {
+        name,
+        channelId: channelId!,
+        audienceKind,
+        csvAssetId: audienceKind === 'csv' ? csvAssetId ?? undefined : undefined,
+        segmentId: audienceKind === 'segment' ? segmentId ?? undefined : undefined,
+        manualPhones,
+        abTest,
+        variantATemplateId: variantATemplateId!,
+        variantBTemplateId: abTest ? variantBTemplateId ?? undefined : undefined,
+        variantAVariables,
+        variantBVariables: abTest ? variantBVariables : undefined,
+      };
+      const created = await api.post<{ data: { id: string } }>('/api/v1/broadcasts', body);
+      const sendBody = scheduleLater && scheduleAt
+        ? { scheduledFor: new Date(scheduleAt).toISOString() }
+        : {};
+      await api.post(`/api/v1/broadcasts/${created.data.id}/send`, sendBody);
+      return created.data.id;
+    },
+    onSuccess: (id) => {
+      toast.success('Broadcast queued');
+      router.push(`/broadcasts/${id}`);
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Send failed'),
+  });
+
+  // ---- Validation per step
+  const canAdvance = useMemo(() => {
+    if (step === 0) {
+      return Boolean(name && channelId && variantATemplateId && (!abTest || variantBTemplateId));
+    }
+    if (step === 1) {
+      if (audienceKind === 'csv') return Boolean(csvAssetId);
+      if (audienceKind === 'segment') return Boolean(segmentId);
+      return manualPhonesRaw.split(/[\n,;]/).filter((p) => p.trim()).length > 0;
+    }
+    if (step === 2) {
+      return paramsA.every((p) => variantAVariables[String(p)]) &&
+        (!abTest || paramsB.every((p) => variantBVariables[String(p)]));
+    }
+    return true;
+  }, [
+    step,
+    name,
+    channelId,
+    variantATemplateId,
+    abTest,
+    variantBTemplateId,
+    audienceKind,
+    csvAssetId,
+    segmentId,
+    manualPhonesRaw,
+    paramsA,
+    paramsB,
+    variantAVariables,
+    variantBVariables,
+  ]);
+
+  return (
+    <>
+      <PageHeader
+        title="New broadcast"
+        description={`Step ${step + 1} of ${STEPS.length} — ${STEPS[step]}`}
+        actions={
+          <Link href="/broadcasts">
+            <Button variant="ghost">
+              <ChevronLeft className="size-4" /> Back to list
+            </Button>
+          </Link>
+        }
+      />
+
+      {/* Step indicator */}
+      <div className="flex items-center gap-2 text-sm">
+        {STEPS.map((s, idx) => (
+          <div
+            key={s}
+            className={`flex items-center gap-2 rounded px-3 py-1 ${
+              idx === step
+                ? 'bg-primary text-primary-foreground'
+                : idx < step
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'bg-surface-muted text-foreground-muted'
+            }`}
+          >
+            <span className="font-mono text-xs">{idx + 1}</span> {s}
+          </div>
+        ))}
+      </div>
+
+      {step === 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Basics</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <Label>Campaign name</Label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Spring sale" />
+            </div>
+            <div>
+              <Label>Channel</Label>
+              <Input
+                disabled
+                value={channelsQuery.data?.data.displayPhoneNumber ?? 'Loading…'}
+                className="font-mono text-sm"
+              />
+            </div>
+            <div>
+              <Label>Template (variant A)</Label>
+              <Select value={variantATemplateId ?? ''} onValueChange={(v) => setVariantATemplateId(v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Pick an approved template…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {approvedTemplates.length === 0 ? (
+                    <div className="px-3 py-2 text-sm text-foreground-muted">
+                      No approved templates. Create + submit one first.
+                    </div>
+                  ) : null}
+                  {approvedTemplates.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.name} <span className="ml-1 text-xs text-foreground-subtle">· {t.language} · {t.category}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {variantATemplate ? (
+                <pre className="mt-2 max-h-32 overflow-y-auto rounded bg-surface-muted p-3 text-xs">
+                  {variantATemplate.bodyText}
+                </pre>
+              ) : null}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                id="abtest"
+                type="checkbox"
+                checked={abTest}
+                onChange={(e) => setAbTest(e.target.checked)}
+              />
+              <Label htmlFor="abtest" className="cursor-pointer">A/B test (split 50/50)</Label>
+            </div>
+
+            {abTest ? (
+              <div>
+                <Label>Template (variant B)</Label>
+                <Select
+                  value={variantBTemplateId ?? ''}
+                  onValueChange={(v) => setVariantBTemplateId(v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pick variant B template…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {approvedTemplates.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {variantBTemplate ? (
+                  <pre className="mt-2 max-h-32 overflow-y-auto rounded bg-surface-muted p-3 text-xs">
+                    {variantBTemplate.bodyText}
+                  </pre>
+                ) : null}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {step === 1 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Audience</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex gap-2">
+              {(['manual', 'csv', 'segment'] as const).map((k) => (
+                <button
+                  key={k}
+                  onClick={() => setAudienceKind(k)}
+                  className={`flex-1 rounded border px-4 py-3 text-center text-sm ${
+                    audienceKind === k
+                      ? 'border-primary bg-primary/10'
+                      : 'border-border hover:bg-surface-muted'
+                  }`}
+                >
+                  <div className="font-medium capitalize">{k}</div>
+                  <div className="text-xs text-foreground-muted">
+                    {k === 'manual'
+                      ? 'Paste phone numbers'
+                      : k === 'csv'
+                        ? 'Upload a CSV'
+                        : 'Pick a saved segment'}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {audienceKind === 'manual' ? (
+              <div>
+                <Label>Phone numbers (one per line, E.164)</Label>
+                <Textarea
+                  rows={8}
+                  value={manualPhonesRaw}
+                  onChange={(e) => setManualPhonesRaw(e.target.value)}
+                  placeholder="+14155551234&#10;+14155555678"
+                  className="font-mono text-sm"
+                />
+                <p className="mt-1 text-xs text-foreground-muted">
+                  {manualPhonesRaw.split(/[\n,;]/).filter((p) => p.trim()).length} numbers entered
+                </p>
+              </div>
+            ) : null}
+
+            {audienceKind === 'csv' ? (
+              <CsvAudienceStep
+                onPicked={(assetId, filename, headers) => {
+                  setCsvAssetId(assetId);
+                  setCsvFilename(filename);
+                  setCsvHeaders(headers);
+                }}
+                currentFilename={csvFilename}
+              />
+            ) : null}
+
+            {audienceKind === 'segment' ? (
+              <div>
+                <Label>Segment</Label>
+                <Select value={segmentId ?? ''} onValueChange={(v) => setSegmentId(v)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pick a segment…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(segmentsQuery.data?.data ?? []).map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}{' '}
+                        <span className="ml-1 text-xs text-foreground-subtle">
+                          · {s.contactCount ?? '?'} contacts
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {step === 2 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Personalization</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {paramsA.length === 0 ? (
+              <p className="text-sm text-foreground-muted">
+                Variant A template has no variables. Nothing to map here.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm font-medium">Variant A · {variantATemplate?.name}</p>
+                {paramsA.map((p) => (
+                  <VariableRow
+                    key={`a-${p}`}
+                    paramIndex={p}
+                    audienceKind={audienceKind}
+                    csvHeaders={csvHeaders}
+                    value={variantAVariables[String(p)]}
+                    onChange={(src) =>
+                      setVariantAVariables((prev) => ({ ...prev, [String(p)]: src }))
+                    }
+                  />
+                ))}
+              </div>
+            )}
+            {abTest && variantBTemplate ? (
+              <div className="space-y-3 border-t border-border pt-4">
+                <p className="text-sm font-medium">Variant B · {variantBTemplate.name}</p>
+                {paramsB.map((p) => (
+                  <VariableRow
+                    key={`b-${p}`}
+                    paramIndex={p}
+                    audienceKind={audienceKind}
+                    csvHeaders={csvHeaders}
+                    value={variantBVariables[String(p)]}
+                    onChange={(src) =>
+                      setVariantBVariables((prev) => ({ ...prev, [String(p)]: src }))
+                    }
+                  />
+                ))}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {step === 3 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Review &amp; send</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <SummaryRow label="Name" value={name} />
+            <SummaryRow
+              label="Template"
+              value={`${variantATemplate?.name ?? ''} (${variantATemplate?.language ?? ''})`}
+            />
+            <SummaryRow label="A/B test" value={abTest ? 'Yes — split 50/50' : 'No'} />
+            <SummaryRow label="Audience" value={audienceKind} />
+            {audienceKind === 'manual' ? (
+              <SummaryRow
+                label="Recipients"
+                value={`${manualPhonesRaw.split(/[\n,;]/).filter((p) => p.trim()).length} numbers`}
+              />
+            ) : null}
+            {audienceKind === 'csv' && csvFilename ? (
+              <SummaryRow label="CSV" value={csvFilename} />
+            ) : null}
+
+            <div className="border-t border-border pt-4">
+              <div className="flex items-center gap-2">
+                <input
+                  id="schedule"
+                  type="checkbox"
+                  checked={scheduleLater}
+                  onChange={(e) => setScheduleLater(e.target.checked)}
+                />
+                <Label htmlFor="schedule" className="cursor-pointer">Schedule for later</Label>
+              </div>
+              {scheduleLater ? (
+                <Input
+                  type="datetime-local"
+                  value={scheduleAt}
+                  onChange={(e) => setScheduleAt(e.target.value)}
+                  className="mt-2 max-w-xs"
+                />
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* Wizard nav */}
+      <div className="flex justify-between">
+        <Button
+          variant="ghost"
+          disabled={step === 0}
+          onClick={() => setStep((s) => Math.max(0, s - 1))}
+        >
+          <ArrowLeft className="size-4" /> Back
+        </Button>
+        {step < STEPS.length - 1 ? (
+          <Button disabled={!canAdvance} onClick={() => setStep((s) => s + 1)}>
+            Next <ArrowRight className="size-4" />
+          </Button>
+        ) : (
+          <Button
+            disabled={sendMutation.isPending}
+            onClick={() => {
+              const phrase = scheduleLater ? 'Schedule this broadcast?' : 'Send this broadcast now?';
+              if (window.confirm(phrase)) sendMutation.mutate();
+            }}
+          >
+            <Send className="size-4" />{' '}
+            {sendMutation.isPending ? 'Submitting…' : scheduleLater ? 'Schedule' : 'Send now'}
+          </Button>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ---------- Variable row -------------------------------------------------
+function VariableRow({
+  paramIndex,
+  audienceKind,
+  csvHeaders,
+  value,
+  onChange,
+}: {
+  paramIndex: number;
+  audienceKind: AudienceKind;
+  csvHeaders: string[];
+  value: VariableSource | undefined;
+  onChange: (src: VariableSource) => void;
+}) {
+  const kind = value?.kind ?? 'static';
+  return (
+    <div className="grid grid-cols-12 items-center gap-2 text-sm">
+      <div className="col-span-1 font-mono text-foreground-muted">{`{{${paramIndex}}}`}</div>
+      <div className="col-span-3">
+        <Select
+          value={kind}
+          onValueChange={(v) => {
+            if (v === 'static') onChange({ kind: 'static', value: '' });
+            else if (v === 'csv') onChange({ kind: 'csv', column: csvHeaders[0] ?? '' });
+            else if (v === 'attribute') onChange({ kind: 'attribute', key: '', fallback: '' });
+            else if (v === 'field')
+              onChange({ kind: 'field', field: 'display_name', fallback: '' });
+          }}
+        >
+          <SelectTrigger className="h-9">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="static">Static value</SelectItem>
+            {audienceKind === 'csv' ? <SelectItem value="csv">CSV column</SelectItem> : null}
+            <SelectItem value="attribute">Contact attribute</SelectItem>
+            <SelectItem value="field">Contact field</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="col-span-8">
+        {value?.kind === 'static' ? (
+          <Input
+            value={value.value}
+            onChange={(e) => onChange({ kind: 'static', value: e.target.value })}
+            placeholder="Hello!"
+          />
+        ) : value?.kind === 'csv' ? (
+          <Select
+            value={value.column}
+            onValueChange={(v) => onChange({ kind: 'csv', column: v })}
+          >
+            <SelectTrigger className="h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {csvHeaders.map((h) => (
+                <SelectItem key={h} value={h}>
+                  {h}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : value?.kind === 'attribute' ? (
+          <div className="flex gap-2">
+            <Input
+              value={value.key}
+              onChange={(e) => onChange({ kind: 'attribute', key: e.target.value, fallback: value.fallback })}
+              placeholder="attribute key (e.g. first_name)"
+            />
+            <Input
+              value={value.fallback ?? ''}
+              onChange={(e) =>
+                onChange({ kind: 'attribute', key: value.key, fallback: e.target.value })
+              }
+              placeholder="fallback (optional)"
+              className="w-40"
+            />
+          </div>
+        ) : value?.kind === 'field' ? (
+          <Select
+            value={value.field}
+            onValueChange={(v) =>
+              onChange({
+                kind: 'field',
+                field: v as 'display_name' | 'phone_e164' | 'locale',
+                fallback: value.fallback,
+              })
+            }
+          >
+            <SelectTrigger className="h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="display_name">Display name</SelectItem>
+              <SelectItem value="phone_e164">Phone</SelectItem>
+              <SelectItem value="locale">Locale</SelectItem>
+            </SelectContent>
+          </Select>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// ---------- CSV upload step ------------------------------------------------
+function CsvAudienceStep({
+  onPicked,
+  currentFilename,
+}: {
+  onPicked: (assetId: string, filename: string, headers: string[]) => void;
+  currentFilename: string | null;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/assets/upload-csv`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${getAccessToken() ?? ''}` },
+          body: fd,
+          credentials: 'include',
+        },
+      );
+      if (!res.ok) throw new Error(await res.text());
+      const data = (await res.json()) as { data: { assetId: string; filename: string } };
+      // Quick header parse via FileReader (saves a roundtrip).
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = String(reader.result ?? '');
+        const firstLine = text.split(/\r?\n/, 1)[0] ?? '';
+        const headers = firstLine
+          .split(',')
+          .map((s) => s.trim().replace(/^"|"$/g, ''))
+          .filter(Boolean);
+        onPicked(data.data.assetId, data.data.filename, headers);
+        toast.success(`Uploaded — ${headers.length} columns detected`);
+      };
+      reader.readAsText(file.slice(0, 8192));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-2">
+      <Input type="file" accept=".csv,text/csv" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+      <Button onClick={submit} disabled={!file || busy}>
+        {busy ? 'Uploading…' : 'Upload CSV'}
+      </Button>
+      {currentFilename ? (
+        <p className="text-sm text-foreground-muted">Uploaded: {currentFilename}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between border-b border-border py-2 text-sm">
+      <span className="text-foreground-muted">{label}</span>
+      <span className="font-medium">{value}</span>
+    </div>
+  );
+}

@@ -1,0 +1,257 @@
+// Phase 4 — Broadcasts. Zod schemas shared between api + web.
+// Mirrors the Prisma models in packages/db/prisma/schema.prisma.
+import { z } from 'zod';
+
+import {
+  BROADCAST_AUDIENCE_KINDS,
+  BROADCAST_STATUSES,
+  type BroadcastAudienceKind,
+  type BroadcastStatus,
+  CONTACT_SOURCES,
+  type ContactSource,
+  RECIPIENT_STATUSES,
+  type RecipientStatus,
+} from '../enums/phase4.js';
+import { uuidSchema } from './common.js';
+
+// ---------- E.164 phone normalization --------------------------------------
+// Accept user input as +14155551234 OR 14155551234 OR digits-with-spaces; we
+// strip non-digits and re-add the leading +. Length: 8–15 digits per E.164.
+export const phoneE164Schema = z
+  .string()
+  .trim()
+  .min(1)
+  .transform((s) => {
+    const digits = s.replace(/[^\d]/g, '');
+    return digits.length > 0 ? `+${digits}` : '';
+  })
+  .refine((s) => /^\+\d{8,15}$/.test(s), 'Use a valid E.164 phone number, e.g. +14155551234.');
+
+// ---------- Contact --------------------------------------------------------
+export const contactDtoSchema = z.object({
+  id: uuidSchema,
+  phoneE164: z.string(),
+  displayName: z.string().nullable(),
+  locale: z.string().nullable(),
+  attributes: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+  source: z.enum(CONTACT_SOURCES as [ContactSource, ...ContactSource[]]),
+  tags: z.array(z.string()),
+  lastInboundAt: z.string().datetime().nullable(),
+  lastOutboundAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type ContactDto = z.infer<typeof contactDtoSchema>;
+
+export const createContactBodySchema = z.object({
+  phoneE164: phoneE164Schema,
+  displayName: z.string().trim().max(120).optional().nullable(),
+  locale: z.string().trim().max(20).optional().nullable(),
+  attributes: z
+    .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+    .optional(),
+  tags: z.array(z.string().trim().min(1).max(40)).optional(),
+});
+export type CreateContactBody = z.infer<typeof createContactBodySchema>;
+
+export const updateContactBodySchema = createContactBodySchema.partial();
+export type UpdateContactBody = z.infer<typeof updateContactBodySchema>;
+
+export const listContactsQuerySchema = z.object({
+  search: z.string().trim().max(120).optional(),
+  tag: z.string().trim().max(40).optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+export type ListContactsQuery = z.infer<typeof listContactsQuerySchema>;
+
+// ---------- Segment --------------------------------------------------------
+// Filter AST: a small whitelist. Evaluator turns this into a Prisma where.
+const segmentClauseSchema = z.discriminatedUnion('field', [
+  z.object({
+    field: z.literal('tag'),
+    op: z.enum(['in', 'not_in']),
+    value: z.array(z.string().trim().min(1).max(40)).min(1).max(50),
+  }),
+  z.object({
+    field: z.literal('attribute'),
+    key: z.string().trim().min(1).max(60),
+    op: z.enum(['eq', 'neq', 'contains']),
+    value: z.string().trim().max(200),
+  }),
+  z.object({
+    field: z.literal('locale'),
+    op: z.enum(['eq', 'neq']),
+    value: z.string().trim().min(1).max(20),
+  }),
+  z.object({
+    field: z.literal('last_inbound_at'),
+    op: z.enum(['within_days', 'not_within_days']),
+    value: z.coerce.number().int().min(1).max(3650),
+  }),
+  z.object({
+    field: z.literal('source'),
+    op: z.enum(['eq', 'neq']),
+    value: z.enum(CONTACT_SOURCES as [ContactSource, ...ContactSource[]]),
+  }),
+]);
+export type SegmentClause = z.infer<typeof segmentClauseSchema>;
+
+export const segmentFilterSchema = z.object({
+  mode: z.enum(['all', 'any']).default('all'),
+  clauses: z.array(segmentClauseSchema).max(20),
+});
+export type SegmentFilter = z.infer<typeof segmentFilterSchema>;
+
+export const segmentDtoSchema = z.object({
+  id: uuidSchema,
+  name: z.string(),
+  description: z.string().nullable(),
+  filter: segmentFilterSchema,
+  contactCount: z.number().int().nonnegative().optional(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type SegmentDto = z.infer<typeof segmentDtoSchema>;
+
+export const createSegmentBodySchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(500).optional().nullable(),
+  filter: segmentFilterSchema,
+});
+export type CreateSegmentBody = z.infer<typeof createSegmentBodySchema>;
+
+export const updateSegmentBodySchema = createSegmentBodySchema.partial();
+
+// ---------- Broadcast variable mapping --------------------------------------
+// Per template parameter index (Meta uses 1-based: {{1}}, {{2}}, ...).
+// Source decides where the value comes from per recipient.
+export const variableSourceSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('static'), value: z.string().max(500) }),
+  // For CSV audiences: read column by header name.
+  z.object({ kind: z.literal('csv'), column: z.string().min(1).max(120) }),
+  // For segment / manual audiences: read Contact.attributes[key], with an
+  // optional fallback for missing keys.
+  z.object({
+    kind: z.literal('attribute'),
+    key: z.string().min(1).max(60),
+    fallback: z.string().max(500).optional(),
+  }),
+  // Built-in fields.
+  z.object({
+    kind: z.literal('field'),
+    field: z.enum(['display_name', 'phone_e164', 'locale']),
+    fallback: z.string().max(500).optional(),
+  }),
+]);
+export type VariableSource = z.infer<typeof variableSourceSchema>;
+
+// Map of "1" | "2" | ... → source. Body components only (Meta header/footer
+// param mapping can be added later).
+export const variableMappingSchema = z.record(
+  z.string().regex(/^\d+$/, 'Use the numeric parameter index, e.g. "1".'),
+  variableSourceSchema,
+);
+export type VariableMapping = z.infer<typeof variableMappingSchema>;
+
+// ---------- Broadcast ------------------------------------------------------
+export const broadcastDtoSchema = z.object({
+  id: uuidSchema,
+  name: z.string(),
+  status: z.enum(BROADCAST_STATUSES as [BroadcastStatus, ...BroadcastStatus[]]),
+  channelId: uuidSchema,
+  audienceKind: z.enum(
+    BROADCAST_AUDIENCE_KINDS as [BroadcastAudienceKind, ...BroadcastAudienceKind[]],
+  ),
+  csvAssetId: uuidSchema.nullable(),
+  segmentId: uuidSchema.nullable(),
+  abTest: z.boolean(),
+  variantATemplateId: uuidSchema,
+  variantBTemplateId: uuidSchema.nullable(),
+  variantAVariables: variableMappingSchema,
+  variantBVariables: variableMappingSchema.nullable(),
+  scheduledFor: z.string().datetime().nullable(),
+  startedAt: z.string().datetime().nullable(),
+  completedAt: z.string().datetime().nullable(),
+  totalRecipients: z.number().int().nonnegative(),
+  queuedCount: z.number().int().nonnegative(),
+  sentCount: z.number().int().nonnegative(),
+  deliveredCount: z.number().int().nonnegative(),
+  readCount: z.number().int().nonnegative(),
+  failedCount: z.number().int().nonnegative(),
+  createdByUserId: uuidSchema.nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type BroadcastDto = z.infer<typeof broadcastDtoSchema>;
+
+export const createBroadcastBodySchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  channelId: uuidSchema,
+  audienceKind: z.enum(
+    BROADCAST_AUDIENCE_KINDS as [BroadcastAudienceKind, ...BroadcastAudienceKind[]],
+  ),
+  csvAssetId: uuidSchema.optional().nullable(),
+  segmentId: uuidSchema.optional().nullable(),
+  manualPhones: z.array(phoneE164Schema).max(10000).optional(),
+  abTest: z.boolean().default(false),
+  variantATemplateId: uuidSchema,
+  variantBTemplateId: uuidSchema.optional().nullable(),
+  variantAVariables: variableMappingSchema.default({}),
+  variantBVariables: variableMappingSchema.optional().nullable(),
+});
+export type CreateBroadcastBody = z.infer<typeof createBroadcastBodySchema>;
+
+export const updateBroadcastBodySchema = createBroadcastBodySchema.partial();
+
+export const sendBroadcastBodySchema = z.object({
+  // ISO datetime; omit (or null) to send now.
+  scheduledFor: z.string().datetime().optional().nullable(),
+});
+export type SendBroadcastBody = z.infer<typeof sendBroadcastBodySchema>;
+
+// ---------- Recipient ------------------------------------------------------
+export const recipientDtoSchema = z.object({
+  id: uuidSchema,
+  phoneE164: z.string(),
+  contactId: uuidSchema.nullable(),
+  variant: z.enum(['A', 'B']),
+  status: z.enum(RECIPIENT_STATUSES as [RecipientStatus, ...RecipientStatus[]]),
+  metaMessageId: z.string().nullable(),
+  metaErrorCode: z.string().nullable(),
+  metaErrorMessage: z.string().nullable(),
+  queuedAt: z.string().datetime().nullable(),
+  sentAt: z.string().datetime().nullable(),
+  deliveredAt: z.string().datetime().nullable(),
+  readAt: z.string().datetime().nullable(),
+  failedAt: z.string().datetime().nullable(),
+  attemptCount: z.number().int().nonnegative(),
+});
+export type RecipientDto = z.infer<typeof recipientDtoSchema>;
+
+export const listRecipientsQuerySchema = z.object({
+  status: z.enum(RECIPIENT_STATUSES as [RecipientStatus, ...RecipientStatus[]]).optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type ListRecipientsQuery = z.infer<typeof listRecipientsQuerySchema>;
+
+// ---------- Broadcast event -------------------------------------------------
+export const broadcastEventDtoSchema = z.object({
+  id: uuidSchema,
+  kind: z.string(),
+  detail: z.unknown().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type BroadcastEventDto = z.infer<typeof broadcastEventDtoSchema>;
+
+// ---------- CSV preview/parse ----------------------------------------------
+// Returned by POST /broadcasts/:id/audience/csv after server-side header parse.
+export const csvAudienceMetaSchema = z.object({
+  assetId: uuidSchema,
+  rowCount: z.number().int().nonnegative(),
+  headers: z.array(z.string()),
+  // First few sample rows (≤20) for the variable-mapping wizard step.
+  sample: z.array(z.record(z.string(), z.string())),
+});
+export type CsvAudienceMeta = z.infer<typeof csvAudienceMetaSchema>;

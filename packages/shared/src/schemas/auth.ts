@@ -34,6 +34,8 @@ export const loginBodySchema = z.object({
   email: emailSchema,
   password: z.string().min(1),
   organizationSlug: slugSchema.optional(), // pick org if user belongs to many
+  // Phase 5.5 — TOTP 2FA. 6-digit numeric code OR an 8-char recovery code.
+  totpCode: z.string().trim().min(6).max(20).optional(),
 });
 export type LoginBody = z.infer<typeof loginBodySchema>;
 

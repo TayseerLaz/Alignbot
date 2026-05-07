@@ -114,6 +114,8 @@ export interface LoginArgs {
   email: string;
   password: string;
   organizationSlug?: string;
+  /** Phase 5.5 — TOTP 6-digit code or 8-char recovery code, when 2FA is on. */
+  totpCode?: string;
   meta: RequestMeta;
 }
 
@@ -170,6 +172,43 @@ export async function login(args: LoginArgs) {
       ApiErrorCode.AUTH_EMAIL_NOT_VERIFIED,
       'Please verify your email before signing in.',
     );
+  }
+
+  // Phase 5.5 — TOTP 2FA gate. If enabled, require a valid totpCode (or one of
+  // the user's recovery codes). On recovery-code use, that single code is
+  // consumed (removed from the array).
+  if (user.totpEnabled && user.totpSecret) {
+    const supplied = args.totpCode?.trim();
+    if (!supplied) {
+      throw unauthorized(
+        ApiErrorCode.TOTP_REQUIRED,
+        'Two-factor authentication is enabled on this account. Provide your 6-digit code.',
+      );
+    }
+    let ok = false;
+    if (/^\d{6}$/.test(supplied)) {
+      const { verifyTotpCode } = await import('../../lib/totp.js');
+      ok = verifyTotpCode(user.totpSecret, supplied);
+    } else if (user.recoveryCodesHashed.length > 0) {
+      // Recovery code path: SHA-256 hash + constant-time compare.
+      const { createHash } = await import('node:crypto');
+      const hashed = createHash('sha256').update(supplied.toUpperCase()).digest('hex');
+      const idx = user.recoveryCodesHashed.indexOf(hashed);
+      if (idx >= 0) {
+        ok = true;
+        const remaining = user.recoveryCodesHashed.filter((_, i) => i !== idx);
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { recoveryCodesHashed: remaining },
+        });
+      }
+    }
+    if (!ok) {
+      throw unauthorized(
+        ApiErrorCode.TOTP_INVALID,
+        'Invalid two-factor code.',
+      );
+    }
   }
 
   const activeMemberships = user.memberships.filter((m) => m.isActive && m.organization.status === 'active');

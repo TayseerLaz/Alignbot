@@ -18,6 +18,7 @@ import { env } from './lib/env.js';
 import { getRedis } from './lib/redis.js';
 import { initSentry } from './lib/sentry.js';
 import accountRoutes from './modules/account/account.routes.js';
+import twoFactorRoutes from './modules/account/2fa.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
 import auditRoutes from './modules/audit/audit.routes.js';
 import billingRoutes from './modules/billing/billing.routes.js';
@@ -217,6 +218,7 @@ export async function buildServer() {
   await app.register(dashboardRoutes, { prefix: '/api/v1' });
   await app.register(auditRoutes, { prefix: '/api/v1' });
   await app.register(accountRoutes, { prefix: '/api/v1' });
+  await app.register(twoFactorRoutes, { prefix: '/api/v1' });
   await app.register(dataExportRoutes, { prefix: '/api/v1' });
   await app.register(orgRoutes, { prefix: '/api/v1' });
   await app.register(whatsappRoutes, { prefix: '/api/v1' });

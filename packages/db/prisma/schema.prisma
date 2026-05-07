@@ -346,6 +346,12 @@ model User {
   lastLoginAt                DateTime?  @map("last_login_at")
   failedLoginAttempts        Int        @default(0) @map("failed_login_attempts")
   lockedUntil                DateTime?  @map("locked_until")
+  // Phase 5.5 — TOTP 2FA (RFC 6238). Secret base32. Recovery codes hashed
+  // individually so a single code leak doesn't expose others.
+  totpEnabled                Boolean    @default(false) @map("totp_enabled")
+  totpSecret                 String?    @map("totp_secret")
+  totpEnrolledAt             DateTime?  @map("totp_enrolled_at")
+  recoveryCodesHashed        String[]   @default([]) @map("recovery_codes_hashed")
   createdAt                  DateTime   @default(now()) @map("created_at")
   updatedAt                  DateTime   @updatedAt @map("updated_at")
 

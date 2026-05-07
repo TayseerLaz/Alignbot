@@ -63,5 +63,10 @@ export type {
   RecipientStatus,
   BroadcastEvent,
   BroadcastEventKind,
+  // Phase 5.4 — Sequences (drip)
+  Sequence,
+  SequenceStep,
+  SequenceEnrollment,
+  SequenceEnrollmentStatus,
   Prisma,
 } from '@prisma/client';

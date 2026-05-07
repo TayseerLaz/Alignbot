@@ -315,6 +315,10 @@ model Organization {
   broadcasts          Broadcast[]
   broadcastRecipients BroadcastRecipient[]
   broadcastEvents     BroadcastEvent[]
+  // Phase 5.4 — Sequences (drip)
+  sequences           Sequence[]
+  sequenceSteps       SequenceStep[]
+  sequenceEnrollments SequenceEnrollment[]
 
   @@index([status])
   @@map("organizations")
@@ -1654,6 +1658,7 @@ model Contact {
   organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   tags         ContactTag[]
   recipients   BroadcastRecipient[]
+  enrollments  SequenceEnrollment[]
 
   @@unique([organizationId, phoneE164])
   @@index([organizationId, createdAt(sort: Desc)])
@@ -1797,4 +1802,75 @@ model BroadcastEvent {
 
   @@index([broadcastId, createdAt(sort: Asc)])
   @@map("broadcast_events")
+}
+
+// ============================================================================
+// PHASE 5.4 — Drip / sequence campaigns
+// ============================================================================
+
+enum SequenceEnrollmentStatus {
+  active
+  paused
+  completed
+  cancelled
+}
+
+model Sequence {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  name            String
+  description     String?
+  isActive        Boolean  @default(true) @map("is_active")
+  channelId       String   @map("channel_id") @db.Uuid
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt              @map("updated_at")
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  steps        SequenceStep[]
+  enrollments  SequenceEnrollment[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("sequences")
+}
+
+model SequenceStep {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  sequenceId     String   @map("sequence_id") @db.Uuid
+  stepOrder      Int      @map("step_order")
+  templateId     String   @map("template_id") @db.Uuid
+  delayHours     Int      @default(0) @map("delay_hours")
+  variables      Json     @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt              @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sequence     Sequence     @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+
+  @@unique([sequenceId, stepOrder])
+  @@index([sequenceId])
+  @@map("sequence_steps")
+}
+
+model SequenceEnrollment {
+  id              String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String                   @map("organization_id") @db.Uuid
+  sequenceId      String                   @map("sequence_id") @db.Uuid
+  contactId       String                   @map("contact_id") @db.Uuid
+  status          SequenceEnrollmentStatus @default(active)
+  nextStepIndex   Int                      @default(0) @map("next_step_index")
+  nextStepDueAt   DateTime?                @map("next_step_due_at")
+  enrolledAt      DateTime                 @default(now()) @map("enrolled_at")
+  completedAt     DateTime?                @map("completed_at")
+  cancelledAt     DateTime?                @map("cancelled_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sequence     Sequence     @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  contact      Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([sequenceId, contactId])
+  @@index([organizationId, status, nextStepDueAt])
+  @@map("sequence_enrollments")
 }

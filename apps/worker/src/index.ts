@@ -10,6 +10,7 @@ import { startBroadcastSendWorker } from './jobs/broadcast-send.js';
 import { startCrawlWorker } from './jobs/crawl.js';
 import { startDataExportWorker } from './jobs/data-export.js';
 import { startImportWorker } from './jobs/import.js';
+import { startSequenceTick } from './jobs/sequence-tick.js';
 import { startSyncWorker } from './jobs/sync.js';
 import { startUptimeProbe } from './jobs/uptime-probe.js';
 import { startWebhookDeliveryWorker } from './jobs/webhook-delivery.js';
@@ -79,6 +80,10 @@ async function main() {
   // Start the uptime probe — separate from the BullMQ workers list because
   // it's not a queue worker, it's a recurring self-ping interval.
   startUptimeProbe();
+  // Phase 5.4 — sequence tick: drives drip campaigns. Same shape as the
+  // uptime probe (recurring interval), not a BullMQ worker.
+  const sequenceTick = startSequenceTick();
+  log.info({ name: sequenceTick.name }, 'tick started');
 
   const workers = [
     startImportWorker(),

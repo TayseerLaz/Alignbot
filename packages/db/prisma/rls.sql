@@ -132,6 +132,10 @@ SELECT _aligned_apply_tenant_rls('segments');
 SELECT _aligned_apply_tenant_rls('broadcasts');
 SELECT _aligned_apply_tenant_rls('broadcast_recipients');
 SELECT _aligned_apply_tenant_rls('broadcast_events');
+-- Phase 5.4 — Sequences (drip)
+SELECT _aligned_apply_tenant_rls('sequences');
+SELECT _aligned_apply_tenant_rls('sequence_steps');
+SELECT _aligned_apply_tenant_rls('sequence_enrollments');
 -- plans is GLOBAL (no organization_id) — no RLS needed; access via API only.
 
 -- ---------- pg_trgm GIN indexes for fast search (Prisma can't express) ------

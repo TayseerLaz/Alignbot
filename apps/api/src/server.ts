@@ -41,6 +41,7 @@ import inboundWebhookRoutes from './modules/connectors/inbound-webhook.routes.js
 import contactsRoutes from './modules/contacts/contacts.routes.js';
 import broadcastsRoutes from './modules/broadcasts/broadcasts.routes.js';
 import segmentsRoutes from './modules/segments/segments.routes.js';
+import sequencesRoutes from './modules/sequences/sequences.routes.js';
 import importRoutes from './modules/imports/import.routes.js';
 import memberRoutes from './modules/members/members.routes.js';
 import notificationRoutes from './modules/notifications/notifications.routes.js';
@@ -228,6 +229,7 @@ export async function buildServer() {
   await app.register(contactsRoutes, { prefix: '/api/v1' });
   await app.register(segmentsRoutes, { prefix: '/api/v1' });
   await app.register(broadcastsRoutes, { prefix: '/api/v1' });
+  await app.register(sequencesRoutes, { prefix: '/api/v1' });
 
   // Routes — public (HMAC-verified, no JWT)
   await app.register(inboundWebhookRoutes, { prefix: '/api/v1' });

@@ -25,7 +25,12 @@ import { prisma, withRlsBypass, withTenant } from './db.js';
 interface SyncJobData {
   organizationId: string;
   connectorId: string;
-  syncRunId: string;
+  /**
+   * Pre-allocated SyncRun id for manual/webhook triggers. NULL for scheduled
+   * (BullMQ repeatable) triggers — the worker creates the row itself.
+   * Legacy queue entries may carry the string '__pending__' sentinel.
+   */
+  syncRunId: string | null;
   trigger: 'scheduled' | 'manual' | 'webhook';
 }
 
@@ -127,7 +132,10 @@ export function startSyncWorker() {
       const { organizationId, connectorId, trigger } = job.data;
       let { syncRunId } = job.data;
 
-      if (syncRunId === '__pending__') {
+      // Phase 5.7 — accept either null (preferred for scheduled triggers) or
+      // the legacy '__pending__' sentinel (for any in-flight queue entries
+      // produced before the change).
+      if (!syncRunId || syncRunId === '__pending__') {
         const created = await prisma.syncRun.create({
           data: {
             organizationId,

@@ -32,7 +32,12 @@ export interface ImportJobPayload {
 export interface SyncJobPayload {
   organizationId: string;
   connectorId: string;
-  syncRunId: string;
+  /**
+   * Pre-allocated SyncRun id for manual/webhook triggers. NULL for scheduled
+   * (BullMQ repeatable) triggers — the worker creates the SyncRun row itself
+   * because the cron payload is shared across every fire.
+   */
+  syncRunId: string | null;
   trigger: 'scheduled' | 'manual' | 'webhook';
 }
 

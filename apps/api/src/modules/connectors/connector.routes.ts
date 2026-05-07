@@ -497,11 +497,11 @@ export default async function connectorRoutes(app: FastifyInstance) {
 async function registerScheduledSync(organizationId: string, connectorId: string, cron: string) {
   await getSyncQueue().add(
     'sync',
-    { organizationId, connectorId, syncRunId: '__pending__', trigger: 'scheduled' as const },
+    { organizationId, connectorId, syncRunId: null, trigger: 'scheduled' as const },
     {
-      // BullMQ will produce a fresh syncRunId at execution time via the worker
-      // wrapper (we emit a placeholder here; the worker creates the SyncRun
-      // inside its job handler when it sees the placeholder).
+      // BullMQ repeatable: the cron payload is shared across every fire, so
+      // we can't pre-allocate a SyncRun here. The worker sees syncRunId=null
+      // and creates a fresh row at job-start time.
       repeat: { pattern: cron },
       jobId: `connector:${connectorId}`,
     },

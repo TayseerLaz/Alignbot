@@ -179,16 +179,31 @@ export function startCrawlWorker() {
           });
         }
 
+        const status = failed > 0 && crawled === 0 ? 'failed' : analysisOK ? 'succeeded' : 'partial';
+        // Only surface the AI-key notice when the crawl part actually
+        // worked. Otherwise the per-page fetch error is the useful signal
+        // and we'd rather not mask it.
+        let errorMessage: string | null = null;
+        if (status === 'failed') {
+          const firstFailure = await prisma.crawlPage.findFirst({
+            where: { crawlJobId, errorMessage: { not: null } },
+            select: { url: true, errorMessage: true, fetchStatus: true },
+          });
+          errorMessage = firstFailure
+            ? `Fetch failed: ${firstFailure.errorMessage} (${firstFailure.url}, status ${firstFailure.fetchStatus})`
+            : 'Crawl failed before any page was fetched.';
+        } else if (!isOpenAIConfigured()) {
+          errorMessage = 'OPENAI_API_KEY not configured — pages crawled but no KB generated.';
+        }
+
         await prisma.crawlJob.update({
           where: { id: crawlJobId },
           data: {
-            status: failed > 0 && crawled === 0 ? 'failed' : analysisOK ? 'succeeded' : 'partial',
+            status,
             pagesCrawled: crawled,
             pagesFailed: failed,
             finishedAt: new Date(),
-            errorMessage: !isOpenAIConfigured()
-              ? 'OPENAI_API_KEY not configured — pages crawled but no KB generated.'
-              : null,
+            errorMessage,
           },
         });
       } catch (err) {

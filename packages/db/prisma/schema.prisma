@@ -142,6 +142,8 @@ enum NotificationKind {
   webhook_disabled
   api_key_first_use
   generic
+  // Phase 5.9 — billing dunning auto-suspend.
+  org_suspended_for_billing
 }
 
 enum NotificationSeverity {

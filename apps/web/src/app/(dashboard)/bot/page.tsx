@@ -230,7 +230,7 @@ function AnalyzeCard() {
           <Globe className="size-4" /> Analyze your website
         </CardTitle>
         <CardDescription>
-          The crawler walks up to 30 pages of your public site, then Claude turns the content into a
+          The crawler walks up to 30 pages of your public site, then an LLM turns the content into a
           knowledge base + suggests a tone preset. Up to a few minutes.
         </CardDescription>
       </CardHeader>

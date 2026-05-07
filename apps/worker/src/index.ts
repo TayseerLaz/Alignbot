@@ -9,6 +9,7 @@ import { startBroadcastFanoutWorker } from './jobs/broadcast-fanout.js';
 import { startBroadcastSendWorker } from './jobs/broadcast-send.js';
 import { startCrawlWorker } from './jobs/crawl.js';
 import { startDataExportWorker } from './jobs/data-export.js';
+import { startDunningTick } from './jobs/dunning-tick.js';
 import { startImportWorker } from './jobs/import.js';
 import { startSequenceTick } from './jobs/sequence-tick.js';
 import { startSyncWorker } from './jobs/sync.js';
@@ -84,6 +85,10 @@ async function main() {
   // uptime probe (recurring interval), not a BullMQ worker.
   const sequenceTick = startSequenceTick();
   log.info({ name: sequenceTick.name }, 'tick started');
+  // Phase 5.9 — dunning tick: hourly scan for past-due subscriptions over the
+  // grace window; auto-suspends the org + notifies admins.
+  const dunningTick = startDunningTick();
+  log.info({ name: dunningTick.name }, 'tick started');
 
   const workers = [
     startImportWorker(),

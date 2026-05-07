@@ -39,12 +39,37 @@ jobs:
             SINCE='${{ inputs.since }}'
             LINES='${{ inputs.lines }}'
             GREP='${{ inputs.grep }}'
+
+            echo "================== systemd unit definitions =================="
             for unit in aligned-api aligned-worker aligned-web; do
-              echo ""
-              echo "================== $unit =================="
+              echo "--- $unit ---"
+              sudo systemctl cat "$unit" 2>/dev/null | grep -E '^(StandardOutput|StandardError|ExecStart|WorkingDirectory|EnvironmentFile)=' || true
+            done
+
+            echo ""
+            echo "================== candidate log files =================="
+            for d in /var/log/aligned /opt/aligned/logs /opt/aligned/app/logs /opt/aligned/app; do
+              if [ -d "$d" ]; then
+                echo "--- $d ---"
+                sudo find "$d" -maxdepth 2 -type f \( -name '*.log' -o -name '*.out' -o -name '*.err' \) -mmin -360 -exec ls -la {} + 2>/dev/null
+              fi
+            done
+
+            echo ""
+            for unit in aligned-api aligned-worker aligned-web; do
+              echo "================== journalctl: $unit =================="
               if [ -n "$GREP" ]; then
                 sudo journalctl -u "$unit" --no-pager --since "$SINCE" -n "$LINES" | grep -E "$GREP" || echo "(no matches)"
               else
                 sudo journalctl -u "$unit" --no-pager --since "$SINCE" -n "$LINES"
+              fi
+            done
+
+            echo ""
+            echo "================== api log file tail (if any) =================="
+            for f in /var/log/aligned/api.log /opt/aligned/logs/api.log /opt/aligned/app/logs/api.log /opt/aligned/app/api.log; do
+              if [ -f "$f" ]; then
+                echo "--- $f (last $LINES) ---"
+                sudo tail -n "$LINES" "$f" | { [ -n "$GREP" ] && grep -E "$GREP" || cat; } | tail -n "$LINES"
               fi
             done

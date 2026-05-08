@@ -39,6 +39,12 @@ jobs:
           NEW_EMAIL_SMTP_PORT: ${{ vars.EMAIL_SMTP_PORT }}
           NEW_EMAIL_SMTP_SECURE: ${{ vars.EMAIL_SMTP_SECURE }}
           NEW_EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+          NEW_WASABI_ACCESS_KEY_ID: ${{ secrets.WASABI_ACCESS_KEY_ID }}
+          NEW_WASABI_SECRET_ACCESS_KEY: ${{ secrets.WASABI_SECRET_ACCESS_KEY }}
+          NEW_WASABI_BUCKET: ${{ vars.WASABI_BUCKET }}
+          NEW_WASABI_REGION: ${{ vars.WASABI_REGION }}
+          NEW_WASABI_ENDPOINT: ${{ vars.WASABI_ENDPOINT }}
+          NEW_WASABI_PUBLIC_URL_BASE: ${{ vars.WASABI_PUBLIC_URL_BASE }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           port: ${{ secrets.DEPLOY_PORT }}
@@ -46,7 +52,7 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           command_timeout: 20m
           script_stop: true
-          envs: NEW_OPENAI_API_KEY,NEW_OPENAI_MODEL,NEW_EMAIL_SMTP_USER,NEW_EMAIL_SMTP_PASS,NEW_EMAIL_SMTP_HOST,NEW_EMAIL_SMTP_PORT,NEW_EMAIL_SMTP_SECURE,NEW_EMAIL_FROM
+          envs: NEW_OPENAI_API_KEY,NEW_OPENAI_MODEL,NEW_EMAIL_SMTP_USER,NEW_EMAIL_SMTP_PASS,NEW_EMAIL_SMTP_HOST,NEW_EMAIL_SMTP_PORT,NEW_EMAIL_SMTP_SECURE,NEW_EMAIL_FROM,NEW_WASABI_ACCESS_KEY_ID,NEW_WASABI_SECRET_ACCESS_KEY,NEW_WASABI_BUCKET,NEW_WASABI_REGION,NEW_WASABI_ENDPOINT,NEW_WASABI_PUBLIC_URL_BASE
           script: |
             set -euo pipefail
             cd /opt/aligned/app
@@ -64,16 +70,26 @@ jobs:
                 'EMAIL_SMTP_PORT': '587',
                 'EMAIL_SMTP_SECURE': 'false',
                 'EMAIL_FROM': 'ALIGNED <noreply@alignbot.aligned-tech.com>',
+                'WASABI_BUCKET': 'alignbotbucket',
+                'WASABI_REGION': 'eu-central-1',
+                'WASABI_ENDPOINT': 'https://s3.eu-central-1.wasabisys.com',
+                'WASABI_PUBLIC_URL_BASE': 'https://alignbotbucket.s3.eu-central-1.wasabisys.com',
             }
             updates = {
-                'OPENAI_API_KEY':    os.environ.get('NEW_OPENAI_API_KEY', ''),
-                'OPENAI_MODEL':      os.environ.get('NEW_OPENAI_MODEL', '') or DEFAULTS['OPENAI_MODEL'],
-                'EMAIL_SMTP_USER':   os.environ.get('NEW_EMAIL_SMTP_USER', ''),
-                'EMAIL_SMTP_PASS':   os.environ.get('NEW_EMAIL_SMTP_PASS', ''),
-                'EMAIL_SMTP_HOST':   os.environ.get('NEW_EMAIL_SMTP_HOST', '') or DEFAULTS['EMAIL_SMTP_HOST'],
-                'EMAIL_SMTP_PORT':   os.environ.get('NEW_EMAIL_SMTP_PORT', '') or DEFAULTS['EMAIL_SMTP_PORT'],
-                'EMAIL_SMTP_SECURE': os.environ.get('NEW_EMAIL_SMTP_SECURE', '') or DEFAULTS['EMAIL_SMTP_SECURE'],
-                'EMAIL_FROM':        os.environ.get('NEW_EMAIL_FROM', '') or DEFAULTS['EMAIL_FROM'],
+                'OPENAI_API_KEY':           os.environ.get('NEW_OPENAI_API_KEY', ''),
+                'OPENAI_MODEL':             os.environ.get('NEW_OPENAI_MODEL', '') or DEFAULTS['OPENAI_MODEL'],
+                'EMAIL_SMTP_USER':          os.environ.get('NEW_EMAIL_SMTP_USER', ''),
+                'EMAIL_SMTP_PASS':          os.environ.get('NEW_EMAIL_SMTP_PASS', ''),
+                'EMAIL_SMTP_HOST':          os.environ.get('NEW_EMAIL_SMTP_HOST', '') or DEFAULTS['EMAIL_SMTP_HOST'],
+                'EMAIL_SMTP_PORT':          os.environ.get('NEW_EMAIL_SMTP_PORT', '') or DEFAULTS['EMAIL_SMTP_PORT'],
+                'EMAIL_SMTP_SECURE':        os.environ.get('NEW_EMAIL_SMTP_SECURE', '') or DEFAULTS['EMAIL_SMTP_SECURE'],
+                'EMAIL_FROM':               os.environ.get('NEW_EMAIL_FROM', '') or DEFAULTS['EMAIL_FROM'],
+                'WASABI_ACCESS_KEY_ID':     os.environ.get('NEW_WASABI_ACCESS_KEY_ID', ''),
+                'WASABI_SECRET_ACCESS_KEY': os.environ.get('NEW_WASABI_SECRET_ACCESS_KEY', ''),
+                'WASABI_BUCKET':            os.environ.get('NEW_WASABI_BUCKET', '') or DEFAULTS['WASABI_BUCKET'],
+                'WASABI_REGION':            os.environ.get('NEW_WASABI_REGION', '') or DEFAULTS['WASABI_REGION'],
+                'WASABI_ENDPOINT':          os.environ.get('NEW_WASABI_ENDPOINT', '') or DEFAULTS['WASABI_ENDPOINT'],
+                'WASABI_PUBLIC_URL_BASE':   os.environ.get('NEW_WASABI_PUBLIC_URL_BASE', '') or DEFAULTS['WASABI_PUBLIC_URL_BASE'],
             }
             path = '.env.production'
             with open(path) as f:

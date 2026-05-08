@@ -81,8 +81,15 @@ export async function presignGetUrl(storageKey: string, expiresIn = 3600): Promi
   return getSignedUrl(getClient(), cmd, { expiresIn });
 }
 
-/** Best-effort public URL when bucket is public-read. Else, callers should use presignGetUrl. */
+/**
+ * Best-effort public URL — only returned when WASABI_PUBLIC_BUCKET=true is
+ * explicitly set. By default (and on the Wasabi accounts we're hosted on)
+ * bucket-level public-read is disallowed at the account level, so emitting
+ * a public URL would 403 the browser. Callers that don't get a value back
+ * here should fall back to presignGetUrl.
+ */
 export function publicUrlFor(storageKey: string): string | null {
+  if (!env.WASABI_PUBLIC_BUCKET) return null;
   if (env.WASABI_PUBLIC_URL_BASE) {
     const base = env.WASABI_PUBLIC_URL_BASE.replace(/\/+$/, '');
     return `${base}/${storageKey}`;

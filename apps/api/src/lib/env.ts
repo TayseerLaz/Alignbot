@@ -44,6 +44,13 @@ const envSchema = z.object({
   WASABI_ACCESS_KEY_ID: z.string().optional(),
   WASABI_SECRET_ACCESS_KEY: z.string().optional(),
   WASABI_PUBLIC_URL_BASE: z.string().url().optional(),
+  // Phase 5 hotfix — Wasabi accounts default to "no public objects allowed",
+  // so even when WASABI_PUBLIC_URL_BASE is set, the public URL 403s. Only
+  // emit public URLs when the bucket is explicitly opt-in public.
+  WASABI_PUBLIC_BUCKET: z
+    .union([z.literal('true'), z.literal('false')])
+    .default('false')
+    .transform((v) => v === 'true'),
   WASABI_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().positive().default(900),
 
   RATE_LIMIT_AUTH_PER_MINUTE: z.coerce.number().int().positive().default(10),

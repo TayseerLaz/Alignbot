@@ -33,6 +33,12 @@ jobs:
         env:
           NEW_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           NEW_OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          NEW_EMAIL_SMTP_USER: ${{ secrets.EMAIL_SMTP_USER }}
+          NEW_EMAIL_SMTP_PASS: ${{ secrets.EMAIL_SMTP_PASS }}
+          NEW_EMAIL_SMTP_HOST: ${{ vars.EMAIL_SMTP_HOST }}
+          NEW_EMAIL_SMTP_PORT: ${{ vars.EMAIL_SMTP_PORT }}
+          NEW_EMAIL_SMTP_SECURE: ${{ vars.EMAIL_SMTP_SECURE }}
+          NEW_EMAIL_FROM: ${{ vars.EMAIL_FROM }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           port: ${{ secrets.DEPLOY_PORT }}
@@ -40,29 +46,48 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           command_timeout: 20m
           script_stop: true
-          envs: NEW_OPENAI_API_KEY,NEW_OPENAI_MODEL
+          envs: NEW_OPENAI_API_KEY,NEW_OPENAI_MODEL,NEW_EMAIL_SMTP_USER,NEW_EMAIL_SMTP_PASS,NEW_EMAIL_SMTP_HOST,NEW_EMAIL_SMTP_PORT,NEW_EMAIL_SMTP_SECURE,NEW_EMAIL_FROM
           script: |
             set -euo pipefail
             cd /opt/aligned/app
 
-            echo "=== ensure OPENAI_* lines in .env.production (idempotent) ==="
-            # Driven by GH secrets so we never have to touch the server file
-            # by hand. Existing lines are replaced; new ones are appended.
+            echo "=== sync env vars from GH secrets/vars into .env.production (idempotent) ==="
+            # Updates existing lines in place; appends if missing. Empty
+            # values are skipped so we never blank an existing on-disk
+            # value when a secret/var is unset upstream. Defaults applied
+            # for non-secret config the operator hasn't bothered to set.
             python3 - <<'PY'
             import os, re
+            DEFAULTS = {
+                'OPENAI_MODEL': 'gpt-4o-mini',
+                'EMAIL_SMTP_HOST': 'email-smtp.us-east-1.amazonaws.com',
+                'EMAIL_SMTP_PORT': '587',
+                'EMAIL_SMTP_SECURE': 'false',
+                'EMAIL_FROM': 'ALIGNED <noreply@alignbot.aligned-tech.com>',
+            }
             updates = {
-                'OPENAI_API_KEY': os.environ.get('NEW_OPENAI_API_KEY', ''),
-                'OPENAI_MODEL': os.environ.get('NEW_OPENAI_MODEL', '') or 'gpt-4o-mini',
+                'OPENAI_API_KEY':    os.environ.get('NEW_OPENAI_API_KEY', ''),
+                'OPENAI_MODEL':      os.environ.get('NEW_OPENAI_MODEL', '') or DEFAULTS['OPENAI_MODEL'],
+                'EMAIL_SMTP_USER':   os.environ.get('NEW_EMAIL_SMTP_USER', ''),
+                'EMAIL_SMTP_PASS':   os.environ.get('NEW_EMAIL_SMTP_PASS', ''),
+                'EMAIL_SMTP_HOST':   os.environ.get('NEW_EMAIL_SMTP_HOST', '') or DEFAULTS['EMAIL_SMTP_HOST'],
+                'EMAIL_SMTP_PORT':   os.environ.get('NEW_EMAIL_SMTP_PORT', '') or DEFAULTS['EMAIL_SMTP_PORT'],
+                'EMAIL_SMTP_SECURE': os.environ.get('NEW_EMAIL_SMTP_SECURE', '') or DEFAULTS['EMAIL_SMTP_SECURE'],
+                'EMAIL_FROM':        os.environ.get('NEW_EMAIL_FROM', '') or DEFAULTS['EMAIL_FROM'],
             }
             path = '.env.production'
             with open(path) as f:
                 content = f.read()
             for key, val in updates.items():
-                if not val and key == 'OPENAI_API_KEY':
-                    continue  # don't blank an existing key when secret is unset
+                # Skip blank values for secrets so we don't wipe an
+                # already-set on-disk credential.
+                if not val and key not in DEFAULTS:
+                    continue
                 pat = re.compile(rf'^{re.escape(key)}=.*$', re.M)
                 line = f'{key}={val}'
-                content = pat.sub(line, content) if pat.search(content) else content.rstrip() + '\n' + line + '\n'
+                # Use a callable replacement so backslashes/backreferences
+                # in `val` aren't interpreted by re.sub.
+                content = pat.sub(lambda _m, _l=line: _l, content) if pat.search(content) else content.rstrip() + '\n' + line + '\n'
             with open(path, 'w') as f:
                 f.write(content)
             PY

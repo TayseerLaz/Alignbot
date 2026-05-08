@@ -78,13 +78,20 @@ jobs:
             path = '.env.production'
             with open(path) as f:
                 content = f.read()
+            def shell_quote(v: str) -> str:
+                # Always emit double-quoted with $/`/"/\ escaped. Safe for
+                # `source .env.production` regardless of whether v contains
+                # spaces, <>, &, |, etc.
+                escaped = v.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$').replace('`', '\\`')
+                return f'"{escaped}"'
+
             for key, val in updates.items():
                 # Skip blank values for secrets so we don't wipe an
                 # already-set on-disk credential.
                 if not val and key not in DEFAULTS:
                     continue
                 pat = re.compile(rf'^{re.escape(key)}=.*$', re.M)
-                line = f'{key}={val}'
+                line = f'{key}={shell_quote(val)}'
                 # Use a callable replacement so backslashes/backreferences
                 # in `val` aren't interpreted by re.sub.
                 content = pat.sub(lambda _m, _l=line: _l, content) if pat.search(content) else content.rstrip() + '\n' + line + '\n'

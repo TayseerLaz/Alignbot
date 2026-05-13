@@ -214,6 +214,158 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- POST /whatsapp/templates/sync -----------------------------
+  // Pulls every template from Meta (the WABA-level message_templates
+  // endpoint) and upserts them into our DB. Covers two gaps:
+  //   1. Templates the operator created directly in Meta's WhatsApp
+  //      Manager UI never landed here — sync imports them.
+  //   2. Templates submitted through our portal still showed as
+  //      `pending` after Meta approved them, because we don't yet
+  //      process the `message_template_status_update` webhook field.
+  //      Sync re-reads the authoritative status from Meta.
+  // Auth: admin-only; uses the org's stored WABA id + access token.
+  r.post(
+    '/whatsapp/templates/sync',
+    {
+      schema: {
+        tags: ['whatsapp'],
+        summary: 'Sync templates from Meta (import new + refresh status).',
+        response: {
+          200: z.object({
+            data: z.object({
+              imported: z.number().int(),
+              updated: z.number().int(),
+              total: z.number().int(),
+            }),
+          }),
+        },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      return app.tenant(req, async (tx) => {
+        const channel = await tx.whatsAppChannel.findFirst({
+          where: { organizationId: orgId, isPrimary: true },
+        });
+        if (!channel?.wabaId || !channel?.accessToken) {
+          throw badRequest(
+            ApiErrorCode.VALIDATION_ERROR,
+            'Configure WABA ID + access token on the WhatsApp page first.',
+          );
+        }
+
+        // Page through Meta's templates list. Defaults to 100 per page
+        // and follows paging.next links until exhausted or we hit 500
+        // templates (generous upper bound — most accounts have <50).
+        type MetaTemplate = {
+          id?: string;
+          name?: string;
+          language?: string;
+          category?: string;
+          status?: string;
+          rejected_reason?: string;
+          components?: { type?: string; text?: string }[];
+        };
+
+        const remote: MetaTemplate[] = [];
+        let next: string | null =
+          `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.wabaId)}/message_templates` +
+          `?fields=id,name,language,category,status,rejected_reason,components&limit=100`;
+        let hops = 0;
+        while (next && hops < 10 && remote.length < 500) {
+          hops += 1;
+          let payload: { data?: MetaTemplate[]; paging?: { next?: string } } = {};
+          try {
+            const res = await fetch(next, {
+              headers: { Authorization: `Bearer ${channel.accessToken}` },
+              signal: AbortSignal.timeout(10_000),
+            });
+            const text = await res.text();
+            if (!res.ok) {
+              throw badRequest(
+                ApiErrorCode.SERVICE_UNAVAILABLE,
+                `Meta returned HTTP ${res.status} from message_templates: ${text.slice(0, 200)}`,
+              );
+            }
+            payload = JSON.parse(text) as typeof payload;
+          } catch (err) {
+            if (err instanceof Error && err.name === 'AbortError') {
+              throw badRequest(
+                ApiErrorCode.SERVICE_UNAVAILABLE,
+                'Meta /message_templates timed out (10s).',
+              );
+            }
+            throw err;
+          }
+          for (const t of payload.data ?? []) remote.push(t);
+          next = payload.paging?.next ?? null;
+        }
+
+        // Upsert by (organizationId, metaTemplateId) when we have a
+        // Meta id; fall back to (organizationId, name, language) so
+        // templates submitted through our portal get reconciled too.
+        let imported = 0;
+        let updated = 0;
+        for (const t of remote) {
+          if (!t.name || !t.language) continue;
+          const bodyText =
+            (t.components ?? []).find((c) => (c.type ?? '').toUpperCase() === 'BODY')?.text ?? '';
+          const status = (t.status ?? 'pending').toLowerCase();
+          const category = (t.category ?? 'UTILITY').toUpperCase();
+
+          // Find by Meta id first; then by name+language.
+          const existing = t.id
+            ? await tx.whatsAppTemplate.findFirst({
+                where: { organizationId: orgId, metaTemplateId: t.id },
+              })
+            : await tx.whatsAppTemplate.findFirst({
+                where: { organizationId: orgId, name: t.name, language: t.language },
+              });
+
+          if (existing) {
+            await tx.whatsAppTemplate.update({
+              where: { id: existing.id },
+              data: {
+                metaTemplateId: t.id ?? existing.metaTemplateId,
+                status,
+                category,
+                bodyText: bodyText || existing.bodyText,
+                rejectionReason: t.rejected_reason ?? null,
+              },
+            });
+            updated += 1;
+          } else {
+            await tx.whatsAppTemplate.create({
+              data: {
+                organizationId: orgId,
+                name: t.name,
+                language: t.language,
+                category,
+                bodyText: bodyText || '(imported from Meta — no body component)',
+                status,
+                metaTemplateId: t.id ?? null,
+                rejectionReason: t.rejected_reason ?? null,
+              },
+            });
+            imported += 1;
+          }
+        }
+
+        await recordAudit({
+          action: 'business_info_updated',
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          entityType: 'whatsapp_template',
+          entityId: null,
+          metadata: { event: 'templates_synced', imported, updated, total: remote.length },
+        });
+
+        return { data: { imported, updated, total: remote.length } };
+      });
+    },
+  );
+
   // ---------- DELETE /whatsapp/templates/:id ---------------------------
   r.delete(
     '/whatsapp/templates/:id',

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle2, Clock, MessageSquare, Plus, Send, Trash2, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock, MessageSquare, Plus, RefreshCw, Send, Trash2, XCircle } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -81,6 +81,19 @@ export default function TemplatesPage() {
     },
   });
 
+  const sync = useMutation({
+    mutationFn: () =>
+      api.post<{ data: { imported: number; updated: number; total: number } }>(
+        '/api/v1/whatsapp/templates/sync',
+      ),
+    onSuccess: (res) => {
+      const { imported, updated, total } = res.data;
+      toast.success(`Synced ${total} from Meta — ${imported} new, ${updated} updated`);
+      queryClient.invalidateQueries({ queryKey: ['whatsapp-templates'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Sync failed'),
+  });
+
   const rows = list.data?.data ?? [];
 
   return (
@@ -94,6 +107,14 @@ export default function TemplatesPage() {
               <Link href="/whatsapp">
                 <ArrowLeft className="size-4" /> WhatsApp
               </Link>
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => sync.mutate()}
+              loading={sync.isPending}
+              title="Pull every template from Meta and refresh statuses"
+            >
+              <RefreshCw className="size-4" /> Sync from Meta
             </Button>
             <Button onClick={() => setCreateOpen(true)}>
               <Plus className="size-4" /> New template

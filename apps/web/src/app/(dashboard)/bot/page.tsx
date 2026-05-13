@@ -128,13 +128,19 @@ export default function BotPage() {
           <AnalyzeCard />
           <KnowledgeBaseCard />
           <PersonalityCard config={config} />
-          <FlowAndTemplatesCard config={config} />
           <ScenarioRunner />
         </div>
         <div className="space-y-6">
           <Questionnaire />
           <Simulator />
         </div>
+      </div>
+
+      {/* Conversation flow gets the full content width — the editor
+          needs the room for readable nodes + a side panel. Pulled out
+          of the 2-col grid above. */}
+      <div className="mt-6">
+        <FlowAndTemplatesCard config={config} />
       </div>
     </>
   );

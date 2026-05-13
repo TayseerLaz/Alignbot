@@ -194,7 +194,7 @@ function FlowEditorInner({
   const selected = useMemo(() => nodes.find((n) => n.id === selectedId) ?? null, [nodes, selectedId]);
 
   return (
-    <div className="flex h-[640px] overflow-hidden rounded-lg border border-border bg-white">
+    <div className="flex h-[min(78vh,900px)] min-h-[640px] w-full overflow-hidden rounded-lg border border-border bg-white">
       <div className="flex-1">
         <ReactFlow
           nodes={nodes}
@@ -214,7 +214,7 @@ function FlowEditorInner({
           <MiniMap pannable zoomable />
         </ReactFlow>
       </div>
-      <div className="flex w-72 shrink-0 flex-col border-l border-border bg-surface-muted/30">
+      <div className="flex w-80 shrink-0 flex-col border-l border-border bg-surface-muted/30">
         <div className="flex items-center justify-between gap-2 border-b border-border bg-white p-3">
           <Button size="sm" variant="secondary" onClick={addNode}>
             <Plus className="size-4" /> Add intent
@@ -276,19 +276,37 @@ function IntentNodeView({ data, selected }: NodeProps<IntentNode>) {
   return (
     <div
       className={cn(
-        'min-w-[180px] max-w-[220px] rounded-md border bg-white px-3 py-2 shadow-sm',
+        // Wider + taller node so titles + response previews are
+        // readable without zooming. line-clamp on the response keeps
+        // very long templates bounded but operator can still see the
+        // first ~5 lines at a glance.
+        'w-[300px] rounded-lg border bg-white px-4 py-3 shadow-sm',
         selected ? 'border-brand-500 ring-2 ring-brand-300' : 'border-border',
       )}
     >
-      <Handle type="target" position={Position.Left} className="!bg-brand-400" />
-      <p className="text-xs font-mono text-foreground-subtle">{data.intent}</p>
-      <p className="text-sm font-semibold">{data.label || 'Untitled intent'}</p>
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="!size-3 !bg-brand-400 !border-2 !border-white"
+      />
+      <p className="font-mono text-[11px] uppercase tracking-wide text-foreground-subtle">
+        {data.intent}
+      </p>
+      <p className="mt-0.5 text-base font-semibold leading-tight text-foreground">
+        {data.label || 'Untitled intent'}
+      </p>
       {data.response ? (
-        <p className="mt-1 line-clamp-3 text-[10px] text-foreground-muted">{data.response}</p>
+        <p className="mt-2 line-clamp-5 whitespace-pre-wrap text-xs text-foreground-muted">
+          {data.response}
+        </p>
       ) : (
-        <p className="mt-1 text-[10px] italic text-foreground-subtle">no response template</p>
+        <p className="mt-2 text-xs italic text-foreground-subtle">no response template</p>
       )}
-      <Handle type="source" position={Position.Right} className="!bg-brand-400" />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="!size-3 !bg-brand-400 !border-2 !border-white"
+      />
     </div>
   );
 }

@@ -99,6 +99,78 @@ const PERSONALITIES = [
   { key: 'professional', label: 'Professional', desc: 'Polite and direct' },
 ];
 
+// Reply languages offered as toggleable chips. The underlying storage
+// on BotConfig.languages is a comma-separated string of ISO 639-1
+// codes (e.g. "en,fr,ar"), which the bot-engine passes into the LLM
+// system prompt. The chip UI is just a friendlier presentation.
+const LANGUAGES: { code: string; label: string }[] = [
+  { code: 'en', label: 'English' },
+  { code: 'ar', label: 'Arabic' },
+  { code: 'fr', label: 'French' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'de', label: 'German' },
+  { code: 'pt', label: 'Portuguese' },
+  { code: 'it', label: 'Italian' },
+  { code: 'tr', label: 'Turkish' },
+];
+
+function parseLangCodes(v: string): string[] {
+  return v
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function LanguagePicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const selected = new Set(parseLangCodes(value));
+  const toggle = (code: string) => {
+    const next = new Set(selected);
+    if (next.has(code)) {
+      next.delete(code);
+    } else {
+      next.add(code);
+    }
+    // Always keep at least one language — fall back to English if the
+    // operator unselects everything (matches BotConfig.languages
+    // default).
+    if (next.size === 0) next.add('en');
+    // Emit in the LANGUAGES order so the saved value is stable
+    // regardless of the order the operator clicked the chips.
+    const ordered = LANGUAGES.map((l) => l.code).filter((c) => next.has(c));
+    onChange(ordered.join(','));
+  };
+  return (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Reply languages">
+      {LANGUAGES.map((lang) => {
+        const on = selected.has(lang.code);
+        return (
+          <button
+            key={lang.code}
+            type="button"
+            id={lang.code === 'en' ? 'bot-langs' : undefined}
+            onClick={() => toggle(lang.code)}
+            aria-pressed={on}
+            className={cn(
+              'rounded-full border px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
+              on
+                ? 'border-brand-500 bg-brand-500 text-white'
+                : 'border-border bg-white text-foreground hover:bg-surface-muted',
+            )}
+          >
+            {lang.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function BotPage() {
   const qc = useQueryClient();
 
@@ -518,10 +590,13 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
             onChange={(e) => setGreeting(e.target.value)}
           />
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr]">
           <div className="space-y-1.5">
-            <Label htmlFor="bot-langs">Languages (comma-sep)</Label>
-            <Input id="bot-langs" value={languages} onChange={(e) => setLanguages(e.target.value)} />
+            <Label htmlFor="bot-langs">Languages</Label>
+            <LanguagePicker
+              value={languages}
+              onChange={setLanguages}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="bot-fallback">Handoff fallback</Label>

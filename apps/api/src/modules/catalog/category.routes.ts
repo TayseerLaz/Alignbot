@@ -35,6 +35,15 @@ export default async function categoryRoutes(app: FastifyInstance) {
       return app.tenant(req, async (tx) => {
         const rows = await tx.category.findMany({
           orderBy: [{ parentId: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }],
+          // Compute live product counts per category in a single query
+          // so the listing page can show "N products" without a
+          // per-row follow-up. Excludes soft-deleted rows so the
+          // number matches what the operator sees on /products.
+          include: {
+            _count: {
+              select: { products: { where: { deletedAt: null } } },
+            },
+          },
         });
         return {
           data: rows.map((c) => ({
@@ -45,6 +54,7 @@ export default async function categoryRoutes(app: FastifyInstance) {
             description: c.description,
             sortOrder: c.sortOrder,
             isActive: c.isActive,
+            productCount: c._count.products,
             createdAt: c.createdAt.toISOString(),
             updatedAt: c.updatedAt.toISOString(),
           })),

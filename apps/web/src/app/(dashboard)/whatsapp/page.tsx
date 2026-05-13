@@ -29,9 +29,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
+
+interface TemplateOption {
+  id: string;
+  name: string;
+  language: string;
+  status: string;
+}
 
 type FormState = {
   wabaId: string;
@@ -85,6 +93,12 @@ export default function WhatsAppPage() {
     queryKey: ['whatsapp-messages'],
     queryFn: () => api.get<{ data: WhatsAppMessageDto[] }>('/api/v1/whatsapp/messages?limit=20'),
     refetchInterval: 10_000,
+  });
+  // Approved templates — used to populate the test-send dropdown so the
+  // operator can pick instead of typing a name/language by hand.
+  const templatesQ = useQuery({
+    queryKey: ['whatsapp-templates'],
+    queryFn: () => api.get<{ data: TemplateOption[] }>('/api/v1/whatsapp/templates'),
   });
 
   const channel = channelQ.data?.data;
@@ -552,13 +566,13 @@ export default function WhatsAppPage() {
               <CardTitle>Send a test</CardTitle>
               <CardDescription>
                 Sends an approved WhatsApp template. The recipient must be added as a tester in
-                Meta until business verification is complete. Defaults are{' '}
-                <span className="font-mono">hello_world / en_US</span> — change them if your account
-                uses a different template.
+                Meta until business verification is complete. Pick a template from the dropdown —
+                it's populated from <span className="font-mono">/whatsapp/templates</span>.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <TestSendForm
+                templates={templatesQ.data?.data ?? []}
                 onSend={(to, templateName, templateLanguage) =>
                   testSend.mutate({ to, templateName, templateLanguage })
                 }
@@ -619,17 +633,38 @@ function Row({ label, value, ok, warn }: { label: string; value: string; ok?: bo
 }
 
 function TestSendForm({
+  templates,
   onSend,
   loading,
   disabled,
 }: {
+  templates: TemplateOption[];
   onSend: (to: string, templateName: string, templateLanguage: string) => void;
   loading: boolean;
   disabled: boolean;
 }) {
   const [to, setTo] = useState('');
-  const [templateName, setTemplateName] = useState('hello_world');
-  const [templateLanguage, setTemplateLanguage] = useState('en_US');
+  // Approved templates first; fall back to hello_world / en_US so the
+  // dropdown is never empty even before the user runs Sync from Meta.
+  const approved = templates.filter((t) => t.status === 'approved');
+  const options: TemplateOption[] =
+    approved.length > 0
+      ? approved
+      : [{ id: 'hello_world', name: 'hello_world', language: 'en_US', status: 'fallback' }];
+  // Each option's value is "name|language" so we can recover both halves
+  // on change without an extra lookup.
+  const [selected, setSelected] = useState<string>(`${options[0]!.name}|${options[0]!.language}`);
+  // Keep the selection in sync if the templates list updates after first render
+  // (Sync from Meta, async load).
+  useEffect(() => {
+    const exists = options.some((o) => `${o.name}|${o.language}` === selected);
+    if (!exists && options[0]) {
+      setSelected(`${options[0].name}|${options[0].language}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templates.length]);
+  const [name, language] = selected.split('|');
+
   return (
     <div className="space-y-2">
       <Input
@@ -639,30 +674,34 @@ function TestSendForm({
         disabled={disabled}
         aria-label="Recipient phone"
       />
-      <div className="flex gap-2">
-        <Input
-          placeholder="template name"
-          value={templateName}
-          onChange={(e) => setTemplateName(e.target.value)}
-          disabled={disabled}
-          aria-label="Template name"
-          className="flex-1"
-        />
-        <Input
-          placeholder="language (en, en_US, ar…)"
-          value={templateLanguage}
-          onChange={(e) => setTemplateLanguage(e.target.value)}
-          disabled={disabled}
-          aria-label="Template language"
-          className="w-44"
-        />
-      </div>
+      <Select value={selected} onValueChange={setSelected} disabled={disabled}>
+        <SelectTrigger>
+          <SelectValue placeholder="Pick a template…" />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((t) => (
+            <SelectItem key={`${t.name}|${t.language}`} value={`${t.name}|${t.language}`}>
+              <span className="font-mono">{t.name}</span>{' '}
+              <span className="text-foreground-subtle">· {t.language}</span>
+              {t.status !== 'approved' && t.status !== 'fallback' ? (
+                <span className="ml-2 text-foreground-subtle">({t.status})</span>
+              ) : null}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {approved.length === 0 ? (
+        <p className="text-xs text-foreground-subtle">
+          No approved templates yet — falling back to <span className="font-mono">hello_world / en_US</span>.
+          Use <span className="font-mono">/whatsapp/templates → Sync from Meta</span> to populate.
+        </p>
+      ) : null}
       <Button
-        onClick={() => onSend(to, templateName.trim(), templateLanguage.trim())}
+        onClick={() => onSend(to, (name ?? '').trim(), (language ?? '').trim())}
         loading={loading}
-        disabled={disabled || to.trim().length < 6 || templateName.trim().length < 1 || templateLanguage.trim().length < 2}
+        disabled={disabled || to.trim().length < 6 || !name || !language}
       >
-        <Send className="size-4" /> Send {templateName.trim() || 'template'}
+        <Send className="size-4" /> Send {name || 'template'}
       </Button>
     </div>
   );

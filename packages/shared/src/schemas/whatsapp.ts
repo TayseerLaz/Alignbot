@@ -54,9 +54,12 @@ export const upsertWhatsappChannelBodySchema = z.object({
   // value to overwrite. The route reads + masks before responding.
   accessToken: z.string().trim().max(2048).optional(),
   appSecret: z.string().trim().max(512).optional(),
-  greetingMessage: z.string().trim().max(2000).optional().nullable(),
+  greetingMessage: z.string().trim().max(4000).optional().nullable(),
   businessName: z.string().trim().max(200).optional().nullable(),
-  businessAbout: z.string().trim().max(500).optional().nullable(),
+  // businessAbout is stored in our DB for the chatbot read API (NOT pushed
+  // to Meta's WhatsApp profile, which has a 139-char limit) — so we
+  // accept long-form About content (vision/values/etc) up to ~5KB.
+  businessAbout: z.string().trim().max(5000).optional().nullable(),
   businessAddress: z.string().trim().max(500).optional().nullable(),
   businessEmail: z.string().trim().email().optional().nullable().or(z.literal('')),
   isActive: z.boolean().optional(),

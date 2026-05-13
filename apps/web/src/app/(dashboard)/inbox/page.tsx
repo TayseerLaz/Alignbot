@@ -129,7 +129,7 @@ export default function InboxPage() {
   }, [activeId, threads]);
 
   return (
-    <>
+    <div className="flex h-[calc(100dvh-4rem)] min-h-0 flex-col">
       <PageHeader
         title="Inbox"
         description="Every WhatsApp conversation. Status, tags, assignment, internal notes — all here."
@@ -140,42 +140,47 @@ export default function InboxPage() {
         }
       />
 
-      <Card className="mb-4">
-        <CardContent className="grid grid-cols-1 gap-2 py-3 sm:grid-cols-[1fr_180px_180px]">
-          <Input
-            placeholder="Search by phone, name, or message…"
-            value={filterQ}
-            onChange={(e) => setFilterQ(e.target.value)}
-            aria-label="Search conversations"
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-hidden rounded-lg border border-border bg-white lg:grid-cols-[22rem_1fr]">
+        <div className="flex min-h-0 flex-col border-r border-border">
+          {/* Filters pinned to the top of the thread-list column so the
+              conversation pane on the right gets the full vertical space. */}
+          <div className="grid shrink-0 grid-cols-1 gap-2 border-b border-border bg-surface-muted/40 px-3 py-2">
+            <Input
+              placeholder="Search by phone, name, or message…"
+              value={filterQ}
+              onChange={(e) => setFilterQ(e.target.value)}
+              aria-label="Search conversations"
+              className="h-8 text-sm"
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <Select value={filterStatus} onValueChange={(v) => setFilterStatus(v as ThreadStatus | 'all')}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="open">Open</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="resolved">Resolved</SelectItem>
+                  <SelectItem value="escalated">Escalated</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder="Tag…"
+                value={filterTag}
+                onChange={(e) => setFilterTag(e.target.value)}
+                aria-label="Filter by tag"
+                className="h-8 text-sm"
+              />
+            </div>
+          </div>
+          <ThreadList
+            threads={threads}
+            activeId={activeId}
+            onSelect={setActiveId}
+            loading={threadsQ.isLoading}
           />
-          <Select value={filterStatus} onValueChange={(v) => setFilterStatus(v as ThreadStatus | 'all')}>
-            <SelectTrigger>
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="open">Open</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="resolved">Resolved</SelectItem>
-              <SelectItem value="escalated">Escalated</SelectItem>
-            </SelectContent>
-          </Select>
-          <Input
-            placeholder="Filter by tag…"
-            value={filterTag}
-            onChange={(e) => setFilterTag(e.target.value)}
-            aria-label="Filter by tag"
-          />
-        </CardContent>
-      </Card>
-
-      <div className="grid h-[calc(100vh-26rem)] grid-cols-1 gap-0 overflow-hidden rounded-lg border border-border bg-white lg:grid-cols-[22rem_1fr]">
-        <ThreadList
-          threads={threads}
-          activeId={activeId}
-          onSelect={setActiveId}
-          loading={threadsQ.isLoading}
-        />
+        </div>
         <ThreadView
           thread={active}
           onChanged={() => {
@@ -185,7 +190,7 @@ export default function InboxPage() {
           currentUserId={session?.user.id ?? null}
         />
       </div>
-    </>
+    </div>
   );
 }
 
@@ -201,7 +206,7 @@ function ThreadList({
   loading: boolean;
 }) {
   return (
-    <ul className="overflow-y-auto border-r border-border" aria-label="Conversations">
+    <ul className="min-h-0 flex-1 overflow-y-auto" aria-label="Conversations">
       {loading ? (
         <li className="px-4 py-6 text-center text-sm text-foreground-muted">Loading…</li>
       ) : threads.length === 0 ? (
@@ -419,7 +424,7 @@ function ThreadView({
   }
 
   return (
-    <div className="flex min-w-0 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <ThreadHeader
         thread={thread}
         onStatusChange={(s) => setStatus.mutate(s)}
@@ -429,7 +434,7 @@ function ThreadView({
         onHandoff={() => handoff.mutate()}
       />
       <TagBar thread={thread} onAdd={(t) => addTag.mutate(t)} onRemove={(t) => removeTag.mutate(t)} />
-      <div className="flex-1 space-y-2 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
         {messagesQ.isLoading ? (
           <p className="text-center text-sm text-foreground-muted">Loading…</p>
         ) : timeline.length === 0 ? (
@@ -444,14 +449,16 @@ function ThreadView({
           )
         )}
       </div>
-      <ReplyBox
-        to={thread.customerPhone}
-        cannedResponses={cannedQ.data?.data ?? []}
-        loading={sendReply.isPending}
-        onSend={(body) => sendReply.mutate({ to: thread.customerPhone, body })}
-        onAddNote={(body) => addNote.mutate(body)}
-        addingNote={addNote.isPending}
-      />
+      <div className="shrink-0">
+        <ReplyBox
+          to={thread.customerPhone}
+          cannedResponses={cannedQ.data?.data ?? []}
+          loading={sendReply.isPending}
+          onSend={(body) => sendReply.mutate({ to: thread.customerPhone, body })}
+          onAddNote={(body) => addNote.mutate(body)}
+          addingNote={addNote.isPending}
+        />
+      </div>
     </div>
   );
 }

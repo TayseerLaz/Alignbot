@@ -32,6 +32,10 @@ export const contactDtoSchema = z.object({
   id: uuidSchema,
   phoneE164: z.string(),
   displayName: z.string().nullable(),
+  // Read-only mirror of the WhatsApp profile name Meta provides on
+  // inbound messages (contacts[].profile.name). Kept distinct from
+  // displayName so an operator-set nickname survives Meta updates.
+  whatsappName: z.string().nullable(),
   locale: z.string().nullable(),
   optedInAt: z.string().datetime().nullable(),
   optedOutAt: z.string().datetime().nullable(),

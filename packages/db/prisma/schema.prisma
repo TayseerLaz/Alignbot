@@ -1171,8 +1171,14 @@ model WhatsAppThread {
   id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId     String               @map("organization_id") @db.Uuid
   customerPhone      String               @map("customer_phone")
-  // Optional friendly name set by an agent (or auto-detected from contact lookups later).
+  // Operator-set nickname / business name. Free-form. Mirrored from
+  // Contact.displayName on rename so /inbox and /contacts stay in sync.
   customerName       String?              @map("customer_name")
+  // Mirror of Meta's WhatsApp profile name from inbound contacts[].
+  // profile.name. Read-only; refreshed on every inbound. Lets the
+  // inbox row show both the operator's rename AND what the customer
+  // actually goes by on WhatsApp.
+  customerWhatsappName String?            @map("customer_whatsapp_name")
   status             WhatsAppThreadStatus @default(open)
   assignedToUserId   String?              @map("assigned_to_user_id") @db.Uuid
   // Optional skill that auto-assign should match a member by.
@@ -1654,7 +1660,12 @@ model Contact {
   id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId String        @map("organization_id") @db.Uuid
   phoneE164      String        @map("phone_e164")
+  // Operator-set nickname / business name. Free-form. Survives Meta
+  // updates so a customer's preferred internal name isn't overwritten.
   displayName    String?       @map("display_name")
+  // WhatsApp profile name (from Meta's inbound contacts[].profile.name).
+  // Refreshed on every inbound message; read-only in the UI.
+  whatsappName   String?       @map("whatsapp_name")
   locale         String? // BCP 47 tag (e.g. en, en_US)
   // Phase 5.3 — opt-in/out + IANA timezone for send-window enforcement.
   // optedInAt is informational; optedOutAt blocks future sends.

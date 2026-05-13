@@ -40,6 +40,8 @@ interface Thread {
   id: string;
   customerPhone: string;
   customerName: string | null;
+  // Read-only mirror of the customer's WhatsApp profile name from Meta.
+  customerWhatsappName: string | null;
   status: ThreadStatus;
   assignedToUserId: string | null;
   assignedToName: string | null;
@@ -558,15 +560,29 @@ function ThreadHeader({
               className="group block max-w-full rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
               title="Click to rename"
             >
+              {/* Top line: operator-set name if any, otherwise the WhatsApp
+                  profile name, otherwise the phone. */}
               <p className="truncate text-sm font-semibold text-foreground">
-                {thread.customerName ?? thread.customerPhone}
+                {thread.customerName ?? thread.customerWhatsappName ?? thread.customerPhone}
                 <span className="ml-1 text-[10px] font-normal text-foreground-subtle opacity-0 group-hover:opacity-100">
                   ✎ rename
                 </span>
               </p>
-              {thread.customerName ? (
-                <p className="font-mono text-[10px] text-foreground-subtle">{thread.customerPhone}</p>
-              ) : null}
+              {/* Secondary line(s): show phone always when a name is on
+                  top, and the WhatsApp display name when it differs from
+                  the operator's rename so both signals are visible. */}
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0">
+                {thread.customerWhatsappName && thread.customerWhatsappName !== thread.customerName ? (
+                  <p className="text-[10px] text-foreground-subtle">
+                    WhatsApp: <span className="font-medium">{thread.customerWhatsappName}</span>
+                  </p>
+                ) : null}
+                {thread.customerName || thread.customerWhatsappName ? (
+                  <p className="font-mono text-[10px] text-foreground-subtle">
+                    {thread.customerPhone}
+                  </p>
+                ) : null}
+              </div>
             </button>
           )}
         </div>

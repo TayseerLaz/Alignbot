@@ -1513,12 +1513,20 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                   create: {
                     organizationId: channel.organizationId,
                     phoneE164,
+                    // On first sight, seed displayName from the Meta
+                    // profile too so operators see SOMETHING immediately
+                    // rather than just a phone number. They can rename
+                    // later; subsequent inbounds only refresh
+                    // whatsappName.
                     displayName: profileName,
+                    whatsappName: profileName,
                     optedOutAt: isStop ? new Date() : null,
                     lastInboundAt: new Date(),
                     source: 'inbox_auto',
                   },
                   update: {
+                    // Always keep Meta's profile name fresh.
+                    ...(profileName ? { whatsappName: profileName } : {}),
                     lastInboundAt: new Date(),
                     ...(isStop ? { optedOutAt: new Date() } : {}),
                   },
@@ -1548,6 +1556,14 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 });
                 return;
               }
+              // Meta's inbound webhook includes a parallel contacts[]
+              // block with the sender's profile.name + wa_id. Keep our
+              // local mirror fresh so the inbox shows the WhatsApp
+              // display name alongside the operator's rename.
+              const inboundContact = (value.contacts ?? []).find(
+                (c) => c.wa_id === m.from,
+              );
+              const waProfileName = inboundContact?.profile?.name ?? null;
               const preview = (bodyText || `[${m.type ?? 'media'}]`).slice(0, 200);
               const thread = await tx.whatsAppThread.upsert({
                 where: {
@@ -1559,6 +1575,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 create: {
                   organizationId: channel.organizationId,
                   customerPhone: phone,
+                  customerWhatsappName: waProfileName,
                   status: 'open',
                   lastMessageAt: new Date(),
                   lastMessagePreview: preview,
@@ -1572,6 +1589,9 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                   inboundCount: { increment: 1 },
                   // Reopen if previously resolved.
                   status: 'open',
+                  // Always refresh the WhatsApp profile name from Meta —
+                  // never overwrite customer_name (operator's rename).
+                  ...(waProfileName ? { customerWhatsappName: waProfileName } : {}),
                   // Append to the rolling search blob, capped at ~16 KB.
                   searchText: { set: '' }, // see post-update below
                 },

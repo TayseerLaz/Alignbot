@@ -36,6 +36,7 @@ const threadDtoSchema = z.object({
   id: uuidSchema,
   customerPhone: z.string(),
   customerName: z.string().nullable(),
+  customerWhatsappName: z.string().nullable(),
   status: threadStatusSchema,
   assignedToUserId: uuidSchema.nullable(),
   assignedToName: z.string().nullable(),
@@ -82,6 +83,7 @@ function serializeThread(t: {
   id: string;
   customerPhone: string;
   customerName: string | null;
+  customerWhatsappName?: string | null;
   status: string;
   assignedToUserId: string | null;
   requiredSkill?: string | null;
@@ -98,6 +100,7 @@ function serializeThread(t: {
     id: t.id,
     customerPhone: t.customerPhone,
     customerName: t.customerName,
+    customerWhatsappName: t.customerWhatsappName ?? null,
     status: t.status as z.infer<typeof threadStatusSchema>,
     assignedToUserId: t.assignedToUserId,
     assignedToName:

@@ -28,6 +28,7 @@ interface ContactRow {
   id: string;
   phoneE164: string;
   displayName: string | null;
+  whatsappName: string | null;
   locale: string | null;
   optedInAt: Date | null;
   optedOutAt: Date | null;
@@ -46,6 +47,7 @@ function toContactDto(row: ContactRow) {
     id: row.id,
     phoneE164: row.phoneE164,
     displayName: row.displayName,
+    whatsappName: row.whatsappName,
     locale: row.locale,
     optedInAt: row.optedInAt?.toISOString() ?? null,
     optedOutAt: row.optedOutAt?.toISOString() ?? null,

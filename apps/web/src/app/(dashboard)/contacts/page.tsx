@@ -2,7 +2,7 @@
 
 import type { ContactDto } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Trash2, Upload, X } from 'lucide-react';
+import { Pencil, Plus, Save, Search, Trash2, Upload, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -59,6 +59,19 @@ export default function ContactsPage() {
       toast.success('Contact deleted');
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Delete failed'),
+  });
+
+  // Inline edit — patches displayName or phoneE164 in one call.
+  const editMutation = useMutation({
+    mutationFn: (vars: { id: string; displayName?: string | null; phoneE164?: string }) => {
+      const { id, ...body } = vars;
+      return api.patch(`/api/v1/contacts/${id}`, body);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contacts'] });
+      toast.success('Saved');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
   });
 
   const total = contactsQuery.data?.data.length ?? 0;
@@ -130,60 +143,39 @@ export default function ContactsPage() {
               <thead className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
                 <tr>
                   <th className="px-6 py-3">Phone</th>
+                  <th className="px-6 py-3">WhatsApp name</th>
                   <th className="px-6 py-3">Name</th>
                   <th className="px-6 py-3">Tags</th>
                   <th className="px-6 py-3">Source</th>
                   <th className="px-6 py-3">Last inbound</th>
-                  <th className="w-12 px-6 py-3" />
+                  <th className="w-20 px-6 py-3" />
                 </tr>
               </thead>
               <tbody>
                 {contactsQuery.isLoading ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-foreground-muted">
+                    <td colSpan={7} className="px-6 py-8 text-center text-foreground-muted">
                       Loading…
                     </td>
                   </tr>
                 ) : null}
                 {contactsQuery.data?.data.length === 0 && !contactsQuery.isLoading ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-foreground-muted">
+                    <td colSpan={7} className="px-6 py-12 text-center text-foreground-muted">
                       No contacts yet. Add one or import a CSV to get started.
                     </td>
                   </tr>
                 ) : null}
                 {contactsQuery.data?.data.map((c) => (
-                  <tr key={c.id} className="border-b border-border last:border-0">
-                    <td className="px-6 py-4 font-mono text-sm">{c.phoneE164}</td>
-                    <td className="px-6 py-4">{c.displayName ?? '—'}</td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-wrap gap-1">
-                        {c.tags.map((t) => (
-                          <span
-                            key={t}
-                            className="rounded-full bg-surface-muted px-2 py-0.5 text-xs text-foreground-muted"
-                          >
-                            {t}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-foreground-muted">{c.source}</td>
-                    <td className="px-6 py-4 text-foreground-muted">
-                      {c.lastInboundAt ? new Date(c.lastInboundAt).toLocaleDateString() : '—'}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => {
-                          if (window.confirm(`Delete ${c.phoneE164}?`)) deleteMutation.mutate(c.id);
-                        }}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </td>
-                  </tr>
+                  <ContactRow
+                    key={c.id}
+                    contact={c}
+                    onSave={(patch) => editMutation.mutate({ id: c.id, ...patch })}
+                    saving={editMutation.isPending}
+                    onDelete={() => {
+                      if (window.confirm(`Delete ${c.phoneE164}?`)) deleteMutation.mutate(c.id);
+                    }}
+                  />
                 ))}
               </tbody>
             </table>
@@ -208,6 +200,120 @@ export default function ContactsPage() {
         }}
       />
     </>
+  );
+}
+
+// ---------- row with inline edit ------------------------------------------
+function ContactRow({
+  contact,
+  onSave,
+  saving,
+  onDelete,
+}: {
+  contact: ContactDto;
+  onSave: (patch: { displayName?: string | null; phoneE164?: string }) => void;
+  saving: boolean;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [phone, setPhone] = useState(contact.phoneE164);
+  const [name, setName] = useState(contact.displayName ?? '');
+
+  // Reset draft when the row identity changes (after save → refetch).
+  if (!editing && (phone !== contact.phoneE164 || name !== (contact.displayName ?? ''))) {
+    setPhone(contact.phoneE164);
+    setName(contact.displayName ?? '');
+  }
+
+  const commit = () => {
+    const patch: { displayName?: string | null; phoneE164?: string } = {};
+    if (phone.trim() !== contact.phoneE164) patch.phoneE164 = phone.trim();
+    const nextName = name.trim();
+    if (nextName !== (contact.displayName ?? '')) patch.displayName = nextName || null;
+    if (Object.keys(patch).length === 0) {
+      setEditing(false);
+      return;
+    }
+    onSave(patch);
+    setEditing(false);
+  };
+  const cancel = () => {
+    setPhone(contact.phoneE164);
+    setName(contact.displayName ?? '');
+    setEditing(false);
+  };
+
+  // The WhatsApp name column is intentionally read-only. Meta refreshes
+  // it on every inbound; renaming it here would just get overwritten.
+  return (
+    <tr className="border-b border-border last:border-0">
+      <td className="px-6 py-3 font-mono text-sm">
+        {editing ? (
+          <Input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="+14155551234"
+            className="h-8 max-w-[14rem] text-sm font-mono"
+            aria-label="Phone"
+          />
+        ) : (
+          contact.phoneE164
+        )}
+      </td>
+      <td className="px-6 py-3 text-sm text-foreground-muted">
+        {contact.whatsappName ?? '—'}
+      </td>
+      <td className="px-6 py-3 text-sm">
+        {editing ? (
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Operator-set name"
+            className="h-8 max-w-[14rem] text-sm"
+            aria-label="Name"
+          />
+        ) : (
+          contact.displayName ?? '—'
+        )}
+      </td>
+      <td className="px-6 py-3">
+        <div className="flex flex-wrap gap-1">
+          {contact.tags.map((t) => (
+            <span
+              key={t}
+              className="rounded-full bg-surface-muted px-2 py-0.5 text-xs text-foreground-muted"
+            >
+              {t}
+            </span>
+          ))}
+        </div>
+      </td>
+      <td className="px-6 py-3 text-sm text-foreground-muted">{contact.source}</td>
+      <td className="px-6 py-3 text-sm text-foreground-muted">
+        {contact.lastInboundAt ? new Date(contact.lastInboundAt).toLocaleDateString() : '—'}
+      </td>
+      <td className="px-6 py-3 text-right">
+        {editing ? (
+          <div className="flex items-center justify-end gap-1">
+            <Button size="icon" variant="ghost" onClick={cancel} aria-label="Cancel">
+              <X className="size-4" />
+            </Button>
+            <Button size="icon" variant="secondary" onClick={commit} loading={saving} aria-label="Save">
+              <Save className="size-4" />
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-end gap-1">
+            <Button size="icon" variant="ghost" onClick={() => setEditing(true)} aria-label="Edit">
+              <Pencil className="size-4" />
+            </Button>
+            <Button size="icon" variant="ghost" onClick={onDelete} aria-label="Delete">
+              <Trash2 className="size-4" />
+            </Button>
+          </div>
+        )}
+      </td>
+    </tr>
   );
 }
 

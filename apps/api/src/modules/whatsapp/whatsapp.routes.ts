@@ -557,15 +557,35 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       const metaMessageId = messages[0]?.id ?? null;
 
       // Persist outbound to the inbox: upsert a thread keyed by the
-      // recipient phone, attach the whatsAppMessage to it, and bump the
-      // preview/counts so the conversation surfaces immediately in
-      // /inbox. The body shows the actual template name + the
-      // operator's parameters (if any) so the operator can see what
-      // they sent, not a hardcoded placeholder.
-      const previewBody =
-        parameters.length > 0
-          ? `[template] ${templateName} · ${parameters.join(' / ')}`
-          : `[template] ${templateName}`;
+      // recipient phone, attach the whatsAppMessage to it, and bump
+      // the preview/counts so the conversation surfaces immediately
+      // in /inbox.
+      //
+      // For the message body we render the FULL template text the
+      // recipient will actually see — pulled from the BODY component
+      // we just fetched from Meta — with {{1}}, {{2}}, … interpolated
+      // from the operator's parameters. This way the inbox shows the
+      // real customer-facing copy instead of a "[template] name"
+      // placeholder, and there's no "see more" truncation: operators
+      // can read the whole thing without scrolling on a phone.
+      const bodyComponent = metaComponents.find((c) => (c.type ?? '').toUpperCase() === 'BODY');
+      const bodyTemplate = bodyComponent?.text ?? '';
+      const renderedBody = bodyTemplate
+        ? bodyTemplate.replace(/{{\s*(\d+)\s*}}/g, (_match, idx: string) => {
+            const i = Number(idx) - 1;
+            return parameters[i] ?? `{{${idx}}}`;
+          })
+        : '';
+      // Compose: [template tag line] + body. The leading tag makes it
+      // obvious in the inbox that this was a template send, not a
+      // free-form message. Fall back to a plain marker when the
+      // Meta-side components fetch failed.
+      const tagLine = `📨 Template · ${templateName}${templateLanguage !== 'en_US' ? ` (${templateLanguage})` : ''}`;
+      const previewBody = renderedBody
+        ? `${tagLine}\n\n${renderedBody}`
+        : parameters.length > 0
+        ? `${tagLine} · ${parameters.join(' / ')}`
+        : tagLine;
       await withRlsBypass(async (tx) => {
         const thread = await tx.whatsAppThread.upsert({
           where: { organizationId_customerPhone: { organizationId: orgId, customerPhone: to } },

@@ -13,7 +13,22 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
+import { env } from '../../lib/env.js';
 import { badRequest, notFound } from '../../lib/errors.js';
+
+// SSE handlers write raw response headers via reply.raw.writeHead(), which
+// bypasses @fastify/cors. Build the Access-Control-Allow-Origin header
+// manually so EventSource clients on the web origin can connect.
+function corsHeadersForSse(req: { headers: Record<string, string | string[] | undefined> }): Record<string, string> {
+  const origin = (req.headers.origin as string | undefined) ?? '';
+  const allowed = env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
+  const allowOrigin = allowed.includes(origin) ? origin : allowed[0] ?? '*';
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Credentials': 'true',
+    Vary: 'Origin',
+  };
+}
 
 const threadStatusSchema = z.enum(['open', 'pending', 'resolved', 'escalated']);
 
@@ -654,6 +669,7 @@ export default async function inboxRoutes(app: FastifyInstance) {
         'Cache-Control': 'no-cache, no-transform',
         Connection: 'keep-alive',
         'X-Accel-Buffering': 'no',
+        ...corsHeadersForSse(req),
       });
       reply.raw.write(`retry: 5000\n\n`);
       reply.raw.write(`event: hello\ndata: ${JSON.stringify({ orgId })}\n\n`);

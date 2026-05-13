@@ -30,7 +30,21 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
+import { env } from '../../lib/env.js';
 import { badRequest, conflict, notFound } from '../../lib/errors.js';
+
+// Same CORS workaround used by the inbox SSE — raw.writeHead bypasses
+// @fastify/cors so we have to echo the allow-origin header manually.
+function corsHeadersForSse(req: { headers: Record<string, string | string[] | undefined> }): Record<string, string> {
+  const origin = (req.headers.origin as string | undefined) ?? '';
+  const allowed = env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
+  const allowOrigin = allowed.includes(origin) ? origin : allowed[0] ?? '*';
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Credentials': 'true',
+    Vary: 'Origin',
+  };
+}
 import {
   getBroadcastFanoutQueue,
   type BroadcastFanoutPayload,
@@ -920,6 +934,7 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
         'Cache-Control': 'no-cache, no-transform',
         Connection: 'keep-alive',
         'X-Accel-Buffering': 'no',
+        ...corsHeadersForSse(req),
       });
       reply.raw.write(`retry: 5000\n\n`);
       reply.raw.write(`event: hello\ndata: ${JSON.stringify({ id })}\n\n`);

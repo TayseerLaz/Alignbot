@@ -1177,13 +1177,15 @@ export default async function whatsappRoutes(app: FastifyInstance) {
 
       const sig = req.headers['x-hub-signature-256'];
       const sigStr = Array.isArray(sig) ? sig[0] : sig;
-      // Fastify body parser may have parsed the JSON already; re-stringify
-      // to compute HMAC. This is a small risk (re-stringification ordering
-      // can differ from Meta's bytes) — for stricter byte-equality, set
-      // `attachFieldsToBody: 'keyValues'` upstream and use req.rawBody.
-      // For Phase 1.5 the JSON-stringify approach is acceptable: Meta
-      // canonicalises its bodies and Node round-trips them stably.
-      const rawBody = JSON.stringify(req.body ?? {});
+      // HMAC must be computed over Meta's ORIGINAL request bytes — not a
+      // re-stringification of the parsed body. server.ts's custom
+      // application/json parser stashes the raw UTF-8 body at
+      // req.rawBody for exactly this. If for any reason it's missing
+      // (e.g. someone calls this route with no Content-Type) we fall
+      // back to JSON.stringify, which is the legacy behaviour and at
+      // least matches Meta's bytes most of the time.
+      const rawBody =
+        (req as unknown as { rawBody?: string }).rawBody ?? JSON.stringify(req.body ?? {});
       const expected =
         'sha256=' +
         crypto.createHmac('sha256', channel.appSecret).update(rawBody).digest('hex');

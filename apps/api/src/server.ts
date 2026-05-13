@@ -95,6 +95,28 @@ export async function buildServer() {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
+  // Capture the raw JSON body on every request before parsing so HMAC
+  // verifiers (WhatsApp Cloud API, Stripe webhooks, etc.) can compute
+  // signatures against Meta's/Stripe's original bytes — not a Node
+  // re-stringification that may reorder keys or change escaping and
+  // break the HMAC comparison. The body is attached at `req.rawBody`.
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'buffer' },
+    (req, body, done) => {
+      try {
+        const buf = body as Buffer;
+        (req as unknown as { rawBody?: string }).rawBody = buf.toString('utf8');
+        const parsed = buf.length === 0 ? {} : JSON.parse(buf.toString('utf8'));
+        done(null, parsed);
+      } catch (err) {
+        const e = err as Error & { statusCode?: number };
+        e.statusCode = 400;
+        done(e, undefined);
+      }
+    },
+  );
+
   // Security & basics
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(sensible);

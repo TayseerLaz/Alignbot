@@ -76,12 +76,18 @@ export const whatsappVerifyResultSchema = z.object({
 });
 export type WhatsAppVerifyResult = z.infer<typeof whatsappVerifyResultSchema>;
 
-// Test-send a `hello_world` template to a number the operator types.
+// Test-send a template to a number the operator types. Defaults to the
+// well-known Meta sandbox `hello_world / en_US`, but accepts an arbitrary
+// template name + language so accounts whose library doesn't include
+// `hello_world` (most production accounts) can pass anything they've had
+// approved.
 export const whatsappTestSendBodySchema = z.object({
   to: z
     .string()
     .trim()
     .regex(/^\+?[0-9]{6,16}$/, 'Use E.164 digits only, e.g. +14155551234.'),
+  templateName: z.string().trim().min(1).max(512).optional(),
+  templateLanguage: z.string().trim().min(2).max(16).optional(),
 });
 export const whatsappTestSendResultSchema = z.object({
   ok: z.boolean(),

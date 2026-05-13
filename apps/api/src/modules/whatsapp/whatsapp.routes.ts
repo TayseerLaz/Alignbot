@@ -413,11 +413,18 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       }
       const to = req.body.to.replace(/[^\d+]/g, '').replace(/^\+/, '');
 
+      // Template name + language come from the request body (or fall back
+      // to the well-known Meta sandbox 'hello_world / en_US'). Most accounts
+      // don't actually have hello_world in their library, so we let callers
+      // pass any template they've already approved.
+      const templateName = req.body.templateName?.trim() || 'hello_world';
+      const templateLanguage = req.body.templateLanguage?.trim() || 'en_US';
+
       const payload = {
         messaging_product: 'whatsapp',
         to,
         type: 'template',
-        template: { name: 'hello_world', language: { code: 'en_US' } },
+        template: { name: templateName, language: { code: templateLanguage } },
       };
 
       let resBody = '';

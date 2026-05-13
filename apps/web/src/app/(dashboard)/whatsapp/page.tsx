@@ -121,11 +121,11 @@ export default function WhatsAppPage() {
   });
 
   const testSend = useMutation({
-    mutationFn: (to: string) =>
-      api.post<{ data: WhatsAppTestSendResult }>('/api/v1/whatsapp/test-send', { to }),
-    onSuccess: (res) => {
+    mutationFn: (args: { to: string; templateName: string; templateLanguage: string }) =>
+      api.post<{ data: WhatsAppTestSendResult }>('/api/v1/whatsapp/test-send', args),
+    onSuccess: (res, vars) => {
       const r = res.data;
-      if (r.ok) toast.success('hello_world template sent');
+      if (r.ok) toast.success(`${vars.templateName} template sent`);
       else toast.error(r.errorMessage ?? 'Send failed');
       queryClient.invalidateQueries({ queryKey: ['whatsapp-messages'] });
     },
@@ -551,13 +551,17 @@ export default function WhatsAppPage() {
             <CardHeader>
               <CardTitle>Send a test</CardTitle>
               <CardDescription>
-                Sends the <span className="font-mono">hello_world</span> template. The recipient
-                must be added as a tester in Meta until business verification is complete.
+                Sends an approved WhatsApp template. The recipient must be added as a tester in
+                Meta until business verification is complete. Defaults are{' '}
+                <span className="font-mono">hello_world / en_US</span> — change them if your account
+                uses a different template.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <TestSendForm
-                onSend={(to) => testSend.mutate(to)}
+                onSend={(to, templateName, templateLanguage) =>
+                  testSend.mutate({ to, templateName, templateLanguage })
+                }
                 loading={testSend.isPending}
                 disabled={!verifiedOk}
               />
@@ -619,11 +623,13 @@ function TestSendForm({
   loading,
   disabled,
 }: {
-  onSend: (to: string) => void;
+  onSend: (to: string, templateName: string, templateLanguage: string) => void;
   loading: boolean;
   disabled: boolean;
 }) {
   const [to, setTo] = useState('');
+  const [templateName, setTemplateName] = useState('hello_world');
+  const [templateLanguage, setTemplateLanguage] = useState('en_US');
   return (
     <div className="space-y-2">
       <Input
@@ -631,9 +637,32 @@ function TestSendForm({
         value={to}
         onChange={(e) => setTo(e.target.value)}
         disabled={disabled}
+        aria-label="Recipient phone"
       />
-      <Button onClick={() => onSend(to)} loading={loading} disabled={disabled || to.trim().length < 6}>
-        <Send className="size-4" /> Send hello_world
+      <div className="flex gap-2">
+        <Input
+          placeholder="template name"
+          value={templateName}
+          onChange={(e) => setTemplateName(e.target.value)}
+          disabled={disabled}
+          aria-label="Template name"
+          className="flex-1"
+        />
+        <Input
+          placeholder="language (en, en_US, ar…)"
+          value={templateLanguage}
+          onChange={(e) => setTemplateLanguage(e.target.value)}
+          disabled={disabled}
+          aria-label="Template language"
+          className="w-44"
+        />
+      </div>
+      <Button
+        onClick={() => onSend(to, templateName.trim(), templateLanguage.trim())}
+        loading={loading}
+        disabled={disabled || to.trim().length < 6 || templateName.trim().length < 1 || templateLanguage.trim().length < 2}
+      >
+        <Send className="size-4" /> Send {templateName.trim() || 'template'}
       </Button>
     </div>
   );

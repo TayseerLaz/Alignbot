@@ -1354,6 +1354,12 @@ export default async function whatsappRoutes(app: FastifyInstance) {
             value?: {
               messaging_product?: string;
               metadata?: { display_phone_number?: string; phone_number_id?: string };
+              // Parallel array with the sender's WhatsApp profile name +
+              // wa_id. Use to populate Contact.whatsappName etc.
+              contacts?: {
+                wa_id?: string;
+                profile?: { name?: string };
+              }[];
               messages?: {
                 id?: string;
                 from?: string;
@@ -1502,6 +1508,16 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 (c) => c.wa_id === m.from,
               );
               const profileName = inboundContact?.profile?.name ?? null;
+              req.log.info(
+                {
+                  from: m.from,
+                  hasContactsBlock: Array.isArray(value.contacts),
+                  contactsCount: (value.contacts ?? []).length,
+                  matchedWaId: !!inboundContact,
+                  profileName,
+                },
+                '[whatsapp] inbound profile extraction',
+              );
               await withRlsBypass(async (tx) => {
                 await tx.contact.upsert({
                   where: {

@@ -83,7 +83,9 @@ export type WhatsAppVerifyResult = z.infer<typeof whatsappVerifyResultSchema>;
 // well-known Meta sandbox `hello_world / en_US`, but accepts an arbitrary
 // template name + language so accounts whose library doesn't include
 // `hello_world` (most production accounts) can pass anything they've had
-// approved.
+// approved. `parameters` is an ordered array of text values that bind to
+// the template's body placeholders ({{1}}, {{2}}, …). Empty array means
+// the template has no variables.
 export const whatsappTestSendBodySchema = z.object({
   to: z
     .string()
@@ -91,6 +93,7 @@ export const whatsappTestSendBodySchema = z.object({
     .regex(/^\+?[0-9]{6,16}$/, 'Use E.164 digits only, e.g. +14155551234.'),
   templateName: z.string().trim().min(1).max(512).optional(),
   templateLanguage: z.string().trim().min(2).max(16).optional(),
+  parameters: z.array(z.string().max(1024)).max(20).optional(),
 });
 export const whatsappTestSendResultSchema = z.object({
   ok: z.boolean(),

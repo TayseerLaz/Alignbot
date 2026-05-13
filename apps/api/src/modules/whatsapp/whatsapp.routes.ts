@@ -419,12 +419,30 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       // pass any template they've already approved.
       const templateName = req.body.templateName?.trim() || 'hello_world';
       const templateLanguage = req.body.templateLanguage?.trim() || 'en_US';
+      // If the template has body placeholders ({{1}}, {{2}}, …) Meta
+      // requires a matching `components` array; otherwise it rejects
+      // with error 132012 "Parameter format does not match format in the
+      // created template." Build it from the optional parameters[] body
+      // field; skip when empty so static templates still work.
+      const parameters = (req.body.parameters ?? []).map((v) => v.trim());
+      const templateBlock: Record<string, unknown> = {
+        name: templateName,
+        language: { code: templateLanguage },
+      };
+      if (parameters.length > 0) {
+        templateBlock.components = [
+          {
+            type: 'body',
+            parameters: parameters.map((text) => ({ type: 'text', text })),
+          },
+        ];
+      }
 
       const payload = {
         messaging_product: 'whatsapp',
         to,
         type: 'template',
-        template: { name: templateName, language: { code: templateLanguage } },
+        template: templateBlock,
       };
 
       let resBody = '';

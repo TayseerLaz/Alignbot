@@ -39,6 +39,7 @@ interface TemplateOption {
   name: string;
   language: string;
   status: string;
+  bodyText?: string;
 }
 
 type FormState = {
@@ -135,8 +136,12 @@ export default function WhatsAppPage() {
   });
 
   const testSend = useMutation({
-    mutationFn: (args: { to: string; templateName: string; templateLanguage: string }) =>
-      api.post<{ data: WhatsAppTestSendResult }>('/api/v1/whatsapp/test-send', args),
+    mutationFn: (args: {
+      to: string;
+      templateName: string;
+      templateLanguage: string;
+      parameters: string[];
+    }) => api.post<{ data: WhatsAppTestSendResult }>('/api/v1/whatsapp/test-send', args),
     onSuccess: (res, vars) => {
       const r = res.data;
       if (r.ok) toast.success(`${vars.templateName} template sent`);
@@ -573,8 +578,8 @@ export default function WhatsAppPage() {
             <CardContent>
               <TestSendForm
                 templates={templatesQ.data?.data ?? []}
-                onSend={(to, templateName, templateLanguage) =>
-                  testSend.mutate({ to, templateName, templateLanguage })
+                onSend={(to, templateName, templateLanguage, parameters) =>
+                  testSend.mutate({ to, templateName, templateLanguage, parameters })
                 }
                 loading={testSend.isPending}
                 disabled={!verifiedOk}
@@ -632,6 +637,19 @@ function Row({ label, value, ok, warn }: { label: string; value: string; ok?: bo
   );
 }
 
+// Count the highest {{N}} placeholder in a template's body so we know
+// how many parameter inputs to render. Returns 0 for static templates.
+function countPlaceholders(body: string | undefined | null): number {
+  if (!body) return 0;
+  const matches = body.match(/{{\s*(\d+)\s*}}/g) ?? [];
+  let max = 0;
+  for (const m of matches) {
+    const n = Number(m.replace(/[^\d]/g, ''));
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max;
+}
+
 function TestSendForm({
   templates,
   onSend,
@@ -639,7 +657,7 @@ function TestSendForm({
   disabled,
 }: {
   templates: TemplateOption[];
-  onSend: (to: string, templateName: string, templateLanguage: string) => void;
+  onSend: (to: string, templateName: string, templateLanguage: string, parameters: string[]) => void;
   loading: boolean;
   disabled: boolean;
 }) {
@@ -664,6 +682,16 @@ function TestSendForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [templates.length]);
   const [name, language] = selected.split('|');
+  const selectedTpl = options.find((o) => `${o.name}|${o.language}` === selected);
+  const placeholderCount = countPlaceholders(selectedTpl?.bodyText);
+  const [params, setParams] = useState<string[]>([]);
+  // Reset/resize the params array whenever the picked template changes
+  // (different templates have different placeholder counts).
+  useEffect(() => {
+    setParams(Array.from({ length: placeholderCount }, () => ''));
+  }, [selected, placeholderCount]);
+
+  const allParamsFilled = params.every((v) => v.trim().length > 0);
 
   return (
     <div className="space-y-2">
@@ -696,10 +724,51 @@ function TestSendForm({
           Use <span className="font-mono">/whatsapp/templates → Sync from Meta</span> to populate.
         </p>
       ) : null}
+      {selectedTpl?.bodyText ? (
+        <pre className="whitespace-pre-wrap rounded border border-border bg-surface-muted/40 px-3 py-2 text-xs font-mono text-foreground">
+          {selectedTpl.bodyText}
+        </pre>
+      ) : null}
+      {placeholderCount > 0 ? (
+        <div className="space-y-1.5">
+          <p className="text-xs text-foreground-muted">
+            This template has {placeholderCount} variable{placeholderCount === 1 ? '' : 's'}. Fill them
+            in order — they bind to <span className="font-mono">{'{{1}}'}</span>,{' '}
+            <span className="font-mono">{'{{2}}'}</span>, … in the body above.
+          </p>
+          {params.map((value, i) => (
+            <Input
+              key={i}
+              placeholder={`value for {{${i + 1}}}`}
+              value={value}
+              onChange={(e) => {
+                const next = params.slice();
+                next[i] = e.target.value;
+                setParams(next);
+              }}
+              disabled={disabled}
+              aria-label={`Template parameter ${i + 1}`}
+            />
+          ))}
+        </div>
+      ) : null}
       <Button
-        onClick={() => onSend(to, (name ?? '').trim(), (language ?? '').trim())}
+        onClick={() =>
+          onSend(
+            to,
+            (name ?? '').trim(),
+            (language ?? '').trim(),
+            params.map((p) => p.trim()),
+          )
+        }
         loading={loading}
-        disabled={disabled || to.trim().length < 6 || !name || !language}
+        disabled={
+          disabled ||
+          to.trim().length < 6 ||
+          !name ||
+          !language ||
+          (placeholderCount > 0 && !allParamsFilled)
+        }
       >
         <Send className="size-4" /> Send {name || 'template'}
       </Button>

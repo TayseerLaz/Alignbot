@@ -1140,7 +1140,6 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         params: z.object({ orgId: uuidSchema }),
       },
       // Public endpoint — no preHandler.
-      logLevel: 'warn',
       // Capture raw body so signature verification works.
       // Fastify exposes request.rawBody when this option is set on the schema.
     },
@@ -1168,6 +1167,10 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       if (!channel || !channel.appSecret) {
         // Without an app secret we can't authenticate the request — refuse
         // rather than persist a potentially-spoofed message.
+        req.log.warn(
+          { orgId: req.params.orgId, inferredPhoneId, hasChannel: !!channel, hasSecret: !!channel?.appSecret },
+          '[whatsapp] webhook rejected — channel or app secret missing',
+        );
         reply.code(403);
         return 'forbidden';
       }
@@ -1189,9 +1192,28 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         sigStr.length === expected.length &&
         crypto.timingSafeEqual(Buffer.from(sigStr), Buffer.from(expected));
       if (!ok) {
+        // Log enough to debug app-secret mismatches without leaking the
+        // secret itself: show the first/last chars of received sig vs the
+        // expected one so an operator can eyeball the diff.
+        const previewSig = (s: string | undefined): string =>
+          !s ? '<missing>' : s.length < 16 ? s : `${s.slice(0, 12)}…${s.slice(-4)} (len=${s.length})`;
+        req.log.warn(
+          {
+            orgId: req.params.orgId,
+            inferredPhoneId,
+            received: previewSig(sigStr),
+            expected: previewSig(expected),
+            bodyLen: rawBody.length,
+          },
+          '[whatsapp] webhook signature mismatch — check app secret in /whatsapp',
+        );
         reply.code(401);
         return 'invalid signature';
       }
+      req.log.info(
+        { orgId: req.params.orgId, inferredPhoneId, bodyLen: rawBody.length },
+        '[whatsapp] webhook signature ok',
+      );
 
       // Walk Meta's payload structure: entry[].changes[].value.messages[]
       // for inbound, entry[].changes[].value.statuses[] for delivery /

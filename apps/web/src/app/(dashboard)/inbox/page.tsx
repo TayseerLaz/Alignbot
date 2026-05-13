@@ -393,14 +393,11 @@ function ThreadView({
     },
   });
 
-  if (!thread) {
-    return (
-      <div className="flex flex-1 items-center justify-center text-sm text-foreground-muted">
-        Select a conversation to view it.
-      </div>
-    );
-  }
-
+  // IMPORTANT: hooks must be called in the same order every render. The
+  // early `return` for the null-thread case must come AFTER every hook
+  // call in this component, otherwise the moment a thread arrives the
+  // render count of hooks changes and React throws #310 "Rendered more
+  // hooks than during the previous render."
   const messages = messagesQ.data?.data ?? [];
   const notes = notesQ.data?.data ?? [];
   // Interleave messages + notes by time.
@@ -412,6 +409,14 @@ function ThreadView({
     items.sort((a, b) => (a.at < b.at ? -1 : 1));
     return items;
   }, [messages, notes]);
+
+  if (!thread) {
+    return (
+      <div className="flex flex-1 items-center justify-center text-sm text-foreground-muted">
+        Select a conversation to view it.
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-w-0 flex-col">

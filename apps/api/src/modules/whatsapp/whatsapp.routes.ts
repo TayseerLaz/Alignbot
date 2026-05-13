@@ -1486,30 +1486,45 @@ export default async function whatsappRoutes(app: FastifyInstance) {
               metaId: m.id ?? null,
             });
 
-            // Phase 5.3 — STOP-keyword opt-out. Match common unsubscribe
-            // verbs (locale-agnostic). On match, set the contact's
-            // opted_out_at so future broadcasts skip them.
+            // Every inbound creates a Contact row if we don't already
+            // have one for this phone. Keeps /contacts in sync with
+            // the inbox automatically so the operator never has to
+            // copy/paste numbers. The contact's `profile.name` from
+            // Meta (if present in the contacts[] block) is used as the
+            // initial display name.
             const STOP_RE = /^\s*(stop|unsubscribe|quit|cancel|end|opt\s*out|alto|para|arr[eê]ter|stopper|اوقف|إيقاف)\s*\.?\s*$/i;
-            if (m.from && STOP_RE.test(bodyText)) {
+            if (m.from) {
+              const phoneE164 = `+${m.from}`;
+              const isStop = STOP_RE.test(bodyText);
+              // Meta inbound payloads include a parallel contacts[] array
+              // with profile.name and wa_id matching the message's from.
+              const inboundContact = (value.contacts ?? []).find(
+                (c) => c.wa_id === m.from,
+              );
+              const profileName = inboundContact?.profile?.name ?? null;
               await withRlsBypass(async (tx) => {
-                const e164 = `+${m.from}`;
                 await tx.contact.upsert({
                   where: {
                     organizationId_phoneE164: {
                       organizationId: channel.organizationId,
-                      phoneE164: e164,
+                      phoneE164,
                     },
                   },
                   create: {
                     organizationId: channel.organizationId,
-                    phoneE164: e164,
-                    optedOutAt: new Date(),
+                    phoneE164,
+                    displayName: profileName,
+                    optedOutAt: isStop ? new Date() : null,
+                    lastInboundAt: new Date(),
                     source: 'inbox_auto',
                   },
-                  update: { optedOutAt: new Date() },
+                  update: {
+                    lastInboundAt: new Date(),
+                    ...(isStop ? { optedOutAt: new Date() } : {}),
+                  },
                 });
               }).catch((err) =>
-                req.log.error({ err }, '[whatsapp] STOP opt-out failed'),
+                req.log.error({ err }, '[whatsapp] contact upsert failed'),
               );
             }
             // Upsert the thread + persist the message + bump the
@@ -1682,9 +1697,96 @@ async function maybeReplyAsBot(args: {
       });
       const data = await gatherBotData(tx as never, args.organizationId);
 
-      return { history: history.reverse(), data, channel: ch };
+      return { history: history.reverse(), data, channel: ch, threadId: thread.id };
     });
     if (!ctx) continue;
+
+    // Escalation short-circuit: if the bot's most recent reply asked
+    // whether the customer wants to talk to a human, and this inbound
+    // is an affirmative answer, skip the LLM call entirely. Send a
+    // confirmation, flag the thread as 'pending' (escalated state),
+    // post an internal "Bot escalated" note so the analytics signal
+    // fires, and leave the rest to the operator.
+    const lastBotReply =
+      [...ctx.history].reverse().find((h) => h.direction === 'outbound')?.body ?? '';
+    const HANDOFF_OFFER_RE =
+      /(connect|transfer|escalat|hand[\s-]?off|speak|talk).{0,40}(human|specialist|agent|representative|teammate|operator|colleague)/i;
+    const AFFIRMATIVE_RE =
+      /^\s*(yes|yep|yeah|yup|sure|please|ok(ay)?|y|si|sí|oui|نعم|إيه|aywa|ايوة|na'?am|طيب|تمام|of course|please do|connect me|go ahead|do it|sounds good)[\s.!,?]*\s*$/i;
+    const isHandoffConfirm =
+      HANDOFF_OFFER_RE.test(lastBotReply) && AFFIRMATIVE_RE.test(m.bodyText!);
+
+    if (isHandoffConfirm) {
+      // Prefer the org's configured escalation fallback so it carries
+      // their tone of voice; default to a polite generic line.
+      const escalation = (ctx.data.config?.escalationRules ?? {}) as { fallback?: unknown };
+      const confirmText =
+        typeof escalation.fallback === 'string' && escalation.fallback.trim().length > 0
+          ? escalation.fallback.trim()
+          : "Thanks — we'll connect you with a human teammate shortly.";
+      try {
+        const payload = {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: m.from,
+          type: 'text',
+          text: { preview_url: false, body: confirmText },
+        };
+        const res = await fetch(
+          `https://graph.facebook.com/v20.0/${encodeURIComponent(ctx.channel.phoneNumberId!)}/messages`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${ctx.channel.accessToken!}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(10_000),
+          },
+        );
+        const text = await res.text();
+        let metaMessageId: string | null = null;
+        try {
+          metaMessageId = (JSON.parse(text) as { messages?: { id?: string }[] }).messages?.[0]?.id ?? null;
+        } catch {
+          /* ignore */
+        }
+        await withRlsBypass(async (tx) => {
+          await tx.whatsAppMessage.create({
+            data: {
+              threadId: ctx.threadId,
+              organizationId: args.organizationId,
+              direction: 'outbound',
+              metaMessageId,
+              toNumber: m.from,
+              messageType: 'text',
+              body: confirmText,
+              rawPayload: { sentBy: 'bot', reason: 'handoff_confirm' } as never,
+            },
+          });
+          await tx.whatsAppThread.update({
+            where: { id: ctx.threadId },
+            data: {
+              status: 'pending',
+              lastMessageAt: new Date(),
+              lastMessagePreview: confirmText.slice(0, 200),
+              outboundCount: { increment: 1 },
+            },
+          });
+          await tx.whatsAppNote.create({
+            data: {
+              threadId: ctx.threadId,
+              organizationId: args.organizationId,
+              authorUserId: null,
+              body: '🤖 → 👤 Bot escalated to human (customer confirmed handoff).',
+            },
+          });
+        });
+      } catch (err) {
+        args.log.warn({ err }, '[whatsapp] handoff-confirm send failed');
+      }
+      continue;
+    }
 
     // OpenAI call — outside the tx. Safe to be slow.
     const result = await buildBotResponse({

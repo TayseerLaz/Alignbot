@@ -14,6 +14,7 @@ import {
   Sparkles,
   StickyNote,
   Tag as TagIcon,
+  Trash2,
   UserCheck,
   X,
 } from 'lucide-react';
@@ -371,6 +372,20 @@ function ThreadView({
     },
   });
 
+  // Rename the customer's display name. Backend mirrors the change to
+  // Contact.displayName so /contacts stays in sync automatically.
+  const renameContact = useMutation({
+    mutationFn: (customerName: string | null) =>
+      thread
+        ? api.patch(`/api/v1/inbox/threads/${thread.id}`, { customerName })
+        : Promise.reject(new Error('no thread')),
+    onSuccess: () => {
+      toast.success('Saved');
+      onChanged();
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Rename failed'),
+  });
+
   const addTag = useMutation({
     mutationFn: (tag: string) =>
       thread
@@ -431,6 +446,8 @@ function ThreadView({
         onAssignSelf={() => currentUserId && setAssignee.mutate(currentUserId)}
         onUnassign={() => setAssignee.mutate(null)}
         onHandoff={() => handoff.mutate()}
+        onRename={(name) => renameContact.mutate(name)}
+        renameSaving={renameContact.isPending}
       />
       <TagBar thread={thread} onAdd={(t) => addTag.mutate(t)} onRemove={(t) => removeTag.mutate(t)} />
       <AiStatusBanner thread={thread} botDeployed={botDeployed} />
@@ -469,22 +486,89 @@ function ThreadHeader({
   onAssignSelf,
   onUnassign,
   onHandoff,
+  onRename,
+  renameSaving,
 }: {
   thread: Thread;
   onStatusChange: (s: ThreadStatus) => void;
   onAssignSelf: () => void;
   onUnassign: () => void;
   onHandoff: () => void;
+  onRename: (name: string | null) => void;
+  renameSaving: boolean;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(thread.customerName ?? '');
+  useEffect(() => {
+    setDraft(thread.customerName ?? '');
+    setEditing(false);
+  }, [thread.id, thread.customerName]);
+
+  const save = () => {
+    const trimmed = draft.trim();
+    const next = trimmed.length > 0 ? trimmed : null;
+    if (next === (thread.customerName ?? null)) {
+      setEditing(false);
+      return;
+    }
+    onRename(next);
+    setEditing(false);
+  };
+
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-muted/40 px-4 py-2">
-      <div className="flex items-center gap-3">
-        <Phone className="size-4 text-foreground-muted" />
-        <div>
-          <p className="font-mono text-sm">{thread.customerName ?? thread.customerPhone}</p>
-          {thread.customerName ? (
-            <p className="text-[10px] font-mono text-foreground-subtle">{thread.customerPhone}</p>
-          ) : null}
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <Phone className="size-4 shrink-0 text-foreground-muted" />
+        <div className="min-w-0 flex-1">
+          {editing ? (
+            <div className="flex items-center gap-2">
+              <Input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') save();
+                  if (e.key === 'Escape') {
+                    setDraft(thread.customerName ?? '');
+                    setEditing(false);
+                  }
+                }}
+                placeholder="Customer name"
+                autoFocus
+                className="h-7 max-w-[16rem] text-sm"
+                aria-label="Customer name"
+              />
+              <Button size="sm" onClick={save} loading={renameSaving}>
+                Save
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setDraft(thread.customerName ?? '');
+                  setEditing(false);
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="group block max-w-full rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
+              title="Click to rename"
+            >
+              <p className="truncate text-sm font-semibold text-foreground">
+                {thread.customerName ?? thread.customerPhone}
+                <span className="ml-1 text-[10px] font-normal text-foreground-subtle opacity-0 group-hover:opacity-100">
+                  ✎ rename
+                </span>
+              </p>
+              {thread.customerName ? (
+                <p className="font-mono text-[10px] text-foreground-subtle">{thread.customerPhone}</p>
+              ) : null}
+            </button>
+          )}
         </div>
         <Badge variant={STATUS_VARIANT[thread.status]} className="ml-2">
           {STATUS_LABEL[thread.status]}

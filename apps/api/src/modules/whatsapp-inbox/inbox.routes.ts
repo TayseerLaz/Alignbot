@@ -283,6 +283,27 @@ export default async function inboxRoutes(app: FastifyInstance) {
             _count: { select: { notes: true } },
           },
         });
+        // When the operator renames a thread, mirror the change onto the
+        // Contact row that shares this phone (creating the contact if
+        // missing) so /contacts stays in sync — operators can edit
+        // either page and the other reflects it immediately.
+        if (req.body.customerName !== undefined && updated.customerPhone) {
+          const phoneE164 = updated.customerPhone.startsWith('+')
+            ? updated.customerPhone
+            : `+${updated.customerPhone}`;
+          await tx.contact.upsert({
+            where: {
+              organizationId_phoneE164: { organizationId: orgId, phoneE164 },
+            },
+            create: {
+              organizationId: orgId,
+              phoneE164,
+              displayName: req.body.customerName,
+              source: 'inbox_auto',
+            },
+            update: { displayName: req.body.customerName },
+          }).catch(() => undefined);
+        }
         await recordAudit({
           action: 'business_info_updated',
           organizationId: orgId,

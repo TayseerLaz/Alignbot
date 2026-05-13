@@ -143,8 +143,13 @@ export default function ContactsPage() {
               <thead className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
                 <tr>
                   <th className="px-6 py-3">Phone</th>
-                  <th className="px-6 py-3">WhatsApp name</th>
-                  <th className="px-6 py-3">Name</th>
+                  <th
+                    className="px-6 py-3"
+                    title="The customer's WhatsApp profile name — what they set in WhatsApp → Settings → Profile → Name. Read-only; auto-fills when they message you."
+                  >
+                    WhatsApp nickname
+                  </th>
+                  <th className="px-6 py-3">Name (your label)</th>
                   <th className="px-6 py-3">Tags</th>
                   <th className="px-6 py-3">Source</th>
                   <th className="px-6 py-3">Last inbound</th>

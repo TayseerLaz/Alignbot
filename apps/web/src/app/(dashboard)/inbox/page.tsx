@@ -573,8 +573,11 @@ function ThreadHeader({
                   the operator's rename so both signals are visible. */}
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0">
                 {thread.customerWhatsappName && thread.customerWhatsappName !== thread.customerName ? (
-                  <p className="text-[10px] text-foreground-subtle">
-                    WhatsApp: <span className="font-medium">{thread.customerWhatsappName}</span>
+                  <p
+                    className="text-[10px] text-foreground-subtle"
+                    title="The customer's WhatsApp profile name"
+                  >
+                    WhatsApp nickname: <span className="font-medium">{thread.customerWhatsappName}</span>
                   </p>
                 ) : null}
                 {thread.customerName || thread.customerWhatsappName ? (

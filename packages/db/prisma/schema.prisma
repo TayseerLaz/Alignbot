@@ -1386,15 +1386,22 @@ model KnowledgeBaseEntry {
 // bot before deploy. We persist the LAST run so the UI can show last
 // scores without re-spending LLM tokens on every page load.
 model BotTestRun {
-  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String   @map("organization_id") @db.Uuid
-  scenarioKey    String   @map("scenario_key") // e.g. 'product_question'
-  scenarioPrompt String   @map("scenario_prompt")
-  botResponse    String   @map("bot_response")
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String    @map("organization_id") @db.Uuid
+  scenarioKey      String    @map("scenario_key") // e.g. 'product_question'
+  scenarioPrompt   String    @map("scenario_prompt")
+  botResponse      String    @map("bot_response")
   // 0..100 — LLM-as-judge score against expected behaviour.
-  score          Int?
-  judgeNotes     String?  @map("judge_notes")
-  createdAt      DateTime @default(now()) @map("created_at")
+  score            Int?
+  judgeNotes       String?   @map("judge_notes")
+  // Operator override — when the human disagrees with the judge. The
+  // original LLM score on `score` is kept for audit; UI prefers
+  // overrideScore when present.
+  overrideScore    Int?      @map("override_score")
+  overrideNotes    String?   @map("override_notes")
+  overrideByUserId String?   @map("override_by_user_id") @db.Uuid
+  overrideAt       DateTime? @map("override_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
 
   @@index([organizationId, scenarioKey, createdAt(sort: Desc)])
   @@map("bot_test_runs")

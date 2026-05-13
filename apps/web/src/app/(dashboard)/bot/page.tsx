@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import Link from 'next/link';
 import {
   AlertTriangle,
   Bot,
@@ -79,11 +80,14 @@ interface QuestionnaireItem {
 }
 
 interface ScenarioRun {
+  id: string | null;
   key: string;
   prompt: string;
   reply: string | null;
   score: number | null;
   notes: string | null;
+  overrideScore: number | null;
+  overrideNotes: string | null;
   ranAt: string | null;
 }
 
@@ -581,6 +585,40 @@ function FlowAndTemplatesCard({ config }: { config: BotConfig | null }) {
 }
 
 // ---------- Questionnaire --------------------------------------------------
+
+// Each question key from /bot/questionnaire maps to either a same-page
+// form field (scroll + focus the input) or an external page (link). Kept
+// here so adding a new question on the API side is a one-line addition
+// here too.
+const QUESTION_ACTIONS: Record<
+  string,
+  { label: string; href?: string; focusId?: string }
+> = {
+  greeting: { label: 'Edit greeting', focusId: 'bot-greeting' },
+  personality: { label: 'Pick personality', focusId: 'bot-greeting' },
+  escalation_fallback: { label: 'Set handoff message', focusId: 'bot-fallback' },
+  languages: { label: 'Set languages', focusId: 'bot-langs' },
+  operating_hours: { label: 'Add hours', href: '/business-info' },
+  add_faqs: { label: 'Add FAQs', href: '/business-info' },
+  add_policies: { label: 'Add policies', href: '/business-info' },
+};
+
+function focusField(id: string) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // Defer focus until scroll settles so smooth-scroll doesn't pull
+  // focus back to the top.
+  window.setTimeout(() => {
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      el.focus({ preventScroll: true });
+      el.select();
+    } else {
+      (el as HTMLElement).focus({ preventScroll: true });
+    }
+  }, 350);
+}
+
 function Questionnaire() {
   const list = useQuery({
     queryKey: ['bot-questionnaire'],
@@ -598,19 +636,41 @@ function Questionnaire() {
           <p className="text-sm text-foreground-muted">Nothing pressing. Looks good!</p>
         ) : (
           <ol className="space-y-2 text-sm">
-            {items.map((item) => (
-              <li key={item.key} className="flex items-start gap-2">
-                <span className="mt-1 size-1.5 shrink-0 rounded-full bg-amber-500" />
-                <div>
-                  <p>{item.question}</p>
-                  {item.suggested ? (
-                    <p className="mt-0.5 text-xs text-foreground-subtle">
-                      Suggested: <span className="font-mono">{item.suggested}</span>
-                    </p>
+            {items.map((item) => {
+              const action = QUESTION_ACTIONS[item.key];
+              return (
+                <li
+                  key={item.key}
+                  className="flex items-start gap-2 rounded-md border border-transparent px-2 py-1.5 hover:border-border hover:bg-surface-muted/40"
+                >
+                  <span className="mt-1 size-1.5 shrink-0 rounded-full bg-amber-500" />
+                  <div className="min-w-0 flex-1">
+                    <p>{item.question}</p>
+                    {item.suggested ? (
+                      <p className="mt-0.5 text-xs text-foreground-subtle">
+                        Suggested: <span className="font-mono">{item.suggested}</span>
+                      </p>
+                    ) : null}
+                  </div>
+                  {action ? (
+                    action.href ? (
+                      <Button asChild size="sm" variant="secondary" className="shrink-0">
+                        <Link href={action.href}>{action.label}</Link>
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="shrink-0"
+                        onClick={() => action.focusId && focusField(action.focusId)}
+                      >
+                        {action.label}
+                      </Button>
+                    )
                   ) : null}
-                </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ol>
         )}
       </CardContent>
@@ -711,6 +771,13 @@ function Simulator() {
 }
 
 // ---------- Test scenarios -------------------------------------------------
+// Operator can override the LLM judge score per row when they disagree
+// with the judge's call. The override takes precedence everywhere
+// (badge, avg). Set to null to revert to the LLM judge.
+function effectiveScore(r: ScenarioRun): number | null {
+  return r.overrideScore ?? r.score ?? null;
+}
+
 function ScenarioRunner() {
   const qc = useQueryClient();
   const last = useQuery({
@@ -727,12 +794,22 @@ function ScenarioRunner() {
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'AI not configured'),
   });
 
+  const override = useMutation({
+    mutationFn: (args: { id: string; overrideScore: number | null; overrideNotes: string | null }) =>
+      api.patch(`/api/v1/bot/scenarios/runs/${args.id}`, {
+        overrideScore: args.overrideScore,
+        overrideNotes: args.overrideNotes,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bot-scenarios-last'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Override failed'),
+  });
+
   const rows = last.data?.data ?? [];
-  const avg = rows.length
-    ? Math.round(
-        rows.filter((r) => r.score != null).reduce((a, b) => a + (b.score ?? 0), 0) /
-          Math.max(1, rows.filter((r) => r.score != null).length),
-      )
+  const scored = rows.map(effectiveScore).filter((s): s is number => s != null);
+  const avg = scored.length
+    ? Math.round(scored.reduce((a, b) => a + b, 0) / scored.length)
     : null;
 
   return (
@@ -741,7 +818,8 @@ function ScenarioRunner() {
         <div>
           <CardTitle>Test scenarios</CardTitle>
           <CardDescription>
-            Five canned customer queries. Each reply is scored 0–100 by an LLM judge.
+            Five canned customer queries. Each reply is scored 0–100 by an LLM judge — override any
+            score below if you disagree.
           </CardDescription>
         </div>
         <div className="flex items-center gap-2">
@@ -758,31 +836,149 @@ function ScenarioRunner() {
       <CardContent className="p-0">
         <ul className="divide-y divide-border">
           {rows.map((r) => (
-            <li key={r.key} className="px-6 py-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-medium capitalize">{r.key.replace(/_/g, ' ')}</span>
-                {r.score != null ? (
-                  <Badge variant={r.score >= 85 ? 'success' : r.score >= 60 ? 'warning' : 'danger'}>
-                    {r.score}/100
-                  </Badge>
-                ) : (
-                  <Badge variant="muted">not run</Badge>
-                )}
-              </div>
-              <p className="mt-1 text-xs italic text-foreground-muted">{r.prompt}</p>
-              {r.reply ? (
-                <p className="mt-1 whitespace-pre-wrap text-xs text-foreground">{r.reply}</p>
-              ) : null}
-              {r.notes ? (
-                <p className="mt-1 text-xs text-foreground-subtle">
-                  judge: {r.notes}
-                  {r.ranAt ? <> · {formatRelative(r.ranAt)}</> : null}
-                </p>
-              ) : null}
-            </li>
+            <ScenarioRow
+              key={r.key}
+              r={r}
+              onOverride={(score, notes) => {
+                if (!r.id) {
+                  toast.error('Run this scenario first, then override.');
+                  return;
+                }
+                override.mutate({ id: r.id, overrideScore: score, overrideNotes: notes });
+              }}
+              saving={override.isPending}
+            />
           ))}
         </ul>
       </CardContent>
     </Card>
+  );
+}
+
+function ScenarioRow({
+  r,
+  onOverride,
+  saving,
+}: {
+  r: ScenarioRun;
+  onOverride: (score: number | null, notes: string | null) => void;
+  saving: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [score, setScore] = useState<string>(
+    r.overrideScore != null ? String(r.overrideScore) : '',
+  );
+  const [notes, setNotes] = useState<string>(r.overrideNotes ?? '');
+  // Re-sync the local form whenever the row changes (after a save / re-run).
+  useEffect(() => {
+    setScore(r.overrideScore != null ? String(r.overrideScore) : '');
+    setNotes(r.overrideNotes ?? '');
+  }, [r.id, r.overrideScore, r.overrideNotes]);
+
+  const eff = effectiveScore(r);
+  const hasOverride = r.overrideScore != null;
+
+  return (
+    <li className="px-6 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-medium capitalize">{r.key.replace(/_/g, ' ')}</span>
+        <div className="flex items-center gap-1.5">
+          {eff != null ? (
+            <Badge variant={eff >= 85 ? 'success' : eff >= 60 ? 'warning' : 'danger'}>
+              {eff}/100{hasOverride ? ' ✎' : ''}
+            </Badge>
+          ) : (
+            <Badge variant="muted">not run</Badge>
+          )}
+          {r.id ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setEditing((v) => !v)}
+              aria-expanded={editing}
+            >
+              {editing ? 'Cancel' : hasOverride ? 'Edit override' : 'Override'}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      <p className="mt-1 text-xs italic text-foreground-muted">{r.prompt}</p>
+      {r.reply ? (
+        <p className="mt-1 whitespace-pre-wrap text-xs text-foreground">{r.reply}</p>
+      ) : null}
+      {r.notes ? (
+        <p className="mt-1 text-xs text-foreground-subtle">
+          judge: {r.notes}
+          {r.ranAt ? <> · {formatRelative(r.ranAt)}</> : null}
+        </p>
+      ) : null}
+      {r.overrideScore != null && r.overrideNotes ? (
+        <p className="mt-1 text-xs text-brand-700">
+          your override: {r.overrideNotes}
+        </p>
+      ) : null}
+      {editing ? (
+        <div className="mt-2 space-y-2 rounded-md border border-border bg-surface-muted/40 p-3">
+          <div className="grid grid-cols-[6rem_1fr] items-center gap-2">
+            <Label htmlFor={`score-${r.id}`} className="text-xs">
+              Your score
+            </Label>
+            <Input
+              id={`score-${r.id}`}
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={100}
+              placeholder="0–100"
+              value={score}
+              onChange={(e) => setScore(e.target.value)}
+              className="h-8 text-sm"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`notes-${r.id}`} className="text-xs">
+              Your notes (optional)
+            </Label>
+            <Textarea
+              id={`notes-${r.id}`}
+              rows={2}
+              placeholder="Why this score?"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </div>
+          <div className="flex items-center justify-end gap-1.5">
+            {hasOverride ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  onOverride(null, null);
+                  setEditing(false);
+                }}
+                disabled={saving}
+              >
+                Clear override
+              </Button>
+            ) : null}
+            <Button
+              size="sm"
+              onClick={() => {
+                const n = Number(score);
+                if (!Number.isInteger(n) || n < 0 || n > 100) {
+                  toast.error('Score must be an integer between 0 and 100.');
+                  return;
+                }
+                onOverride(n, notes.trim() || null);
+                setEditing(false);
+              }}
+              loading={saving}
+            >
+              Save override
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </li>
   );
 }

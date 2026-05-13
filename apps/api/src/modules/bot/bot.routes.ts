@@ -675,11 +675,14 @@ export default async function botRoutes(app: FastifyInstance) {
     async (req) =>
       app.tenant(req, async (tx) => {
         const out: {
+          id: string | null;
           key: string;
           prompt: string;
           reply: string | null;
           score: number | null;
           notes: string | null;
+          overrideScore: number | null;
+          overrideNotes: string | null;
           ranAt: string | null;
         }[] = [];
         for (const s of SCENARIOS) {
@@ -688,16 +691,75 @@ export default async function botRoutes(app: FastifyInstance) {
             orderBy: { createdAt: 'desc' },
           });
           out.push({
+            id: last?.id ?? null,
             key: s.key,
             prompt: s.prompt,
             reply: last?.botResponse ?? null,
             score: last?.score ?? null,
             notes: last?.judgeNotes ?? null,
+            overrideScore: last?.overrideScore ?? null,
+            overrideNotes: last?.overrideNotes ?? null,
             ranAt: last?.createdAt.toISOString() ?? null,
           });
         }
         return { data: out };
       }),
+  );
+
+  // ---------- PATCH /bot/scenarios/runs/:id ----------
+  // Operator override on a specific test-run's score. Lets the team
+  // disagree with the LLM judge when the judge prompt is overly strict
+  // or misses nuance. The original LLM `score` + `judgeNotes` are kept
+  // verbatim; the human signal lives in overrideScore / overrideNotes.
+  r.patch(
+    '/bot/scenarios/runs/:id',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Operator override of an LLM judge score (0..100) + notes.',
+        params: z.object({ id: uuidSchema }),
+        body: z.object({
+          overrideScore: z.number().int().min(0).max(100).nullable(),
+          overrideNotes: z.string().trim().max(2000).optional().nullable(),
+        }),
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      return app.tenant(req, async (tx) => {
+        const row = await tx.botTestRun.findFirst({ where: { id: req.params.id } });
+        if (!row) throw notFound('Test run not found.');
+        const updated = await tx.botTestRun.update({
+          where: { id: row.id },
+          data: {
+            overrideScore: req.body.overrideScore,
+            overrideNotes: req.body.overrideNotes ?? null,
+            overrideByUserId: req.body.overrideScore === null ? null : req.auth!.userId,
+            overrideAt: req.body.overrideScore === null ? null : new Date(),
+          },
+        });
+        await recordAudit({
+          action: 'business_info_updated',
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          entityType: 'bot_test_run',
+          entityId: updated.id,
+          metadata: {
+            event: req.body.overrideScore === null ? 'judge_override_cleared' : 'judge_override_set',
+            scenarioKey: updated.scenarioKey,
+            overrideScore: req.body.overrideScore,
+          },
+        });
+        return {
+          data: {
+            id: updated.id,
+            overrideScore: updated.overrideScore,
+            overrideNotes: updated.overrideNotes,
+          },
+        };
+      });
+    },
   );
 
   // ---------- POST /bot/deploy ----------

@@ -1397,12 +1397,16 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 },
               });
               // Two-step search-text update so we keep the existing blob
-              // bounded without a stored procedure.
+              // bounded without a stored procedure. The `$2::uuid` cast is
+              // required because Prisma's $executeRawUnsafe passes JS
+              // strings as `text` and Postgres won't compare `uuid = text`
+              // implicitly (error 42883). The id column on
+              // whatsapp_threads is uuid.
               if (m.text?.body) {
                 await tx.$executeRawUnsafe(
                   `UPDATE whatsapp_threads
                      SET search_text = LEFT(COALESCE(search_text,'') || ' ' || $1, 16000)
-                     WHERE id = $2`,
+                     WHERE id = $2::uuid`,
                   m.text.body,
                   thread.id,
                 );

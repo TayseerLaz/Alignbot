@@ -120,15 +120,98 @@ async function* streamXlsxRows(
   }
 }
 
+// Normalize an arbitrary spreadsheet header to a canonical key shape:
+//   "SKU"              → "sku"
+//   "Price (cents)"    → "price_cents"
+//   "Short description" → "short_description"
+//   "  Category Slug " → "category_slug"
+// Lowercases, collapses any non-alphanumeric run to a single underscore,
+// trims leading/trailing underscores. Then we run the result through a
+// per-kind alias table so common human-friendly variants
+// ("price cents" / "stock" / "available" / "is available") all resolve
+// to the camelCase field names the Zod schemas in shared-upsert.ts
+// expect.
+function normalizeHeader(raw: string): string {
+  return (raw ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+// kind → { normalizedHeader → canonicalSchemaKey }. Only the synonyms
+// that don't already snake_case to the right key need listing; e.g.
+// "name" maps to "name" implicitly. Update this when a new field is
+// added to a shared schema.
+const HEADER_ALIASES: Record<string, Record<string, string>> = {
+  product: {
+    short_description: 'shortDescription',
+    long_description: 'description',
+    description: 'description',
+    price: 'priceMinor',
+    price_cents: 'priceMinor',
+    price_minor: 'priceMinor',
+    available: 'isAvailable',
+    is_available: 'isAvailable',
+    stock: 'stockQuantity',
+    stock_quantity: 'stockQuantity',
+    quantity: 'stockQuantity',
+    category: 'categorySlug',
+    category_slug: 'categorySlug',
+  },
+  service: {
+    short_description: 'shortDescription',
+    long_description: 'description',
+    description: 'description',
+    duration: 'durationMinutes',
+    duration_minutes: 'durationMinutes',
+    base_price: 'basePriceMinor',
+    base_price_cents: 'basePriceMinor',
+    base_price_minor: 'basePriceMinor',
+    price: 'basePriceMinor',
+    available: 'isAvailable',
+    is_available: 'isAvailable',
+    price_unit: 'priceUnit',
+    category: 'categorySlug',
+    category_slug: 'categorySlug',
+  },
+  faq: {
+    q: 'question',
+    a: 'answer',
+    tag: 'tags',
+  },
+  business_info: {
+    legal_name: 'legalName',
+    business_name: 'legalName',
+    name: 'legalName',
+    website: 'websiteUrl',
+    website_url: 'websiteUrl',
+    about: 'about',
+    tagline: 'tagline',
+    currency: 'currency',
+    timezone: 'timezone',
+  },
+};
+
 function applyMapping(
   headers: string[],
   values: string[],
   mapping: Record<string, string> | null,
+  kind: string,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
+  const aliases = HEADER_ALIASES[kind] ?? {};
   for (let i = 0; i < headers.length; i++) {
-    const header = headers[i] ?? '';
-    const target = mapping?.[header] ?? mapping?.[header.trim()] ?? header;
+    const rawHeader = headers[i] ?? '';
+    // Explicit mapping (operator-supplied) wins over normalization so a
+    // power user can still wire a weird header to any field name.
+    const explicit = mapping?.[rawHeader] ?? mapping?.[rawHeader.trim()];
+    let target: string;
+    if (explicit) {
+      target = explicit;
+    } else {
+      const normalized = normalizeHeader(rawHeader);
+      target = aliases[normalized] ?? normalized;
+    }
     if (!target) continue;
     out[target] = values[i] ?? '';
   }
@@ -199,6 +282,7 @@ export function startImportWorker() {
           headers,
           row,
           (importJob.columnMapping as Record<string, string> | null) ?? null,
+          importJob.entityKind,
         );
         try {
           const resultId = await withTenant(organizationId, (tx) =>

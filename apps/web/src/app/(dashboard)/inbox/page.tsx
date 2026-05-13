@@ -626,6 +626,16 @@ function ReplyBox({
   const [mode, setMode] = useState<'reply' | 'note'>('reply');
   const [showCanned, setShowCanned] = useState(false);
   const [attaching, setAttaching] = useState(false);
+  // Pending attachment — uploaded to Wasabi but NOT yet sent to Meta.
+  // Operator picks file → it uploads in the background → we keep the
+  // assetId here. Send happens when the operator clicks Send, with the
+  // current body field used as caption.
+  const [pendingAttachment, setPendingAttachment] = useState<{
+    assetId: string;
+    mediaType: 'image' | 'document';
+    filename: string;
+  } | null>(null);
+  const [sendingMedia, setSendingMedia] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
@@ -639,7 +649,9 @@ function ReplyBox({
     requestAnimationFrame(() => taRef.current?.focus());
   };
 
-  async function attachAndSend(e: React.ChangeEvent<HTMLInputElement>) {
+  // Stage the attachment: upload to Wasabi but DO NOT call /send-media
+  // yet. The Send button below handles the actual transmission.
+  async function stageAttachment(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 16 * 1024 * 1024) {
@@ -651,23 +663,12 @@ function ReplyBox({
       const isImage = file.type.startsWith('image/');
       const { uploadFile } = await import('@/lib/upload');
       const { assetId } = await uploadFile(file, isImage ? 'image' : 'document');
-      const res = await api.post<{ data: { ok: boolean; errorMessage: string | null } }>(
-        '/api/v1/whatsapp/send-media',
-        {
-          to,
-          assetId,
-          mediaType: isImage ? 'image' : 'document',
-          caption: body.trim() || undefined,
-        },
-      );
-      if (res.data.ok) {
-        toast.success('Media sent');
-        setBody('');
-        qc.invalidateQueries({ queryKey: ['inbox-thread'] });
-        qc.invalidateQueries({ queryKey: ['inbox-threads'] });
-      } else {
-        toast.error(res.data.errorMessage ?? 'Send failed');
-      }
+      setPendingAttachment({
+        assetId,
+        mediaType: isImage ? 'image' : 'document',
+        filename: file.name,
+      });
+      toast.success('Attached — click Send to deliver');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Upload failed');
     } finally {
@@ -676,7 +677,43 @@ function ReplyBox({
     }
   }
 
+  async function sendMediaNow() {
+    if (!pendingAttachment) return;
+    setSendingMedia(true);
+    try {
+      const res = await api.post<{ data: { ok: boolean; errorMessage: string | null } }>(
+        '/api/v1/whatsapp/send-media',
+        {
+          to,
+          assetId: pendingAttachment.assetId,
+          mediaType: pendingAttachment.mediaType,
+          caption: body.trim() || undefined,
+        },
+      );
+      if (res.data.ok) {
+        toast.success('Media sent');
+        setBody('');
+        setPendingAttachment(null);
+        qc.invalidateQueries({ queryKey: ['inbox-thread'] });
+        qc.invalidateQueries({ queryKey: ['inbox-threads'] });
+      } else {
+        toast.error(res.data.errorMessage ?? 'Send failed');
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Send failed');
+    } finally {
+      setSendingMedia(false);
+    }
+  }
+
   const submit = () => {
+    // If a file is attached, sending the message means transmitting the
+    // media (with current text as caption). Otherwise, plain text reply
+    // or note.
+    if (mode === 'reply' && pendingAttachment) {
+      void sendMediaNow();
+      return;
+    }
     const v = body.trim();
     if (!v) return;
     if (mode === 'reply') onSend(v);
@@ -717,12 +754,12 @@ function ReplyBox({
             type="file"
             accept="image/png,image/jpeg,image/webp,application/pdf"
             className="hidden"
-            onChange={attachAndSend}
+            onChange={stageAttachment}
           />
           <Button
             size="sm"
             variant="ghost"
-            disabled={mode === 'note' || attaching}
+            disabled={mode === 'note' || attaching || !!pendingAttachment}
             loading={attaching}
             onClick={() => fileInputRef.current?.click()}
             aria-label="Attach file"
@@ -765,12 +802,33 @@ function ReplyBox({
         </div>
       </div>
       <div className="p-3">
+        {pendingAttachment ? (
+          <div className="mb-2 flex items-center gap-2 rounded-md border border-border bg-surface-muted/40 px-3 py-2 text-xs">
+            <Paperclip className="size-3.5 text-foreground-muted" />
+            <span className="flex-1 truncate font-mono">
+              {pendingAttachment.filename}
+            </span>
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+              Not sent yet
+            </span>
+            <button
+              type="button"
+              onClick={() => setPendingAttachment(null)}
+              className="rounded p-0.5 text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+              aria-label="Remove attachment"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </div>
+        ) : null}
         <Textarea
           ref={taRef}
           rows={3}
           placeholder={
             mode === 'reply'
-              ? `Reply to ${to}…  (must be inside Meta's 24-hour customer-session window)`
+              ? pendingAttachment
+                ? 'Optional caption…'
+                : `Reply to ${to}…  (must be inside Meta's 24-hour customer-session window)`
               : 'Internal note — visible to your team, not sent to the customer.'
           }
           value={body}
@@ -780,7 +838,11 @@ function ReplyBox({
         <div className="mt-2 flex items-center justify-between">
           <p className="text-[11px] text-foreground-muted">
             {mode === 'reply' ? (
-              <>Outside the 24h window? Send a template from the WhatsApp page.</>
+              pendingAttachment ? (
+                <>Click Send to deliver this attachment with your caption.</>
+              ) : (
+                <>Outside the 24h window? Send a template from the WhatsApp page.</>
+              )
             ) : (
               <>Notes are stored on the thread, never sent to Meta.</>
             )}
@@ -788,8 +850,20 @@ function ReplyBox({
           <Button
             type="button"
             size="sm"
-            loading={mode === 'reply' ? loading : addingNote}
-            disabled={body.trim().length === 0}
+            loading={
+              mode === 'reply'
+                ? pendingAttachment
+                  ? sendingMedia
+                  : loading
+                : addingNote
+            }
+            disabled={
+              mode === 'reply'
+                ? pendingAttachment
+                  ? sendingMedia
+                  : body.trim().length === 0
+                : body.trim().length === 0
+            }
             onClick={submit}
           >
             {mode === 'reply' ? (

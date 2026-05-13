@@ -556,20 +556,50 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       const messages = (parsed.messages ?? []) as { id?: string }[];
       const metaMessageId = messages[0]?.id ?? null;
 
-      // Persist outbound for the audit log.
-      await withRlsBypass((tx) =>
-        tx.whatsAppMessage.create({
+      // Persist outbound to the inbox: upsert a thread keyed by the
+      // recipient phone, attach the whatsAppMessage to it, and bump the
+      // preview/counts so the conversation surfaces immediately in
+      // /inbox. The body shows the actual template name + the
+      // operator's parameters (if any) so the operator can see what
+      // they sent, not a hardcoded placeholder.
+      const previewBody =
+        parameters.length > 0
+          ? `[template] ${templateName} · ${parameters.join(' / ')}`
+          : `[template] ${templateName}`;
+      await withRlsBypass(async (tx) => {
+        const thread = await tx.whatsAppThread.upsert({
+          where: { organizationId_customerPhone: { organizationId: orgId, customerPhone: to } },
+          create: {
+            organizationId: orgId,
+            customerPhone: to,
+            status: 'open',
+            lastMessageAt: new Date(),
+            lastMessagePreview: previewBody.slice(0, 200),
+            inboundCount: 0,
+            outboundCount: 1,
+            searchText: previewBody,
+          },
+          update: {
+            lastMessageAt: new Date(),
+            lastMessagePreview: previewBody.slice(0, 200),
+            outboundCount: { increment: 1 },
+            status: 'open',
+          },
+        });
+        await tx.whatsAppMessage.create({
           data: {
+            threadId: thread.id,
             organizationId: orgId,
             direction: 'outbound',
             metaMessageId,
+            fromNumber: channel.displayPhoneNumber ?? null,
             toNumber: to,
             messageType: 'template',
-            body: 'hello_world',
+            body: previewBody,
             rawPayload: payload as never,
           },
-        }),
-      ).catch(() => undefined);
+        });
+      }).catch((err) => req.log.error({ err }, '[whatsapp] test-send persist failed'));
 
       return { data: { ok: true, metaMessageId, errorMessage: null } };
     },
@@ -1387,16 +1417,52 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         }
       }
 
+      // Extract the operator-visible body text from any Meta inbound
+      // payload shape. WhatsApp delivers replies in different fields
+      // depending on the source:
+      //   - type=text                → text.body
+      //   - type=button              → button.text (template Quick Reply)
+      //   - type=interactive         → interactive.button_reply.title  OR
+      //                                interactive.list_reply.title
+      //   - type=image/video/audio/  → caption (if any) or "[image]" etc.
+      //     document/sticker
+      //   - everything else          → "[<type>]" placeholder so the
+      //                                inbox never shows a bare empty cell.
+      function extractInboundBody(m: Record<string, unknown>): string {
+        const type = (m.type as string | undefined) ?? '';
+        if (type === 'text') {
+          return (m as { text?: { body?: string } }).text?.body ?? '';
+        }
+        if (type === 'button') {
+          return (m as { button?: { text?: string; payload?: string } }).button?.text
+            ?? (m as { button?: { payload?: string } }).button?.payload
+            ?? '[button]';
+        }
+        if (type === 'interactive') {
+          const i = (m as { interactive?: { button_reply?: { title?: string }; list_reply?: { title?: string } } }).interactive;
+          return i?.button_reply?.title ?? i?.list_reply?.title ?? '[interactive]';
+        }
+        // Media types: prefer the caption if the customer attached one,
+        // otherwise placeholder so the thread preview is meaningful.
+        const caption = (m as { [k: string]: { caption?: string } | undefined })[type]?.caption;
+        if (caption) return caption;
+        if (['image', 'video', 'audio', 'document', 'sticker', 'voice', 'location', 'contacts'].includes(type)) {
+          return `[${type}]`;
+        }
+        return type ? `[${type}]` : '';
+      }
+
       const persisted: { from: string; type: string; bodyText: string | null; metaId: string | null }[] = [];
       for (const entry of body.entry ?? []) {
         for (const change of entry.changes ?? []) {
           const value = change.value;
           if (!value || !value.messages) continue;
           for (const m of value.messages) {
+            const bodyText = extractInboundBody(m as unknown as Record<string, unknown>);
             persisted.push({
               from: m.from ?? '',
               type: m.type ?? 'unknown',
-              bodyText: m.text?.body ?? null,
+              bodyText: bodyText || null,
               metaId: m.id ?? null,
             });
 
@@ -1404,7 +1470,6 @@ export default async function whatsappRoutes(app: FastifyInstance) {
             // verbs (locale-agnostic). On match, set the contact's
             // opted_out_at so future broadcasts skip them.
             const STOP_RE = /^\s*(stop|unsubscribe|quit|cancel|end|opt\s*out|alto|para|arr[eê]ter|stopper|اوقف|إيقاف)\s*\.?\s*$/i;
-            const bodyText = m.text?.body ?? '';
             if (m.from && STOP_RE.test(bodyText)) {
               await withRlsBypass(async (tx) => {
                 const e164 = `+${m.from}`;
@@ -1442,13 +1507,13 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                     fromNumber: null,
                     toNumber: value.metadata?.display_phone_number ?? null,
                     messageType: m.type ?? null,
-                    body: m.text?.body ?? null,
+                    body: bodyText || null,
                     rawPayload: m as never,
                   },
                 });
                 return;
               }
-              const preview = (m.text?.body ?? `[${m.type ?? 'media'}]`).slice(0, 200);
+              const preview = (bodyText || `[${m.type ?? 'media'}]`).slice(0, 200);
               const thread = await tx.whatsAppThread.upsert({
                 where: {
                   organizationId_customerPhone: {
@@ -1464,7 +1529,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                   lastMessagePreview: preview,
                   inboundCount: 1,
                   outboundCount: 0,
-                  searchText: m.text?.body ?? '',
+                  searchText: bodyText || '',
                 },
                 update: {
                   lastMessageAt: new Date(),
@@ -1482,12 +1547,12 @@ export default async function whatsappRoutes(app: FastifyInstance) {
               // strings as `text` and Postgres won't compare `uuid = text`
               // implicitly (error 42883). The id column on
               // whatsapp_threads is uuid.
-              if (m.text?.body) {
+              if (bodyText) {
                 await tx.$executeRawUnsafe(
                   `UPDATE whatsapp_threads
                      SET search_text = LEFT(COALESCE(search_text,'') || ' ' || $1, 16000)
                      WHERE id = $2::uuid`,
-                  m.text.body,
+                  bodyText,
                   thread.id,
                 );
               }
@@ -1500,7 +1565,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                   fromNumber: phone,
                   toNumber: value.metadata?.display_phone_number ?? null,
                   messageType: m.type ?? null,
-                  body: m.text?.body ?? null,
+                  body: bodyText || null,
                   rawPayload: m as never,
                 },
               });

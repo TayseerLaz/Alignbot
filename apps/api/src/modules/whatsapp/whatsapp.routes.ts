@@ -419,23 +419,83 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       // pass any template they've already approved.
       const templateName = req.body.templateName?.trim() || 'hello_world';
       const templateLanguage = req.body.templateLanguage?.trim() || 'en_US';
-      // If the template has body placeholders ({{1}}, {{2}}, …) Meta
-      // requires a matching `components` array; otherwise it rejects
-      // with error 132012 "Parameter format does not match format in the
-      // created template." Build it from the optional parameters[] body
-      // field; skip when empty so static templates still work.
       const parameters = (req.body.parameters ?? []).map((v) => v.trim());
+
+      // Fetch the template's components from Meta so we can build a payload
+      // that satisfies every part Meta expects:
+      //   - HEADER with TEXT  → if it has {{1}}, take the first body param
+      //                          (rare; templates usually have header text
+      //                          static). Skipped for now.
+      //   - HEADER with IMAGE/VIDEO/DOCUMENT → use the `example.header_handle`
+      //                          URL Meta itself provided when the template
+      //                          was created. This is what allows test-send
+      //                          on media-header templates without uploading.
+      //   - BODY              → bind operator-supplied parameters[] to the
+      //                          {{1}}, {{2}}, … placeholders.
+      //   - FOOTER + BUTTONS  → no parameters required for static / quick-
+      //                          reply buttons. URL buttons with {{1}} would
+      //                          need handling, deferred.
+      // Without this lookup, media-header templates fail with Meta error
+      // 132012 ("Parameter format does not match format in the created
+      // template") even when the body has no placeholders.
+      type MetaComp = {
+        type?: string;
+        format?: string;
+        text?: string;
+        example?: { header_handle?: string[] };
+      };
+      let metaComponents: MetaComp[] = [];
+      try {
+        const tplRes = await fetch(
+          `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.wabaId!)}/message_templates` +
+            `?name=${encodeURIComponent(templateName)}&fields=id,name,language,components&limit=10`,
+          {
+            headers: { Authorization: `Bearer ${channel.accessToken}` },
+            signal: AbortSignal.timeout(8_000),
+          },
+        );
+        if (tplRes.ok) {
+          const body = (await tplRes.json()) as {
+            data?: { name?: string; language?: string; components?: MetaComp[] }[];
+          };
+          const match = (body.data ?? []).find(
+            (t) => t.name === templateName && t.language === templateLanguage,
+          ) ?? (body.data ?? [])[0];
+          metaComponents = match?.components ?? [];
+        }
+      } catch {
+        // Non-fatal — fall through with no components and let Meta tell us
+        // what's wrong on the actual send call.
+      }
+
+      const sendComponents: Record<string, unknown>[] = [];
+      for (const c of metaComponents) {
+        const t = (c.type ?? '').toUpperCase();
+        const fmt = (c.format ?? '').toUpperCase();
+        if (t === 'HEADER' && fmt && fmt !== 'TEXT') {
+          const handle = c.example?.header_handle?.[0];
+          if (handle) {
+            const kind = fmt.toLowerCase(); // image | video | document
+            sendComponents.push({
+              type: 'header',
+              parameters: [{ type: kind, [kind]: { link: handle } }],
+            });
+          }
+        }
+        if (t === 'BODY' && parameters.length > 0) {
+          sendComponents.push({
+            type: 'body',
+            parameters: parameters.map((text) => ({ type: 'text', text })),
+          });
+        }
+      }
+
       const templateBlock: Record<string, unknown> = {
         name: templateName,
         language: { code: templateLanguage },
       };
-      if (parameters.length > 0) {
-        templateBlock.components = [
-          {
-            type: 'body',
-            parameters: parameters.map((text) => ({ type: 'text', text })),
-          },
-        ];
+      if (sendComponents.length > 0) {
+        templateBlock.components = sendComponents;
       }
 
       const payload = {

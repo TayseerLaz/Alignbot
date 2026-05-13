@@ -560,27 +560,30 @@ function ThreadHeader({
               className="group block max-w-full rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
               title="Click to rename"
             >
-              {/* Top line: operator-set name if any, otherwise the WhatsApp
-                  profile name, otherwise the phone. */}
+              {/* Top line is ALWAYS the operator-set contact name (the
+                  same value editable here and on /contacts). Never the
+                  WhatsApp nickname — that's surfaced separately below.
+                  When no contact name is set, fall through to the
+                  phone so the row is never blank. */}
               <p className="truncate text-sm font-semibold text-foreground">
-                {thread.customerName ?? thread.customerWhatsappName ?? thread.customerPhone}
+                {thread.customerName ?? thread.customerPhone}
                 <span className="ml-1 text-[10px] font-normal text-foreground-subtle opacity-0 group-hover:opacity-100">
                   ✎ rename
                 </span>
               </p>
-              {/* Secondary line(s): show phone always when a name is on
-                  top, and the WhatsApp display name when it differs from
-                  the operator's rename so both signals are visible. */}
+              {/* Secondary line: WhatsApp nickname (Meta's profile.name,
+                  read-only) + phone. Both are auxiliary info so they
+                  never compete with the operator-controlled name. */}
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0">
-                {thread.customerWhatsappName && thread.customerWhatsappName !== thread.customerName ? (
+                {thread.customerWhatsappName ? (
                   <p
                     className="text-[10px] text-foreground-subtle"
-                    title="The customer's WhatsApp profile name"
+                    title="The customer's WhatsApp profile name (read-only)"
                   >
                     WhatsApp nickname: <span className="font-medium">{thread.customerWhatsappName}</span>
                   </p>
                 ) : null}
-                {thread.customerName || thread.customerWhatsappName ? (
+                {thread.customerName ? (
                   <p className="font-mono text-[10px] text-foreground-subtle">
                     {thread.customerPhone}
                   </p>

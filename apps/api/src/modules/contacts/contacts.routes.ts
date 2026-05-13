@@ -227,6 +227,25 @@ export default async function contactsRoutes(app: FastifyInstance) {
           },
           include: { tags: { select: { tag: true } } },
         });
+        // Bidirectional name sync: when /contacts updates displayName,
+        // mirror it onto any matching WhatsApp thread's customerName so
+        // the inbox header reflects the rename. Thread → contact is
+        // already wired in the /inbox patch route. Match by the raw
+        // phone (threads strip the leading "+") as well as the E.164
+        // form, since older rows might have either.
+        if (body.displayName !== undefined) {
+          const stripped = updated.phoneE164.replace(/^\+/, '');
+          await tx.whatsAppThread.updateMany({
+            where: {
+              organizationId: orgId,
+              OR: [
+                { customerPhone: updated.phoneE164 },
+                { customerPhone: stripped },
+              ],
+            },
+            data: { customerName: body.displayName },
+          });
+        }
         if (body.tags) {
           // Replace-set semantics for tags.
           await tx.contactTag.deleteMany({ where: { contactId: id } });

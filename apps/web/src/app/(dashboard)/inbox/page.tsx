@@ -286,6 +286,18 @@ function ThreadView({
 }) {
   const queryClient = useQueryClient();
 
+  // Whether the AI bot is deployed at the org level. This + an
+  // unassigned thread are the two preconditions for auto-reply; the
+  // inbox surfaces both so the operator knows why a thread is or
+  // isn't getting bot answers.
+  const botCfg = useQuery({
+    queryKey: ['bot-config-deployment'],
+    queryFn: () =>
+      api.get<{ data: { deployedAt: string | null } }>('/api/v1/bot/config'),
+    staleTime: 30_000,
+  });
+  const botDeployed = !!botCfg.data?.data?.deployedAt;
+
   const messagesQ = useQuery({
     queryKey: ['inbox-thread', thread?.id, 'messages'],
     queryFn: () =>
@@ -359,18 +371,6 @@ function ThreadView({
     },
   });
 
-  const autoAssign = useMutation({
-    mutationFn: () =>
-      thread
-        ? api.post(`/api/v1/inbox/threads/${thread.id}/auto-assign`)
-        : Promise.reject(new Error('no thread')),
-    onSuccess: () => {
-      toast.success('Auto-assigned');
-      onChanged();
-    },
-    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Failed'),
-  });
-
   const addTag = useMutation({
     mutationFn: (tag: string) =>
       thread
@@ -428,12 +428,12 @@ function ThreadView({
       <ThreadHeader
         thread={thread}
         onStatusChange={(s) => setStatus.mutate(s)}
-        onAutoAssign={() => autoAssign.mutate()}
         onAssignSelf={() => currentUserId && setAssignee.mutate(currentUserId)}
         onUnassign={() => setAssignee.mutate(null)}
         onHandoff={() => handoff.mutate()}
       />
       <TagBar thread={thread} onAdd={(t) => addTag.mutate(t)} onRemove={(t) => removeTag.mutate(t)} />
+      <AiStatusBanner thread={thread} botDeployed={botDeployed} />
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
         {messagesQ.isLoading ? (
           <p className="text-center text-sm text-foreground-muted">Loading…</p>
@@ -466,14 +466,12 @@ function ThreadView({
 function ThreadHeader({
   thread,
   onStatusChange,
-  onAutoAssign,
   onAssignSelf,
   onUnassign,
   onHandoff,
 }: {
   thread: Thread;
   onStatusChange: (s: ThreadStatus) => void;
-  onAutoAssign: () => void;
   onAssignSelf: () => void;
   onUnassign: () => void;
   onHandoff: () => void;
@@ -512,14 +510,24 @@ function ThreadHeader({
         <Button size="sm" variant="secondary" onClick={onAssignSelf}>
           <UserCheck className="size-3.5" /> Take
         </Button>
-        <Button size="sm" variant="ghost" onClick={onAutoAssign}>
-          <Sparkles className="size-3.5" /> Auto
+        {/* "AI" toggle: when no human is assigned to this thread, the
+            deployed bot replies to inbound messages automatically. The
+            button is active/pressed in that state to make it obvious.
+            Clicking it on a human-owned thread unassigns the owner so
+            the bot can take over. */}
+        <Button
+          size="sm"
+          variant={thread.assignedToUserId ? 'ghost' : 'secondary'}
+          aria-pressed={!thread.assignedToUserId}
+          onClick={onUnassign}
+          title={
+            thread.assignedToUserId
+              ? 'Let the AI handle this thread (unassigns the current owner)'
+              : 'AI is currently handling this thread'
+          }
+        >
+          <Sparkles className="size-3.5" /> AI
         </Button>
-        {thread.assignedToUserId ? (
-          <Button size="sm" variant="ghost" onClick={onUnassign} aria-label="Unassign">
-            <X className="size-3.5" />
-          </Button>
-        ) : null}
         <Button size="sm" variant="secondary" onClick={onHandoff}>
           <AlertTriangle className="size-3.5" /> Handoff
         </Button>
@@ -568,6 +576,46 @@ function TagBar({
         aria-label="Add tag"
         className="h-7 w-32 rounded border border-border bg-white px-2 text-xs placeholder:text-foreground-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
       />
+    </div>
+  );
+}
+
+// Tiny banner just under the thread header that tells the operator
+// whether the AI is actively replying to this thread. Three cases:
+//   - bot deployed + thread unassigned → AI is auto-replying
+//   - bot deployed + thread assigned   → AI paused (human owns it)
+//   - bot not deployed                 → AI off platform-wide, click
+//                                        through to /bot to deploy
+function AiStatusBanner({ thread, botDeployed }: { thread: Thread; botDeployed: boolean }) {
+  if (!botDeployed) {
+    return (
+      <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50/60 px-4 py-1.5 text-xs text-amber-900">
+        <Sparkles className="size-3.5" />
+        <span>
+          AI auto-reply is OFF — bot isn't deployed yet.{' '}
+          <a href="/bot" className="font-medium underline">
+            Deploy it on /bot
+          </a>{' '}
+          first.
+        </span>
+      </div>
+    );
+  }
+  if (thread.assignedToUserId) {
+    return (
+      <div className="flex items-center gap-2 border-b border-border bg-surface-muted/40 px-4 py-1.5 text-xs text-foreground-muted">
+        <UserCheck className="size-3.5" />
+        <span>
+          AI paused — this thread is assigned to a human ({thread.assignedToName ?? 'operator'}).
+          Click <span className="font-medium">AI</span> above to give it back to the bot.
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2 border-b border-emerald-200 bg-emerald-50/60 px-4 py-1.5 text-xs text-emerald-900">
+      <Sparkles className="size-3.5" />
+      <span>AI is replying automatically. Click <span className="font-medium">Take</span> to step in.</span>
     </div>
   );
 }

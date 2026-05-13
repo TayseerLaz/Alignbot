@@ -275,11 +275,17 @@ function DeployToggle({ config, onChanged }: { config: BotConfig; onChanged: () 
 function AnalyzeCard() {
   const qc = useQueryClient();
   const [url, setUrl] = useState('');
+  const [maxPages, setMaxPages] = useState(200);
+  const [maxDepth, setMaxDepth] = useState(6);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   const start = useMutation({
     mutationFn: () =>
-      api.post<{ data: CrawlJob }>('/api/v1/bot/analyze', { rootUrl: url, maxPages: 30, maxDepth: 2 }),
+      api.post<{ data: CrawlJob }>('/api/v1/bot/analyze', {
+        rootUrl: url,
+        maxPages,
+        maxDepth,
+      }),
     onSuccess: (res) => {
       toast.success('Crawl started');
       setActiveJobId(res.data.id);
@@ -312,8 +318,9 @@ function AnalyzeCard() {
           <Globe className="size-4" /> Analyze your website
         </CardTitle>
         <CardDescription>
-          The crawler walks up to 30 pages of your public site, then an LLM turns the content into a
-          knowledge base + suggests a tone preset. Up to a few minutes.
+          The crawler walks your public site BFS-style, then an LLM turns the content into a
+          knowledge base + suggests a tone preset. Defaults to 200 pages and 6 levels deep — bump
+          them for very large sites. Big crawls can take 10–40 minutes.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -331,6 +338,46 @@ function AnalyzeCard() {
           >
             <Play className="size-4" /> Start
           </Button>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <Label htmlFor="crawl-max-pages" className="text-xs">
+              Max pages (1–500)
+            </Label>
+            <Input
+              id="crawl-max-pages"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={500}
+              value={maxPages}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (Number.isFinite(n)) setMaxPages(Math.max(1, Math.min(500, Math.round(n))));
+              }}
+              aria-label="Maximum pages to crawl"
+              className="h-9 text-sm"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="crawl-max-depth" className="text-xs">
+              Max link depth (0–8)
+            </Label>
+            <Input
+              id="crawl-max-depth"
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={8}
+              value={maxDepth}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (Number.isFinite(n)) setMaxDepth(Math.max(0, Math.min(8, Math.round(n))));
+              }}
+              aria-label="Maximum link depth to follow"
+              className="h-9 text-sm"
+            />
+          </div>
         </div>
         {job ? (
           <div className="rounded-md border border-border bg-surface-muted/40 p-3 text-sm">

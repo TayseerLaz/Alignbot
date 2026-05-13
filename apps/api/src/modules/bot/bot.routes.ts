@@ -220,8 +220,13 @@ export default async function botRoutes(app: FastifyInstance) {
         summary: 'Start a website crawl + LLM analysis.',
         body: z.object({
           rootUrl: z.string().url(),
-          maxPages: z.number().int().min(1).max(60).default(30),
-          maxDepth: z.number().int().min(0).max(3).default(2),
+          // Deliberately generous caps so the crawler can cover an
+          // entire mid-sized marketing site (root + nested sub-pages)
+          // rather than just the home. 500 pages × 5 s timeout each
+          // ≈ 40 min wall-clock worst case, which is acceptable for a
+          // one-off setup task.
+          maxPages: z.number().int().min(1).max(500).default(200),
+          maxDepth: z.number().int().min(0).max(8).default(6),
         }),
         response: { 201: itemEnvelopeSchema(crawlJobDto) },
       },

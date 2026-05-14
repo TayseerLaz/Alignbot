@@ -93,7 +93,7 @@ export default function WhatsAppPage() {
   });
   const messagesQ = useQuery({
     queryKey: ['whatsapp-messages'],
-    queryFn: () => api.get<{ data: WhatsAppMessageDto[] }>('/api/v1/whatsapp/messages?limit=20'),
+    queryFn: () => api.get<{ data: WhatsAppMessageDto[] }>('/api/v1/whatsapp/messages?limit=5'),
     refetchInterval: 10_000,
   });
   // Approved templates — used to populate the test-send dropdown so the
@@ -458,8 +458,8 @@ export default function WhatsAppPage() {
                 <MessageCircle className="size-4" /> Recent messages
               </CardTitle>
               <CardDescription>
-                Inbound messages are persisted whenever Meta posts to the webhook URL. Test
-                outbound sends also appear here.
+                The 5 most recent inbound + outbound messages for this number. For full history,
+                use <span className="font-mono">/inbox</span>.
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
@@ -469,7 +469,7 @@ export default function WhatsAppPage() {
                 </p>
               ) : (
                 <ul className="divide-y divide-border">
-                  {messagesQ.data?.data.map((m) => (
+                  {(messagesQ.data?.data ?? []).slice(0, 5).map((m) => (
                     <li key={m.id} className="grid grid-cols-[auto_1fr_auto] items-start gap-3 px-6 py-3 text-sm">
                       <Badge variant={m.direction === 'inbound' ? 'success' : 'muted'} className="mt-0.5">
                         {m.direction}

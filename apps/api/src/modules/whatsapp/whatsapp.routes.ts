@@ -971,13 +971,23 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       }
 
       // Step 2: upload to Meta as multipart/form-data → media_id.
+      // Meta's /media rejects MIME types that include codec parameters
+      // (e.g. "audio/ogg;codecs=opus") — strip everything after ';'.
+      // Then if we're sending audio, also coerce to one of the four
+      // MIME types Meta accepts (https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media):
+      //   audio/aac, audio/mp4, audio/mpeg, audio/amr, audio/ogg.
+      // Browser MediaRecorder typically gives us audio/ogg;codecs=opus
+      // (Chrome / Firefox) or audio/mp4 (Safari) — both are accepted
+      // after the strip.
+      const rawContentType = asset.contentType ?? 'application/octet-stream';
+      const baseContentType = rawContentType.split(';')[0]!.trim();
       let metaMediaId: string | null = null;
       try {
         const fd = new FormData();
-        const blob = new Blob([fileBytes], { type: asset.contentType ?? 'application/octet-stream' });
+        const blob = new Blob([fileBytes], { type: baseContentType });
         fd.set('file', blob, asset.metadata && (asset.metadata as { filename?: string }).filename ? (asset.metadata as { filename: string }).filename : 'upload.bin');
         fd.set('messaging_product', 'whatsapp');
-        fd.set('type', asset.contentType ?? 'application/octet-stream');
+        fd.set('type', baseContentType);
         const upRes = await fetch(
           `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId)}/media`,
           {
@@ -1031,14 +1041,19 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         );
       }
 
+      // Audio messages don't accept a caption field at Meta's API —
+      // sending one yields error (#100). Drop the caption silently
+      // for audio; image / video / document keep it.
+      const mediaType = req.body.mediaType;
+      const allowsCaption = mediaType !== 'audio';
       const payload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
         to,
-        type: req.body.mediaType,
-        [req.body.mediaType]: {
+        type: mediaType,
+        [mediaType]: {
           id: metaMediaId,
-          ...(req.body.caption ? { caption: req.body.caption } : {}),
+          ...(allowsCaption && req.body.caption ? { caption: req.body.caption } : {}),
         },
       };
       let sendBody = '';

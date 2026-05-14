@@ -2,7 +2,7 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { loginBodySchema, type LoginBody } from '@aligned/shared';
-import { Eye, EyeOff, Github } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -48,28 +48,7 @@ export default function LoginPage() {
         <p className="mt-2 text-sm text-white/60">Enter your details to continue.</p>
       </div>
 
-      {/* SSO row */}
-      <div className="mt-7 grid grid-cols-2 gap-3">
-        <SsoButton
-          onClick={() => toast('SSO sign-in is coming soon.', { description: 'Use email + password for now.' })}
-          icon={<GoogleG />}
-          label="Google"
-        />
-        <SsoButton
-          onClick={() => toast('SSO sign-in is coming soon.', { description: 'Use email + password for now.' })}
-          icon={<Github className="size-4" />}
-          label="Github"
-        />
-      </div>
-
-      {/* Or divider */}
-      <div className="my-5 flex items-center gap-3 text-xs text-white/40">
-        <span className="h-px flex-1 bg-white/10" />
-        <span>Or</span>
-        <span className="h-px flex-1 bg-white/10" />
-      </div>
-
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form onSubmit={onSubmit} className="mt-7 space-y-4">
         <Field label="Email" error={form.formState.errors.email?.message}>
           <input
             type="email"
@@ -154,35 +133,3 @@ function Field({
   );
 }
 
-function SsoButton({
-  onClick,
-  icon,
-  label,
-}: {
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-[#19191c] py-2.5 text-sm font-medium text-white transition hover:bg-[#1f1f24]"
-    >
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
-}
-
-// Tiny Google G in brand colours so we don't pull in an icon font.
-function GoogleG() {
-  return (
-    <svg viewBox="0 0 48 48" className="size-4" aria-hidden>
-      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.6-6 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.4-.4-3.5z" />
-      <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
-      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.3l-6.2-5.2C29.2 35.2 26.7 36 24 36c-5.3 0-9.7-3.4-11.3-8l-6.5 5C9.6 39.6 16.2 44 24 44z" />
-      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4-4 5.3l6.2 5.2c-.4.4 6.5-4.7 6.5-14.5 0-1.2-.1-2.4-.4-3.5z" />
-    </svg>
-  );
-}

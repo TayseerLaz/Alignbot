@@ -28,6 +28,9 @@ const templateDtoSchema = z.object({
   language: z.string(),
   category: z.string(),
   bodyText: z.string(),
+  // Full Meta-shaped components array when present (header / body /
+  // footer / buttons). Synced from Meta + populated by the builder UI.
+  components: z.array(z.record(z.string(), z.unknown())).nullable(),
   status: z.string(),
   rejectionReason: z.string().nullable(),
   metaTemplateId: z.string().nullable(),
@@ -59,6 +62,9 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
             language: t.language,
             category: t.category,
             bodyText: t.bodyText,
+            components: Array.isArray(t.components)
+              ? (t.components as unknown as Record<string, unknown>[])
+              : null,
             status: t.status,
             rejectionReason: t.rejectionReason,
             metaTemplateId: t.metaTemplateId,
@@ -71,12 +77,75 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
   );
 
   // ---------- POST /whatsapp/templates ---------------------------------
+  // The optional `components` field accepts the full Meta-shaped JSON
+  // (header / body / footer / buttons). When provided, it's the source
+  // of truth at submit time. When omitted, we fall back to a single
+  // BODY component built from bodyText so the simple flow still works.
+  const componentsSchema = z.array(
+    z.discriminatedUnion('type', [
+      z.object({
+        type: z.literal('HEADER'),
+        format: z.enum(['TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT']),
+        text: z.string().max(60).optional(),
+        example: z
+          .object({
+            header_text: z.array(z.string()).optional(),
+            header_handle: z.array(z.string().url()).optional(),
+          })
+          .optional(),
+      }),
+      z.object({
+        type: z.literal('BODY'),
+        text: z.string().trim().min(1).max(1024),
+        example: z
+          .object({ body_text: z.array(z.array(z.string())) })
+          .optional(),
+      }),
+      z.object({
+        type: z.literal('FOOTER'),
+        text: z.string().trim().min(1).max(60),
+      }),
+      z.object({
+        type: z.literal('BUTTONS'),
+        buttons: z
+          .array(
+            z.discriminatedUnion('type', [
+              z.object({
+                type: z.literal('QUICK_REPLY'),
+                text: z.string().trim().min(1).max(25),
+              }),
+              z.object({
+                type: z.literal('URL'),
+                text: z.string().trim().min(1).max(25),
+                url: z.string().url().max(2000),
+                example: z.array(z.string()).optional(),
+              }),
+              z.object({
+                type: z.literal('PHONE_NUMBER'),
+                text: z.string().trim().min(1).max(25),
+                phone_number: z
+                  .string()
+                  .trim()
+                  .regex(/^\+?[0-9]{6,16}$/, 'E.164 phone number'),
+              }),
+              z.object({
+                type: z.literal('COPY_CODE'),
+                example: z.string().trim().min(1).max(15),
+              }),
+            ]),
+          )
+          .min(1)
+          .max(10),
+      }),
+    ]),
+  );
+
   r.post(
     '/whatsapp/templates',
     {
       schema: {
         tags: ['whatsapp'],
-        summary: 'Create a draft template.',
+        summary: 'Create a draft template (full Meta components supported).',
         body: z.object({
           name: z
             .string()
@@ -87,6 +156,7 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
           language: z.string().trim().min(2).max(8).default('en_US'),
           category: z.enum(['MARKETING', 'UTILITY', 'AUTHENTICATION']),
           bodyText: z.string().trim().min(1).max(1024),
+          components: componentsSchema.optional(),
         }),
       },
       preHandler: [app.requireRole('editor')],
@@ -100,6 +170,7 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
             language: req.body.language,
             category: req.body.category,
             bodyText: req.body.bodyText,
+            components: (req.body.components ?? null) as never,
             status: 'draft',
           },
         });
@@ -136,12 +207,19 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
           );
         }
 
-        // Meta payload: we only support body components in Session 4.
+        // Use the full components array when the operator built one;
+        // otherwise fall back to a single BODY built from bodyText so
+        // the simple "just type the body" flow still works.
+        const storedComponents = Array.isArray(tpl.components)
+          ? (tpl.components as unknown as Record<string, unknown>[])
+          : null;
         const payload = {
           name: tpl.name,
           language: tpl.language,
           category: tpl.category,
-          components: [{ type: 'BODY', text: tpl.bodyText }],
+          components: storedComponents && storedComponents.length > 0
+            ? storedComponents
+            : [{ type: 'BODY', text: tpl.bodyText }],
         };
 
         let resBody = '';
@@ -323,6 +401,11 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
                 where: { organizationId: orgId, name: t.name, language: t.language },
               });
 
+          // Store the full components array Meta sent us. Makes the
+          // builder UI editable (operator can read/edit existing
+          // headers/footers/buttons) and lets future submits include
+          // every component without us having to remodel each one.
+          const components = Array.isArray(t.components) ? (t.components as unknown) : null;
           if (existing) {
             await tx.whatsAppTemplate.update({
               where: { id: existing.id },
@@ -331,6 +414,7 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
                 status,
                 category,
                 bodyText: bodyText || existing.bodyText,
+                components: components as never,
                 rejectionReason: t.rejected_reason ?? null,
               },
             });
@@ -343,6 +427,7 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
                 language: t.language,
                 category,
                 bodyText: bodyText || '(imported from Meta — no body component)',
+                components: components as never,
                 status,
                 metaTemplateId: t.id ?? null,
                 rejectionReason: t.rejected_reason ?? null,

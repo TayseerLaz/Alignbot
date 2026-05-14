@@ -1257,6 +1257,11 @@ model WhatsAppTemplate {
   language        String   @default("en_US")
   category        String // 'MARKETING' | 'UTILITY' | 'AUTHENTICATION'
   bodyText        String   @map("body_text")
+  // Full Meta-shaped components array (header / body / footer /
+  // buttons + per-placeholder examples). Source of truth when
+  // submitting to Meta; bodyText is kept for search + the
+  // chatbot-read API.
+  components      Json?
   status          String   @default("draft") // 'draft' | 'pending' | 'approved' | 'rejected'
   rejectionReason String?  @map("rejection_reason")
   metaTemplateId  String?  @map("meta_template_id")

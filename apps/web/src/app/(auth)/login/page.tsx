@@ -38,104 +38,105 @@ export default function LoginPage() {
     }
   });
 
+  // Reference's input style: rounded, dark gray fill (#1a1a1d), no
+  // visible border except on focus.
+  const inputClass =
+    'w-full rounded-lg border border-white/[0.06] bg-[#19191c] px-3.5 py-2.5 text-sm text-white placeholder:text-white/30 outline-none transition focus:border-white/30 focus:bg-[#1c1c20]';
+
   return (
-    <div className="relative flex flex-1 flex-col">
-      {/* Headline — large, light weight, like the reference. */}
-      <h1 className="text-5xl font-light tracking-tight text-white sm:text-6xl">Login</h1>
+    <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center">
+      <div className="mb-7 text-center">
+        <h1 className="text-2xl font-semibold tracking-tight text-white">Sign in to Account</h1>
+        <p className="mt-1.5 text-sm text-white/60">
+          Welcome back. Enter your details to continue.
+        </p>
+      </div>
 
-      {/* Two underline-only inputs side by side. */}
-      <form onSubmit={onSubmit} className="mt-12 max-w-2xl">
-        <div className="grid gap-10 sm:grid-cols-2">
-          <UnderlineField label="Email">
-            <input
-              type="email"
-              autoComplete="email"
-              placeholder="name@company.com"
-              className="w-full border-0 border-b border-white/40 bg-transparent py-2 text-base text-white placeholder:text-white/30 focus:border-white focus:outline-none focus:ring-0"
-              aria-invalid={!!form.formState.errors.email}
-              {...form.register('email')}
-            />
-            {form.formState.errors.email ? (
-              <p className="mt-1 text-[11px] text-rose-300">
-                {form.formState.errors.email.message}
-              </p>
-            ) : null}
-          </UnderlineField>
-          <UnderlineField label="Password">
-            <div className="relative">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                autoComplete="current-password"
-                placeholder="••••••••••"
-                className="w-full border-0 border-b border-white/40 bg-transparent py-2 pr-8 text-base text-white placeholder:text-white/30 focus:border-white focus:outline-none focus:ring-0"
-                aria-invalid={!!form.formState.errors.password}
-                {...form.register('password')}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((v) => !v)}
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-                className="absolute right-0 top-1/2 -translate-y-1/2 text-white/50 hover:text-white"
-              >
-                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-              </button>
-            </div>
-            {form.formState.errors.password ? (
-              <p className="mt-1 text-[11px] text-rose-300">
-                {form.formState.errors.password.message}
-              </p>
-            ) : null}
-          </UnderlineField>
-        </div>
+      <form onSubmit={onSubmit} className="space-y-4">
+        <Field label="Email" error={form.formState.errors.email?.message}>
+          <input
+            type="email"
+            autoComplete="email"
+            placeholder="eg. john@gmail.com"
+            className={inputClass}
+            aria-invalid={!!form.formState.errors.email}
+            {...form.register('email')}
+          />
+        </Field>
 
-        {/* Remember me + forgot — under the field row. */}
-        <div className="mt-6 grid items-center gap-4 sm:grid-cols-2">
-          <label className="inline-flex items-center gap-2 text-sm text-white/80">
+        <Field
+          label="Password"
+          error={form.formState.errors.password?.message}
+          hint="Must be at least 8 characters."
+        >
+          <div className="relative">
             <input
-              type="checkbox"
-              className="size-4 rounded-full border border-white/40 bg-transparent accent-white"
+              type={showPassword ? 'text' : 'password'}
+              autoComplete="current-password"
+              placeholder="Enter your password"
+              className={`${inputClass} pr-10`}
+              aria-invalid={!!form.formState.errors.password}
+              {...form.register('password')}
             />
-            <span>Remember me</span>
-          </label>
-          <div className="sm:text-right">
-            <Link
-              href="/forgot-password"
-              className="text-sm text-white/70 hover:text-white hover:underline focus-visible:underline"
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white"
             >
-              Forgot?
-            </Link>
+              {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </button>
           </div>
+        </Field>
+
+        <div className="flex justify-end">
+          <Link
+            href="/forgot-password"
+            className="text-xs text-white/60 hover:text-white hover:underline focus-visible:underline"
+          >
+            Forgot password?
+          </Link>
         </div>
 
-        {/* Big circular SIGN IN button anchored bottom-right of the
-            form column, like the reference. We keep it submit-typed
-            so Enter on the inputs still submits. */}
-        <div className="mt-20 flex justify-end sm:absolute sm:bottom-0 sm:right-0 sm:mt-0">
-          <button
-            type="submit"
-            disabled={form.formState.isSubmitting}
-            className="flex size-24 items-center justify-center rounded-full bg-white text-xs font-semibold tracking-[0.18em] text-black transition-transform hover:scale-[1.03] disabled:opacity-60 sm:size-28"
-          >
-            {form.formState.isSubmitting ? 'SIGNING IN…' : 'SIGN IN'}
-          </button>
-        </div>
+        <button
+          type="submit"
+          disabled={form.formState.isSubmitting}
+          className="mt-2 w-full rounded-lg bg-white py-3 text-sm font-semibold text-black transition hover:bg-white/90 disabled:opacity-60"
+        >
+          {form.formState.isSubmitting ? 'Signing in…' : 'Sign In'}
+        </button>
       </form>
+
+      <p className="mt-6 text-center text-sm text-white/60">
+        New to ALIGNED?{' '}
+        <Link href="/signup" className="font-semibold text-white hover:underline">
+          Create an account
+        </Link>
+      </p>
     </div>
   );
 }
 
-// Underlined field group: tiny label above an underlined input.
-function UnderlineField({
+function Field({
   label,
+  hint,
+  error,
   children,
 }: {
   label: string;
+  hint?: string;
+  error?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-xs font-medium text-white/60">{label}</span>
+    <div className="space-y-1.5">
+      <label className="block text-xs font-medium text-white/80">{label}</label>
       {children}
+      {error ? (
+        <p className="text-[11px] text-rose-300">{error}</p>
+      ) : hint ? (
+        <p className="text-[11px] text-white/40">{hint}</p>
+      ) : null}
     </div>
   );
 }

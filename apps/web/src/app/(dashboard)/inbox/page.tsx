@@ -12,6 +12,7 @@ import {
   Phone,
   Send,
   Sparkles,
+  Mic,
   StickyNote,
   Tag as TagIcon,
   Trash2,
@@ -832,6 +833,28 @@ function AiStatusBanner({ thread, botDeployed }: { thread: Thread; botDeployed: 
 
 function Bubble({ message }: { message: Message }) {
   const isOut = message.direction === 'outbound';
+  // Detect button/interactive replies and surface them visually. The
+  // body text is already the button's label (via extractInboundBody on
+  // the API side) — but a customer tapping "INTERESTED" looks
+  // identical to one TYPING "INTERESTED" without an annotation. The
+  // little 🔘 label tells the operator it was a button press, not
+  // typed.
+  const mt = (message.messageType ?? '').toLowerCase();
+  const isButtonReply = mt === 'button' || mt === 'interactive';
+  // Same idea for media types — show a small "📷 image" / "🎙 voice" /
+  // "📄 document" tag when the message is a media type, regardless of
+  // whether a caption is also present.
+  const MEDIA_TAGS: Record<string, string> = {
+    image: '📷 Image',
+    video: '🎥 Video',
+    audio: '🎙 Voice note',
+    voice: '🎙 Voice note',
+    document: '📄 Document',
+    sticker: '🌟 Sticker',
+    location: '📍 Location',
+    contacts: '👤 Contact',
+  };
+  const mediaTag = MEDIA_TAGS[mt];
   return (
     <div className={cn('flex', isOut ? 'justify-end' : 'justify-start')}>
       <div
@@ -840,6 +863,25 @@ function Bubble({ message }: { message: Message }) {
           isOut ? 'bg-brand-500 text-white' : 'bg-surface-muted text-foreground',
         )}
       >
+        {isButtonReply ? (
+          <p
+            className={cn(
+              'mb-1 text-[10px] font-semibold uppercase tracking-wide',
+              isOut ? 'text-white/80' : 'text-brand-600',
+            )}
+          >
+            🔘 Button tapped
+          </p>
+        ) : mediaTag ? (
+          <p
+            className={cn(
+              'mb-1 text-[10px] font-semibold uppercase tracking-wide',
+              isOut ? 'text-white/80' : 'text-foreground-subtle',
+            )}
+          >
+            {mediaTag}
+          </p>
+        ) : null}
         <p className="whitespace-pre-wrap break-words">
           {message.body ?? <em className="opacity-70">[{message.messageType ?? 'media'}]</em>}
         </p>
@@ -890,10 +932,21 @@ function ReplyBox({
   // current body field used as caption.
   const [pendingAttachment, setPendingAttachment] = useState<{
     assetId: string;
-    mediaType: 'image' | 'document';
+    mediaType: 'image' | 'document' | 'audio';
     filename: string;
+    durationSec?: number;
   } | null>(null);
   const [sendingMedia, setSendingMedia] = useState(false);
+  // Voice recording state. recordingMime is whatever MediaRecorder
+  // negotiated with the browser (audio/ogg;opus on Chrome/Firefox,
+  // audio/mp4 on Safari — both are accepted by Meta).
+  const [recording, setRecording] = useState(false);
+  const [recordedSec, setRecordedSec] = useState(0);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordChunksRef = useRef<Blob[]>([]);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recordStartRef = useRef<number>(0);
+  const recordStreamRef = useRef<MediaStream | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
@@ -906,6 +959,123 @@ function ReplyBox({
     setShowCanned(false);
     requestAnimationFrame(() => taRef.current?.focus());
   };
+
+  // Voice recording: tries the WhatsApp-native ogg/opus first, falls
+  // back to audio/mp4 (Safari). If neither is supported, the button
+  // is disabled (handled below via canRecord). Stop returns a Blob
+  // which we upload as a 'document'-kind asset (no MIME restriction
+  // server-side) and then stage as a 'audio'-mediaType pending
+  // attachment so Send fires /whatsapp/send-media with type=audio.
+  function pickRecorderMime(): string | null {
+    if (typeof window === 'undefined' || typeof MediaRecorder === 'undefined') return null;
+    const candidates = ['audio/ogg;codecs=opus', 'audio/ogg', 'audio/mp4', 'audio/webm;codecs=opus'];
+    for (const mime of candidates) {
+      try {
+        if (MediaRecorder.isTypeSupported(mime)) return mime;
+      } catch {
+        /* some browsers throw */
+      }
+    }
+    return null;
+  }
+  const canRecord = typeof window !== 'undefined' && pickRecorderMime() !== null;
+
+  async function startRecording() {
+    if (recording) return;
+    const mime = pickRecorderMime();
+    if (!mime) {
+      toast.error('Voice recording not supported in this browser.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordStreamRef.current = stream;
+      const mr = new MediaRecorder(stream, { mimeType: mime });
+      recordChunksRef.current = [];
+      mr.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) recordChunksRef.current.push(e.data);
+      };
+      mr.onstop = async () => {
+        // Tear down the mic stream before uploading so the OS-level
+        // recording indicator stops immediately.
+        recordStreamRef.current?.getTracks().forEach((t) => t.stop());
+        recordStreamRef.current = null;
+        if (recordTimerRef.current) {
+          clearInterval(recordTimerRef.current);
+          recordTimerRef.current = null;
+        }
+        const durationSec = Math.round((Date.now() - recordStartRef.current) / 1000);
+        const blob = new Blob(recordChunksRef.current, { type: mime });
+        if (blob.size < 500) {
+          toast.error('Recording too short — try again.');
+          setRecording(false);
+          setRecordedSec(0);
+          return;
+        }
+        // Upload as a document-kind asset — the server doesn't gate
+        // MIME on documents, and /whatsapp/send-media reads the
+        // stored content-type when posting to Meta.
+        const ext = mime.startsWith('audio/ogg') ? 'ogg' : mime.startsWith('audio/mp4') ? 'm4a' : 'webm';
+        const filename = `voice-${new Date().toISOString().replace(/[:.]/g, '-')}.${ext}`;
+        const file = new File([blob], filename, { type: mime });
+        setAttaching(true);
+        try {
+          const { uploadFile } = await import('@/lib/upload');
+          const { assetId } = await uploadFile(file, 'document');
+          setPendingAttachment({ assetId, mediaType: 'audio', filename, durationSec });
+          toast.success(`Voice (${durationSec}s) — click Send to deliver`);
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : 'Upload failed');
+        } finally {
+          setAttaching(false);
+          setRecording(false);
+          setRecordedSec(0);
+        }
+      };
+      recorderRef.current = mr;
+      recordStartRef.current = Date.now();
+      mr.start();
+      setRecording(true);
+      setRecordedSec(0);
+      recordTimerRef.current = setInterval(() => {
+        setRecordedSec(Math.round((Date.now() - recordStartRef.current) / 1000));
+      }, 250);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Mic permission denied');
+    }
+  }
+
+  function stopRecording() {
+    if (!recording || !recorderRef.current) return;
+    try {
+      recorderRef.current.stop();
+    } catch {
+      /* already stopped */
+    }
+  }
+
+  function cancelRecording() {
+    if (!recording) return;
+    // Discard recorded chunks before stopping so onstop doesn't upload.
+    recordChunksRef.current = [];
+    recorderRef.current?.stop();
+    recordStreamRef.current?.getTracks().forEach((t) => t.stop());
+    recordStreamRef.current = null;
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+    setRecording(false);
+    setRecordedSec(0);
+  }
+
+  // Cleanup if the component unmounts mid-recording.
+  useEffect(() => {
+    return () => {
+      recordStreamRef.current?.getTracks().forEach((t) => t.stop());
+      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+    };
+  }, []);
 
   // Stage the attachment: upload to Wasabi but DO NOT call /send-media
   // yet. The Send button below handles the actual transmission.
@@ -1017,13 +1187,53 @@ function ReplyBox({
           <Button
             size="sm"
             variant="ghost"
-            disabled={mode === 'note' || attaching || !!pendingAttachment}
-            loading={attaching}
+            disabled={mode === 'note' || attaching || !!pendingAttachment || recording}
+            loading={attaching && !recording}
             onClick={() => fileInputRef.current?.click()}
             aria-label="Attach file"
           >
             <Paperclip className="size-3.5" /> Attach
           </Button>
+          {/* Voice recorder. Disabled when an attachment is staged or
+              when MediaRecorder is unsupported. While recording the
+              button turns red and shows the elapsed seconds; a Cancel
+              ✕ appears next to it to discard without sending. */}
+          {recording ? (
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="bg-red-50 text-red-700 hover:bg-red-100"
+                onClick={stopRecording}
+                aria-label="Stop recording"
+              >
+                <Mic className="size-3.5" /> Stop · {recordedSec}s
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={cancelRecording}
+                aria-label="Cancel recording"
+              >
+                <X className="size-3.5" />
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={mode === 'note' || attaching || !!pendingAttachment || !canRecord}
+              onClick={startRecording}
+              aria-label="Record voice note"
+              title={
+                canRecord
+                  ? 'Record a voice note (sent as a WhatsApp voice message)'
+                  : "This browser doesn't support voice recording — try Chrome/Safari"
+              }
+            >
+              <Mic className="size-3.5" /> Voice
+            </Button>
+          )}
           <div className="relative">
           <Button
             size="sm"
@@ -1062,9 +1272,15 @@ function ReplyBox({
       <div className="p-3">
         {pendingAttachment ? (
           <div className="mb-2 flex items-center gap-2 rounded-md border border-border bg-surface-muted/40 px-3 py-2 text-xs">
-            <Paperclip className="size-3.5 text-foreground-muted" />
+            {pendingAttachment.mediaType === 'audio' ? (
+              <Mic className="size-3.5 text-foreground-muted" />
+            ) : (
+              <Paperclip className="size-3.5 text-foreground-muted" />
+            )}
             <span className="flex-1 truncate font-mono">
-              {pendingAttachment.filename}
+              {pendingAttachment.mediaType === 'audio' && pendingAttachment.durationSec != null
+                ? `Voice note · ${pendingAttachment.durationSec}s`
+                : pendingAttachment.filename}
             </span>
             <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
               Not sent yet

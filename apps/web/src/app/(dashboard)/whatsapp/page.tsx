@@ -7,6 +7,7 @@ import type {
   WhatsAppVerifyResult,
 } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import Link from 'next/link';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -410,62 +411,41 @@ export default function WhatsAppPage() {
             </CardContent>
           </Card>
 
-          {/* ----- Bot profile + greeting ----- */}
+          {/* ----- Pointers to the real sources of truth -----
+              The fields that used to live here (businessName / Address /
+              About / greetingMessage) were write-only — the AI bot reads
+              from BusinessInfo + BotConfig instead, so editing them here
+              had no effect on what the customer saw. Replaced the form
+              with a clear pointer to where each value actually lives. */}
           <Card>
             <CardHeader>
-              <CardTitle>Business profile + greeting</CardTitle>
+              <CardTitle>Business profile & greeting</CardTitle>
               <CardDescription>
-                Stored alongside your catalog. Your bot runtime can pull them via the read API.
+                The AI bot pulls its identity + opening line from two other pages — edit them
+                there.
               </CardDescription>
             </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="businessName">Business name</Label>
-                <Input
-                  id="businessName"
-                  value={form.businessName}
-                  onChange={(e) => setForm({ ...form, businessName: e.target.value })}
-                />
+            <CardContent className="space-y-2 text-sm">
+              <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-muted/30 px-3 py-2">
+                <div>
+                  <p className="font-medium">Business name, email, address, about, opening hours</p>
+                  <p className="text-xs text-foreground-muted">
+                    Source of truth: <span className="font-mono">/business-info</span>
+                  </p>
+                </div>
+                <Button asChild size="sm" variant="secondary">
+                  <Link href="/business-info">Edit business info</Link>
+                </Button>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="businessEmail">Business email</Label>
-                <Input
-                  id="businessEmail"
-                  type="email"
-                  value={form.businessEmail}
-                  onChange={(e) => setForm({ ...form, businessEmail: e.target.value })}
-                />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label htmlFor="businessAddress">Business address</Label>
-                <Input
-                  id="businessAddress"
-                  value={form.businessAddress}
-                  onChange={(e) => setForm({ ...form, businessAddress: e.target.value })}
-                />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label htmlFor="businessAbout">About</Label>
-                <Textarea
-                  id="businessAbout"
-                  rows={2}
-                  value={form.businessAbout}
-                  onChange={(e) => setForm({ ...form, businessAbout: e.target.value })}
-                />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label htmlFor="greetingMessage">Greeting message</Label>
-                <Textarea
-                  id="greetingMessage"
-                  rows={3}
-                  placeholder="Hi! Welcome to <Your Business>. Ask about hours, products, or bookings."
-                  value={form.greetingMessage}
-                  onChange={(e) => setForm({ ...form, greetingMessage: e.target.value })}
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <Button onClick={() => save.mutate(buildPayload())} loading={save.isPending}>
-                  Save profile
+              <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-muted/30 px-3 py-2">
+                <div>
+                  <p className="font-medium">Greeting, personality, handoff message, languages</p>
+                  <p className="text-xs text-foreground-muted">
+                    Source of truth: <span className="font-mono">/bot</span>
+                  </p>
+                </div>
+                <Button asChild size="sm" variant="secondary">
+                  <Link href="/bot">Edit bot config</Link>
                 </Button>
               </div>
             </CardContent>

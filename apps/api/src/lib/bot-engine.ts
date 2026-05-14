@@ -200,6 +200,31 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
   const escalation = ((config?.escalationRules ?? {}) as Record<string, unknown>) ?? {};
   const escalationText = typeof escalation.fallback === 'string' ? escalation.fallback : null;
 
+  // Languages — convert ISO codes the operator selected into a
+  // human-readable list the LLM can quote in its instructions.
+  // Pulls from BotConfig.languages (comma-sep codes; defaults to "en").
+  const LANGUAGE_NAMES: Record<string, string> = {
+    en: 'English',
+    ar: 'Arabic',
+    fr: 'French',
+    es: 'Spanish',
+    de: 'German',
+    pt: 'Portuguese',
+    it: 'Italian',
+    tr: 'Turkish',
+    nl: 'Dutch',
+    ru: 'Russian',
+    zh: 'Chinese',
+    ja: 'Japanese',
+  };
+  const langCodes = (config as { languages?: string } | null)?.languages
+    ?.split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean) ?? ['en'];
+  const languageList = langCodes
+    .map((c) => LANGUAGE_NAMES[c] ?? c.toUpperCase())
+    .join(', ');
+
   // Compose the system prompt — long but cache-friendly.
   const sys = [
     `You are a customer-service chatbot for the business below. Reply in WhatsApp-style: short, scannable, plain text. No markdown headings. Use bullets sparingly.`,
@@ -219,6 +244,11 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     // the visible reply server-side.
     `- When a customer asks about a specific product BY NAME or BY SKU and that product appears in the CATALOG with an image, end your reply with a marker on its own line: [IMAGE: <SKU>] — the system will attach the product's image automatically. Use the SKU exactly as written in the catalog (case-sensitive). Only include the marker for products that you can SEE in the catalog list below; never invent one.`,
     `- Hours: when a customer asks about opening times, quote directly from the OPENING HOURS section below. Don't paraphrase — read it back day-by-day, and call out the days that show "Closed" so the customer knows when not to expect a reply.`,
+    // Language rule: reply in the customer's language IF it's one we
+    // support; otherwise apologise briefly in the first listed
+    // supported language and offer to continue there. This makes the
+    // Languages chip selector on /bot actually mean something.
+    `- Languages: this business supports ${languageList}. Detect the language the customer wrote in and reply in the same language IF it's one of those. If they message you in a language NOT in the supported list, reply in ${LANGUAGE_NAMES[langCodes[0] ?? 'en'] ?? 'English'}, briefly apologise that you can't yet support that language, and ask if they're comfortable continuing in one of the supported languages.`,
     escalationText ? `- When the user asks for a human, reply: "${escalationText}"` : '',
     ``,
     `# Business info`,

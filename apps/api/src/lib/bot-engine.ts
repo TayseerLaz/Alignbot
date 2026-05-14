@@ -38,6 +38,13 @@ export interface BotData {
     detectedTone: string | null;
     greeting: string | null;
     escalationRules: unknown;
+    // Optional structured flow + per-intent response templates the
+    // operator authored on /bot → Conversation flow. Used as preferred
+    // phrasings the LLM should prefer when the customer's message
+    // matches one of the labelled intents.
+    conversationFlow: unknown;
+    responseTemplates: unknown;
+    languages: string | null;
   } | null;
   kb: { question: string; answer: string }[];
   products: {
@@ -69,6 +76,49 @@ export interface BotData {
   } | null;
   faqs: { question: string; answer: string }[];
   policies: { kind: string; title: string; content: string }[];
+}
+
+// Pull the operator-authored intents out of BotConfig.conversationFlow
+// + BotConfig.responseTemplates. Each intent has a stable key (e.g.
+// "booking"), a human-readable label ("Book a consultation"), and an
+// optional response template — the wording the operator wants the bot
+// to use when the customer's message matches that intent.
+function extractIntents(
+  conversationFlow: unknown,
+  responseTemplates: unknown,
+): { intent: string; label: string; response: string }[] {
+  const out: { intent: string; label: string; response: string }[] = [];
+  const seen = new Set<string>();
+  // 1. Walk the new graph shape { nodes: [{ intent, label, response }] }
+  if (
+    conversationFlow &&
+    typeof conversationFlow === 'object' &&
+    Array.isArray((conversationFlow as { nodes?: unknown }).nodes)
+  ) {
+    const nodes = (conversationFlow as {
+      nodes: { intent?: string; label?: string; response?: string }[];
+    }).nodes;
+    for (const n of nodes) {
+      const intent = (n.intent ?? '').trim();
+      if (!intent || seen.has(intent)) continue;
+      const response = (n.response ?? '').trim();
+      const label = (n.label ?? intent).trim();
+      if (!response) continue; // empty templates don't help the LLM
+      seen.add(intent);
+      out.push({ intent, label, response });
+    }
+  }
+  // 2. Fill any gaps from the legacy flat responseTemplates map.
+  if (responseTemplates && typeof responseTemplates === 'object') {
+    for (const [k, v] of Object.entries(responseTemplates as Record<string, unknown>)) {
+      const intent = k.trim();
+      if (!intent || seen.has(intent)) continue;
+      if (typeof v !== 'string' || !v.trim()) continue;
+      seen.add(intent);
+      out.push({ intent, label: intent, response: v.trim() });
+    }
+  }
+  return out;
 }
 
 // Format operating hours stored as { monday: [{open, close}], ... }
@@ -200,6 +250,15 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
   const escalation = ((config?.escalationRules ?? {}) as Record<string, unknown>) ?? {};
   const escalationText = typeof escalation.fallback === 'string' ? escalation.fallback : null;
 
+  // Operator-authored "preferred phrasings" from the Conversation flow
+  // canvas. The LLM uses these as on-brand wording when the customer's
+  // message clearly matches an intent — but isn't forced into them, so
+  // it can still answer KB-grounded questions when no intent fits.
+  const intents = extractIntents(
+    config?.conversationFlow ?? null,
+    config?.responseTemplates ?? null,
+  );
+
   // Languages — convert ISO codes the operator selected into a
   // human-readable list the LLM can quote in its instructions.
   // Pulls from BotConfig.languages (comma-sep codes; defaults to "en").
@@ -249,6 +308,13 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     // supported language and offer to continue there. This makes the
     // Languages chip selector on /bot actually mean something.
     `- Languages: this business supports ${languageList}. Detect the language the customer wrote in and reply in the same language IF it's one of those. If they message you in a language NOT in the supported list, reply in ${LANGUAGE_NAMES[langCodes[0] ?? 'en'] ?? 'English'}, briefly apologise that you can't yet support that language, and ask if they're comfortable continuing in one of the supported languages.`,
+    // Intent / preferred phrasings rule — wires the Conversation flow
+    // canvas into the LLM. Only emitted when the operator has authored
+    // intents; silent otherwise so simple bots aren't burdened with
+    // unused instructions.
+    intents.length > 0
+      ? `- Preferred phrasings: if the customer's message clearly matches one of the labelled intents below (PREFERRED PHRASINGS section), use that intent's response template as the basis of your reply. Adapt it lightly for the customer's language + tone, but keep the substance — these are operator-authored brand voice. When no intent matches, answer normally from the KB / catalog.`
+      : '',
     escalationText ? `- When the user asks for a human, reply: "${escalationText}"` : '',
     ``,
     `# Business info`,
@@ -263,6 +329,16 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     kb.length > 0
       ? kb.map((e) => `Q: ${e.question}\nA: ${e.answer}`).join('\n\n')
       : '(no curated entries — the bot only has the data sections below)',
+    ``,
+    intents.length > 0 ? `# Preferred phrasings (${intents.length})` : '',
+    intents.length > 0
+      ? intents
+          .map(
+            (it) =>
+              `Intent: ${it.intent}\nLabel: ${it.label}\nWhen-to-use: when the customer's message clearly matches "${it.label}".\nResponse template:\n${it.response}`,
+          )
+          .join('\n\n')
+      : '',
     ``,
     `# Catalog`,
     products.length > 0

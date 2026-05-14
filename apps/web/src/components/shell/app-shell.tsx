@@ -73,7 +73,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-white px-4 lg:px-6">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-surface px-4 lg:px-6">
           <Button
             variant="ghost"
             size="icon"

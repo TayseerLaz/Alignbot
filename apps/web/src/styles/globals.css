@@ -25,21 +25,24 @@
   --color-brand-800: #0e2a3e;
   --color-brand-900: #091c29;
 
-  /* Neutral surfaces */
-  --color-surface: #ffffff;
-  --color-surface-muted: #f6f8fb;
-  --color-surface-elevated: #ffffff;
-  --color-border: #e5e9f0;
-  --color-border-strong: #cdd5e0;
-  --color-foreground: #0f172a;
-  --color-foreground-muted: #475569;
-  --color-foreground-subtle: #64748b;
+  /* Neutral surfaces — dark theme. The platform reads as a dark
+     admin dashboard: near-black page body, slightly lifted card
+     surfaces, off-white text. Brand-* (blue) stays unchanged so
+     accents keep their identity. */
+  --color-surface: #1a1c22;          /* card / elevated surface */
+  --color-surface-muted: #0e0f14;    /* page body background */
+  --color-surface-elevated: #20232b; /* hover / pressed card */
+  --color-border: #25272f;
+  --color-border-strong: #353842;
+  --color-foreground: #f4f6fa;
+  --color-foreground-muted: #9ba3b4;
+  --color-foreground-subtle: #6b7280;
 
-  /* Semantic */
-  --color-success: #15803d;
-  --color-warning: #b45309;
-  --color-danger: #b91c1c;
-  --color-info: #1d4ed8;
+  /* Semantic — bumped slightly brighter so they pop on dark. */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #f87171;
+  --color-info: #60a5fa;
 
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;
@@ -60,11 +63,17 @@
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    color-scheme: dark;
   }
   :focus-visible {
-    outline: 2px solid var(--color-brand-500);
+    outline: 2px solid var(--color-brand-400);
     outline-offset: 2px;
     border-radius: 0.25rem;
+  }
+  /* Form controls inherit the dark theme so default browser styling
+     (autofill, date-picker chrome, etc.) doesn't flash white. */
+  input, textarea, select {
+    color-scheme: dark;
   }
 }
 

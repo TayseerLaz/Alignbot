@@ -2123,11 +2123,32 @@ async function maybeReplyAsBot(args: {
         }
       }
 
+      // Dedupe: don't create a second booking for this thread if one
+      // was captured in the last 30 minutes. Both the LLM marker and
+      // the fallback extractor can fire for the same conversation;
+      // without this guard a follow-up "thanks" would create a
+      // duplicate row from the extractor.
+      const recentBooking = await withRlsBypass(async (tx) =>
+        tx.booking.findFirst({
+          where: {
+            organizationId: args.organizationId,
+            threadId: ctx.threadId,
+            createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
+          },
+          select: { id: true },
+        }),
+      );
+
       // Fallback: GPT-4o-mini sometimes finishes the booking conversation
       // without ever emitting the [BOOKING:{...}] marker. Run a tiny
       // JSON-mode extraction call to recover. Gate on cheap signals so
       // we don't fire it for unrelated messages.
-      if (!parsedBooking && ctx.data.bookingForm?.enabled && ctx.data.bookingForm.fields.length > 0) {
+      if (
+        !parsedBooking &&
+        !recentBooking &&
+        ctx.data.bookingForm?.enabled &&
+        ctx.data.bookingForm.fields.length > 0
+      ) {
         const recentAssistant = ctx.history
           .filter((h) => h.direction === 'outbound')
           .slice(-3)
@@ -2218,7 +2239,7 @@ async function maybeReplyAsBot(args: {
           });
         }
 
-        if (parsedBooking && ctx.data.bookingForm) {
+        if (parsedBooking && ctx.data.bookingForm && !recentBooking) {
           const fields = ctx.data.bookingForm.fields.map((f) => ({
             key: f.key,
             label: f.label,

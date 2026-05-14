@@ -103,71 +103,74 @@ const alignedAdminItems: NavItem[] = [
   { href: '/aligned-admin/revenue', label: 'Revenue', icon: CreditCard },
 ];
 
-export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
+export function Sidebar({
+  onNavigate,
+  collapsed = false,
+}: { onNavigate?: () => void; collapsed?: boolean; onToggleCollapsed?: () => void } = {}) {
   const pathname = usePathname();
   const { session } = useSession();
 
   const isActive = (item: NavItem) => (item.exact ? pathname === item.href : pathname.startsWith(item.href));
 
+  // When collapsed: the row strips down to a centred icon with the
+  // label rendered as a native tooltip via `title=` so the operator
+  // can still identify each link without giving up screen real estate.
+  const renderItem = (item: NavItem) => {
+    const Icon = item.icon;
+    const active = isActive(item);
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        onClick={onNavigate}
+        title={collapsed ? item.label : undefined}
+        aria-label={item.label}
+        className={cn(
+          'flex items-center rounded-md text-sm font-medium transition-colors',
+          collapsed ? 'justify-center px-2 py-2' : 'gap-2.5 px-3 py-2',
+          active
+            ? 'bg-brand-50 text-brand-700'
+            : 'text-foreground-muted hover:bg-surface-muted hover:text-foreground',
+        )}
+      >
+        <Icon className="size-4 shrink-0" />
+        {collapsed ? null : <span className="truncate">{item.label}</span>}
+      </Link>
+    );
+  };
+
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-14 items-center border-b border-border px-5">
-        <AlignedLogo />
+      <div
+        className={cn(
+          'flex h-14 items-center border-b border-border',
+          collapsed ? 'justify-center px-2' : 'px-5',
+        )}
+      >
+        <AlignedLogo iconOnly={collapsed} />
       </div>
       <nav className="flex-1 space-y-6 overflow-y-auto p-3">
         {groups.map((group) => (
           <div key={group.label} className="space-y-1">
-            <p className="px-3 text-[11px] font-semibold uppercase tracking-wider text-foreground-subtle">
-              {group.label}
-            </p>
-            {group.items.map((item) => {
-              const Icon = item.icon;
-              const active = isActive(item);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={onNavigate}
-                  className={cn(
-                    'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                    active
-                      ? 'bg-brand-50 text-brand-700'
-                      : 'text-foreground-muted hover:bg-surface-muted hover:text-foreground',
-                  )}
-                >
-                  <Icon className="size-4 shrink-0" />
-                  {item.label}
-                </Link>
-              );
-            })}
+            {/* Hide group headers when collapsed — the icons themselves
+                are the only grouping the operator needs at that width. */}
+            {!collapsed ? (
+              <p className="px-3 text-[11px] font-semibold uppercase tracking-wider text-foreground-subtle">
+                {group.label}
+              </p>
+            ) : null}
+            {group.items.map(renderItem)}
           </div>
         ))}
 
         {session?.user.isAlignedAdmin ? (
           <div className="space-y-1 border-t border-border pt-6">
-            <p className="px-3 text-[11px] font-semibold uppercase tracking-wider text-brand-500">
-              ALIGNED admin
-            </p>
-            {alignedAdminItems.map((item) => {
-              const Icon = item.icon;
-              const active = isActive(item);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={onNavigate}
-                  className={cn(
-                    'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                    active
-                      ? 'bg-brand-50 text-brand-700'
-                      : 'text-foreground-muted hover:bg-surface-muted hover:text-foreground',
-                  )}
-                >
-                  <Icon className="size-4 shrink-0" />
-                  {item.label}
-                </Link>
-              );
-            })}
+            {!collapsed ? (
+              <p className="px-3 text-[11px] font-semibold uppercase tracking-wider text-brand-500">
+                ALIGNED admin
+              </p>
+            ) : null}
+            {alignedAdminItems.map(renderItem)}
           </div>
         ) : null}
       </nav>

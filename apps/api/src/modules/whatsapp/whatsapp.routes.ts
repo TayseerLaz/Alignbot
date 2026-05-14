@@ -468,24 +468,67 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         // what's wrong on the actual send call.
       }
 
+      // Operator-supplied per-variable values for header + button URL
+      // placeholders. `parameters[]` already covers the body.
+      const headerTextParam = req.body.headerTextParam?.trim() ?? null;
+      const buttonUrlParams = (req.body.buttonUrlParams ?? []).map((v) => v.trim());
+
       const sendComponents: Record<string, unknown>[] = [];
-      for (const c of metaComponents) {
+      let urlButtonCursor = 0;
+
+      for (const rawC of metaComponents) {
+        const c = rawC as MetaComp & {
+          buttons?: { type?: string; url?: string }[];
+        };
         const t = (c.type ?? '').toUpperCase();
         const fmt = (c.format ?? '').toUpperCase();
-        if (t === 'HEADER' && fmt && fmt !== 'TEXT') {
-          const handle = c.example?.header_handle?.[0];
-          if (handle) {
-            const kind = fmt.toLowerCase(); // image | video | document
-            sendComponents.push({
-              type: 'header',
-              parameters: [{ type: kind, [kind]: { link: handle } }],
-            });
+        if (t === 'HEADER') {
+          if (fmt === 'TEXT') {
+            // Header with {{1}} (Meta only supports one var in headers).
+            const hasVar = /{{\s*1\s*}}/.test(c.text ?? '');
+            if (hasVar && headerTextParam) {
+              sendComponents.push({
+                type: 'header',
+                parameters: [{ type: 'text', text: headerTextParam }],
+              });
+            }
+          } else if (fmt && fmt !== 'TEXT') {
+            const handle = c.example?.header_handle?.[0];
+            if (handle) {
+              const kind = fmt.toLowerCase(); // image | video | document
+              sendComponents.push({
+                type: 'header',
+                parameters: [{ type: kind, [kind]: { link: handle } }],
+              });
+            }
           }
         }
         if (t === 'BODY' && parameters.length > 0) {
           sendComponents.push({
             type: 'body',
             parameters: parameters.map((text) => ({ type: 'text', text })),
+          });
+        }
+        if (t === 'BUTTONS') {
+          // For each URL button with {{1}}, pull the next value from
+          // buttonUrlParams[] and emit a per-button-index entry. Non-URL
+          // buttons and URL buttons without placeholders are skipped
+          // (Meta doesn't need a runtime parameter for them).
+          const buttons = c.buttons ?? [];
+          buttons.forEach((b, i) => {
+            const btype = (b.type ?? '').toUpperCase();
+            if (btype !== 'URL') return;
+            const hasVar = /{{\s*1\s*}}/.test(b.url ?? '');
+            if (!hasVar) return;
+            const value = buttonUrlParams[urlButtonCursor] ?? '';
+            urlButtonCursor += 1;
+            if (!value) return;
+            sendComponents.push({
+              type: 'button',
+              sub_type: 'url',
+              index: String(i),
+              parameters: [{ type: 'text', text: value }],
+            });
           });
         }
       }

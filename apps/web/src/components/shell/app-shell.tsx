@@ -1,21 +1,53 @@
 'use client';
 
-import { Menu } from 'lucide-react';
-import { useState } from 'react';
+import { Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 
 import { Sidebar } from './sidebar';
 import { TopBar } from './top-bar';
 
+// localStorage key for the persisted collapse preference. Stored as
+// "1" (collapsed) or "0" (expanded); read on mount, updated on toggle.
+const COLLAPSED_KEY = 'aligned:sidebar:collapsed';
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Start expanded by default, then read the saved preference on mount
+  // so the initial server-rendered tree matches and we don't flash a
+  // collapse-then-expand on hydration.
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(COLLAPSED_KEY);
+      if (saved === '1') setCollapsed(true);
+    } catch {
+      /* localStorage blocked → keep default */
+    }
+  }, []);
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(COLLAPSED_KEY, next ? '1' : '0');
+      } catch {
+        /* noop */
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="flex min-h-dvh bg-surface-muted">
-      {/* Desktop sidebar */}
-      <aside className="hidden w-64 shrink-0 border-r border-border bg-white lg:block">
-        <Sidebar />
+      {/* Desktop sidebar — width animates between full (16rem) and
+          icon-only (4.5rem). Sidebar adapts to the `collapsed` prop. */}
+      <aside
+        className={`hidden shrink-0 border-r border-border bg-white transition-[width] duration-200 ease-in-out lg:block ${
+          collapsed ? 'w-[4.5rem]' : 'w-64'
+        }`}
+      >
+        <Sidebar collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
       </aside>
 
       {/* Mobile sidebar drawer */}
@@ -44,6 +76,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             aria-label="Open menu"
           >
             <Menu className="size-5" />
+          </Button>
+          {/* Desktop-only collapse/expand toggle in the top bar so it's
+              always reachable even when the sidebar is icons-only and
+              its inner toggle isn't visible. */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={toggleCollapsed}
+            className="hidden lg:inline-flex"
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed ? <PanelLeftOpen className="size-5" /> : <PanelLeftClose className="size-5" />}
           </Button>
           <TopBar />
         </header>

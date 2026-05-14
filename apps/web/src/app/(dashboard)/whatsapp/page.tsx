@@ -41,6 +41,10 @@ interface TemplateOption {
   language: string;
   status: string;
   bodyText?: string;
+  // Full Meta-shaped components — the test-send form parses these to
+  // figure out which header / URL-button placeholders need input
+  // fields. Optional because older synced templates may not have it.
+  components?: Record<string, unknown>[] | null;
 }
 
 type FormState = {
@@ -142,6 +146,8 @@ export default function WhatsAppPage() {
       templateName: string;
       templateLanguage: string;
       parameters: string[];
+      headerTextParam?: string;
+      buttonUrlParams?: string[];
     }) => api.post<{ data: WhatsAppTestSendResult }>('/api/v1/whatsapp/test-send', args),
     onSuccess: (res, vars) => {
       const r = res.data;
@@ -558,9 +564,7 @@ export default function WhatsAppPage() {
             <CardContent>
               <TestSendForm
                 templates={templatesQ.data?.data ?? []}
-                onSend={(to, templateName, templateLanguage, parameters) =>
-                  testSend.mutate({ to, templateName, templateLanguage, parameters })
-                }
+                onSend={(args) => testSend.mutate(args)}
                 loading={testSend.isPending}
                 disabled={!verifiedOk}
               />
@@ -630,6 +634,52 @@ function countPlaceholders(body: string | undefined | null): number {
   return max;
 }
 
+interface TestSendArgs {
+  to: string;
+  templateName: string;
+  templateLanguage: string;
+  parameters: string[];
+  headerTextParam?: string;
+  buttonUrlParams?: string[];
+}
+
+// Inspect a template's stored components and pull out:
+//   - whether the HEADER is TEXT with {{1}}
+//   - URL buttons (in order) and whether each contains {{1}}
+// Used to decide which extra input fields the test-send form needs to
+// render alongside the body-parameter inputs.
+function inspectComponents(components: Record<string, unknown>[] | null | undefined): {
+  headerTextHasVar: boolean;
+  urlButtonsWithVar: { url: string; text: string }[];
+} {
+  if (!Array.isArray(components)) {
+    return { headerTextHasVar: false, urlButtonsWithVar: [] };
+  }
+  let headerTextHasVar = false;
+  const urlButtonsWithVar: { url: string; text: string }[] = [];
+  for (const raw of components) {
+    const c = raw as {
+      type?: string;
+      format?: string;
+      text?: string;
+      buttons?: { type?: string; url?: string; text?: string }[];
+    };
+    const t = (c.type ?? '').toUpperCase();
+    if (t === 'HEADER' && (c.format ?? '').toUpperCase() === 'TEXT') {
+      if (/{{\s*1\s*}}/.test(c.text ?? '')) headerTextHasVar = true;
+    }
+    if (t === 'BUTTONS') {
+      for (const b of c.buttons ?? []) {
+        if ((b.type ?? '').toUpperCase() !== 'URL') continue;
+        if (/{{\s*1\s*}}/.test(b.url ?? '')) {
+          urlButtonsWithVar.push({ url: b.url ?? '', text: b.text ?? '' });
+        }
+      }
+    }
+  }
+  return { headerTextHasVar, urlButtonsWithVar };
+}
+
 function TestSendForm({
   templates,
   onSend,
@@ -637,7 +687,7 @@ function TestSendForm({
   disabled,
 }: {
   templates: TemplateOption[];
-  onSend: (to: string, templateName: string, templateLanguage: string, parameters: string[]) => void;
+  onSend: (args: TestSendArgs) => void;
   loading: boolean;
   disabled: boolean;
 }) {
@@ -664,14 +714,24 @@ function TestSendForm({
   const [name, language] = selected.split('|');
   const selectedTpl = options.find((o) => `${o.name}|${o.language}` === selected);
   const placeholderCount = countPlaceholders(selectedTpl?.bodyText);
+  const { headerTextHasVar, urlButtonsWithVar } = inspectComponents(selectedTpl?.components);
+
   const [params, setParams] = useState<string[]>([]);
-  // Reset/resize the params array whenever the picked template changes
-  // (different templates have different placeholder counts).
+  const [headerParam, setHeaderParam] = useState<string>('');
+  const [urlParams, setUrlParams] = useState<string[]>([]);
+
+  // Reset all variable-input arrays whenever the picked template changes
+  // (different templates have different placeholder shapes).
   useEffect(() => {
     setParams(Array.from({ length: placeholderCount }, () => ''));
-  }, [selected, placeholderCount]);
+    setHeaderParam('');
+    setUrlParams(Array.from({ length: urlButtonsWithVar.length }, () => ''));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, placeholderCount, urlButtonsWithVar.length]);
 
-  const allParamsFilled = params.every((v) => v.trim().length > 0);
+  const allBodyFilled = params.every((v) => v.trim().length > 0);
+  const headerOk = !headerTextHasVar || headerParam.trim().length > 0;
+  const urlsOk = urlButtonsWithVar.length === 0 || urlParams.every((v) => v.trim().length > 0);
 
   return (
     <div className="space-y-2">
@@ -709,17 +769,36 @@ function TestSendForm({
           {selectedTpl.bodyText}
         </pre>
       ) : null}
+
+      {/* Header text {{1}} when present */}
+      {headerTextHasVar ? (
+        <div className="space-y-1.5">
+          <p className="text-xs text-foreground-muted">
+            This template has a header variable. Fill the value that will replace{' '}
+            <span className="font-mono">{'{{1}}'}</span> in the header line.
+          </p>
+          <Input
+            placeholder="value for header {{1}}"
+            value={headerParam}
+            onChange={(e) => setHeaderParam(e.target.value)}
+            disabled={disabled}
+            aria-label="Header parameter"
+          />
+        </div>
+      ) : null}
+
+      {/* Body placeholders */}
       {placeholderCount > 0 ? (
         <div className="space-y-1.5">
           <p className="text-xs text-foreground-muted">
-            This template has {placeholderCount} variable{placeholderCount === 1 ? '' : 's'}. Fill them
-            in order — they bind to <span className="font-mono">{'{{1}}'}</span>,{' '}
+            This template has {placeholderCount} body variable{placeholderCount === 1 ? '' : 's'}. Fill
+            them in order — they bind to <span className="font-mono">{'{{1}}'}</span>,{' '}
             <span className="font-mono">{'{{2}}'}</span>, … in the body above.
           </p>
           {params.map((value, i) => (
             <Input
               key={i}
-              placeholder={`value for {{${i + 1}}}`}
+              placeholder={`value for body {{${i + 1}}}`}
               value={value}
               onChange={(e) => {
                 const next = params.slice();
@@ -727,19 +806,52 @@ function TestSendForm({
                 setParams(next);
               }}
               disabled={disabled}
-              aria-label={`Template parameter ${i + 1}`}
+              aria-label={`Body parameter ${i + 1}`}
             />
           ))}
         </div>
       ) : null}
+
+      {/* URL button placeholders */}
+      {urlButtonsWithVar.length > 0 ? (
+        <div className="space-y-1.5">
+          <p className="text-xs text-foreground-muted">
+            {urlButtonsWithVar.length === 1 ? 'One URL button' : `${urlButtonsWithVar.length} URL buttons`}{' '}
+            need a runtime value — Meta interpolates each into the URL where{' '}
+            <span className="font-mono">{'{{1}}'}</span> appears.
+          </p>
+          {urlButtonsWithVar.map((btn, i) => (
+            <div key={i} className="space-y-0.5">
+              <p className="text-[11px] font-mono text-foreground-subtle">
+                {btn.text ? `"${btn.text}" → ` : ''}
+                {btn.url}
+              </p>
+              <Input
+                placeholder={`value for URL {{1}} (button ${i + 1})`}
+                value={urlParams[i] ?? ''}
+                onChange={(e) => {
+                  const next = urlParams.slice();
+                  next[i] = e.target.value;
+                  setUrlParams(next);
+                }}
+                disabled={disabled}
+                aria-label={`URL button parameter ${i + 1}`}
+              />
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       <Button
         onClick={() =>
-          onSend(
+          onSend({
             to,
-            (name ?? '').trim(),
-            (language ?? '').trim(),
-            params.map((p) => p.trim()),
-          )
+            templateName: (name ?? '').trim(),
+            templateLanguage: (language ?? '').trim(),
+            parameters: params.map((p) => p.trim()),
+            headerTextParam: headerTextHasVar ? headerParam.trim() : undefined,
+            buttonUrlParams: urlButtonsWithVar.length > 0 ? urlParams.map((v) => v.trim()) : undefined,
+          })
         }
         loading={loading}
         disabled={
@@ -747,7 +859,9 @@ function TestSendForm({
           to.trim().length < 6 ||
           !name ||
           !language ||
-          (placeholderCount > 0 && !allParamsFilled)
+          (placeholderCount > 0 && !allBodyFilled) ||
+          !headerOk ||
+          !urlsOk
         }
       >
         <Send className="size-4" /> Send {name || 'template'}

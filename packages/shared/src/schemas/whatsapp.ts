@@ -83,9 +83,17 @@ export type WhatsAppVerifyResult = z.infer<typeof whatsappVerifyResultSchema>;
 // well-known Meta sandbox `hello_world / en_US`, but accepts an arbitrary
 // template name + language so accounts whose library doesn't include
 // `hello_world` (most production accounts) can pass anything they've had
-// approved. `parameters` is an ordered array of text values that bind to
-// the template's body placeholders ({{1}}, {{2}}, …). Empty array means
-// the template has no variables.
+// approved.
+//
+// Variable-binding fields:
+//   parameters        → body {{1}}, {{2}}, …
+//   headerTextParam   → header (TEXT format) {{1}}. Meta only supports
+//                       a single variable in a text header.
+//   buttonUrlParams   → URL buttons {{1}}. Array entries are in the same
+//                       order as the URL buttons appear in the template's
+//                       components.buttons; non-URL buttons are skipped.
+//                       Pass an empty string for URL buttons that don't
+//                       contain a placeholder.
 export const whatsappTestSendBodySchema = z.object({
   to: z
     .string()
@@ -94,6 +102,8 @@ export const whatsappTestSendBodySchema = z.object({
   templateName: z.string().trim().min(1).max(512).optional(),
   templateLanguage: z.string().trim().min(2).max(16).optional(),
   parameters: z.array(z.string().max(1024)).max(20).optional(),
+  headerTextParam: z.string().max(1024).optional(),
+  buttonUrlParams: z.array(z.string().max(1024)).max(10).optional(),
 });
 export const whatsappTestSendResultSchema = z.object({
   ok: z.boolean(),

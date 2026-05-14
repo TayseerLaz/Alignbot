@@ -28,17 +28,82 @@ export function isOpenAIConfigured(): boolean {
   return !!env.OPENAI_API_KEY;
 }
 
-const DAILY_TOKEN_LIMIT_PER_ORG = 200_000;
+export const DAILY_TOKEN_LIMIT_PER_ORG = 200_000;
+
+// gpt-4o-mini price points (USD per 1M tokens), used to estimate cost.
+// We don't track input/output split per call; assume a 70/30 mix which
+// is conservative-ish for our prompts (long system prompt + short reply).
+export const PRICE_INPUT_PER_M = 0.15;
+export const PRICE_OUTPUT_PER_M = 0.60;
+export const PRICE_BLENDED_PER_M = 0.7 * PRICE_INPUT_PER_M + 0.3 * PRICE_OUTPUT_PER_M;
+
+export function estimateCostUsd(tokens: number): number {
+  return (tokens / 1_000_000) * PRICE_BLENDED_PER_M;
+}
+
+// ALIGNED admins get unlimited daily tokens — they're internal accounts
+// running QA + demos and shouldn't be throttled. We cache the result
+// in Redis for 5 minutes per org to keep the path hot. To invalidate
+// (e.g. after promoting/demoting an admin) just DEL the cache key.
+async function isUnlimitedOrg(orgId: string): Promise<boolean> {
+  const redis = getRedis();
+  const cacheKey = `aitokens:unlimited:${orgId}`;
+  const cached = await redis.get(cacheKey);
+  if (cached === '1') return true;
+  if (cached === '0') return false;
+  // Miss → ask Postgres. Lazy import keeps the cycle clean.
+  const { prisma } = await import('./db.js');
+  const adminMember = await prisma.membership.findFirst({
+    where: {
+      organizationId: orgId,
+      isActive: true,
+      user: { isAlignedAdmin: true },
+    },
+    select: { id: true },
+  });
+  const unlimited = !!adminMember;
+  await redis.set(cacheKey, unlimited ? '1' : '0', 'EX', 300);
+  return unlimited;
+}
 
 async function consumeDailyTokens(orgId: string, tokens: number): Promise<boolean> {
   const redis = getRedis();
   const day = new Date().toISOString().slice(0, 10);
   const key = `aitokens:${orgId}:${day}`;
+  // We still bump the counter for unlimited orgs so we can show their
+  // usage / cost in the dashboard — we just don't enforce the cap.
   const used = await redis.incrby(key, tokens);
   if (used === tokens) {
     await redis.expire(key, 60 * 60 * 26);
   }
+  if (await isUnlimitedOrg(orgId)) return true;
   return used <= DAILY_TOKEN_LIMIT_PER_ORG;
+}
+
+// Read-only helper for the dashboard widget. Returns today's running
+// total (in tokens) for the given org. Never throws — falls back to 0.
+export async function readDailyTokenUsage(orgId: string): Promise<{
+  used: number;
+  limit: number;
+  unlimited: boolean;
+  percentUsed: number;
+  estCostUsd: number;
+}> {
+  const redis = getRedis();
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `aitokens:${orgId}:${day}`;
+  const raw = await redis.get(key);
+  const used = raw ? Number(raw) : 0;
+  const unlimited = await isUnlimitedOrg(orgId);
+  const limit = DAILY_TOKEN_LIMIT_PER_ORG;
+  const percentUsed = unlimited ? 0 : Math.min(100, Math.round((used / limit) * 100));
+  return {
+    used,
+    limit,
+    unlimited,
+    percentUsed,
+    estCostUsd: estimateCostUsd(used),
+  };
 }
 
 interface CompleteArgs {

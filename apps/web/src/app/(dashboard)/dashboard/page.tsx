@@ -13,6 +13,7 @@ import {
   Package,
   Plug,
   RefreshCw,
+  Sparkles,
   Webhook,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -128,6 +129,9 @@ export default function DashboardPage() {
         <MetricCard title="FAQs" value={c?.faqs ?? '—'} href="/business-info" icon={HelpCircle} />
         <MetricCard title="API keys" value={c?.apiKeys ?? '—'} href="/api-keys" icon={KeyRound} />
       </div>
+
+      <AiUsageCard />
+
 
       <section className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Last sync */}
@@ -298,5 +302,85 @@ function GettingStartedItem({
         <Link href={ctaHref}>{ctaLabel}</Link>
       </Button>
     </div>
+  );
+}
+
+// AI budget meter — shows today's token spend, the remaining %, and an
+// estimated USD cost. ALIGNED-admin-operated orgs read as "Unlimited"
+// since their cap is bypassed server-side.
+interface AiUsage {
+  used: number;
+  limit: number;
+  unlimited: boolean;
+  percentUsed: number;
+  estCostUsd: number;
+}
+
+function AiUsageCard() {
+  const usage = useQuery({
+    queryKey: ['dashboard-ai-usage'],
+    queryFn: () => api.get<{ data: AiUsage }>('/api/v1/dashboard/ai-usage'),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
+  const d = usage.data?.data;
+  const used = d?.used ?? 0;
+  const limit = d?.limit ?? 200_000;
+  const unlimited = d?.unlimited ?? false;
+  const percentUsed = d?.percentUsed ?? 0;
+  const percentLeft = unlimited ? 100 : Math.max(0, 100 - percentUsed);
+  const cost = d?.estCostUsd ?? 0;
+
+  // Bar color shifts amber > red as the cap closes.
+  const barColor =
+    unlimited || percentUsed < 60
+      ? 'bg-brand-500'
+      : percentUsed < 85
+        ? 'bg-amber-500'
+        : 'bg-red-500';
+
+  return (
+    <Card className="mt-6">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+        <div className="flex items-center gap-2">
+          <Sparkles className="size-4 text-brand-500" />
+          <CardTitle className="text-sm font-medium text-foreground-muted">
+            AI chatbot budget · today
+          </CardTitle>
+        </div>
+        <span className="text-xs text-foreground-subtle">Resets at 00:00 UTC</span>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <p className="text-2xl font-semibold">
+              {unlimited ? 'Unlimited' : `${percentLeft}% left`}
+            </p>
+            <p className="mt-0.5 text-xs text-foreground-muted">
+              {unlimited
+                ? `${used.toLocaleString()} tokens used today · cost ${cost < 0.01 ? '<$0.01' : `$${cost.toFixed(3)}`}`
+                : `${used.toLocaleString()} of ${limit.toLocaleString()} tokens used · cost ${cost < 0.01 ? '<$0.01' : `$${cost.toFixed(3)}`}`}
+            </p>
+          </div>
+          {!unlimited && percentUsed >= 85 ? (
+            <Badge variant="warning" className="gap-1">
+              <AlertTriangle className="size-3" />
+              Low budget
+            </Badge>
+          ) : null}
+        </div>
+        <div className="h-2 w-full overflow-hidden rounded-full bg-surface-muted">
+          <div
+            className={`h-full ${barColor} transition-all`}
+            style={{ width: `${unlimited ? 100 : percentUsed}%`, opacity: unlimited ? 0.4 : 1 }}
+          />
+        </div>
+        <p className="text-xs text-foreground-subtle">
+          Each customer message uses ≈ 1k–3k tokens of GPT-4o-mini. The free
+          tier resets daily; contact us to lift the cap.
+        </p>
+      </CardContent>
+    </Card>
   );
 }

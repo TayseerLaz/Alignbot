@@ -165,4 +165,36 @@ export default async function dashboardRoutes(app: FastifyInstance) {
       return { data };
     },
   );
+
+  // ---------- GET /dashboard/ai-usage -------------------------------------
+  // Today's AI token usage for the active org. Powers the small "AI
+  // budget remaining" widget on /dashboard. Returns 0% used + unlimited
+  // = true for ALIGNED-admin-operated orgs so the bar reads "Unlimited".
+  r.get(
+    '/dashboard/ai-usage',
+    {
+      schema: {
+        tags: ['dashboard'],
+        summary: "Today's AI token usage for the current org.",
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              used: z.number().int().nonnegative(),
+              limit: z.number().int().nonnegative(),
+              unlimited: z.boolean(),
+              percentUsed: z.number().int().min(0).max(100),
+              estCostUsd: z.number().nonnegative(),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const { readDailyTokenUsage } = await import('../../lib/openai.js');
+      const data = await readDailyTokenUsage(orgId);
+      return { data };
+    },
+  );
 }

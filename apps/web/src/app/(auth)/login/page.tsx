@@ -105,12 +105,6 @@ export default function LoginPage() {
         </button>
       </form>
 
-      <p className="mt-5 text-center text-sm text-white/60">
-        New to ALIGNED?{' '}
-        <Link href="/signup" className="font-semibold text-white hover:underline">
-          Create an account
-        </Link>
-      </p>
     </div>
   );
 }

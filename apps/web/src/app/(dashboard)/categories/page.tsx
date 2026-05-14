@@ -1,7 +1,8 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
+import Link from 'next/link';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -26,11 +27,36 @@ interface Category {
   slug: string;
   parentId: string | null;
   productCount?: number;
+  serviceCount?: number;
+}
+
+interface ProductRow {
+  id: string;
+  sku: string;
+  name: string;
+  priceMinor: number | null;
+  currency: string | null;
+  isAvailable: boolean;
+}
+
+interface ServiceRow {
+  id: string;
+  slug: string;
+  name: string;
+  basePriceMinor: number | null;
+  currency: string | null;
+  isAvailable: boolean;
+}
+
+function formatPrice(minor: number | null, currency: string | null): string {
+  if (minor == null) return '—';
+  return `${(minor / 100).toFixed(2)} ${currency ?? ''}`.trim();
 }
 
 export default function CategoriesPage() {
   const qc = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const cats = useQuery({
     queryKey: ['categories'],
@@ -50,7 +76,7 @@ export default function CategoriesPage() {
     <>
       <PageHeader
         title="Categories"
-        description="Organize products into categories for chatbot retrieval and the storefront."
+        description="Organize products and services into categories for chatbot retrieval and the storefront. Click any row to expand and see what's linked."
         actions={
           <Button onClick={() => setCreateOpen(true)}>
             <Plus className="size-4" /> New category
@@ -65,42 +91,49 @@ export default function CategoriesPage() {
           <table className="w-full text-left text-sm">
             <thead className="border-b border-border bg-surface-muted text-xs uppercase tracking-wide text-foreground-subtle">
               <tr>
+                <th className="w-10 px-4 py-3" />
                 <th className="px-6 py-3">Name</th>
                 <th className="px-6 py-3">Slug</th>
                 <th className="px-6 py-3">Products</th>
+                <th className="px-6 py-3">Services</th>
                 <th className="w-12 px-6 py-3" />
               </tr>
             </thead>
             <tbody>
               {cats.isLoading ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-8 text-center text-foreground-muted">Loading…</td>
+                  <td colSpan={6} className="px-6 py-8 text-center text-foreground-muted">Loading…</td>
                 </tr>
               ) : null}
               {cats.data?.data.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-12 text-center text-foreground-muted">No categories yet.</td>
+                  <td colSpan={6} className="px-6 py-12 text-center text-foreground-muted">No categories yet.</td>
                 </tr>
               ) : null}
-              {cats.data?.data.map((c) => (
-                <tr key={c.id} className="border-b border-border last:border-0">
-                  <td className="px-6 py-4 font-medium">{c.name}</td>
-                  <td className="px-6 py-4 font-mono text-xs text-foreground-muted">{c.slug}</td>
-                  <td className="px-6 py-4 font-mono text-sm">{c.productCount ?? 0}</td>
-                  <td className="px-6 py-4 text-right">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => {
-                        if (window.confirm(`Delete "${c.name}"? Products keep their data but lose this category link.`))
-                          deleteMutation.mutate(c.id);
-                      }}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </td>
-                </tr>
-              ))}
+              {cats.data?.data.map((c) => {
+                const isOpen = expandedId === c.id;
+                const productCount = c.productCount ?? 0;
+                const serviceCount = c.serviceCount ?? 0;
+                return (
+                  <CategoryRowGroup
+                    key={c.id}
+                    cat={c}
+                    isOpen={isOpen}
+                    onToggle={() => setExpandedId(isOpen ? null : c.id)}
+                    onDelete={() => {
+                      if (
+                        window.confirm(
+                          `Delete "${c.name}"? Linked products and services keep their data but lose this category link.`,
+                        )
+                      ) {
+                        deleteMutation.mutate(c.id);
+                      }
+                    }}
+                    productCount={productCount}
+                    serviceCount={serviceCount}
+                  />
+                );
+              })}
             </tbody>
           </table>
         </CardContent>
@@ -113,6 +146,148 @@ export default function CategoriesPage() {
         onCreated={() => qc.invalidateQueries({ queryKey: ['categories'] })}
       />
     </>
+  );
+}
+
+// Top-level row + (when expanded) a second `<tr>` rendering the linked
+// products and services. Queries fire lazy (only when the row opens)
+// so we don't fan out N parallel fetches for every page load.
+function CategoryRowGroup({
+  cat,
+  isOpen,
+  onToggle,
+  onDelete,
+  productCount,
+  serviceCount,
+}: {
+  cat: Category;
+  isOpen: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
+  productCount: number;
+  serviceCount: number;
+}) {
+  const productsQ = useQuery({
+    queryKey: ['categories', cat.id, 'products'],
+    queryFn: () =>
+      api.get<{ data: ProductRow[] }>(`/api/v1/products?categoryId=${cat.id}&limit=200`),
+    enabled: isOpen && productCount > 0,
+    staleTime: 30_000,
+  });
+  const servicesQ = useQuery({
+    queryKey: ['categories', cat.id, 'services'],
+    queryFn: () =>
+      api.get<{ data: ServiceRow[] }>(`/api/v1/services?categoryId=${cat.id}&limit=200`),
+    enabled: isOpen && serviceCount > 0,
+    staleTime: 30_000,
+  });
+
+  const Chevron = isOpen ? ChevronDown : ChevronRight;
+
+  return (
+    <>
+      <tr
+        className="cursor-pointer border-b border-border last:border-0 hover:bg-surface-muted/40"
+        onClick={onToggle}
+      >
+        <td className="px-4 py-4">
+          <Chevron className="size-4 text-foreground-muted" />
+        </td>
+        <td className="px-6 py-4 font-medium">{cat.name}</td>
+        <td className="px-6 py-4 font-mono text-xs text-foreground-muted">{cat.slug}</td>
+        <td className="px-6 py-4 font-mono text-sm">{productCount}</td>
+        <td className="px-6 py-4 font-mono text-sm">{serviceCount}</td>
+        <td className="px-6 py-4 text-right">
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            aria-label={`Delete ${cat.name}`}
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        </td>
+      </tr>
+      {isOpen ? (
+        <tr className="border-b border-border bg-surface-muted/30">
+          <td className="px-4 py-3" />
+          <td colSpan={5} className="px-6 py-3">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <CategoryLinkedList
+                title={`Products (${productCount})`}
+                loading={productsQ.isLoading && productCount > 0}
+                empty={productCount === 0}
+                emptyHint="No products linked to this category."
+                items={(productsQ.data?.data ?? []).map((p) => ({
+                  key: p.id,
+                  primary: p.name,
+                  secondary: `${p.sku} · ${formatPrice(p.priceMinor, p.currency)}${p.isAvailable ? '' : ' · unavailable'}`,
+                  href: `/products/${p.id}`,
+                }))}
+              />
+              <CategoryLinkedList
+                title={`Services (${serviceCount})`}
+                loading={servicesQ.isLoading && serviceCount > 0}
+                empty={serviceCount === 0}
+                emptyHint="No services linked to this category."
+                items={(servicesQ.data?.data ?? []).map((s) => ({
+                  key: s.id,
+                  primary: s.name,
+                  secondary: `${s.slug} · ${formatPrice(s.basePriceMinor, s.currency)}${s.isAvailable ? '' : ' · unavailable'}`,
+                  href: `/services/${s.id}`,
+                }))}
+              />
+            </div>
+          </td>
+        </tr>
+      ) : null}
+    </>
+  );
+}
+
+function CategoryLinkedList({
+  title,
+  loading,
+  empty,
+  emptyHint,
+  items,
+}: {
+  title: string;
+  loading: boolean;
+  empty: boolean;
+  emptyHint: string;
+  items: { key: string; primary: string; secondary: string; href: string }[];
+}) {
+  return (
+    <div className="rounded-md border border-border bg-white p-3">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-foreground-subtle">
+        {title}
+      </p>
+      {loading ? (
+        <p className="text-xs text-foreground-muted">Loading…</p>
+      ) : empty ? (
+        <p className="text-xs italic text-foreground-subtle">{emptyHint}</p>
+      ) : items.length === 0 ? (
+        <p className="text-xs italic text-foreground-subtle">Nothing linked.</p>
+      ) : (
+        <ul className="space-y-1.5">
+          {items.map((it) => (
+            <li key={it.key}>
+              <Link
+                href={it.href}
+                className="block rounded px-1.5 py-1 hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
+              >
+                <p className="text-sm text-foreground">{it.primary}</p>
+                <p className="font-mono text-[11px] text-foreground-subtle">{it.secondary}</p>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

@@ -41,7 +41,10 @@ export default async function categoryRoutes(app: FastifyInstance) {
           // number matches what the operator sees on /products.
           include: {
             _count: {
-              select: { products: { where: { deletedAt: null } } },
+              select: {
+                products: { where: { deletedAt: null } },
+                services: { where: { deletedAt: null } },
+              },
             },
           },
         });
@@ -55,6 +58,7 @@ export default async function categoryRoutes(app: FastifyInstance) {
             sortOrder: c.sortOrder,
             isActive: c.isActive,
             productCount: c._count.products,
+            serviceCount: c._count.services,
             createdAt: c.createdAt.toISOString(),
             updatedAt: c.updatedAt.toISOString(),
           })),

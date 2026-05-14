@@ -10,10 +10,12 @@ export const categorySchema = z.object({
   description: z.string().nullable(),
   sortOrder: z.number().int(),
   isActive: z.boolean(),
-  // Optional product count — populated by GET /categories so the
-  // listing page can show "N products" per row without a follow-up
-  // request. Detail endpoints don't have to set this.
+  // Optional product / service counts — populated by GET /categories
+  // so the listing page can show "N products / M services" per row
+  // without a follow-up request. Detail endpoints don't have to set
+  // these.
   productCount: z.number().int().nonnegative().optional(),
+  serviceCount: z.number().int().nonnegative().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

@@ -981,11 +981,36 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       // after the strip.
       const rawContentType = asset.contentType ?? 'application/octet-stream';
       const baseContentType = rawContentType.split(';')[0]!.trim();
+      // Filename + extension matter to Meta — it uses the extension to
+      // dispatch the file to the right downstream pipeline. Sending
+      // "upload.bin" makes Meta accept the upload, but WhatsApp can't
+      // play it back. Derive a sensible extension from the content
+      // type so audio actually reaches the customer's phone.
+      const EXT_BY_MIME: Record<string, string> = {
+        'audio/ogg': 'ogg',
+        'audio/mpeg': 'mp3',
+        'audio/mp4': 'm4a',
+        'audio/aac': 'aac',
+        'audio/amr': 'amr',
+        'audio/webm': 'webm',
+        'image/jpeg': 'jpg',
+        'image/png': 'png',
+        'image/webp': 'webp',
+        'video/mp4': 'mp4',
+        'application/pdf': 'pdf',
+      };
+      const ext = EXT_BY_MIME[baseContentType] ?? baseContentType.split('/')[1] ?? 'bin';
+      const storedFilename =
+        (asset.metadata as { filename?: string } | null)?.filename ?? `media-${asset.id}.${ext}`;
+      // Always force the extension to match the MIME so a filename
+      // mis-saved as "voice.webm" with content-type "audio/ogg" still
+      // arrives at Meta as voice.ogg.
+      const filenameWithExt = storedFilename.replace(/\.[^.]+$/, '') + `.${ext}`;
       let metaMediaId: string | null = null;
       try {
         const fd = new FormData();
         const blob = new Blob([fileBytes], { type: baseContentType });
-        fd.set('file', blob, asset.metadata && (asset.metadata as { filename?: string }).filename ? (asset.metadata as { filename: string }).filename : 'upload.bin');
+        fd.set('file', blob, filenameWithExt);
         fd.set('messaging_product', 'whatsapp');
         fd.set('type', baseContentType);
         const upRes = await fetch(

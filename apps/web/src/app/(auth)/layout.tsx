@@ -4,9 +4,11 @@
 // Mobile: left panel collapses; the right column owns the screen.
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="grid min-h-dvh bg-[#0a0a0c] text-white lg:grid-cols-2">
+    <div className="grid h-dvh overflow-hidden bg-[#0a0a0c] text-white lg:grid-cols-2">
       <BrandPanel />
-      <section className="flex min-h-dvh flex-col justify-center px-6 py-10 sm:px-12 lg:px-16">
+      {/* Right column owns the form. overflow-y-auto kicks in only on
+          tiny viewports so the page itself never scrolls. */}
+      <section className="flex h-full flex-col justify-center overflow-y-auto px-6 py-10 sm:px-12 lg:px-16">
         <div className="mx-auto w-full max-w-sm">{children}</div>
       </section>
     </div>

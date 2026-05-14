@@ -171,6 +171,26 @@ jobs:
             INITIAL_ADMIN_PASSWORD='${{ secrets.INITIAL_ADMIN_PASSWORD }}' \
             pnpm --filter @aligned/db exec tsx ./seed/super-admin.ts
 
+            echo "=== ensure Caddy Permissions-Policy allows microphone ==="
+            # The portal's voice-note recorder (MediaRecorder in the
+            # inbox composer) needs same-origin microphone access. The
+            # live Caddyfile previously had microphone=() which the
+            # browser enforces as a hard block. Patch any occurrence
+            # of microphone=() to microphone=(self) and reload. The
+            # in-place edit is idempotent — reruns on already-patched
+            # configs are a no-op.
+            if [ -f /etc/caddy/Caddyfile ]; then
+              if sudo grep -q "microphone=()" /etc/caddy/Caddyfile; then
+                sudo sed -i 's|microphone=()|microphone=(self)|g' /etc/caddy/Caddyfile
+                echo "Caddyfile patched; reloading caddy."
+                sudo systemctl reload caddy || sudo systemctl restart caddy || true
+              else
+                echo "Caddyfile already allows microphone or uses a different syntax — leaving alone."
+              fi
+            else
+              echo "No /etc/caddy/Caddyfile on this host — skipping."
+            fi
+
             echo "=== restart services ==="
             sudo systemctl restart aligned-api aligned-worker aligned-web
             sleep 5

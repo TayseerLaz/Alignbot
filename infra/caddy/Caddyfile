@@ -18,7 +18,9 @@
         Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
-        Permissions-Policy "geolocation=(), camera=(), microphone=()"
+        # Allow same-origin microphone so the inbox can record voice
+        # notes via MediaRecorder. Camera/geolocation stay disabled.
+        Permissions-Policy "geolocation=(), camera=(), microphone=(self)"
         -Server
     }
     reverse_proxy web:3000 {

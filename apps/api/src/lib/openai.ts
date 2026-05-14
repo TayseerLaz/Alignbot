@@ -41,29 +41,11 @@ export function estimateCostUsd(tokens: number): number {
   return (tokens / 1_000_000) * PRICE_BLENDED_PER_M;
 }
 
-// ALIGNED admins get unlimited daily tokens — they're internal accounts
-// running QA + demos and shouldn't be throttled. We cache the result
-// in Redis for 5 minutes per org to keep the path hot. To invalidate
-// (e.g. after promoting/demoting an admin) just DEL the cache key.
+// ALIGNED admins get unlimited daily tokens. Same predicate the
+// billing cap check uses — single source of truth.
 async function isUnlimitedOrg(orgId: string): Promise<boolean> {
-  const redis = getRedis();
-  const cacheKey = `aitokens:unlimited:${orgId}`;
-  const cached = await redis.get(cacheKey);
-  if (cached === '1') return true;
-  if (cached === '0') return false;
-  // Miss → ask Postgres. Lazy import keeps the cycle clean.
-  const { prisma } = await import('./db.js');
-  const adminMember = await prisma.membership.findFirst({
-    where: {
-      organizationId: orgId,
-      isActive: true,
-      user: { isAlignedAdmin: true },
-    },
-    select: { id: true },
-  });
-  const unlimited = !!adminMember;
-  await redis.set(cacheKey, unlimited ? '1' : '0', 'EX', 300);
-  return unlimited;
+  const { isOrgUnlimited } = await import('./billing.js');
+  return isOrgUnlimited(orgId);
 }
 
 async function consumeDailyTokens(orgId: string, tokens: number): Promise<boolean> {

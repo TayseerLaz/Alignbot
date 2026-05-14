@@ -35,6 +35,32 @@ export function currentYearMonth(now = new Date()): string {
   return now.toISOString().slice(0, 7);
 }
 
+// ALIGNED admins operate internal / demo orgs and shouldn't be throttled.
+// Result is cached 5 minutes in Redis per-org so the hot write path
+// (capCheck on every product create etc.) doesn't hit Postgres every call.
+// Invalidate by deleting `plan:unlimited:<orgId>` if you flip a user's
+// isAlignedAdmin flag and want it to take effect immediately.
+export async function isOrgUnlimited(orgId: string): Promise<boolean> {
+  const { getRedis } = await import('./redis.js');
+  const redis = getRedis();
+  const cacheKey = `plan:unlimited:${orgId}`;
+  const cached = await redis.get(cacheKey).catch(() => null);
+  if (cached === '1') return true;
+  if (cached === '0') return false;
+  const { prisma } = await import('./db.js');
+  const adminMember = await prisma.membership.findFirst({
+    where: {
+      organizationId: orgId,
+      isActive: true,
+      user: { isAlignedAdmin: true },
+    },
+    select: { id: true },
+  });
+  const unlimited = !!adminMember;
+  await redis.set(cacheKey, unlimited ? '1' : '0', 'EX', 300).catch(() => {});
+  return unlimited;
+}
+
 // All cap kinds the cap-check middleware understands. Note these are
 // PER-MONTH or POINT-IN-TIME depending on the metric. Caps named
 // `monthly_*` are reset at month boundary; the rest are absolute.
@@ -96,6 +122,8 @@ export async function resolveOrgPlan(tx: MinimalTx, orgId: string): Promise<Plan
 }
 
 export async function capCheck(tx: MinimalTx, orgId: string, kind: CapKind): Promise<void> {
+  // ALIGNED-admin-operated orgs are unmetered across every cap kind.
+  if (await isOrgUnlimited(orgId)) return;
   const plan = await resolveOrgPlan(tx, orgId);
   const cap =
     kind === 'product' ? plan.productCap

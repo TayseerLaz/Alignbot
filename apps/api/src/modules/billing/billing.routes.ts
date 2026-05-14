@@ -20,7 +20,7 @@ import type Stripe from 'stripe';
 import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
-import { currentYearMonth, getStripe, isStripeConfigured, resolveOrgPlan } from '../../lib/billing.js';
+import { currentYearMonth, getStripe, isOrgUnlimited, isStripeConfigured, resolveOrgPlan } from '../../lib/billing.js';
 import { withRlsBypass } from '../../lib/db.js';
 import { env } from '../../lib/env.js';
 import { badRequest, notFound } from '../../lib/errors.js';
@@ -152,24 +152,39 @@ export default async function billingRoutes(app: FastifyInstance) {
             .findFirst({ where: { organizationId: orgId, yearMonth: ym, kind: 'import_started' } })
             .then((r) => r?.count ?? 0),
         ]);
+        // ALIGNED-admin-operated orgs render as a synthetic "Unlimited
+        // (admin)" plan with null caps so the UI knows there's nothing
+        // to throttle. The actual subscription row is left intact so
+        // demoting the admin later snaps things back.
+        const unlimited = await isOrgUnlimited(orgId);
         return {
           data: {
             id: sub.id,
-            planCode: sub.plan.code,
-            planName: sub.plan.name,
-            status: sub.status,
+            planCode: unlimited ? 'admin' : sub.plan.code,
+            planName: unlimited ? 'Unlimited (admin)' : sub.plan.name,
+            status: unlimited ? 'active' : sub.status,
             trialEndsAt: sub.trialEndsAt?.toISOString() ?? null,
             currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null,
             cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
-            caps: {
-              productCap: sub.plan.productCap,
-              serviceCap: sub.plan.serviceCap,
-              memberCap: sub.plan.memberCap,
-              monthlyMessageCap: sub.plan.monthlyMessageCap,
-              monthlyImportCap: sub.plan.monthlyImportCap,
-              apiKeyCap: sub.plan.apiKeyCap,
-              webhookCap: sub.plan.webhookCap,
-            },
+            caps: unlimited
+              ? {
+                  productCap: null,
+                  serviceCap: null,
+                  memberCap: null,
+                  monthlyMessageCap: null,
+                  monthlyImportCap: null,
+                  apiKeyCap: null,
+                  webhookCap: null,
+                }
+              : {
+                  productCap: sub.plan.productCap,
+                  serviceCap: sub.plan.serviceCap,
+                  memberCap: sub.plan.memberCap,
+                  monthlyMessageCap: sub.plan.monthlyMessageCap,
+                  monthlyImportCap: sub.plan.monthlyImportCap,
+                  apiKeyCap: sub.plan.apiKeyCap,
+                  webhookCap: sub.plan.webhookCap,
+                },
             usage: {
               products,
               services,

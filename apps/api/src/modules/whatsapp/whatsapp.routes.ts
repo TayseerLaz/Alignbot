@@ -812,6 +812,22 @@ export default async function whatsappRoutes(app: FastifyInstance) {
             outboundCount: { increment: 1 },
           },
         });
+        // Operator replied → if the bot had escalated this chat to a
+        // human, clear the flag so the sidebar badge decrements and
+        // the red row tint goes away. Don't touch other statuses
+        // (resolved / pending / open) since the operator might be
+        // intentionally re-opening a closed chat.
+        if (thread.status === 'escalated' || thread.assignedToUserId === null) {
+          await tx.whatsAppThread.update({
+            where: { id: thread.id },
+            data: {
+              ...(thread.status === 'escalated' ? { status: 'open' as never } : {}),
+              ...(thread.assignedToUserId === null
+                ? { assignedToUserId: req.auth!.userId }
+                : {}),
+            },
+          });
+        }
         await tx.whatsAppMessage.create({
           data: {
             threadId: thread.id,

@@ -304,10 +304,28 @@ export default async function inboxRoutes(app: FastifyInstance) {
             );
           }
         }
+        // Auto-clear the "escalated" flag when an operator takes the
+        // chat back. Triggers: (a) explicitly setting status to
+        // anything else, (b) assigning a user when status was
+        // escalated. This is what makes the sidebar Inbox badge
+        // decrement immediately when someone picks up the chat
+        // instead of waiting for the operator to also manually flip
+        // the status dropdown.
+        let resolvedStatus = (req.body.status as never) ?? undefined;
+        if (resolvedStatus === undefined && req.body.assignedToUserId) {
+          const current = await tx.whatsAppThread.findUnique({
+            where: { id: req.params.id },
+            select: { status: true },
+          });
+          if (current?.status === 'escalated') {
+            resolvedStatus = 'open' as never;
+          }
+        }
+
         const updated = await tx.whatsAppThread.update({
           where: { id: req.params.id },
           data: {
-            status: (req.body.status as never) ?? undefined,
+            status: resolvedStatus,
             customerName:
               req.body.customerName === undefined ? undefined : req.body.customerName,
             assignedToUserId:

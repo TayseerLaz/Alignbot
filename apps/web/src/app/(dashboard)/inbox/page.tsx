@@ -190,6 +190,11 @@ export default function InboxPage() {
           onChanged={() => {
             queryClient.invalidateQueries({ queryKey: ['inbox-threads'] });
             if (active) queryClient.invalidateQueries({ queryKey: ['inbox-thread', active.id] });
+            // Inbox-counts drives the red Inbox badge in the sidebar.
+            // Any thread change (status flip, assign, tag, etc.) can
+            // shift the counts so we invalidate eagerly — the actual
+            // refetch is gated by staleTime on the sidebar query.
+            queryClient.invalidateQueries({ queryKey: ['sidebar-inbox-counts'] });
           }}
           currentUserId={session?.user.id ?? null}
         />
@@ -1375,6 +1380,10 @@ function useInboxSSE() {
     es.addEventListener('tick', () => {
       qc.invalidateQueries({ queryKey: ['inbox-threads'] });
       qc.invalidateQueries({ queryKey: ['inbox-thread'] });
+      // Drive the sidebar Inbox badge in real time. When the bot
+      // escalates a chat or the operator un-escalates one, the count
+      // should flip without waiting for the 10s sidebar poll.
+      qc.invalidateQueries({ queryKey: ['sidebar-inbox-counts'] });
     });
     es.onerror = () => {
       // EventSource auto-reconnects per `retry: 5000` from the server.

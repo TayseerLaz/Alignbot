@@ -132,8 +132,12 @@ export function Sidebar({
       api.get<{ data: { escalated: number; pending: number; open: number } }>(
         '/api/v1/inbox/counts',
       ),
-    refetchInterval: 30_000,
-    staleTime: 20_000,
+    // Refetch every 10s as a fallback so the operator sees new
+    // escalations within that window even without an active SSE
+    // connection. The inbox page additionally invalidates this query
+    // on every SSE tick for instant updates while they're on /inbox.
+    refetchInterval: 10_000,
+    staleTime: 5_000,
   });
   const badges: Record<BadgeKey, number> = {
     inboxEscalated: counts.data?.data.escalated ?? 0,

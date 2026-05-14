@@ -41,8 +41,22 @@ export default function LoginPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
-        <p className="mt-1 text-sm text-foreground-muted">
+        <div className="mb-3 flex items-center gap-2">
+          {/* Mini concentric dot — a tiny echo of the page's halo. */}
+          <span
+            aria-hidden
+            className="inline-block size-2.5 rounded-full"
+            style={{
+              background:
+                'radial-gradient(circle at 50% 50%, #1e1b4b 0%, #7c3aed 40%, #ec4899 65%, #facc15 90%)',
+            }}
+          />
+          <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground-subtle">
+            ALIGNED
+          </span>
+        </div>
+        <h1 className="text-3xl font-semibold tracking-tight text-foreground">Sign in</h1>
+        <p className="mt-2 text-sm text-foreground-muted">
           Welcome back. Manage your catalog and chatbot from one place.
         </p>
       </div>

@@ -38,18 +38,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     });
   };
 
-  // Brand-blue glass sidebar — same gradient family as the login page.
-  // The aside fills the full column; the sidebar component renders
-  // glass pill rows on top of it.
-  const sidebarBg =
-    'bg-[radial-gradient(ellipse_120%_60%_at_50%_0%,#1F4A78_0%,#0E2747_45%,#061224_100%)]';
-
   return (
     <div className="flex min-h-dvh bg-surface-muted">
       {/* Desktop sidebar — width animates between full (16rem) and
-          icon-only (4.5rem). */}
+          icon-only (4.5rem). Sidebar adapts to the `collapsed` prop. */}
       <aside
-        className={`hidden shrink-0 text-white transition-[width] duration-200 ease-in-out lg:block ${sidebarBg} ${
+        className={`hidden shrink-0 border-r border-border bg-white transition-[width] duration-200 ease-in-out lg:block ${
           collapsed ? 'w-[4.5rem]' : 'w-64'
         }`}
       >
@@ -65,7 +59,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         />
       ) : null}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 transform text-white transition-transform lg:hidden ${sidebarBg} ${
+        className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r border-border bg-white transition-transform lg:hidden ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -73,7 +67,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-surface px-4 lg:px-6">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-white px-4 lg:px-6">
           <Button
             variant="ghost"
             size="icon"

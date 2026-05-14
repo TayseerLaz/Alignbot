@@ -98,33 +98,27 @@ function BrandPanel() {
         />
 
         <div className="mt-auto">
-          <div className="mb-9 grid items-end gap-x-10 gap-y-4 sm:grid-cols-[1fr_auto]">
-            <h2 className="text-5xl font-semibold leading-[1.05] tracking-tight text-white">
-              One inbox for
-              <br />
-              every customer
-            </h2>
-            <p className="max-w-[22ch] text-sm leading-snug text-white/70 sm:text-right">
-              Alignbot turns your catalog, FAQs, and business info into a 24/7
-              WhatsApp chatbot — and captures every booking in one place.
-            </p>
-          </div>
+          <h2 className="mb-7 text-5xl font-semibold leading-[1.05] tracking-tight text-white">
+            One inbox for
+            <br />
+            every customer
+          </h2>
 
-          <ul className="grid grid-cols-3 gap-3">
+          <ul className="grid grid-cols-3 gap-2.5">
             {features.map((f) => (
               <li
                 key={f.n}
                 className={
                   f.active
-                    ? 'flex min-h-[150px] flex-col justify-between rounded-2xl border border-white bg-white p-[18px_18px_22px] text-[#0E2747] shadow-[0_20px_50px_-10px_rgba(8,20,40,0.5),0_0_0_1px_rgba(255,255,255,0.4)] transition'
-                    : 'flex min-h-[150px] flex-col justify-between rounded-2xl border border-[rgba(143,196,240,0.12)] bg-[rgba(8,20,40,0.55)] p-[18px_18px_22px] text-white/75 backdrop-blur-md transition hover:-translate-y-0.5 hover:border-[rgba(143,196,240,0.3)]'
+                    ? 'flex min-h-[108px] flex-col justify-between rounded-xl border border-white bg-white p-3 text-[#0E2747] shadow-[0_20px_50px_-10px_rgba(8,20,40,0.5),0_0_0_1px_rgba(255,255,255,0.4)] transition'
+                    : 'flex min-h-[108px] flex-col justify-between rounded-xl border border-[rgba(143,196,240,0.12)] bg-[rgba(8,20,40,0.55)] p-3 text-white/75 backdrop-blur-md transition hover:-translate-y-0.5 hover:border-[rgba(143,196,240,0.3)]'
                 }
               >
                 <span
                   className={
                     f.active
-                      ? 'flex size-7 items-center justify-center rounded-full bg-[#0E2747] text-xs font-semibold text-white'
-                      : 'flex size-7 items-center justify-center rounded-full bg-white/10 text-xs font-semibold text-white/85'
+                      ? 'flex size-6 items-center justify-center rounded-full bg-[#0E2747] text-[11px] font-semibold text-white'
+                      : 'flex size-6 items-center justify-center rounded-full bg-white/10 text-[11px] font-semibold text-white/85'
                   }
                 >
                   {f.n}
@@ -132,8 +126,8 @@ function BrandPanel() {
                 <span
                   className={
                     f.active
-                      ? 'whitespace-pre-line text-[15px] font-semibold leading-tight'
-                      : 'whitespace-pre-line text-[15px] font-medium leading-tight text-white/85'
+                      ? 'whitespace-pre-line text-[12.5px] font-semibold leading-tight'
+                      : 'whitespace-pre-line text-[12.5px] font-medium leading-tight text-white/85'
                   }
                 >
                   {f.label}

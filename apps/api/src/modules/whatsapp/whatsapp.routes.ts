@@ -1737,7 +1737,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
 async function maybeReplyAsBot(args: {
   organizationId: string;
   messages: { from: string; type: string; bodyText: string | null; metaId: string | null }[];
-  log: { error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
+  log: { error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; info: (...args: unknown[]) => void };
 }): Promise<void> {
   const { isOpenAIConfigured } = await import('../../lib/openai.js');
   if (!isOpenAIConfigured()) return;
@@ -2089,6 +2089,63 @@ async function maybeReplyAsBot(args: {
         } catch (err) {
           args.log.warn({ err, raw: bookingMatch[1]?.slice(0, 300) }, '[whatsapp] booking marker JSON invalid');
           parsedBooking = null;
+        }
+      }
+
+      // Fallback: GPT-4o-mini sometimes finishes the booking conversation
+      // without ever emitting the [BOOKING:{...}] marker. Run a tiny
+      // JSON-mode extraction call to recover. Gate on cheap signals so
+      // we don't fire it for unrelated messages.
+      if (!parsedBooking && ctx.data.bookingForm?.enabled && ctx.data.bookingForm.fields.length > 0) {
+        const recentAssistant = ctx.history
+          .filter((h) => h.direction === 'outbound')
+          .slice(-3)
+          .map((h) => (h.body ?? '').toLowerCase())
+          .join(' ');
+        const ASSISTANT_BOOKING_SIGNAL = /(book|schedul|appointment|consult|reserv|confirm|set up|will (?:be|finalize)|set you up)/i;
+        const USER_AFFIRMATIVE = /^\s*(yes|yep|yeah|yup|sure|please|ok(ay)?|y|confirm(ed)?|do it|go ahead|sounds good|let'?s do it|book it|that works|perfect)[\s.!,?]*\s*$/i;
+        const looksLikeBookingFlow =
+          ASSISTANT_BOOKING_SIGNAL.test(recentAssistant) ||
+          ASSISTANT_BOOKING_SIGNAL.test(reply.toLowerCase()) ||
+          USER_AFFIRMATIVE.test(m.bodyText!);
+
+        if (looksLikeBookingFlow) {
+          const { extractBooking } = await import('../../lib/bot-engine.js');
+          const ex = await extractBooking({
+            organizationId: args.organizationId,
+            bookingForm: ctx.data.bookingForm,
+            history: ctx.history.map((h) => ({
+              role: h.direction === 'outbound' ? ('assistant' as const) : ('user' as const),
+              content: h.body ?? '',
+            })),
+            latestUserMessage: m.bodyText!,
+          }).catch((err) => {
+            args.log.warn({ err }, '[whatsapp] booking extractor failed');
+            return null;
+          });
+          if (ex?.complete && ex.values) {
+            // Make sure every REQUIRED field has a non-empty value before
+            // we persist — otherwise an over-eager extractor could
+            // create half-filled bookings.
+            const missing = ctx.data.bookingForm.fields.filter(
+              (f) => f.required && !(ex.values[f.key] && String(ex.values[f.key]).trim()),
+            );
+            if (missing.length === 0) {
+              parsedBooking = {};
+              for (const f of ctx.data.bookingForm.fields) {
+                parsedBooking[f.key] = (ex.values[f.key] ?? '').toString();
+              }
+              args.log.info(
+                { fieldCount: ctx.data.bookingForm.fields.length },
+                '[whatsapp] booking captured via fallback extractor',
+              );
+            } else {
+              args.log.info(
+                { missing: missing.map((f) => f.key) },
+                '[whatsapp] booking extractor flagged complete but required fields missing',
+              );
+            }
+          }
         }
       }
 

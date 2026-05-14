@@ -21,7 +21,7 @@
 //                                        with NO tx held
 // Call sites do tx1 → release → LLM → tx2.
 
-import { complete } from './openai.js';
+import { complete, completeJson } from './openai.js';
 
 const PERSONALITY_DESCRIPTIONS: Record<string, string> = {
   formal: 'Professional, precise, no contractions. Address customer with full sentences.',
@@ -362,9 +362,31 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     // and the customer wants to book/schedule, walk them through the
     // fields one or two at a time, then emit the [BOOKING: {...}]
     // marker with the collected values. The marker MUST be valid
-    // strict JSON so the server can persist it.
+    // strict JSON so the server can persist it. Marker emission is
+    // load-bearing: the system creates the booking row ONLY when the
+    // marker is present. Without it, the booking is lost.
     bookingForm
-      ? `- Booking flow: if the customer's message clearly asks to BOOK / SCHEDULE / RESERVE a "${bookingForm.title}" (or matches one of: ${bookingForm.intentKeywords.join(', ') || '"book", "appointment", "consultation", "reserve", "schedule"'}), start collecting the FORM FIELDS listed below ONE OR TWO at a time so the customer doesn't get overwhelmed. After the customer has answered ALL required fields, repeat the captured values back to confirm, then on a NEW LINE emit this marker (strict JSON, no trailing comma): [BOOKING: { "${bookingForm.fields.map((f) => `${f.key}": "<value>"`).join(', "')} }] — keys exactly as written, missing optional answers as empty strings. The server creates a Booking from the marker. NEVER emit the marker until every required field has a customer-provided value.`
+      ? `- BOOKING FLOW (load-bearing). If the customer's message asks to BOOK / SCHEDULE / RESERVE a "${bookingForm.title}" (or matches one of: ${bookingForm.intentKeywords.join(', ') || '"book", "appointment", "consultation", "reserve", "schedule"'}):\n` +
+        `  Step 1: ask for the fields listed in the BOOKING FORM section below, ONE OR TWO at a time so the customer isn't overwhelmed. Use the exact LABELS shown.\n` +
+        `  Step 2: when EVERY required field has a value, summarise the captured values back to the customer and ask them to confirm.\n` +
+        `  Step 3: as SOON AS the customer affirms (yes / confirm / go ahead / ok / etc.), include the BOOKING marker. After a brief one-sentence confirmation reply, emit on a NEW LINE:\n` +
+        `    [BOOKING: ${JSON.stringify(
+          Object.fromEntries(bookingForm.fields.map((f) => [f.key, `<${f.label}>`])),
+        )}]\n` +
+        `  Replace each <...> with the customer's actual answer (as a string, even for dates). Missing optional answers = "". Keys EXACTLY as written. The marker is what creates the booking in the dashboard — if you don't emit it, the booking is LOST.\n` +
+        `  Example flow (English):\n` +
+        `    User: "I want to book a consultation"\n` +
+        `    Bot: "Great — what's your full name?"\n` +
+        `    User: "Jane Doe"\n` +
+        `    Bot: "Thanks Jane. What's your email?"\n` +
+        `    User: "jane@x.com"\n` +
+        `    Bot: "Got it. Preferred date?"\n` +
+        `    User: "Tomorrow at 5"\n` +
+        `    Bot: "Anything you'd like us to know?"\n` +
+        `    User: "Just IT strategy"\n` +
+        `    Bot: "I have: Jane Doe, jane@x.com, tomorrow at 5, IT strategy. Shall I book it?"\n` +
+        `    User: "Yes confirm"\n` +
+        `    Bot: "All set, Jane — booking confirmed for tomorrow at 5. We'll be in touch.\\n[BOOKING: {\\"name\\":\\"Jane Doe\\",\\"email\\":\\"jane@x.com\\",\\"date\\":\\"tomorrow at 5\\",\\"notes\\":\\"IT strategy\\"}]"`
       : '',
     `- Hours: when a customer asks about opening times, quote directly from the OPENING HOURS section below. Don't paraphrase — read it back day-by-day, and call out the days that show "Closed" so the customer knows when not to expect a reply.`,
     // Language rule: reply in the customer's language IF it's one we
@@ -451,3 +473,59 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
 
   return { text: result.text, usedKbCount: kb.length };
 }
+
+// Fallback booking extractor. The main bot reply path asks the LLM to
+// emit a [BOOKING: {...}] marker when a flow completes, but GPT-4o-mini
+// is unreliable at sticking to the marker — it sometimes just writes a
+// natural-language confirmation and leaves it at that. This function
+// re-reads the recent conversation in JSON mode and asks the model to
+// either (a) return every captured field if the flow is complete, or
+// (b) say it isn't done yet. Caller persists the Booking only when the
+// model reports complete=true AND every required field has a non-empty
+// value. Cheap to call: bounded short prompt, gpt-4o-mini tokens.
+export interface BookingExtraction {
+  complete: boolean;
+  values: Record<string, string>;
+}
+
+export async function extractBooking(args: {
+  organizationId: string;
+  bookingForm: NonNullable<BotData['bookingForm']>;
+  history: { role: 'user' | 'assistant'; content: string }[];
+  latestUserMessage: string;
+}): Promise<BookingExtraction> {
+  const { bookingForm } = args;
+  const sys = [
+    'You are a structured-data extractor for a chatbot booking flow.',
+    `The operator's form is titled "${bookingForm.title}".`,
+    'Fields to capture (key — label — required):',
+    ...bookingForm.fields.map(
+      (f) => `- ${f.key} — ${f.label} — ${f.required ? 'required' : 'optional'} (type: ${f.type})`,
+    ),
+    '',
+    'Read the conversation. Decide if the booking is COMPLETE — i.e. every required field has a customer-provided value AND the customer just confirmed/agreed/affirmed the booking in their LAST message.',
+    'Output STRICT JSON with exactly two keys:',
+    '  - "complete": boolean — true ONLY if every required field has a real value the customer provided AND the customer just confirmed.',
+    '  - "values": object mapping each form key to the captured string value. Missing optional fields = "". Use exactly the keys listed above; never invent new ones.',
+    'Do NOT include any commentary or other keys. Just the JSON object.',
+  ].join('\n');
+
+  const convo = args.history
+    .slice(-12)
+    .map((h) => `${h.role.toUpperCase()}: ${h.content}`)
+    .join('\n');
+  const userPrompt = `CONVERSATION (oldest → newest):\n${convo}\nUSER (just now): ${args.latestUserMessage}\n\nReturn the JSON object.`;
+
+  try {
+    return await completeJson<BookingExtraction>({
+      organizationId: args.organizationId,
+      systemPrompt: sys,
+      messages: [{ role: 'user', content: userPrompt }],
+      maxTokens: 300,
+      temperature: 0,
+    });
+  } catch {
+    return { complete: false, values: {} };
+  }
+}
+

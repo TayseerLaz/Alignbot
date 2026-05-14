@@ -82,3 +82,33 @@ export async function complete(args: CompleteArgs): Promise<{ text: string; inpu
     outputTokens: res.usage?.completion_tokens ?? 0,
   };
 }
+
+// Strict JSON-mode completion. The LLM is asked to return a single JSON
+// object. Used by the booking extractor fallback so we don't depend on
+// the conversational LLM remembering to emit our [BOOKING: {...}] marker.
+export async function completeJson<T = unknown>(args: CompleteArgs): Promise<T> {
+  const estIn = Math.ceil(args.systemPrompt.length / 4)
+    + args.messages.reduce((s, m) => s + Math.ceil(m.content.length / 4), 0);
+  const estOut = args.maxTokens ?? 400;
+  const ok = await consumeDailyTokens(args.organizationId, estIn + estOut);
+  if (!ok) {
+    const err = new Error('Daily AI token budget exceeded for this organization.');
+    (err as Error & { code?: string }).code = 'TOKEN_BUDGET_EXCEEDED';
+    throw err;
+  }
+
+  const c = client();
+  const res = await c.chat.completions.create({
+    model: env.OPENAI_MODEL,
+    max_tokens: args.maxTokens ?? 400,
+    temperature: args.temperature ?? 0,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: args.systemPrompt },
+      ...args.messages,
+    ],
+  });
+
+  const text = (res.choices[0]?.message.content ?? '').trim();
+  return JSON.parse(text) as T;
+}

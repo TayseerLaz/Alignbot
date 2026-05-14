@@ -453,7 +453,13 @@ function ThreadView({
       />
       <TagBar thread={thread} onAdd={(t) => addTag.mutate(t)} onRemove={(t) => removeTag.mutate(t)} />
       <AiStatusBanner thread={thread} botDeployed={botDeployed} />
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
+      <MessageScroller
+        threadId={thread.id}
+        timelineLength={timeline.length}
+        latestTimestamp={
+          timeline.length > 0 ? timeline[timeline.length - 1]!.at : null
+        }
+      >
         {messagesQ.isLoading ? (
           <p className="text-center text-sm text-foreground-muted">Loading…</p>
         ) : timeline.length === 0 ? (
@@ -467,7 +473,7 @@ function ThreadView({
             ),
           )
         )}
-      </div>
+      </MessageScroller>
       <div className="shrink-0">
         <ReplyBox
           to={thread.customerPhone}
@@ -517,126 +523,161 @@ function ThreadHeader({
     setEditing(false);
   };
 
+  // Tightened layout:
+  //   Row 1 (always visible):  avatar circle + customer name (clickable
+  //                            to rename) + status pill + assignee chip.
+  //                            On the right: Take / AI / Handoff (the
+  //                            three ownership actions, grouped).
+  //   Row 2 (always visible):  phone (mono) + WhatsApp nickname.
+  //                            Quiet — these are reference info, not
+  //                            actions.
+  // No more layout shifts on rename: secondary line is unconditional.
+  const initial = (thread.customerName ?? thread.customerWhatsappName ?? thread.customerPhone)
+    .replace(/[^\p{L}\p{N}]/gu, '')
+    .charAt(0)
+    .toUpperCase() || '#';
+
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-muted/40 px-4 py-2">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <Phone className="size-4 shrink-0 text-foreground-muted" />
-        <div className="min-w-0 flex-1">
-          {editing ? (
-            <div className="flex items-center gap-2">
-              <Input
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') save();
-                  if (e.key === 'Escape') {
+    <div className="flex flex-col gap-2 border-b border-border bg-surface-muted/40 px-4 py-2.5">
+      {/* Row 1 — identity + actions */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          {/* Avatar circle with the first character of the visible name */}
+          <div
+            aria-hidden
+            className="flex size-9 shrink-0 items-center justify-center rounded-full bg-brand-100 text-sm font-semibold text-brand-700"
+          >
+            {initial}
+          </div>
+          <div className="min-w-0 flex-1">
+            {editing ? (
+              <div className="flex items-center gap-1.5">
+                <Input
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') save();
+                    if (e.key === 'Escape') {
+                      setDraft(thread.customerName ?? '');
+                      setEditing(false);
+                    }
+                  }}
+                  placeholder="Customer name"
+                  autoFocus
+                  className="h-7 max-w-[14rem] text-sm"
+                  aria-label="Customer name"
+                />
+                <Button size="sm" onClick={save} loading={renameSaving}>
+                  Save
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
                     setDraft(thread.customerName ?? '');
                     setEditing(false);
-                  }
-                }}
-                placeholder="Customer name"
-                autoFocus
-                className="h-7 max-w-[16rem] text-sm"
-                aria-label="Customer name"
-              />
-              <Button size="sm" onClick={save} loading={renameSaving}>
-                Save
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setDraft(thread.customerName ?? '');
-                  setEditing(false);
-                }}
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                className="group inline-flex max-w-full items-center gap-1.5 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
+                title="Click to rename"
               >
-                Cancel
-              </Button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setEditing(true)}
-              className="group block max-w-full rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
-              title="Click to rename"
-            >
-              {/* Top line is ALWAYS the operator-set contact name (the
-                  same value editable here and on /contacts). Never the
-                  WhatsApp nickname — that's surfaced separately below.
-                  When no contact name is set, fall through to the
-                  phone so the row is never blank. */}
-              <p className="truncate text-sm font-semibold text-foreground">
-                {thread.customerName ?? thread.customerPhone}
-                <span className="ml-1 text-[10px] font-normal text-foreground-subtle opacity-0 group-hover:opacity-100">
+                <span className="truncate text-sm font-semibold text-foreground">
+                  {thread.customerName ?? thread.customerWhatsappName ?? thread.customerPhone}
+                </span>
+                <span className="text-[10px] font-normal text-foreground-subtle opacity-0 group-hover:opacity-100">
                   ✎ rename
                 </span>
-              </p>
-              {/* Secondary line: WhatsApp nickname (Meta's profile.name,
-                  read-only) + phone. Both are auxiliary info so they
-                  never compete with the operator-controlled name. */}
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-0">
-                {thread.customerWhatsappName ? (
-                  <p
-                    className="text-[10px] text-foreground-subtle"
-                    title="The customer's WhatsApp profile name (read-only)"
-                  >
-                    WhatsApp nickname: <span className="font-medium">{thread.customerWhatsappName}</span>
-                  </p>
-                ) : null}
-                {thread.customerName ? (
-                  <p className="font-mono text-[10px] text-foreground-subtle">
-                    {thread.customerPhone}
-                  </p>
-                ) : null}
-              </div>
-            </button>
-          )}
+              </button>
+            )}
+          </div>
         </div>
-        <Badge variant={STATUS_VARIANT[thread.status]} className="ml-2">
-          {STATUS_LABEL[thread.status]}
-        </Badge>
-        {thread.assignedToName ? (
-          <Badge variant="muted" className="gap-1">
-            <UserCheck className="size-3" /> {thread.assignedToName}
-          </Badge>
-        ) : null}
+
+        {/* Right cluster: status pill + assignee chip + action group.
+            Status comes first so it reads top-left to bottom-right:
+            who is this, what state, who owns it, what can I do. */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Select value={thread.status} onValueChange={(v) => onStatusChange(v as ThreadStatus)}>
+            <SelectTrigger className="h-8 w-28 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="open">Open</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="resolved">Resolved</SelectItem>
+              <SelectItem value="escalated">Escalated</SelectItem>
+            </SelectContent>
+          </Select>
+          {thread.assignedToName ? (
+            <Badge variant="muted" className="gap-1 whitespace-nowrap">
+              <UserCheck className="size-3" /> {thread.assignedToName}
+            </Badge>
+          ) : (
+            <Badge variant={STATUS_VARIANT[thread.status]} className="gap-1 whitespace-nowrap">
+              <Sparkles className="size-3" /> AI handling
+            </Badge>
+          )}
+          {/* The three ownership actions, visually grouped via a rounded
+              container so they read as a single control. */}
+          <div className="flex items-center overflow-hidden rounded-md border border-border bg-white">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="rounded-none border-0"
+              onClick={onAssignSelf}
+              title="Take this thread (you become the assignee)"
+            >
+              <UserCheck className="size-3.5" /> Take
+            </Button>
+            <span className="h-5 w-px bg-border" aria-hidden />
+            <Button
+              size="sm"
+              variant="ghost"
+              className={cn(
+                'rounded-none border-0',
+                !thread.assignedToUserId && 'bg-brand-50 text-brand-700',
+              )}
+              aria-pressed={!thread.assignedToUserId}
+              onClick={onUnassign}
+              title={
+                thread.assignedToUserId
+                  ? 'Hand the thread to the AI (unassigns the current owner)'
+                  : 'AI is currently handling this thread'
+              }
+            >
+              <Sparkles className="size-3.5" /> AI
+            </Button>
+            <span className="h-5 w-px bg-border" aria-hidden />
+            <Button
+              size="sm"
+              variant="ghost"
+              className="rounded-none border-0 text-amber-700"
+              onClick={onHandoff}
+              title="Escalate to a human + post an internal note"
+            >
+              <AlertTriangle className="size-3.5" /> Handoff
+            </Button>
+          </div>
+        </div>
       </div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Select value={thread.status} onValueChange={(v) => onStatusChange(v as ThreadStatus)}>
-          <SelectTrigger className="h-8 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="open">Open</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="resolved">Resolved</SelectItem>
-            <SelectItem value="escalated">Escalated</SelectItem>
-          </SelectContent>
-        </Select>
-        <Button size="sm" variant="secondary" onClick={onAssignSelf}>
-          <UserCheck className="size-3.5" /> Take
-        </Button>
-        {/* "AI" toggle: when no human is assigned to this thread, the
-            deployed bot replies to inbound messages automatically. The
-            button is active/pressed in that state to make it obvious.
-            Clicking it on a human-owned thread unassigns the owner so
-            the bot can take over. */}
-        <Button
-          size="sm"
-          variant={thread.assignedToUserId ? 'ghost' : 'secondary'}
-          aria-pressed={!thread.assignedToUserId}
-          onClick={onUnassign}
-          title={
-            thread.assignedToUserId
-              ? 'Let the AI handle this thread (unassigns the current owner)'
-              : 'AI is currently handling this thread'
-          }
-        >
-          <Sparkles className="size-3.5" /> AI
-        </Button>
-        <Button size="sm" variant="secondary" onClick={onHandoff}>
-          <AlertTriangle className="size-3.5" /> Handoff
-        </Button>
+
+      {/* Row 2 — phone + WhatsApp nickname (quiet reference info) */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-12 text-[11px] text-foreground-subtle">
+        <span className="inline-flex items-center gap-1 font-mono">
+          <Phone className="size-3" />
+          {thread.customerPhone}
+        </span>
+        {thread.customerWhatsappName ? (
+          <span title="The customer's WhatsApp profile name (read-only)">
+            WhatsApp: <span className="font-medium">{thread.customerWhatsappName}</span>
+          </span>
+        ) : null}
       </div>
     </div>
   );
@@ -682,6 +723,69 @@ function TagBar({
         aria-label="Add tag"
         className="h-7 w-32 rounded border border-border bg-white px-2 text-xs placeholder:text-foreground-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
       />
+    </div>
+  );
+}
+
+// Scroll container that auto-pins the conversation to the bottom on
+// thread open and whenever a new message arrives. Respects operator
+// intent: if they've scrolled up to read older history (more than
+// ~80px from the bottom), we don't yank them back — but the moment
+// they scroll near the bottom again we resume sticking.
+function MessageScroller({
+  threadId,
+  timelineLength,
+  latestTimestamp,
+  children,
+}: {
+  threadId: string;
+  timelineLength: number;
+  latestTimestamp: string | null;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  // Tracks whether the operator is "stuck to the bottom" — true means
+  // any new message scrolls them down; false means they're reading
+  // older messages and we leave them alone.
+  const stuckRef = useRef(true);
+
+  // Jump (instant, no animation) to the bottom whenever the thread
+  // changes — different conversation, different reading position.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    stuckRef.current = true;
+  }, [threadId]);
+
+  // Smooth-scroll to the bottom whenever a new message lands AND the
+  // operator is currently near the bottom. Triggered by either a
+  // timeline count change OR the most recent message's timestamp
+  // changing (covers in-place edits).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !stuckRef.current) return;
+    // Defer one frame so the DOM has rendered the new message before
+    // we measure scrollHeight.
+    requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    });
+  }, [timelineLength, latestTimestamp]);
+
+  const handleScroll = () => {
+    const el = ref.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stuckRef.current = distanceFromBottom < 80;
+  };
+
+  return (
+    <div
+      ref={ref}
+      onScroll={handleScroll}
+      className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4"
+    >
+      {children}
     </div>
   );
 }

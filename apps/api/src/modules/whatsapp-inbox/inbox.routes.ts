@@ -432,15 +432,43 @@ export default async function inboxRoutes(app: FastifyInstance) {
     },
     async (req) =>
       app.tenant(req, async (tx) => {
+        const tag = req.body.tag.toLowerCase();
+        const orgId = req.auth!.organizationId;
         await tx.whatsAppThreadTag
           .create({
             data: {
-              organizationId: req.auth!.organizationId,
+              organizationId: orgId,
               threadId: req.params.id,
-              tag: req.body.tag.toLowerCase(),
+              tag,
             },
           })
           .catch(() => undefined); // duplicate is fine
+        // Mirror to the matching Contact's tag set so /contacts and
+        // segment filters see the same labels operators apply in the
+        // inbox. Find the thread to discover its phone, find/create
+        // the contact (rare case: inbound landed before contact
+        // creation), then upsert the contact_tag row.
+        const thread = await tx.whatsAppThread.findUnique({
+          where: { id: req.params.id },
+          select: { customerPhone: true },
+        });
+        if (thread?.customerPhone) {
+          const phoneE164 = thread.customerPhone.startsWith('+')
+            ? thread.customerPhone
+            : `+${thread.customerPhone}`;
+          const contact = await tx.contact.upsert({
+            where: {
+              organizationId_phoneE164: { organizationId: orgId, phoneE164 },
+            },
+            create: { organizationId: orgId, phoneE164, source: 'inbox_auto' },
+            update: {},
+          });
+          await tx.contactTag
+            .create({
+              data: { organizationId: orgId, contactId: contact.id, tag },
+            })
+            .catch(() => undefined);
+        }
         return { ok: true as const };
       }),
   );
@@ -458,9 +486,31 @@ export default async function inboxRoutes(app: FastifyInstance) {
     },
     async (req) =>
       app.tenant(req, async (tx) => {
+        const tag = decodeURIComponent(req.params.tag).toLowerCase();
+        const orgId = req.auth!.organizationId;
         await tx.whatsAppThreadTag.deleteMany({
-          where: { threadId: req.params.id, tag: decodeURIComponent(req.params.tag).toLowerCase() },
+          where: { threadId: req.params.id, tag },
         });
+        // Mirror the removal: pull the contact row for the same phone
+        // and delete its matching contact_tag, if any.
+        const thread = await tx.whatsAppThread.findUnique({
+          where: { id: req.params.id },
+          select: { customerPhone: true },
+        });
+        if (thread?.customerPhone) {
+          const phoneE164 = thread.customerPhone.startsWith('+')
+            ? thread.customerPhone
+            : `+${thread.customerPhone}`;
+          const contact = await tx.contact.findUnique({
+            where: { organizationId_phoneE164: { organizationId: orgId, phoneE164 } },
+            select: { id: true },
+          });
+          if (contact) {
+            await tx.contactTag.deleteMany({
+              where: { contactId: contact.id, tag },
+            });
+          }
+        }
         return { ok: true as const };
       }),
   );

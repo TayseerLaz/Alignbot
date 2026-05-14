@@ -26,8 +26,12 @@ function BrandPanel() {
       aria-hidden
       className="relative hidden flex-col justify-end overflow-hidden p-12 lg:flex"
       style={{
+        // Navy "high-conversion" gradient — rich Mediterranean blue
+        // at the highlight fading into deep midnight at the corners.
+        // Tonal hierarchy: bright trust-blue → enterprise navy → near-black
+        // gives a premium, financial-grade feel without screaming.
         background:
-          'radial-gradient(ellipse 80% 70% at 70% 20%, #2d8a66 0%, #1a6648 28%, #0f4a36 55%, #082b1f 85%, #04140d 100%)',
+          'radial-gradient(ellipse 80% 70% at 70% 20%, #2f5fd1 0%, #1c3f9c 28%, #112766 55%, #07153d 85%, #030a1f 100%)',
       }}
     >
       {/* Soft inner highlight near the top, exactly like the reference. */}
@@ -36,7 +40,7 @@ function BrandPanel() {
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            'radial-gradient(circle at 60% 0%, rgba(255,255,255,0.18) 0%, transparent 55%)',
+            'radial-gradient(circle at 60% 0%, rgba(255,255,255,0.16) 0%, transparent 55%)',
         }}
       />
 

@@ -33,6 +33,7 @@ import whatsappRoutes from './modules/whatsapp/whatsapp.routes.js';
 import whatsappTemplatesRoutes from './modules/whatsapp-templates/templates.routes.js';
 import apiKeyRoutes from './modules/api-keys/api-keys.routes.js';
 import authRoutes from './modules/auth/auth.routes.js';
+import bookingsRoutes from './modules/bookings/bookings.routes.js';
 import businessInfoRoutes from './modules/catalog/business-info.routes.js';
 import categoryRoutes from './modules/catalog/category.routes.js';
 import productRoutes from './modules/catalog/product.routes.js';
@@ -231,6 +232,7 @@ export async function buildServer() {
   await app.register(productRoutes, { prefix: '/api/v1' });
   await app.register(serviceRoutes, { prefix: '/api/v1' });
   await app.register(businessInfoRoutes, { prefix: '/api/v1' });
+  await app.register(bookingsRoutes, { prefix: '/api/v1' });
   await app.register(importRoutes, { prefix: '/api/v1' });
   await app.register(connectorRoutes, { prefix: '/api/v1' });
   await app.register(webhookEndpointRoutes, { prefix: '/api/v1' });

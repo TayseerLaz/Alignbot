@@ -1762,6 +1762,10 @@ async function maybeReplyAsBot(args: {
       if (!thread) return null;
       // Don't reply if a human owns it.
       if (thread.assignedToUserId) return null;
+      // Don't reply once the bot has escalated to a human — the thread
+      // is waiting for an operator to step in. They'll un-escalate by
+      // resolving or re-opening the chat from the inbox.
+      if (thread.status === 'escalated') return null;
 
       const ch = await tx.whatsAppChannel.findFirst({
         where: { organizationId: args.organizationId, isPrimary: true },
@@ -1891,7 +1895,26 @@ async function maybeReplyAsBot(args: {
     // as a SEPARATE WhatsApp message AFTER the text reply.
     const imageMarkerRe = /\[IMAGE:\s*([^\]\s]+)\s*\]/i;
     const imageMatch = imageMarkerRe.exec(rawReply);
-    const reply = rawReply.replace(imageMarkerRe, '').trim();
+
+    // Handoff protocol: bare [HANDOFF] marker means the customer asked
+    // for a human teammate. Strip it, flip the thread to "escalated"
+    // (sidebar Inbox badge + colored row in the list), and post an
+    // internal note so the operator can see why.
+    const handoffMarkerRe = /\[HANDOFF\]/i;
+    const wantsHandoff = handoffMarkerRe.test(rawReply);
+
+    // Booking protocol: [BOOKING: { ... json ... }] terminates a
+    // booking conversation. We parse the JSON, look up the operator's
+    // configured form to label each field, persist a Booking row,
+    // strip the marker from the visible reply.
+    const bookingMarkerRe = /\[BOOKING:\s*(\{[\s\S]*?\})\s*\]/i;
+    const bookingMatch = bookingMarkerRe.exec(rawReply);
+
+    let reply = rawReply
+      .replace(imageMarkerRe, '')
+      .replace(handoffMarkerRe, '')
+      .replace(bookingMarkerRe, '')
+      .trim();
     const imageProduct = imageMatch
       ? ctx.data.products.find(
           (p) => p.sku.toLowerCase() === imageMatch[1]!.toLowerCase(),
@@ -1901,6 +1924,16 @@ async function maybeReplyAsBot(args: {
       imageProduct?.primaryImageStorageKey && imageProduct.primaryImageStorageKey.length > 0
         ? imageProduct.primaryImageStorageKey
         : null;
+    // If the LLM emitted ONLY markers (no visible text), fall back to a
+    // short acknowledgement so the customer sees something — and so the
+    // handoff / booking side effects still run.
+    if (!reply) {
+      if (wantsHandoff) {
+        reply = "Sure — connecting you with a teammate now. They'll pick up here shortly.";
+      } else if (bookingMatch) {
+        reply = 'All set — your request has been captured. A teammate will follow up shortly.';
+      }
+    }
     if (!reply && !imageStorageKey) continue;
 
     // Send via Meta directly (we're in the worker-equivalent path; reusing
@@ -2042,6 +2075,23 @@ async function maybeReplyAsBot(args: {
         }
       }
       // Persist outbound + bump thread.
+      // wantsHandoff flips the thread to 'escalated' so the inbox can
+      // surface it (colored row + sidebar badge). booking marker, if
+      // valid, persists a Booking row that operators see on /bookings.
+      let parsedBooking: Record<string, string> | null = null;
+      if (bookingMatch) {
+        try {
+          const obj = JSON.parse(bookingMatch[1]!) as Record<string, unknown>;
+          parsedBooking = {};
+          for (const [k, v] of Object.entries(obj)) {
+            parsedBooking[k] = v == null ? '' : String(v);
+          }
+        } catch (err) {
+          args.log.warn({ err, raw: bookingMatch[1]?.slice(0, 300) }, '[whatsapp] booking marker JSON invalid');
+          parsedBooking = null;
+        }
+      }
+
       await withRlsBypass(async (tx) => {
         const thread = await tx.whatsAppThread.findFirst({
           where: { organizationId: args.organizationId, customerPhone: m.from },
@@ -2065,8 +2115,61 @@ async function maybeReplyAsBot(args: {
             lastMessageAt: new Date(),
             lastMessagePreview: reply.slice(0, 200),
             outboundCount: { increment: 1 },
+            ...(wantsHandoff ? { status: 'escalated' as never } : {}),
           },
         });
+
+        if (wantsHandoff) {
+          await tx.whatsAppNote.create({
+            data: {
+              threadId: thread.id,
+              organizationId: args.organizationId,
+              authorUserId: null,
+              body: '🤖 → 👤 Bot flagged this chat for human support (customer asked for an agent).',
+            },
+          });
+        }
+
+        if (parsedBooking && ctx.data.bookingForm) {
+          const fields = ctx.data.bookingForm.fields.map((f) => ({
+            key: f.key,
+            label: f.label,
+            type: f.type,
+            required: f.required,
+            value: parsedBooking![f.key] ?? null,
+          }));
+          const booking = await tx.booking.create({
+            data: {
+              organizationId: args.organizationId,
+              threadId: thread.id,
+              customerPhone: m.from,
+              customerName: thread.customerName ?? thread.customerWhatsappName ?? null,
+              fields: fields as never,
+              status: 'new',
+            },
+          });
+          await tx.whatsAppNote.create({
+            data: {
+              threadId: thread.id,
+              organizationId: args.organizationId,
+              authorUserId: null,
+              body: `📅 Booking captured (id ${booking.id.slice(0, 8)}…). See /bookings.`,
+            },
+          });
+          // Flag for operator review unless an explicit handoff already set it.
+          if (!wantsHandoff) {
+            await tx.whatsAppThread.update({
+              where: { id: thread.id },
+              data: { status: 'pending' as never },
+            });
+          }
+          // Webhook for downstream automations.
+          void (await import('../../lib/webhooks.js')).emitWebhookEvent({
+            organizationId: args.organizationId,
+            eventKind: 'booking_created',
+            payload: { id: booking.id, customerPhone: m.from, fields },
+          });
+        }
       });
     } catch (err) {
       args.log.warn({ err }, '[whatsapp] bot send threw');

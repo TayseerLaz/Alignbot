@@ -1,11 +1,13 @@
 'use client';
 
+import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
   BarChart3,
   Bot,
   Briefcase,
   Building2,
+  CalendarCheck,
   Code2,
   Contact as ContactIcon,
   CreditCard,
@@ -27,6 +29,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import { AlignedLogo } from '@/components/brand/logo';
+import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/lib/session';
 
@@ -35,7 +38,14 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   exact?: boolean;
+  // When set, the sidebar reads `badges[badgeKey]` and renders a red
+  // pill next to the item label. Keeps badge wiring centralised so
+  // adding new badges is just (a) plumb a number through useBadges
+  // and (b) tag the matching nav item.
+  badgeKey?: BadgeKey;
 }
+
+type BadgeKey = 'inboxEscalated';
 
 interface NavGroup {
   label: string;
@@ -71,8 +81,9 @@ const groups: NavGroup[] = [
       { href: '/whatsapp', label: 'WhatsApp', icon: MessageCircle },
       { href: '/whatsapp/templates', label: 'Templates', icon: BarChart3 },
       { href: '/whatsapp/onboarding', label: 'Meta verification', icon: ShieldCheck },
-      { href: '/inbox', label: 'Inbox', icon: Inbox },
+      { href: '/inbox', label: 'Inbox', icon: Inbox, badgeKey: 'inboxEscalated' },
       { href: '/inbox/canned', label: 'Canned replies', icon: Inbox },
+      { href: '/bookings', label: 'Bookings', icon: CalendarCheck },
       { href: '/bot', label: 'AI bot builder', icon: Bot },
       { href: '/analytics', label: 'Analytics', icon: TrendingUp },
     ],
@@ -110,6 +121,24 @@ export function Sidebar({
   const pathname = usePathname();
   const { session } = useSession();
 
+  // Poll the lightweight counts endpoint every 30s so the Inbox badge
+  // stays roughly fresh without thrashing the API. Skip when there's
+  // no active session — useSession returns null while resolving and
+  // the API would 401 anyway.
+  const counts = useQuery({
+    enabled: !!session,
+    queryKey: ['sidebar-inbox-counts'],
+    queryFn: () =>
+      api.get<{ data: { escalated: number; pending: number; open: number } }>(
+        '/api/v1/inbox/counts',
+      ),
+    refetchInterval: 30_000,
+    staleTime: 20_000,
+  });
+  const badges: Record<BadgeKey, number> = {
+    inboxEscalated: counts.data?.data.escalated ?? 0,
+  };
+
   const isActive = (item: NavItem) => (item.exact ? pathname === item.href : pathname.startsWith(item.href));
 
   // When collapsed: the row strips down to a centred icon with the
@@ -118,15 +147,17 @@ export function Sidebar({
   const renderItem = (item: NavItem) => {
     const Icon = item.icon;
     const active = isActive(item);
+    const badgeCount = item.badgeKey ? badges[item.badgeKey] : 0;
+    const showBadge = badgeCount > 0;
     return (
       <Link
         key={item.href}
         href={item.href}
         onClick={onNavigate}
-        title={collapsed ? item.label : undefined}
+        title={collapsed ? `${item.label}${showBadge ? ` (${badgeCount})` : ''}` : undefined}
         aria-label={item.label}
         className={cn(
-          'flex items-center rounded-md text-sm font-medium transition-colors',
+          'relative flex items-center rounded-md text-sm font-medium transition-colors',
           collapsed ? 'justify-center px-2 py-2' : 'gap-2.5 px-3 py-2',
           active
             ? 'bg-brand-50 text-brand-700'
@@ -135,6 +166,17 @@ export function Sidebar({
       >
         <Icon className="size-4 shrink-0" />
         {collapsed ? null : <span className="truncate">{item.label}</span>}
+        {showBadge ? (
+          collapsed ? (
+            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold text-white">
+              {badgeCount > 9 ? '9+' : badgeCount}
+            </span>
+          ) : (
+            <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 text-xs font-semibold text-white">
+              {badgeCount > 99 ? '99+' : badgeCount}
+            </span>
+          )
+        ) : null}
       </Link>
     );
   };

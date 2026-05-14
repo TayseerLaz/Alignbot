@@ -14,7 +14,7 @@ import {
   FaqVisibility,
 } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, MapPin, MessageSquare, Phone, Plus, Save, ScrollText, Trash2 } from 'lucide-react';
+import { Building2, CalendarCheck, MapPin, MessageSquare, Phone, Plus, Save, ScrollText, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -63,6 +63,9 @@ export default function BusinessInfoPage() {
           <TabsTrigger value="policies">
             <ScrollText className="mr-2 size-4" /> Policies
           </TabsTrigger>
+          <TabsTrigger value="booking">
+            <CalendarCheck className="mr-2 size-4" /> Booking form
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="profile">
           <ProfilePanel />
@@ -78,6 +81,9 @@ export default function BusinessInfoPage() {
         </TabsContent>
         <TabsContent value="policies">
           <PoliciesPanel />
+        </TabsContent>
+        <TabsContent value="booking">
+          <BookingFormPanel />
         </TabsContent>
       </Tabs>
     </>
@@ -855,6 +861,253 @@ function PoliciesPanel() {
               ))}
             </ul>
           )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ---------- booking form ---------------------------------------------------
+const BOOKING_FIELD_TYPES = ['text', 'email', 'phone', 'date', 'time', 'number', 'long_text'] as const;
+type BookingFieldType = (typeof BOOKING_FIELD_TYPES)[number];
+
+interface BookingFieldDraft {
+  key: string;
+  label: string;
+  type: BookingFieldType;
+  required: boolean;
+}
+
+interface BookingFormDraft {
+  enabled: boolean;
+  title: string;
+  intentKeywords: string[];
+  fields: BookingFieldDraft[];
+}
+
+function defaultBookingForm(): BookingFormDraft {
+  return {
+    enabled: false,
+    title: 'Book a consultation',
+    intentKeywords: ['book', 'appointment', 'consultation', 'reserve', 'schedule'],
+    fields: [
+      { key: 'name', label: 'Full name', type: 'text', required: true },
+      { key: 'email', label: 'Email', type: 'email', required: true },
+      { key: 'date', label: 'Preferred date', type: 'date', required: true },
+      { key: 'notes', label: 'Anything else?', type: 'long_text', required: false },
+    ],
+  };
+}
+
+function BookingFormPanel() {
+  const queryClient = useQueryClient();
+  const infoQuery = useQuery({
+    queryKey: ['business-info'],
+    queryFn: () => api.get<{ data: BusinessInfoDto | null }>('/api/v1/business-info'),
+  });
+
+  const [draft, setDraft] = useState<BookingFormDraft>(defaultBookingForm());
+  const [keywordsInput, setKeywordsInput] = useState('');
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!infoQuery.data || loaded) return;
+    const incoming = (infoQuery.data.data as { bookingForm?: BookingFormDraft } | null)
+      ?.bookingForm;
+    if (incoming && Array.isArray(incoming.fields)) {
+      setDraft({
+        enabled: !!incoming.enabled,
+        title: incoming.title || 'Book a consultation',
+        intentKeywords: incoming.intentKeywords ?? [],
+        fields: incoming.fields.map((f) => ({
+          key: f.key,
+          label: f.label,
+          type: (BOOKING_FIELD_TYPES as readonly string[]).includes(f.type)
+            ? (f.type as BookingFieldType)
+            : 'text',
+          required: f.required !== false,
+        })),
+      });
+      setKeywordsInput((incoming.intentKeywords ?? []).join(', '));
+    } else {
+      const d = defaultBookingForm();
+      setDraft(d);
+      setKeywordsInput(d.intentKeywords.join(', '));
+    }
+    setLoaded(true);
+  }, [infoQuery.data, loaded]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.put('/api/v1/business-info', {
+        bookingForm: {
+          enabled: draft.enabled,
+          title: draft.title.trim() || 'Booking',
+          intentKeywords: keywordsInput
+            .split(/[,\n]+/)
+            .map((s) => s.trim())
+            .filter(Boolean),
+          fields: draft.fields,
+        },
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['business-info'] });
+      toast.success('Booking form saved');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
+  });
+
+  const setField = (i: number, patch: Partial<BookingFieldDraft>) => {
+    setDraft((d) => {
+      const next = [...d.fields];
+      next[i] = { ...next[i]!, ...patch };
+      return { ...d, fields: next };
+    });
+  };
+
+  const addField = () => {
+    setDraft((d) => ({
+      ...d,
+      fields: [
+        ...d.fields,
+        { key: `field_${d.fields.length + 1}`, label: '', type: 'text', required: true },
+      ],
+    }));
+  };
+
+  const removeField = (i: number) => {
+    setDraft((d) => ({ ...d, fields: d.fields.filter((_, idx) => idx !== i) }));
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Booking form</CardTitle>
+          <CardDescription>
+            Configure the fields the AI chatbot asks for when a customer wants to book a meeting,
+            consultation, or appointment. Each completed booking lands on the{' '}
+            <a className="text-brand-600 hover:underline" href="/bookings">
+              /bookings
+            </a>{' '}
+            page.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              className="mt-1 size-4 accent-brand-600"
+              checked={draft.enabled}
+              onChange={(e) => setDraft((d) => ({ ...d, enabled: e.target.checked }))}
+            />
+            <div className="text-sm">
+              <p className="font-medium">Enable booking flow</p>
+              <p className="text-xs text-foreground-muted">
+                When on, the AI will offer to collect these fields when a customer asks to book.
+              </p>
+            </div>
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Title (shown in the prompt + on /bookings)</Label>
+              <Input
+                value={draft.title}
+                onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+                placeholder="Book a consultation"
+              />
+            </div>
+            <div>
+              <Label>Trigger keywords (comma-separated)</Label>
+              <Input
+                value={keywordsInput}
+                onChange={(e) => setKeywordsInput(e.target.value)}
+                placeholder="book, appointment, consultation, reserve"
+              />
+              <p className="mt-1 text-xs text-foreground-muted">
+                The AI starts the booking flow when the customer's message matches one of these.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm">Fields to collect</Label>
+              <Button size="sm" variant="ghost" onClick={addField}>
+                <Plus className="mr-1 size-4" /> Add field
+              </Button>
+            </div>
+            {draft.fields.length === 0 ? (
+              <p className="rounded border border-dashed border-border bg-surface-muted/40 p-4 text-center text-xs italic text-foreground-muted">
+                No fields yet. Add at least one to enable the flow.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {draft.fields.map((f, i) => (
+                  <div
+                    key={i}
+                    className="grid grid-cols-1 gap-2 rounded border border-border bg-white p-3 sm:grid-cols-[1fr_1.5fr_140px_120px_36px]"
+                  >
+                    <Input
+                      placeholder="key (e.g. name)"
+                      value={f.key}
+                      onChange={(e) =>
+                        setField(i, {
+                          key: e.target.value
+                            .replace(/[^a-z0-9_]/gi, '_')
+                            .toLowerCase()
+                            .slice(0, 60),
+                        })
+                      }
+                    />
+                    <Input
+                      placeholder="Label shown to the customer"
+                      value={f.label}
+                      onChange={(e) => setField(i, { label: e.target.value.slice(0, 120) })}
+                    />
+                    <Select
+                      value={f.type}
+                      onValueChange={(v) => setField(i, { type: v as BookingFieldType })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {BOOKING_FIELD_TYPES.map((t) => (
+                          <SelectItem key={t} value={t}>
+                            {t}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <label className="flex items-center gap-1 text-xs">
+                      <input
+                        type="checkbox"
+                        className="size-4 accent-brand-600"
+                        checked={f.required}
+                        onChange={(e) => setField(i, { required: e.target.checked })}
+                      />
+                      Required
+                    </label>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => removeField(i)}
+                      aria-label="Remove field"
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end">
+            <Button onClick={() => save.mutate()} loading={save.isPending}>
+              <Save className="mr-2 size-4" /> Save booking form
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>

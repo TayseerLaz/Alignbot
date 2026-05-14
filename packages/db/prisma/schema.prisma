@@ -116,6 +116,10 @@ enum AuditAction {
   broadcast_resumed
   broadcast_cancelled
   broadcast_completed
+  // Bookings
+  booking_created
+  booking_updated
+  booking_deleted
 }
 
 enum RevisionEntityType {
@@ -229,6 +233,9 @@ enum WebhookEventKind {
   broadcast_completed
   broadcast_failed
   broadcast_recipient_failed
+  // Bookings
+  booking_created
+  booking_status_changed
 }
 
 enum AssetKind {
@@ -321,6 +328,8 @@ model Organization {
   sequences           Sequence[]
   sequenceSteps       SequenceStep[]
   sequenceEnrollments SequenceEnrollment[]
+  // Bookings — customer intakes captured by the AI bot
+  bookings            Booking[]
 
   @@index([status])
   @@map("organizations")
@@ -730,6 +739,10 @@ model BusinessInfo {
   timezone        String   @default("UTC")
   currency        String   @default("USD") @db.Char(3)
   metadata        Json?
+  // Booking form definition: { title, intentKeywords[], fields[] }.
+  // Operator-defined fields the AI bot asks the customer to fill in
+  // when they ask to book a meeting / consultation / appointment.
+  bookingForm     Json?    @map("booking_form")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
@@ -1168,41 +1181,70 @@ enum WhatsAppThreadStatus {
 }
 
 model WhatsAppThread {
-  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId     String               @map("organization_id") @db.Uuid
-  customerPhone      String               @map("customer_phone")
+  id                   String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId       String               @map("organization_id") @db.Uuid
+  customerPhone        String               @map("customer_phone")
   // Operator-set nickname / business name. Free-form. Mirrored from
   // Contact.displayName on rename so /inbox and /contacts stay in sync.
-  customerName       String?              @map("customer_name")
+  customerName         String?              @map("customer_name")
   // Mirror of Meta's WhatsApp profile name from inbound contacts[].
   // profile.name. Read-only; refreshed on every inbound. Lets the
   // inbox row show both the operator's rename AND what the customer
   // actually goes by on WhatsApp.
-  customerWhatsappName String?            @map("customer_whatsapp_name")
-  status             WhatsAppThreadStatus @default(open)
-  assignedToUserId   String?              @map("assigned_to_user_id") @db.Uuid
+  customerWhatsappName String?              @map("customer_whatsapp_name")
+  status               WhatsAppThreadStatus @default(open)
+  assignedToUserId     String?              @map("assigned_to_user_id") @db.Uuid
   // Optional skill that auto-assign should match a member by.
-  requiredSkill      String?              @map("required_skill")
-  lastMessageAt      DateTime             @default(now()) @map("last_message_at")
-  lastMessagePreview String?              @map("last_message_preview")
-  inboundCount       Int                  @default(0) @map("inbound_count")
-  outboundCount      Int                  @default(0) @map("outbound_count")
+  requiredSkill        String?              @map("required_skill")
+  lastMessageAt        DateTime             @default(now()) @map("last_message_at")
+  lastMessagePreview   String?              @map("last_message_preview")
+  inboundCount         Int                  @default(0) @map("inbound_count")
+  outboundCount        Int                  @default(0) @map("outbound_count")
   // Search blob — concatenation of recent messages, kept up-to-date by the
   // upsert path. pg_trgm GIN index added in the migration.
-  searchText         String               @default("") @map("search_text")
-  createdAt          DateTime             @default(now()) @map("created_at")
-  updatedAt          DateTime             @updatedAt @map("updated_at")
+  searchText           String               @default("") @map("search_text")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
 
   organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   assignedTo   User?               @relation("WhatsAppThreadAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
   messages     WhatsAppMessage[]
   tags         WhatsAppThreadTag[]
   notes        WhatsAppNote[]
+  bookings     Booking[]
 
   @@unique([organizationId, customerPhone])
   @@index([organizationId, lastMessageAt(sort: Desc)])
   @@index([organizationId, status, lastMessageAt(sort: Desc)])
   @@map("whatsapp_threads")
+}
+
+// ----------------------------------------------------------------------------
+// Booking — one row per completed intake. The bot collects every field in
+// BusinessInfo.bookingForm.fields[] from the customer in WhatsApp, then we
+// snapshot the form (with values) here so the row stays correct even if the
+// form is edited later.
+// ----------------------------------------------------------------------------
+model Booking {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  threadId       String?  @map("thread_id") @db.Uuid
+  customerPhone  String   @map("customer_phone")
+  customerName   String?  @map("customer_name")
+  // Frozen snapshot of the form at booking time:
+  // [{ key, label, type, required, value }]
+  fields         Json     @default("[]")
+  status         String   @default("new")
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  thread       WhatsAppThread? @relation(fields: [threadId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status, createdAt(sort: Desc)])
+  @@index([organizationId, customerPhone])
+  @@map("bookings")
 }
 
 model WhatsAppThreadTag {
@@ -1737,45 +1779,45 @@ model Segment {
 // 100% variant A. Variables maps are { templateParamIndex: source } where
 // source = { kind: 'csv'|'attribute'|'static', value: string }.
 model Broadcast {
-  id                 String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId     String                @map("organization_id") @db.Uuid
-  name               String
-  status             BroadcastStatus       @default(draft)
-  channelId          String                @map("channel_id") @db.Uuid
-  audienceKind       BroadcastAudienceKind @map("audience_kind")
-  csvAssetId         String?               @map("csv_asset_id") @db.Uuid
-  segmentId          String?               @map("segment_id") @db.Uuid
+  id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String                @map("organization_id") @db.Uuid
+  name                String
+  status              BroadcastStatus       @default(draft)
+  channelId           String                @map("channel_id") @db.Uuid
+  audienceKind        BroadcastAudienceKind @map("audience_kind")
+  csvAssetId          String?               @map("csv_asset_id") @db.Uuid
+  segmentId           String?               @map("segment_id") @db.Uuid
   // A/B test
-  abTest             Boolean               @default(false) @map("ab_test")
-  variantATemplateId String                @map("variant_a_template_id") @db.Uuid
-  variantBTemplateId String?               @map("variant_b_template_id") @db.Uuid
-  variantAVariables  Json                  @default("{}") @map("variant_a_variables")
-  variantBVariables  Json?                 @map("variant_b_variables")
+  abTest              Boolean               @default(false) @map("ab_test")
+  variantATemplateId  String                @map("variant_a_template_id") @db.Uuid
+  variantBTemplateId  String?               @map("variant_b_template_id") @db.Uuid
+  variantAVariables   Json                  @default("{}") @map("variant_a_variables")
+  variantBVariables   Json?                 @map("variant_b_variables")
   // Scheduling
-  scheduledFor       DateTime?             @map("scheduled_for")
-  startedAt          DateTime?             @map("started_at")
-  completedAt        DateTime?             @map("completed_at")
+  scheduledFor        DateTime?             @map("scheduled_for")
+  startedAt           DateTime?             @map("started_at")
+  completedAt         DateTime?             @map("completed_at")
   // Phase 5.3 — send window in the channel's timezone (or per-contact if set).
   // Hours stored as 0-23. Send worker requeues recipients outside the window.
-  sendWindowStartHour Int?                 @map("send_window_start_hour")
-  sendWindowEndHour   Int?                 @map("send_window_end_hour")
-  sendWindowTimezone  String?              @map("send_window_timezone")
+  sendWindowStartHour Int?                  @map("send_window_start_hour")
+  sendWindowEndHour   Int?                  @map("send_window_end_hour")
+  sendWindowTimezone  String?               @map("send_window_timezone")
   // Phase 5.3 — post-hoc A/B winner determination. Set when broadcast completes.
   // Strategy: 'read_rate' | 'response_rate' | 'manual' | null (no determination).
-  abWinnerStrategy    String?              @map("ab_winner_strategy")
-  abWinnerVariant     BroadcastVariant?    @map("ab_winner_variant")
-  abWinnerDecidedAt   DateTime?            @map("ab_winner_decided_at")
+  abWinnerStrategy    String?               @map("ab_winner_strategy")
+  abWinnerVariant     BroadcastVariant?     @map("ab_winner_variant")
+  abWinnerDecidedAt   DateTime?             @map("ab_winner_decided_at")
   // Counters — kept consistent by the fanout/send workers + webhook handler.
-  totalRecipients    Int                   @default(0) @map("total_recipients")
-  queuedCount        Int                   @default(0) @map("queued_count")
-  sentCount          Int                   @default(0) @map("sent_count")
-  deliveredCount     Int                   @default(0) @map("delivered_count")
-  readCount          Int                   @default(0) @map("read_count")
-  failedCount        Int                   @default(0) @map("failed_count")
+  totalRecipients     Int                   @default(0) @map("total_recipients")
+  queuedCount         Int                   @default(0) @map("queued_count")
+  sentCount           Int                   @default(0) @map("sent_count")
+  deliveredCount      Int                   @default(0) @map("delivered_count")
+  readCount           Int                   @default(0) @map("read_count")
+  failedCount         Int                   @default(0) @map("failed_count")
   // The user who clicked Send. May be NULL if the user is later deleted.
-  createdByUserId    String?               @map("created_by_user_id") @db.Uuid
-  createdAt          DateTime              @default(now()) @map("created_at")
-  updatedAt          DateTime              @updatedAt @map("updated_at")
+  createdByUserId     String?               @map("created_by_user_id") @db.Uuid
+  createdAt           DateTime              @default(now()) @map("created_at")
+  updatedAt           DateTime              @updatedAt @map("updated_at")
 
   organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   segment      Segment?             @relation(fields: [segmentId], references: [id], onDelete: SetNull)
@@ -1855,7 +1897,7 @@ model Sequence {
   channelId       String   @map("channel_id") @db.Uuid
   createdByUserId String?  @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt              @map("updated_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   steps        SequenceStep[]
@@ -1875,7 +1917,7 @@ model SequenceStep {
   delayHours     Int      @default(0) @map("delay_hours")
   variables      Json     @default("{}")
   createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt              @map("updated_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   sequence     Sequence     @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
@@ -1886,16 +1928,16 @@ model SequenceStep {
 }
 
 model SequenceEnrollment {
-  id              String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId  String                   @map("organization_id") @db.Uuid
-  sequenceId      String                   @map("sequence_id") @db.Uuid
-  contactId       String                   @map("contact_id") @db.Uuid
-  status          SequenceEnrollmentStatus @default(active)
-  nextStepIndex   Int                      @default(0) @map("next_step_index")
-  nextStepDueAt   DateTime?                @map("next_step_due_at")
-  enrolledAt      DateTime                 @default(now()) @map("enrolled_at")
-  completedAt     DateTime?                @map("completed_at")
-  cancelledAt     DateTime?                @map("cancelled_at")
+  id             String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String                   @map("organization_id") @db.Uuid
+  sequenceId     String                   @map("sequence_id") @db.Uuid
+  contactId      String                   @map("contact_id") @db.Uuid
+  status         SequenceEnrollmentStatus @default(active)
+  nextStepIndex  Int                      @default(0) @map("next_step_index")
+  nextStepDueAt  DateTime?                @map("next_step_due_at")
+  enrolledAt     DateTime                 @default(now()) @map("enrolled_at")
+  completedAt    DateTime?                @map("completed_at")
+  cancelledAt    DateTime?                @map("cancelled_at")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   sequence     Sequence     @relation(fields: [sequenceId], references: [id], onDelete: Cascade)

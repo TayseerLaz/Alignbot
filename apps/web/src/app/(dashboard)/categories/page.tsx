@@ -170,14 +170,14 @@ function CategoryRowGroup({
   const productsQ = useQuery({
     queryKey: ['categories', cat.id, 'products'],
     queryFn: () =>
-      api.get<{ data: ProductRow[] }>(`/api/v1/products?categoryId=${cat.id}&limit=200`),
+      api.get<{ data: ProductRow[] }>(`/api/v1/products?categoryId=${cat.id}&limit=100`),
     enabled: isOpen && productCount > 0,
     staleTime: 30_000,
   });
   const servicesQ = useQuery({
     queryKey: ['categories', cat.id, 'services'],
     queryFn: () =>
-      api.get<{ data: ServiceRow[] }>(`/api/v1/services?categoryId=${cat.id}&limit=200`),
+      api.get<{ data: ServiceRow[] }>(`/api/v1/services?categoryId=${cat.id}&limit=100`),
     enabled: isOpen && serviceCount > 0,
     staleTime: 30_000,
   });

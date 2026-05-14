@@ -229,8 +229,13 @@ function ThreadList({
               onClick={() => onSelect(t.id)}
               aria-current={activeId === t.id}
               className={cn(
-                'flex w-full flex-col gap-1 border-b border-border px-3 py-3 text-left text-sm hover:bg-surface-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400',
-                activeId === t.id && 'bg-brand-50/50',
+                'flex w-full flex-col gap-1 border-b border-l-4 border-border border-l-transparent px-3 py-3 text-left text-sm hover:bg-surface-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400',
+                // Bot-flagged "needs human" threads get a tinted background +
+                // a red left bar so operators can spot them at a glance.
+                t.status === 'escalated' &&
+                  'border-l-red-500 bg-red-50/60 hover:bg-red-50/80',
+                activeId === t.id && t.status !== 'escalated' && 'bg-brand-50/50',
+                activeId === t.id && t.status === 'escalated' && 'bg-red-100/70',
               )}
             >
               <div className="flex items-center justify-between gap-2">

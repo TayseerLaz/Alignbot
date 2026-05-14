@@ -26,6 +26,29 @@ export const hoursExceptionSchema = z.object({
   note: z.string().max(200).optional(),
 });
 
+// Booking form — operator-defined intake the AI bot asks customers to fill
+// in when they want to book a meeting / consultation / appointment.
+export const BOOKING_FIELD_TYPES = ['text', 'email', 'phone', 'date', 'time', 'number', 'long_text'] as const;
+export type BookingFieldType = (typeof BOOKING_FIELD_TYPES)[number];
+
+export const bookingFormFieldSchema = z.object({
+  key: z.string().trim().min(1).max(60).regex(/^[a-z][a-z0-9_]*$/i, 'lowercase letters + digits + _'),
+  label: z.string().trim().min(1).max(120),
+  type: z.enum(BOOKING_FIELD_TYPES).default('text'),
+  required: z.boolean().default(true),
+});
+
+export const bookingFormSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    title: z.string().trim().min(1).max(200).default('Book a consultation'),
+    intentKeywords: z.array(z.string().trim().min(1).max(60)).max(40).default([]),
+    fields: z.array(bookingFormFieldSchema).max(40).default([]),
+  })
+  .strict();
+export type BookingFormDto = z.infer<typeof bookingFormSchema>;
+export type BookingFormField = z.infer<typeof bookingFormFieldSchema>;
+
 export const businessInfoSchema = z.object({
   id: uuidSchema,
   legalName: z.string().nullable(),
@@ -37,6 +60,7 @@ export const businessInfoSchema = z.object({
   timezone: z.string(),
   currency: currency3,
   metadata: z.record(z.string(), z.unknown()).nullable(),
+  bookingForm: bookingFormSchema.nullable(),
   updatedAt: z.string().datetime(),
 });
 export type BusinessInfoDto = z.infer<typeof businessInfoSchema>;
@@ -51,6 +75,7 @@ export const upsertBusinessInfoBodySchema = z.object({
   timezone: z.string().min(1).max(80).optional(),
   currency: currency3.optional(),
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+  bookingForm: bookingFormSchema.nullable().optional(),
 });
 export type UpsertBusinessInfoBody = z.infer<typeof upsertBusinessInfoBodySchema>;
 

@@ -92,6 +92,9 @@ export const WebhookEventKind = {
   broadcast_completed: 'broadcast_completed',
   broadcast_failed: 'broadcast_failed',
   broadcast_recipient_failed: 'broadcast_recipient_failed',
+  // Bookings
+  booking_created: 'booking_created',
+  booking_status_changed: 'booking_status_changed',
 } as const;
 export type WebhookEventKind = (typeof WebhookEventKind)[keyof typeof WebhookEventKind];
 

@@ -178,6 +178,39 @@ export default async function inboxRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- GET /inbox/counts ----------------------------------------
+  // Lightweight aggregate for the sidebar badge. We surface the count of
+  // chats the bot has flagged as needing a real human ("escalated") so
+  // the Inbox nav item can show a red number next to it.
+  r.get(
+    '/inbox/counts',
+    {
+      schema: {
+        tags: ['inbox'],
+        summary: 'Aggregate thread counts (escalated etc.) for the sidebar badge.',
+        response: {
+          200: z.object({
+            data: z.object({
+              escalated: z.number().int().nonnegative(),
+              pending: z.number().int().nonnegative(),
+              open: z.number().int().nonnegative(),
+            }),
+          }),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const [escalated, pending, open] = await Promise.all([
+          tx.whatsAppThread.count({ where: { status: 'escalated' as never } }),
+          tx.whatsAppThread.count({ where: { status: 'pending' as never } }),
+          tx.whatsAppThread.count({ where: { status: 'open' as never } }),
+        ]);
+        return { data: { escalated, pending, open } };
+      }),
+  );
+
   // ---------- GET /inbox/threads/:id -----------------------------------
   r.get(
     '/inbox/threads/:id',

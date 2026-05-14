@@ -76,6 +76,16 @@ export interface BotData {
   } | null;
   faqs: { question: string; answer: string }[];
   policies: { kind: string; title: string; content: string }[];
+  // Operator-defined booking form (BusinessInfo.bookingForm). When enabled
+  // and populated, the bot offers to collect these fields when the customer
+  // asks to book a meeting/consultation/appointment, then emits the
+  // [BOOKING: {...}] marker so the caller can persist a Booking row.
+  bookingForm: {
+    enabled: boolean;
+    title: string;
+    intentKeywords: string[];
+    fields: { key: string; label: string; type: string; required: boolean }[];
+  } | null;
 }
 
 // Pull the operator-authored intents out of BotConfig.conversationFlow
@@ -225,7 +235,44 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
     primaryImageStorageKey: p.images[0]?.asset?.storageKey ?? null,
   }));
 
-  return { config, kb, products: flatProducts, services, biz, faqs, policies };
+  // BusinessInfo.bookingForm — only surface when enabled AND there is at
+  // least one field, otherwise the prompt would advertise a flow we
+  // can't actually complete.
+  const rawBooking = (biz as { bookingForm?: unknown } | null)?.bookingForm;
+  let bookingForm: BotData['bookingForm'] = null;
+  if (rawBooking && typeof rawBooking === 'object') {
+    const b = rawBooking as {
+      enabled?: unknown;
+      title?: unknown;
+      intentKeywords?: unknown;
+      fields?: unknown;
+    };
+    const fields = Array.isArray(b.fields)
+      ? (b.fields
+          .filter(
+            (f): f is { key: string; label: string; type?: string; required?: boolean } =>
+              !!f && typeof f === 'object' && typeof (f as { key: unknown }).key === 'string' && typeof (f as { label: unknown }).label === 'string',
+          )
+          .map((f) => ({
+            key: f.key,
+            label: f.label,
+            type: typeof f.type === 'string' ? f.type : 'text',
+            required: f.required !== false,
+          })))
+      : [];
+    if (b.enabled === true && fields.length > 0) {
+      bookingForm = {
+        enabled: true,
+        title: typeof b.title === 'string' && b.title.trim() ? b.title : 'Booking',
+        intentKeywords: Array.isArray(b.intentKeywords)
+          ? (b.intentKeywords as unknown[]).filter((x): x is string => typeof x === 'string')
+          : [],
+        fields,
+      };
+    }
+  }
+
+  return { config, kb, products: flatProducts, services, biz, faqs, policies, bookingForm };
 }
 
 interface BotResponseArgs {
@@ -238,7 +285,7 @@ interface BotResponseArgs {
 // Composes the system prompt from gathered data + asks the LLM. NO Prisma
 // tx is held here — callers MUST have already exited their gather-data tx.
 export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: string; usedKbCount: number }> {
-  const { config, kb, products, services, biz, faqs, policies } = args.data;
+  const { config, kb, products, services, biz, faqs, policies, bookingForm } = args.data;
 
   const personalityKey = config?.personality ?? config?.detectedTone ?? 'friendly';
   const personalityHint =
@@ -302,6 +349,23 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     // as a follow-up WhatsApp media message. Strip the marker from
     // the visible reply server-side.
     `- When a customer asks about a specific product BY NAME or BY SKU and that product appears in the CATALOG with an image, end your reply with a marker on its own line: [IMAGE: <SKU>] — the system will attach the product's image automatically. Use the SKU exactly as written in the catalog (case-sensitive). Only include the marker for products that you can SEE in the catalog list below; never invent one.`,
+    // Customer-service handoff protocol — when a customer explicitly asks
+    // for human support / customer service / a real agent / to stop
+    // talking to a bot, acknowledge briefly, tell them a teammate will
+    // pick up shortly, and emit the [HANDOFF] marker on its own line.
+    // The server side flips the thread to "escalated" so the inbox
+    // surfaces it for human follow-up. Do NOT use the marker for
+    // generic complaints or follow-up questions — only when the customer
+    // clearly wants out of the bot conversation.
+    `- Human handoff: if the customer asks for "support", "customer service", "an agent", "a human", "real person", or otherwise wants to speak with a teammate, reply briefly: "Sure — connecting you with a teammate now. They'll pick up here shortly." (translate to the customer's language), then on a NEW LINE add this marker: [HANDOFF]. Do NOT add the marker for any other reason. After the marker, write nothing else.`,
+    // Booking protocol — when an operator has configured a booking form
+    // and the customer wants to book/schedule, walk them through the
+    // fields one or two at a time, then emit the [BOOKING: {...}]
+    // marker with the collected values. The marker MUST be valid
+    // strict JSON so the server can persist it.
+    bookingForm
+      ? `- Booking flow: if the customer's message clearly asks to BOOK / SCHEDULE / RESERVE a "${bookingForm.title}" (or matches one of: ${bookingForm.intentKeywords.join(', ') || '"book", "appointment", "consultation", "reserve", "schedule"'}), start collecting the FORM FIELDS listed below ONE OR TWO at a time so the customer doesn't get overwhelmed. After the customer has answered ALL required fields, repeat the captured values back to confirm, then on a NEW LINE emit this marker (strict JSON, no trailing comma): [BOOKING: { "${bookingForm.fields.map((f) => `${f.key}": "<value>"`).join(', "')} }] — keys exactly as written, missing optional answers as empty strings. The server creates a Booking from the marker. NEVER emit the marker until every required field has a customer-provided value.`
+      : '',
     `- Hours: when a customer asks about opening times, quote directly from the OPENING HOURS section below. Don't paraphrase — read it back day-by-day, and call out the days that show "Closed" so the customer knows when not to expect a reply.`,
     // Language rule: reply in the customer's language IF it's one we
     // support; otherwise apologise briefly in the first listed
@@ -359,6 +423,14 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
       : '',
     policies.length > 0
       ? `Policies:\n${policies.map((p) => `${p.kind} (${p.title}): ${p.content.slice(0, 400)}`).join('\n\n')}`
+      : '',
+    bookingForm
+      ? `# Booking form (${bookingForm.title})\nFields to collect, in this order:\n${bookingForm.fields
+          .map(
+            (f, i) =>
+              `${i + 1}. key="${f.key}" — ask the customer for "${f.label}" (type: ${f.type}${f.required ? ', required' : ', optional'}).`,
+          )
+          .join('\n')}`
       : '',
   ]
     .filter(Boolean)

@@ -59,6 +59,7 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
             timezone: info.timezone,
             currency: info.currency,
             metadata: (info.metadata ?? null) as Record<string, unknown> | null,
+            bookingForm: (info.bookingForm ?? null) as never,
             updatedAt: info.updatedAt.toISOString(),
           },
         };
@@ -94,6 +95,7 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
             timezone: req.body.timezone ?? 'UTC',
             currency: req.body.currency ?? 'USD',
             metadata: (req.body.metadata ?? undefined) as Prisma.InputJsonValue | undefined,
+            bookingForm: (req.body.bookingForm ?? undefined) as Prisma.InputJsonValue | undefined,
           },
           update: {
             legalName: req.body.legalName === undefined ? undefined : req.body.legalName,
@@ -112,6 +114,10 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
             currency: req.body.currency ?? undefined,
             metadata:
               req.body.metadata === undefined ? undefined : (req.body.metadata as Prisma.InputJsonValue),
+            bookingForm:
+              req.body.bookingForm === undefined
+                ? undefined
+                : (req.body.bookingForm as Prisma.InputJsonValue),
           },
         });
         await recordAudit({
@@ -146,6 +152,7 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
             timezone: updated.timezone,
             currency: updated.currency,
             metadata: (updated.metadata ?? null) as Record<string, unknown> | null,
+            bookingForm: (updated.bookingForm ?? null) as never,
             updatedAt: updated.updatedAt.toISOString(),
           },
         };

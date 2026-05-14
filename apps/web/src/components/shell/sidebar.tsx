@@ -25,10 +25,10 @@ import {
   Upload,
   Users,
 } from 'lucide-react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
-import { AlignedLogo } from '@/components/brand/logo';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/lib/session';
@@ -148,6 +148,9 @@ export function Sidebar({
   // When collapsed: the row strips down to a centred icon with the
   // label rendered as a native tooltip via `title=` so the operator
   // can still identify each link without giving up screen real estate.
+  // Each row is a glass pill: translucent white over the navy gradient,
+  // active = solid white with deep-navy text + icon. Icon sits in a
+  // little rounded square so the row reads like the reference design.
   const renderItem = (item: NavItem) => {
     const Icon = item.icon;
     const active = isActive(item);
@@ -161,14 +164,22 @@ export function Sidebar({
         title={collapsed ? `${item.label}${showBadge ? ` (${badgeCount})` : ''}` : undefined}
         aria-label={item.label}
         className={cn(
-          'relative flex items-center rounded-md text-sm font-medium transition-colors',
-          collapsed ? 'justify-center px-2 py-2' : 'gap-2.5 px-3 py-2',
+          'relative flex items-center rounded-full text-sm font-medium transition-all',
+          collapsed ? 'justify-center px-1.5 py-1.5' : 'gap-2.5 px-2 py-1.5',
           active
-            ? 'bg-brand-50 text-brand-700'
-            : 'text-foreground-muted hover:bg-surface-muted hover:text-foreground',
+            ? 'bg-white text-[#0E2747] shadow-[0_8px_24px_-8px_rgba(0,0,0,0.45)]'
+            : 'text-white/85 hover:bg-white/10 hover:text-white',
         )}
       >
-        <Icon className="size-4 shrink-0" />
+        <span
+          className={cn(
+            'flex shrink-0 items-center justify-center rounded-lg',
+            collapsed ? 'size-8' : 'size-8',
+            active ? 'bg-[#0E2747] text-white' : 'bg-white/10 text-white',
+          )}
+        >
+          <Icon className="size-4" />
+        </span>
         {collapsed ? null : <span className="truncate">{item.label}</span>}
         {showBadge ? (
           collapsed ? (
@@ -189,19 +200,32 @@ export function Sidebar({
     <div className="flex h-full flex-col">
       <div
         className={cn(
-          'flex h-14 items-center border-b border-border',
-          collapsed ? 'justify-center px-2' : 'px-5',
+          'flex h-14 items-center border-b border-white/10',
+          collapsed ? 'justify-center px-2' : 'px-4',
         )}
       >
-        <AlignedLogo iconOnly={collapsed} />
+        {collapsed ? (
+          <div
+            aria-hidden
+            className="flex size-8 items-center justify-center rounded-md bg-[#3a92cf]"
+          >
+            <span className="text-sm font-bold text-white">A</span>
+          </div>
+        ) : (
+          <Image
+            src="/aligned-logo.webp"
+            alt="ALIGNED"
+            width={140}
+            height={28}
+            priority
+          />
+        )}
       </div>
-      <nav className="flex-1 space-y-6 overflow-y-auto p-3">
+      <nav className="flex-1 space-y-5 overflow-y-auto p-3">
         {groups.map((group) => (
           <div key={group.label} className="space-y-1">
-            {/* Hide group headers when collapsed — the icons themselves
-                are the only grouping the operator needs at that width. */}
             {!collapsed ? (
-              <p className="px-3 text-[11px] font-semibold uppercase tracking-wider text-foreground-subtle">
+              <p className="px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/40">
                 {group.label}
               </p>
             ) : null}
@@ -210,9 +234,9 @@ export function Sidebar({
         ))}
 
         {session?.user.isAlignedAdmin ? (
-          <div className="space-y-1 border-t border-border pt-6">
+          <div className="space-y-1 border-t border-white/10 pt-5">
             {!collapsed ? (
-              <p className="px-3 text-[11px] font-semibold uppercase tracking-wider text-brand-500">
+              <p className="px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8FC4F0]">
                 ALIGNED admin
               </p>
             ) : null}

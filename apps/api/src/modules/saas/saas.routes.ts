@@ -476,11 +476,33 @@ export default async function saasRoutes(app: FastifyInstance) {
           .slice(0, 10)
           .map(([message, count]) => ({ message, count }));
 
-        // Top products + services asked about — match each inbound
-        // body against every product SKU/name + service name in the
-        // tenant's catalog. Substring + case-insensitive; cheap O(N*M)
-        // but acceptable at the catalog sizes we expect (≤a few hundred
-        // products per org).
+        // Top products + services asked about — token-overlap match
+        // between each inbound message and the catalog, not a literal
+        // substring of the full product name. Customers say "do you
+        // have laptops?" or "show me dell", not the full SKU.
+        //
+        // Scoring: tokenize the product/service name and the message
+        // into lowercase alphanumeric words of length >= 3, dropping
+        // English stop words. A product counts as "asked about" when:
+        //   - any of its tokens of length >= 5 appears in the message
+        //     (model names / brand / distinctive nouns), OR
+        //   - at least 2 shorter tokens overlap (covers short brand +
+        //     category combinations like "lg tv"), OR
+        //   - the message contains the literal SKU.
+        // This keeps generic single-word matches ("phone") from
+        // exploding noise while still surfacing real product
+        // interest.
+        const STOP = new Set([
+          'the','and','for','you','your','have','is','are','to','a','i','of','do','can','what','how','when','this','that','it','in','on','at','my','me','we','please','hi','hello','with','will','any','about','need','want','price','cost','available','tell','show','give','send','from','they','their','some','one','get',
+        ]);
+        function tokenize(s: string): string[] {
+          return s
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, ' ')
+            .split(/\s+/)
+            .filter((w) => w.length >= 3 && !STOP.has(w));
+        }
+
         const [allProducts, allServices] = await Promise.all([
           tx.product.findMany({
             where: { deletedAt: null },
@@ -491,22 +513,44 @@ export default async function saasRoutes(app: FastifyInstance) {
             select: { id: true, name: true },
           }),
         ]);
+
+        // Pre-tokenize the catalog once.
+        const productTokens = allProducts.map((p) => ({
+          ...p,
+          tokens: tokenize(p.name ?? ''),
+          skuLower: (p.sku ?? '').toLowerCase(),
+        }));
+        const serviceTokens = allServices.map((s) => ({
+          ...s,
+          tokens: tokenize(s.name ?? ''),
+        }));
+
         const productHits = new Map<string, { name: string; sku: string; count: number }>();
         const serviceHits = new Map<string, { name: string; count: number }>();
         for (const m of topInboundRaw) {
           const body = (m.body ?? '').toLowerCase();
           if (!body) continue;
-          for (const p of allProducts) {
-            const nameMatch = p.name && body.includes(p.name.toLowerCase());
-            const skuMatch = p.sku && body.includes(p.sku.toLowerCase());
-            if (nameMatch || skuMatch) {
+          const msgTokens = new Set(tokenize(body));
+          for (const p of productTokens) {
+            const skuHit = p.skuLower && body.includes(p.skuLower);
+            // Tokens of length >= 5 are distinctive — one match is enough.
+            const distinctiveHit = p.tokens.some(
+              (t) => t.length >= 5 && msgTokens.has(t),
+            );
+            // Short-token overlap — need at least 2 to count.
+            const shortOverlap = p.tokens.filter((t) => t.length < 5 && msgTokens.has(t)).length;
+            if (skuHit || distinctiveHit || shortOverlap >= 2) {
               const existing = productHits.get(p.id) ?? { name: p.name, sku: p.sku, count: 0 };
               existing.count += 1;
               productHits.set(p.id, existing);
             }
           }
-          for (const s of allServices) {
-            if (s.name && body.includes(s.name.toLowerCase())) {
+          for (const s of serviceTokens) {
+            const distinctiveHit = s.tokens.some(
+              (t) => t.length >= 5 && msgTokens.has(t),
+            );
+            const shortOverlap = s.tokens.filter((t) => t.length < 5 && msgTokens.has(t)).length;
+            if (distinctiveHit || shortOverlap >= 2) {
               const existing = serviceHits.get(s.id) ?? { name: s.name, count: 0 };
               existing.count += 1;
               serviceHits.set(s.id, existing);

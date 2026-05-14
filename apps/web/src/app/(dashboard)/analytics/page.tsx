@@ -20,6 +20,9 @@ interface Analytics {
   botResolution: { resolutionRate: number; handoffs: number };
   avgResponseSeconds: number | null;
   topQueries: { word: string; count: number }[];
+  topMessages: { message: string; count: number }[];
+  topProducts: { id: string; name: string; sku: string; count: number }[];
+  topServices: { id: string; name: string; count: number }[];
 }
 
 export default function AnalyticsPage() {
@@ -124,9 +127,9 @@ export default function AnalyticsPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Activity className="size-4" /> Top queries
+                  <Activity className="size-4" /> Top keywords
                 </CardTitle>
-                <CardDescription>Naive word frequency in inbound bodies.</CardDescription>
+                <CardDescription>Most frequent words across all inbound messages.</CardDescription>
               </CardHeader>
               <CardContent>
                 {a.topQueries.length === 0 ? (
@@ -137,6 +140,95 @@ export default function AnalyticsPage() {
                       <li key={q.word} className="flex items-center justify-between">
                         <span className="font-mono">{q.word}</span>
                         <Badge variant="muted">{q.count}</Badge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Full-message clustering + product/service mentions — three
+              cards stacked in a responsive grid so each gets enough
+              horizontal space for long content. */}
+          <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Activity className="size-4" /> Top messages
+                </CardTitle>
+                <CardDescription>
+                  The same inbound text asked more than once. Useful for spotting missing FAQs.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {a.topMessages.length === 0 ? (
+                  <p className="text-sm text-foreground-muted">
+                    No repeated questions yet — every inbound so far is unique.
+                  </p>
+                ) : (
+                  <ul className="space-y-1.5 text-sm">
+                    {a.topMessages.map((q, i) => (
+                      <li key={i} className="flex items-start justify-between gap-2">
+                        <span className="line-clamp-2 break-words text-foreground">{q.message}</span>
+                        <Badge variant="muted" className="shrink-0">{q.count}</Badge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Activity className="size-4" /> Top products asked
+                </CardTitle>
+                <CardDescription>
+                  Products that appear most often in customer messages (matched by name or SKU).
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {a.topProducts.length === 0 ? (
+                  <p className="text-sm text-foreground-muted">
+                    No product mentions in customer messages this window.
+                  </p>
+                ) : (
+                  <ul className="space-y-1.5 text-sm">
+                    {a.topProducts.map((p) => (
+                      <li key={p.id} className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-foreground">{p.name}</p>
+                          <p className="font-mono text-[10px] text-foreground-subtle">{p.sku}</p>
+                        </div>
+                        <Badge variant="muted" className="shrink-0">{p.count}</Badge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Activity className="size-4" /> Top services asked
+                </CardTitle>
+                <CardDescription>
+                  Services mentioned most often in customer messages (matched by service name).
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {a.topServices.length === 0 ? (
+                  <p className="text-sm text-foreground-muted">
+                    No service mentions in customer messages this window.
+                  </p>
+                ) : (
+                  <ul className="space-y-1.5 text-sm">
+                    {a.topServices.map((s) => (
+                      <li key={s.id} className="flex items-start justify-between gap-2">
+                        <span className="truncate text-foreground">{s.name}</span>
+                        <Badge variant="muted" className="shrink-0">{s.count}</Badge>
                       </li>
                     ))}
                   </ul>

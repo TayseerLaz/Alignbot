@@ -459,6 +459,69 @@ export default async function saasRoutes(app: FastifyInstance) {
           .slice(0, 10)
           .map(([word, count]) => ({ word, count }));
 
+        // Top messages — full inbound messages ranked by repetition.
+        // Customers frequently ask the same thing (e.g. "how much?",
+        // "where are you located?"), so the literal duplicates are
+        // useful to surface what FAQs/KB entries are missing. Cheap
+        // exact-string aggregation; case + whitespace folded.
+        const messageCounts = new Map<string, number>();
+        for (const m of topInboundRaw) {
+          const norm = (m.body ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+          if (norm.length < 3) continue;
+          messageCounts.set(norm, (messageCounts.get(norm) ?? 0) + 1);
+        }
+        const topMessages = [...messageCounts.entries()]
+          .filter(([, c]) => c >= 2) // ignore one-offs — they're not "top"
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10)
+          .map(([message, count]) => ({ message, count }));
+
+        // Top products + services asked about — match each inbound
+        // body against every product SKU/name + service name in the
+        // tenant's catalog. Substring + case-insensitive; cheap O(N*M)
+        // but acceptable at the catalog sizes we expect (≤a few hundred
+        // products per org).
+        const [allProducts, allServices] = await Promise.all([
+          tx.product.findMany({
+            where: { deletedAt: null },
+            select: { id: true, name: true, sku: true },
+          }),
+          tx.service.findMany({
+            where: { deletedAt: null },
+            select: { id: true, name: true },
+          }),
+        ]);
+        const productHits = new Map<string, { name: string; sku: string; count: number }>();
+        const serviceHits = new Map<string, { name: string; count: number }>();
+        for (const m of topInboundRaw) {
+          const body = (m.body ?? '').toLowerCase();
+          if (!body) continue;
+          for (const p of allProducts) {
+            const nameMatch = p.name && body.includes(p.name.toLowerCase());
+            const skuMatch = p.sku && body.includes(p.sku.toLowerCase());
+            if (nameMatch || skuMatch) {
+              const existing = productHits.get(p.id) ?? { name: p.name, sku: p.sku, count: 0 };
+              existing.count += 1;
+              productHits.set(p.id, existing);
+            }
+          }
+          for (const s of allServices) {
+            if (s.name && body.includes(s.name.toLowerCase())) {
+              const existing = serviceHits.get(s.id) ?? { name: s.name, count: 0 };
+              existing.count += 1;
+              serviceHits.set(s.id, existing);
+            }
+          }
+        }
+        const topProducts = [...productHits.entries()]
+          .sort((a, b) => b[1].count - a[1].count)
+          .slice(0, 10)
+          .map(([id, v]) => ({ id, name: v.name, sku: v.sku, count: v.count }));
+        const topServices = [...serviceHits.entries()]
+          .sort((a, b) => b[1].count - a[1].count)
+          .slice(0, 10)
+          .map(([id, v]) => ({ id, name: v.name, count: v.count }));
+
         return {
           data: {
             window: win,
@@ -474,6 +537,9 @@ export default async function saasRoutes(app: FastifyInstance) {
             },
             avgResponseSeconds,
             topQueries,
+            topMessages,
+            topProducts,
+            topServices,
           },
         };
       }),

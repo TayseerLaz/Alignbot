@@ -5,16 +5,15 @@ import { cn } from '@/lib/utils';
 /**
  * AlignedLogo — single source of truth for the brand mark.
  *
- * The asset (/public/aligned-logo.webp) is a white wordmark on a transparent
- * background. On its own it disappears against a white sidebar in light mode,
- * so we tint it:
- *   - Light mode  → `filter: brightness(0)`              (black silhouette)
- *   - Dark mode   → `filter: brightness(0) invert(1)`    (back to white)
- * Both states render clearly on the surface color underneath.
+ * Two raw assets, one per theme, so no CSS filter trickery is needed:
+ *   - /aligned-logo-light.jpg  → dark wordmark on transparent (light mode)
+ *   - /aligned-logo.webp       → white wordmark on transparent (dark mode)
  *
- * `iconOnly` (collapsed sidebar): we can't crop the wide horizontal lockup
- * into a square cleanly, so we render a brand-blue rounded square with "A".
- * Keeps the look on-brand without needing a second asset.
+ * Both are loaded; we toggle visibility via Tailwind's `dark:` variant
+ * so SSR/CSR don't mismatch and there's no first-paint swap.
+ *
+ * `iconOnly` (collapsed sidebar): we render a brand-blue rounded square
+ * with "A" since the wide lockup can't crop cleanly into 36×36.
  */
 export function AlignedLogo({
   className,
@@ -39,19 +38,25 @@ export function AlignedLogo({
   }
 
   return (
-    <Image
-      src="/aligned-logo.webp"
-      alt="ALIGNED Business Platform"
-      width={160}
-      height={32}
-      priority
-      className={cn(
-        'h-8 w-auto',
-        // Tint the white asset so it reads on whatever background.
-        '[filter:brightness(0)]',
-        'dark:[filter:brightness(0)_invert(1)]',
-        className,
-      )}
-    />
+    <span className={cn('inline-flex h-8 items-center', className)} aria-label="ALIGNED">
+      {/* Light-mode wordmark */}
+      <Image
+        src="/aligned-logo-light.jpg"
+        alt="ALIGNED Business Platform"
+        width={200}
+        height={49}
+        priority
+        className="block h-8 w-auto dark:hidden"
+      />
+      {/* Dark-mode wordmark — same shape, white-on-transparent. */}
+      <Image
+        src="/aligned-logo.webp"
+        alt="ALIGNED Business Platform"
+        width={200}
+        height={40}
+        priority
+        className="hidden h-8 w-auto dark:block"
+      />
+    </span>
   );
 }

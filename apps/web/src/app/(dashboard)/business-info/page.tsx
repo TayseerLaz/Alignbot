@@ -232,11 +232,13 @@ function ProfilePanel() {
             const close = slot?.close ?? '';
             const isOpen = !!slot;
             return (
-              <div key={day} className="grid grid-cols-[80px_auto_1fr_1fr] items-center gap-2">
-                <span className="text-xs font-medium">{DAY_OF_WEEK_LABELS[day]}</span>
+              // Flex layout (not grid) so the time inputs can shrink with
+              // `min-w-0` and never overflow the card on narrow columns.
+              // Time inputs use a tighter h-9 / px-2 style for this row only.
+              <div key={day} className="flex items-center gap-2">
                 <input
                   type="checkbox"
-                  className="size-4 cursor-pointer rounded border-border accent-brand-500"
+                  className="size-4 shrink-0 cursor-pointer rounded border-border accent-brand-500"
                   checked={isOpen}
                   onChange={(e) =>
                     setDraft((prev) => ({
@@ -245,10 +247,14 @@ function ProfilePanel() {
                     }))
                   }
                 />
+                <span className="w-[68px] shrink-0 text-xs font-medium">
+                  {DAY_OF_WEEK_LABELS[day]}
+                </span>
                 <Input
                   type="time"
                   disabled={!isOpen}
                   value={open}
+                  className="h-9 min-w-0 flex-1 rounded-md px-2 text-xs"
                   onChange={(e) =>
                     setDraft((prev) => ({
                       ...prev,
@@ -256,10 +262,12 @@ function ProfilePanel() {
                     }))
                   }
                 />
+                <span className="shrink-0 text-foreground-subtle">–</span>
                 <Input
                   type="time"
                   disabled={!isOpen}
                   value={close}
+                  className="h-9 min-w-0 flex-1 rounded-md px-2 text-xs"
                   onChange={(e) =>
                     setDraft((prev) => ({
                       ...prev,

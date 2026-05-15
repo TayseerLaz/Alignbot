@@ -314,6 +314,7 @@ export default function BookingsPage() {
                 <th className="px-6 py-3">Time</th>
                 <th className="px-6 py-3">Customer</th>
                 <th className="px-6 py-3">Answers</th>
+                <th className="px-6 py-3">Notes</th>
                 <th className="px-6 py-3">Status</th>
                 <th className="w-32 px-6 py-3 text-right">Actions</th>
               </tr>
@@ -321,14 +322,14 @@ export default function BookingsPage() {
             <tbody>
               {list.isLoading ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-foreground-muted">
+                  <td colSpan={7} className="px-6 py-12 text-center text-foreground-muted">
                     Loading…
                   </td>
                 </tr>
               ) : null}
               {!list.isLoading && rows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-16 text-center text-foreground-muted">
+                  <td colSpan={7} className="px-6 py-16 text-center text-foreground-muted">
                     No bookings yet. When a customer asks the bot to book something, the captured
                     answers will appear here.
                   </td>
@@ -342,10 +343,34 @@ export default function BookingsPage() {
                 // ("tomorrow at 5" → 17:00) when the dedicated time field
                 // is empty.
                 const timeLabel = formatBookingTime(apt.timeRaw, apt.dateRaw);
-                // Hide the date/time fields from the Answers cell since we
-                // surface them in their own columns now.
+                // Pull a "notes" answer out of the form. Prefer a field
+                // whose key === 'notes' / 'note' / 'comments', or whose
+                // label contains "anything else" or "notes". Falls back
+                // to the booking's own b.notes column.
+                const notesField = b.fields.find((f) => {
+                  const k = f.key.toLowerCase();
+                  const l = f.label.toLowerCase();
+                  return (
+                    k === 'notes' ||
+                    k === 'note' ||
+                    k === 'comments' ||
+                    k === 'comment' ||
+                    l.includes('anything else') ||
+                    l.includes('note') ||
+                    l.includes('comment')
+                  );
+                });
+                const notesValue =
+                  (typeof notesField?.value === 'string' && notesField.value.trim()) ||
+                  (b.notes && b.notes.trim()) ||
+                  '';
+                // Hide date/time AND the notes field from the Answers cell —
+                // they get their own columns now.
                 const otherFields = b.fields.filter(
-                  (f) => f.key !== apt.dateFieldKey && f.key !== apt.timeFieldKey,
+                  (f) =>
+                    f.key !== apt.dateFieldKey &&
+                    f.key !== apt.timeFieldKey &&
+                    f.key !== notesField?.key,
                 );
                 return (
                 <tr key={b.id} className="border-b border-border last:border-0 align-top">
@@ -402,9 +427,15 @@ export default function BookingsPage() {
                         (no extra fields)
                       </span>
                     )}
-                    {b.notes ? (
-                      <p className="mt-2 text-xs italic text-foreground-muted">{b.notes}</p>
-                    ) : null}
+                  </td>
+                  <td className="max-w-xs px-6 py-4 align-top text-xs">
+                    {notesValue ? (
+                      <span className="whitespace-pre-wrap break-words text-foreground">
+                        {notesValue}
+                      </span>
+                    ) : (
+                      <span className="italic text-foreground-subtle">empty</span>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     <Select

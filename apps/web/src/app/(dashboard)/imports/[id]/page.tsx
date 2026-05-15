@@ -312,41 +312,86 @@ function RowItem({
           ) : null}
 
           {editing ? (
-            <div className="space-y-3 rounded-md border border-border bg-surface p-3">
-              <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">
-                Edit fields, then save to re-validate
-              </p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {[...fieldList, ...extras].map((key) => (
-                  <label key={key} className="flex flex-col gap-1 text-xs">
-                    <span className="font-mono text-foreground-muted">
-                      {key}
-                      {extras.includes(key) ? (
-                        <span className="ml-1 text-foreground-subtle">(extra)</span>
-                      ) : null}
-                    </span>
-                    <Input
-                      value={draft[key] ?? ''}
-                      onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
-                      placeholder={extras.includes(key) ? 'extra column from your file' : undefined}
-                    />
-                  </label>
-                ))}
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setEditing(false)}
-                  disabled={retry.isPending}
-                >
-                  Cancel
-                </Button>
-                <Button size="sm" onClick={save} loading={retry.isPending}>
-                  <Save className="size-4" /> Save & retry
-                </Button>
-              </div>
-            </div>
+            (() => {
+              // Build a per-field error index so each Input can show its
+              // own red border + inline message. Falls back to "_" for
+              // top-level errors (e.g. wrong shape), which we render
+              // above the grid instead of under any single field.
+              const errorByField = new Map<string, string>();
+              const generalErrors: string[] = [];
+              for (const e of row.errors ?? []) {
+                const key = (e.path ?? '').split('.')[0] || '_';
+                if (key === '_') generalErrors.push(e.message);
+                else if (!errorByField.has(key)) errorByField.set(key, e.message);
+              }
+              return (
+                <div className="space-y-3 rounded-md border border-border bg-surface p-3">
+                  <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">
+                    Edit fields, then save to re-validate
+                  </p>
+                  {generalErrors.length > 0 ? (
+                    <ul className="space-y-1 rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700">
+                      {generalErrors.map((m, i) => (
+                        <li key={i}>{m}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {[...fieldList, ...extras].map((key) => {
+                      const fieldError = errorByField.get(key);
+                      const hasError = !!fieldError;
+                      return (
+                        <label key={key} className="flex flex-col gap-1 text-xs">
+                          <span
+                            className={
+                              hasError
+                                ? 'font-mono font-semibold text-red-700'
+                                : 'font-mono text-foreground-muted'
+                            }
+                          >
+                            {key}
+                            {extras.includes(key) ? (
+                              <span className="ml-1 font-normal text-foreground-subtle">
+                                (extra)
+                              </span>
+                            ) : null}
+                          </span>
+                          <Input
+                            value={draft[key] ?? ''}
+                            onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
+                            placeholder={
+                              extras.includes(key) ? 'extra column from your file' : undefined
+                            }
+                            aria-invalid={hasError || undefined}
+                            className={
+                              hasError
+                                ? 'border-red-400 bg-red-50 text-red-900 focus-visible:border-red-500 focus-visible:ring-red-300'
+                                : undefined
+                            }
+                          />
+                          {hasError ? (
+                            <span className="text-[11px] text-red-700">{fieldError}</span>
+                          ) : null}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditing(false)}
+                      disabled={retry.isPending}
+                    >
+                      Cancel
+                    </Button>
+                    <Button size="sm" onClick={save} loading={retry.isPending}>
+                      <Save className="size-4" /> Save & retry
+                    </Button>
+                  </div>
+                </div>
+              );
+            })()
           ) : row.rawData ? (
             <pre className="overflow-x-auto rounded bg-surface p-3 text-xs">
               {JSON.stringify(row.rawData, null, 2)}

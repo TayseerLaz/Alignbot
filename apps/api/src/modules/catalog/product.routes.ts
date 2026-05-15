@@ -131,7 +131,9 @@ export default async function productRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const orgId = req.auth!.organizationId;
       return app.tenant(req, async (tx) => {
-        await capCheck(tx as never, orgId, 'product');
+        await capCheck(tx as never, orgId, 'product', {
+          actorIsAlignedAdmin: req.auth!.isAlignedAdmin,
+        });
         const slug = req.body.slug ?? slugify(req.body.name);
         const dupes = await tx.product.findFirst({
           where: { OR: [{ sku: req.body.sku }, { slug }], deletedAt: null },

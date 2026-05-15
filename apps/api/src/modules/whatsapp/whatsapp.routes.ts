@@ -704,7 +704,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       }
       // Phase 3 cap check — block sends when the monthly message cap is hit.
       const { capCheck } = await import('../../lib/billing.js');
-      await app.tenant(req, (tx) => capCheck(tx as never, orgId, 'monthly_message'));
+      await app.tenant(req, (tx) => capCheck(tx as never, orgId, 'monthly_message', { actorIsAlignedAdmin: req.auth!.isAlignedAdmin }));
 
       const bucket = await consumeSendToken(orgId);
       if (!bucket.ok) {
@@ -942,7 +942,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       // Rate limit + cap.
       const { capCheck, bumpUsage } = await import('../../lib/billing.js');
       const { prisma } = await import('../../lib/db.js');
-      await app.tenant(req, (tx) => capCheck(tx as never, orgId, 'monthly_message'));
+      await app.tenant(req, (tx) => capCheck(tx as never, orgId, 'monthly_message', { actorIsAlignedAdmin: req.auth!.isAlignedAdmin }));
       const bucket = await consumeSendToken(orgId);
       if (!bucket.ok) {
         throw badRequest(

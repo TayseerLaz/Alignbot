@@ -156,7 +156,13 @@ export default async function billingRoutes(app: FastifyInstance) {
         // (admin)" plan with null caps so the UI knows there's nothing
         // to throttle. The actual subscription row is left intact so
         // demoting the admin later snaps things back.
-        const unlimited = await isOrgUnlimited(orgId);
+        //
+        // Fast path: the JWT claim (`req.auth.isAlignedAdmin`) is already
+        // resolved at this point — trust it directly so admins always
+        // see the unlimited plan even if the membership-based check
+        // misses (different org context, RLS edge case, etc.).
+        const unlimited =
+          req.auth!.isAlignedAdmin || (await isOrgUnlimited(orgId));
         return {
           data: {
             id: sub.id,

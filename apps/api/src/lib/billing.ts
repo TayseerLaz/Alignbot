@@ -121,8 +121,18 @@ export async function resolveOrgPlan(tx: MinimalTx, orgId: string): Promise<Plan
   };
 }
 
-export async function capCheck(tx: MinimalTx, orgId: string, kind: CapKind): Promise<void> {
-  // ALIGNED-admin-operated orgs are unmetered across every cap kind.
+export async function capCheck(
+  tx: MinimalTx,
+  orgId: string,
+  kind: CapKind,
+  opts: { actorIsAlignedAdmin?: boolean } = {},
+): Promise<void> {
+  // Fast path: the JWT already tells us the caller is an ALIGNED admin.
+  // Skip the cap unconditionally — admin actions are unmetered.
+  if (opts.actorIsAlignedAdmin) return;
+  // Slow path: any active org member who is an ALIGNED admin also
+  // qualifies the whole org for unlimited (covers worker / webhook
+  // paths that don't have a request actor).
   if (await isOrgUnlimited(orgId)) return;
   const plan = await resolveOrgPlan(tx, orgId);
   const cap =

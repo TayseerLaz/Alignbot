@@ -194,6 +194,11 @@ export default async function dashboardRoutes(app: FastifyInstance) {
       const orgId = req.auth!.organizationId;
       const { readDailyTokenUsage } = await import('../../lib/openai.js');
       const data = await readDailyTokenUsage(orgId);
+      // Force unlimited when the JWT says admin — covers the case where
+      // the org's membership-based check missed for any reason.
+      if (req.auth!.isAlignedAdmin && !data.unlimited) {
+        return { data: { ...data, unlimited: true, percentUsed: 0 } };
+      }
       return { data };
     },
   );

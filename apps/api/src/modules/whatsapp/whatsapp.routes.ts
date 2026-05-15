@@ -64,6 +64,54 @@ async function consumeSendToken(orgId: string): Promise<{ ok: boolean; retryAfte
 
 // ---- helpers --------------------------------------------------------------
 
+// Sniff the actual container of an uploaded media file by its magic
+// bytes. Returns a canonical MIME (without codec parameters) when
+// recognised, or null when we can't tell. Used to override the
+// browser-supplied content-type before forwarding to Meta — Chrome
+// reports audio/ogg but actually writes WebM, etc.
+function sniffMediaContainer(buf: Buffer): string | null {
+  if (buf.length < 12) return null;
+  // OGG container — "OggS" magic at offset 0.
+  if (buf[0] === 0x4f && buf[1] === 0x67 && buf[2] === 0x67 && buf[3] === 0x53) {
+    return 'audio/ogg';
+  }
+  // WebM / Matroska — EBML header 1A 45 DF A3 at offset 0.
+  if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) {
+    return 'audio/webm';
+  }
+  // ISO BMFF (MP4 / M4A) — "ftyp" at offset 4..7.
+  if (buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70) {
+    return 'audio/mp4';
+  }
+  // ID3 tag (MP3) — "ID3" at offset 0.
+  if (buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) {
+    return 'audio/mpeg';
+  }
+  // MPEG frame sync — 0xFFFx at offset 0. Covers raw MP3 streams.
+  if (buf[0] === 0xff && (buf[1]! & 0xe0) === 0xe0) {
+    return 'audio/mpeg';
+  }
+  // AMR — "#!AMR\n" at offset 0.
+  if (
+    buf[0] === 0x23 && buf[1] === 0x21 && buf[2] === 0x41 &&
+    buf[3] === 0x4d && buf[4] === 0x52 && buf[5] === 0x0a
+  ) {
+    return 'audio/amr';
+  }
+  // Common image / pdf containers — let send-media keep working for
+  // those without changing what the caller declared.
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (
+    buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47
+  ) {
+    return 'image/png';
+  }
+  if (buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) {
+    return 'application/pdf';
+  }
+  return null;
+}
+
 function maskSecret(s: string | null | undefined): string | null {
   if (!s) return null;
   if (s.length <= 8) return '••••';
@@ -973,14 +1021,41 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       // Step 2: upload to Meta as multipart/form-data → media_id.
       // Meta's /media rejects MIME types that include codec parameters
       // (e.g. "audio/ogg;codecs=opus") — strip everything after ';'.
-      // Then if we're sending audio, also coerce to one of the four
-      // MIME types Meta accepts (https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media):
+      // Then if we're sending audio, also coerce to one of the MIME
+      // types Meta accepts (https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media):
       //   audio/aac, audio/mp4, audio/mpeg, audio/amr, audio/ogg.
-      // Browser MediaRecorder typically gives us audio/ogg;codecs=opus
-      // (Chrome / Firefox) or audio/mp4 (Safari) — both are accepted
-      // after the strip.
+      //
+      // IMPORTANT: Browsers lie about what MediaRecorder is going to
+      // produce. Chrome on desktop reports isTypeSupported('audio/ogg')
+      // as true but actually writes a WebM/EBML container internally.
+      // Meta validates the bytes, not the headers, and silently rejects
+      // unsupported audio containers — the upload "succeeds" (200) but
+      // the customer never sees the message. So we sniff the magic bytes
+      // here, override the MIME to the truth, and degrade audio → document
+      // when the container isn't actually one Meta plays back.
       const rawContentType = asset.contentType ?? 'application/octet-stream';
-      const baseContentType = rawContentType.split(';')[0]!.trim();
+      let baseContentType = rawContentType.split(';')[0]!.trim();
+      const sniffed = sniffMediaContainer(fileBytes);
+      if (sniffed) baseContentType = sniffed;
+      const META_AUDIO_OK = new Set([
+        'audio/aac',
+        'audio/mp4',
+        'audio/mpeg',
+        'audio/amr',
+        'audio/ogg',
+      ]);
+      let effectiveMediaType = req.body.mediaType;
+      if (effectiveMediaType === 'audio' && !META_AUDIO_OK.has(baseContentType)) {
+        // Most common cause: Chrome recorded WebM/Opus. Meta doesn't
+        // play that back as audio, but it WILL deliver it as a document
+        // — the customer taps it and their phone plays it back. Keep
+        // the voice-note filename so the bubble is recognisable.
+        req.log.warn(
+          { sniffed, raw: rawContentType },
+          '[whatsapp] audio container not in Meta allowlist — falling back to document',
+        );
+        effectiveMediaType = 'document';
+      }
       // Filename + extension matter to Meta — it uses the extension to
       // dispatch the file to the right downstream pipeline. Sending
       // "upload.bin" makes Meta accept the upload, but WhatsApp can't
@@ -1069,8 +1144,13 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       // Audio messages don't accept a caption field at Meta's API —
       // sending one yields error (#100). Drop the caption silently
       // for audio; image / video / document keep it.
-      const mediaType = req.body.mediaType;
+      const mediaType = effectiveMediaType;
       const allowsCaption = mediaType !== 'audio';
+      // When we degraded an audio note to a document, include the
+      // filename so the WhatsApp bubble shows "voice-note.webm" instead
+      // of a generic "file" label. Documents need it anyway.
+      const isDegradedVoice =
+        req.body.mediaType === 'audio' && effectiveMediaType === 'document';
       const payload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
@@ -1079,6 +1159,9 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         [mediaType]: {
           id: metaMediaId,
           ...(allowsCaption && req.body.caption ? { caption: req.body.caption } : {}),
+          ...(mediaType === 'document'
+            ? { filename: isDegradedVoice ? `voice-note.${ext}` : filenameWithExt }
+            : {}),
         },
       };
       let sendBody = '';

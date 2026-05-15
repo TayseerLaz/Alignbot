@@ -40,7 +40,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
 
 function BrandPanel() {
   const features = [
-    { n: 1, label: 'AI WhatsApp\nchatbot', active: true },
+    { n: 1, label: 'AI WhatsApp\nchatbot' },
     { n: 2, label: 'Synced catalog\n& FAQs' },
     { n: 3, label: 'Bookings captured\nautomatically' },
   ];

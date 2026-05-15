@@ -5,14 +5,15 @@ import {
   type BroadcastDto,
   type BroadcastStatus,
 } from '@aligned/shared';
-import { useQuery } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Plus, Trash2 } from 'lucide-react';
 import Link from 'next/link';
+import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 
 const STATUS_CLASS: Record<BroadcastStatus, string> = {
   draft: 'bg-slate-100 text-slate-600',
@@ -25,6 +26,16 @@ const STATUS_CLASS: Record<BroadcastStatus, string> = {
 };
 
 export default function BroadcastsPage() {
+  const qc = useQueryClient();
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/broadcasts/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['broadcasts'] });
+      toast.success('Broadcast deleted');
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Delete failed'),
+  });
+
   const broadcastsQuery = useQuery({
     queryKey: ['broadcasts'],
     queryFn: () =>
@@ -122,6 +133,21 @@ export default function BroadcastsPage() {
                           Open
                         </Button>
                       </Link>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label={`Delete ${b.name}`}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Delete "${b.name}"? Permanently removes the campaign + all recipient rows + timeline.`,
+                            )
+                          )
+                            deleteMutation.mutate(b.id);
+                        }}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
                     </td>
                   </tr>
                 ))}

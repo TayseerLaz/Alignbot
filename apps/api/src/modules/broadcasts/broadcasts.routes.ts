@@ -398,12 +398,16 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
   );
 
   // ---------- DELETE /broadcasts/:id ---------------------------------------
+  // Deletes a broadcast in any status. If the broadcast is currently
+  // sending or scheduled, the BullMQ fanout job is also removed so it
+  // doesn't wake up to a deleted row. Cascade on broadcastRecipients +
+  // broadcastEvents drops every child row in one go.
   r.delete(
     '/broadcasts/:id',
     {
       schema: {
         tags: ['broadcasts'],
-        summary: 'Delete a draft broadcast (only drafts can be deleted).',
+        summary: 'Delete a broadcast and all its recipients + timeline events.',
         params: z.object({ id: uuidSchema }),
         response: { 200: successSchema },
       },
@@ -414,11 +418,16 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
       await app.tenant(req, async (tx) => {
         const existing = await tx.broadcast.findUnique({ where: { id } });
         if (!existing) throw notFound('Broadcast not found.');
-        if (existing.status !== 'draft') {
-          throw conflict('Only drafts can be deleted. Cancel a sending broadcast instead.');
-        }
         await tx.broadcast.delete({ where: { id } });
       });
+      // Best-effort: remove any still-pending fanout job for this broadcast.
+      // If it has already fired or doesn't exist, BullMQ returns 0 — harmless.
+      try {
+        const job = await getBroadcastFanoutQueue().getJob(`broadcast:${id}`);
+        if (job) await job.remove();
+      } catch (err) {
+        req.log.warn({ err, id }, '[broadcasts] failed to remove fanout job on delete');
+      }
       return { ok: true as const };
     },
   );
@@ -508,10 +517,22 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
       });
 
       // Enqueue fanout. For scheduled, BullMQ delay handles the wait.
+      // Re-send semantics: if a job already exists for this broadcast
+      // (e.g. user clicked Send twice, or re-scheduled), remove the
+      // existing job before adding the new one. BullMQ throws on a
+      // duplicate jobId otherwise, which previously surfaced as a 500.
+      const fanoutQueue = getBroadcastFanoutQueue();
+      const jobId = `broadcast:${id}`;
+      const existingJob = await fanoutQueue.getJob(jobId).catch(() => null);
+      if (existingJob) {
+        await existingJob.remove().catch((err) =>
+          req.log.warn({ err, jobId }, '[broadcasts] failed to remove stale fanout job'),
+        );
+      }
       const payload: BroadcastFanoutPayload = { organizationId: orgId, broadcastId: id };
       const delay = isScheduled && scheduledFor ? Math.max(0, scheduledFor.getTime() - Date.now()) : 0;
-      await getBroadcastFanoutQueue().add('fanout', payload, {
-        jobId: `broadcast:${id}`,
+      await fanoutQueue.add('fanout', payload, {
+        jobId,
         delay,
         removeOnComplete: { age: 24 * 60 * 60 },
         removeOnFail: { age: 7 * 24 * 60 * 60 },

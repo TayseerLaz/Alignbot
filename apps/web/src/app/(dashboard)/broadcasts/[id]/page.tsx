@@ -16,6 +16,7 @@ import {
   Play,
   RefreshCw,
   StopCircle,
+  Trash2,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
@@ -132,6 +133,15 @@ export default function BroadcastDetailPage() {
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Re-run failed'),
   });
+  const deleteMutation = useMutation({
+    mutationFn: () => api.delete(`/api/v1/broadcasts/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['broadcasts'] });
+      toast.success('Broadcast deleted');
+      window.location.href = '/broadcasts';
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Delete failed'),
+  });
 
   const exportCsv = () => {
     const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/broadcasts/${id}/recipients.csv`;
@@ -213,6 +223,22 @@ export default function BroadcastDetailPage() {
             {b && b.totalRecipients > 0 ? (
               <Button variant="ghost" onClick={exportCsv}>
                 <Download className="size-4" /> Export CSV
+              </Button>
+            ) : null}
+            {b ? (
+              <Button
+                variant="danger"
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `Delete broadcast "${b.name}"? This permanently removes the campaign + all recipient rows + timeline. Can't be undone.`,
+                    )
+                  )
+                    deleteMutation.mutate();
+                }}
+                disabled={deleteMutation.isPending}
+              >
+                <Trash2 className="size-4" /> Delete
               </Button>
             ) : null}
           </div>

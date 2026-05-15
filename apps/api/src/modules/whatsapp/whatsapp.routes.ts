@@ -2162,7 +2162,17 @@ async function maybeReplyAsBot(args: {
       });
       const data = await gatherBotData(tx as never, args.organizationId);
 
-      return { history: history.reverse(), data, channel: ch, threadId: thread.id };
+      return {
+        history: history.reverse(),
+        data,
+        channel: ch,
+        threadId: thread.id,
+        // Phase 6 — voice-reply preferences. Plumbed through to the
+        // send block so it can branch text vs TTS without re-reading
+        // BotConfig.
+        replyMode: (config.replyMode as string | undefined) ?? 'text',
+        ttsVoiceName: (config.ttsVoiceName as string | null | undefined) ?? null,
+      };
     });
     if (!ctx) continue;
 
@@ -2318,41 +2328,166 @@ async function maybeReplyAsBot(args: {
     }
     if (!reply && !imageStorageKey) continue;
 
-    // Send via Meta directly (we're in the worker-equivalent path; reusing
-    // the in-process token bucket from the /send route is fine — both
-    // share the same Redis key).
-    try {
-      const payload = {
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: m.from,
-        type: 'text',
-        text: { preview_url: false, body: reply || 'Here:' },
-      };
-      const res = await fetch(
-        `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/messages`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${channel.accessToken!}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(10_000),
-        },
+    // Phase 6 — decide text vs voice. `voice` always sends TTS. `match_customer`
+    // only sends TTS when the customer's last inbound was itself a voice
+    // note (so they don't get audio replies after typing a text question).
+    // `text` keeps existing behaviour.
+    const customerSpokeAudio = m.type === 'audio' || m.type === 'voice';
+    const wantsVoice =
+      ctx.replyMode === 'voice' ||
+      (ctx.replyMode === 'match_customer' && customerSpokeAudio);
+
+    let metaMessageId: string | null = null;
+    let sendOk = false;
+
+    if (wantsVoice && reply) {
+      const { isGoogleTtsConfigured, synthesizeSpeech } = await import(
+        '../../lib/tts-google.js'
       );
-      const text = await res.text();
-      if (!res.ok) {
-        args.log.warn({ status: res.status, text: text.slice(0, 200) }, '[whatsapp] bot send failed');
+      const { transcodeToOggOpus } = await import('../../lib/audio-transcode.js');
+      if (!isGoogleTtsConfigured()) {
+        args.log.warn(
+          { orgId: args.organizationId },
+          '[whatsapp] voice reply requested but GOOGLE_TTS_API_KEY not set — falling back to text',
+        );
+      } else {
+        // Pick the configured voice, fall back to language-appropriate
+        // env defaults. Crude language sniff: any Arabic Unicode block
+        // in the reply → use the Arabic default.
+        const isArabic = /[؀-ۿ]/.test(reply);
+        const voiceName =
+          ctx.ttsVoiceName ||
+          (isArabic ? env.GOOGLE_TTS_DEFAULT_VOICE_AR : env.GOOGLE_TTS_DEFAULT_VOICE_EN);
+        const tts = await synthesizeSpeech({ text: reply, voiceName });
+        if (!tts.ok) {
+          args.log.warn(
+            { err: tts.error, status: tts.status, orgId: args.organizationId, voiceName },
+            '[whatsapp] TTS failed — falling back to text',
+          );
+        } else {
+          // Even though Google gives us OGG/Opus 16 kHz already, run
+          // ffmpeg to force mono + the exact bitrate Meta's voice-note
+          // validator likes. ~30 ms operation; cheap insurance.
+          const transcoded = await transcodeToOggOpus(tts.bytes);
+          if (!transcoded.ok) {
+            args.log.warn(
+              { err: transcoded.error },
+              '[whatsapp] TTS transcode failed — falling back to text',
+            );
+          } else {
+            // Upload bytes to Meta /media → get media_id → send audio.
+            try {
+              const fd = new FormData();
+              fd.append('messaging_product', 'whatsapp');
+              fd.append(
+                'file',
+                new Blob([new Uint8Array(transcoded.bytes)], { type: 'audio/ogg' }),
+                'reply.ogg',
+              );
+              const mediaRes = await fetch(
+                `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/media`,
+                {
+                  method: 'POST',
+                  headers: { Authorization: `Bearer ${channel.accessToken!}` },
+                  body: fd,
+                  signal: AbortSignal.timeout(20_000),
+                },
+              );
+              const mediaJson = (await mediaRes.json().catch(() => ({}))) as { id?: string };
+              if (!mediaRes.ok || !mediaJson.id) {
+                args.log.warn(
+                  { status: mediaRes.status, body: mediaJson },
+                  '[whatsapp] TTS media upload failed — falling back to text',
+                );
+              } else {
+                const audioPayload = {
+                  messaging_product: 'whatsapp',
+                  recipient_type: 'individual',
+                  to: m.from,
+                  type: 'audio',
+                  audio: { id: mediaJson.id },
+                };
+                const audioRes = await fetch(
+                  `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/messages`,
+                  {
+                    method: 'POST',
+                    headers: {
+                      Authorization: `Bearer ${channel.accessToken!}`,
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(audioPayload),
+                    signal: AbortSignal.timeout(10_000),
+                  },
+                );
+                const audioBody = await audioRes.text();
+                if (!audioRes.ok) {
+                  args.log.warn(
+                    { status: audioRes.status, body: audioBody.slice(0, 200) },
+                    '[whatsapp] TTS audio send failed — falling back to text',
+                  );
+                } else {
+                  try {
+                    const parsed = JSON.parse(audioBody) as { messages?: { id?: string }[] };
+                    metaMessageId = parsed.messages?.[0]?.id ?? null;
+                  } catch {
+                    /* ignore */
+                  }
+                  sendOk = true;
+                }
+              }
+            } catch (err) {
+              args.log.warn({ err }, '[whatsapp] TTS send threw — falling back to text');
+            }
+          }
+        }
+      }
+    }
+
+    // Fallback / default: plain text reply (also runs when voice failed).
+    if (!sendOk) {
+      try {
+        const payload = {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: m.from,
+          type: 'text',
+          text: { preview_url: false, body: reply || 'Here:' },
+        };
+        const res = await fetch(
+          `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/messages`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${channel.accessToken!}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(10_000),
+          },
+        );
+        const text = await res.text();
+        if (!res.ok) {
+          args.log.warn(
+            { status: res.status, text: text.slice(0, 200) },
+            '[whatsapp] bot send failed',
+          );
+          continue;
+        }
+        try {
+          const parsed = JSON.parse(text) as { messages?: { id?: string }[] };
+          metaMessageId = parsed.messages?.[0]?.id ?? null;
+        } catch {
+          /* ignore */
+        }
+      } catch (err) {
+        args.log.warn({ err }, '[whatsapp] bot send threw');
         continue;
       }
-      let metaMessageId: string | null = null;
-      try {
-        const parsed = JSON.parse(text) as { messages?: { id?: string }[] };
-        metaMessageId = parsed.messages?.[0]?.id ?? null;
-      } catch {
-        /* ignore */
-      }
+    }
+
+    // The legacy code below this point expects `metaMessageId` to be set
+    // and continues with image-followup, audit, etc. We keep that flow.
+    try {
 
       // Follow-up: send the product's primary image as a separate
       // media message. Two-step: PUT bytes from Wasabi → POST to

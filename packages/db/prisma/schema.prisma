@@ -1360,6 +1360,15 @@ model BotConfig {
   // Simple version counter, bumped on every PUT. Surfaced in the UI so
   // the operator can see when something changed.
   version           Int       @default(1)
+  // Phase 6 — TTS reply mode.
+  //   text            : current behaviour. Plain WhatsApp text reply.
+  //   voice           : every reply spoken with Google Cloud TTS.
+  //   match_customer  : voice when the customer's last inbound was a
+  //                     voice note; text otherwise.
+  replyMode         String    @default("text") @map("reply_mode")
+  // Google Cloud TTS voice name (e.g. en-US-Neural2-J, ar-XA-Wavenet-B).
+  // Falls back to GOOGLE_TTS_DEFAULT_VOICE_EN env when null.
+  ttsVoiceName      String?   @map("tts_voice_name")
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 

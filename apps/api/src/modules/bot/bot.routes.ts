@@ -44,6 +44,9 @@ const botConfigDto = z.object({
   conversationFlow: z.record(z.string(), z.unknown()).nullable(),
   responseTemplates: z.record(z.string(), z.unknown()).nullable(),
   deployedAt: z.string().datetime().nullable(),
+  // Phase 6 — voice replies via Google Cloud TTS.
+  replyMode: z.enum(['text', 'voice', 'match_customer']),
+  ttsVoiceName: z.string().nullable(),
   version: z.number().int(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -117,10 +120,15 @@ function serializeConfig(c: {
   conversationFlow: unknown;
   responseTemplates: unknown;
   deployedAt: Date | null;
+  replyMode?: string;
+  ttsVoiceName?: string | null;
   version: number;
   createdAt: Date;
   updatedAt: Date;
 }) {
+  // Coerce replyMode to the enum the DTO promises — defaults to 'text'
+  // if anything else slipped in (no-op on fresh rows).
+  const mode = (c.replyMode ?? 'text') as 'text' | 'voice' | 'match_customer';
   return {
     id: c.id,
     personality: c.personality,
@@ -132,6 +140,8 @@ function serializeConfig(c: {
     conversationFlow: (c.conversationFlow ?? null) as Record<string, unknown> | null,
     responseTemplates: (c.responseTemplates ?? null) as Record<string, unknown> | null,
     deployedAt: c.deployedAt?.toISOString() ?? null,
+    replyMode: ['text', 'voice', 'match_customer'].includes(mode) ? mode : 'text',
+    ttsVoiceName: c.ttsVoiceName ?? null,
     version: c.version,
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
@@ -173,6 +183,9 @@ export default async function botRoutes(app: FastifyInstance) {
           escalationRules: z.record(z.string(), z.unknown()).nullable().optional(),
           conversationFlow: z.record(z.string(), z.unknown()).nullable().optional(),
           responseTemplates: z.record(z.string(), z.unknown()).nullable().optional(),
+          // Phase 6 — voice replies.
+          replyMode: z.enum(['text', 'voice', 'match_customer']).optional(),
+          ttsVoiceName: z.string().trim().max(100).nullable().optional(),
         }),
         response: { 200: itemEnvelopeSchema(botConfigDto) },
       },
@@ -195,6 +208,9 @@ export default async function botRoutes(app: FastifyInstance) {
             escalationRules: (req.body.escalationRules ?? undefined) as never,
             conversationFlow: (req.body.conversationFlow ?? undefined) as never,
             responseTemplates: (req.body.responseTemplates ?? undefined) as never,
+            replyMode: req.body.replyMode ?? undefined,
+            ttsVoiceName:
+              req.body.ttsVoiceName === undefined ? undefined : req.body.ttsVoiceName,
             version: { increment: 1 },
           },
         });

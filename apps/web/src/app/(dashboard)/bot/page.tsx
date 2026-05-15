@@ -44,6 +44,8 @@ interface BotConfig {
   conversationFlow: Record<string, unknown> | null;
   responseTemplates: Record<string, unknown> | null;
   deployedAt: string | null;
+  replyMode: 'text' | 'voice' | 'match_customer';
+  ttsVoiceName: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -200,6 +202,7 @@ export default function BotPage() {
           <AnalyzeCard />
           <KnowledgeBaseCard />
           <PersonalityCard config={config} />
+          <VoiceReplyCard config={config} />
           <ScenarioRunner />
         </div>
         <div className="space-y-6">
@@ -1108,5 +1111,139 @@ function ScenarioRow({
         </div>
       ) : null}
     </li>
+  );
+}
+
+// ---------- Voice reply (Google Cloud TTS) -------------------------------
+// Lets operators flip the bot from text replies to spoken voice notes.
+// "match_customer" is the safe default — speaks when the customer's last
+// inbound was itself a voice note, types when they type. Voice ID is
+// optional; when blank, the API falls back to env-configured defaults.
+const VOICE_OPTIONS: { id: string; label: string; lang: string }[] = [
+  { id: 'en-US-Neural2-J', label: 'English (US) · Male · Neural2-J', lang: 'en' },
+  { id: 'en-US-Neural2-F', label: 'English (US) · Female · Neural2-F', lang: 'en' },
+  { id: 'en-US-Neural2-D', label: 'English (US) · Male · Neural2-D', lang: 'en' },
+  { id: 'en-GB-Neural2-A', label: 'English (UK) · Female · Neural2-A', lang: 'en' },
+  { id: 'en-GB-Neural2-B', label: 'English (UK) · Male · Neural2-B', lang: 'en' },
+  { id: 'ar-XA-Wavenet-B', label: 'Arabic (Standard) · Male · WaveNet-B', lang: 'ar' },
+  { id: 'ar-XA-Wavenet-A', label: 'Arabic (Standard) · Female · WaveNet-A', lang: 'ar' },
+  { id: 'ar-XA-Wavenet-C', label: 'Arabic (Standard) · Male · WaveNet-C', lang: 'ar' },
+];
+
+function VoiceReplyCard({ config }: { config: BotConfig | null }) {
+  const qc = useQueryClient();
+  const [replyMode, setReplyMode] = useState<'text' | 'voice' | 'match_customer'>(
+    config?.replyMode ?? 'text',
+  );
+  const [voiceName, setVoiceName] = useState<string>(config?.ttsVoiceName ?? '');
+
+  useEffect(() => {
+    if (!config) return;
+    setReplyMode(config.replyMode ?? 'text');
+    setVoiceName(config.ttsVoiceName ?? '');
+  }, [config]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.put('/api/v1/bot/config', {
+        replyMode,
+        ttsVoiceName: voiceName || null,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bot-config'] });
+      toast.success('Voice reply preferences saved');
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Save failed'),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Voice replies</CardTitle>
+        <CardDescription>
+          Speak the bot&apos;s answers as WhatsApp voice notes instead of plain text. Uses Google
+          Cloud TTS — the free tier covers ~5,000 replies/month.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <p className="text-xs font-medium uppercase tracking-wider text-foreground-subtle">
+            When the bot replies
+          </p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            {(
+              [
+                {
+                  v: 'text',
+                  label: 'Always text',
+                  hint: 'Default. No TTS calls. No extra cost.',
+                },
+                {
+                  v: 'match_customer',
+                  label: 'Match the customer',
+                  hint: 'Voice if they sent a voice note. Text if they typed.',
+                },
+                {
+                  v: 'voice',
+                  label: 'Always voice',
+                  hint: 'Every reply spoken. Heavier on TTS quota.',
+                },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.v}
+                type="button"
+                onClick={() => setReplyMode(opt.v)}
+                className={`rounded-lg border p-3 text-left transition ${
+                  replyMode === opt.v
+                    ? 'border-brand-500 bg-brand-50/60 dark:bg-brand-500/10'
+                    : 'border-border bg-surface hover:bg-surface-muted'
+                }`}
+              >
+                <div className="text-sm font-semibold">{opt.label}</div>
+                <div className="mt-1 text-xs text-foreground-muted">{opt.hint}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {replyMode !== 'text' ? (
+          <div className="space-y-1.5">
+            <label htmlFor="bot-voice" className="text-xs font-medium text-foreground-muted">
+              Voice
+            </label>
+            <select
+              id="bot-voice"
+              value={voiceName}
+              onChange={(e) => setVoiceName(e.target.value)}
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+            >
+              <option value="">— Use default for the bot&apos;s reply language —</option>
+              {VOICE_OPTIONS.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-foreground-subtle">
+              You can preview voices at{' '}
+              <a
+                href="https://cloud.google.com/text-to-speech"
+                target="_blank"
+                rel="noreferrer"
+                className="underline"
+              >
+                cloud.google.com/text-to-speech
+              </a>
+              .
+            </p>
+          </div>
+        ) : null}
+
+        <Button onClick={() => save.mutate()} loading={save.isPending}>
+          Save voice preferences
+        </Button>
+      </CardContent>
+    </Card>
   );
 }

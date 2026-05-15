@@ -53,6 +53,12 @@ const envSchema = z.object({
     .transform((v) => v === 'true'),
   WASABI_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().positive().default(900),
 
+  // Phase 6 — Google Cloud TTS for voice replies. Optional; bot routes
+  // fall back to text replies when the key is missing.
+  GOOGLE_TTS_API_KEY: z.string().optional(),
+  GOOGLE_TTS_DEFAULT_VOICE_EN: z.string().default('en-US-Neural2-J'),
+  GOOGLE_TTS_DEFAULT_VOICE_AR: z.string().default('ar-XA-Wavenet-B'),
+
   RATE_LIMIT_AUTH_PER_MINUTE: z.coerce.number().int().positive().default(10),
   RATE_LIMIT_API_PER_SECOND: z.coerce.number().int().positive().default(100),
   RATE_LIMIT_READ_API_PER_SECOND: z.coerce.number().int().positive().default(200),

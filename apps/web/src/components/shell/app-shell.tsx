@@ -39,11 +39,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="flex min-h-dvh bg-surface-muted">
+    // Lock the shell to exactly one viewport height so the document
+    // itself never scrolls. The sidebar's internal <nav> and <main>
+    // each own their own scroll, which keeps the sidebar pinned while
+    // the page content scrolls past.
+    <div className="flex h-dvh bg-surface-muted">
       {/* Desktop sidebar — width animates between full (16rem) and
-          icon-only (4.5rem). Sidebar adapts to the `collapsed` prop. */}
+          icon-only (4.5rem). Height is the full viewport so its inner
+          <nav overflow-y-auto> actually has a bounded parent to scroll
+          against. */}
       <aside
-        className={`hidden shrink-0 border-r border-border bg-white transition-[width] duration-200 ease-in-out lg:block ${
+        className={`hidden h-dvh shrink-0 border-r border-border bg-white transition-[width] duration-200 ease-in-out lg:block ${
           collapsed ? 'w-[4.5rem]' : 'w-64'
         }`}
       >

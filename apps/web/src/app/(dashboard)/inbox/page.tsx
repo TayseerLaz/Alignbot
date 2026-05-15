@@ -1032,8 +1032,32 @@ function ReplyBox({
         try {
           const { uploadFile } = await import('@/lib/upload');
           const { assetId } = await uploadFile(file, 'document');
-          setPendingAttachment({ assetId, mediaType: 'audio', filename, durationSec });
-          toast.success(`Voice (${durationSec}s) — click Send to deliver`);
+          // Voice notes auto-send the moment the recording stops —
+          // every messenger app behaves this way and operators
+          // expect the same. Files / images keep the explicit
+          // staging UI because they often want a caption.
+          setAttaching(false);
+          setRecording(false);
+          setRecordedSec(0);
+          setSendingMedia(true);
+          try {
+            const res = await api.post<{ data: { ok: boolean; errorMessage: string | null } }>(
+              '/api/v1/whatsapp/send-media',
+              { to, assetId, mediaType: 'audio' },
+            );
+            if (res.data.ok) {
+              toast.success(`Voice note (${durationSec}s) sent`);
+              qc.invalidateQueries({ queryKey: ['inbox-thread'] });
+              qc.invalidateQueries({ queryKey: ['inbox-threads'] });
+            } else {
+              toast.error(res.data.errorMessage ?? 'Voice send failed');
+            }
+          } catch (sendErr) {
+            toast.error(sendErr instanceof Error ? sendErr.message : 'Voice send failed');
+          } finally {
+            setSendingMedia(false);
+          }
+          return;
         } catch (err) {
           toast.error(err instanceof Error ? err.message : 'Upload failed');
         } finally {

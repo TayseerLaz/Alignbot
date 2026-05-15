@@ -101,7 +101,7 @@ function BrandPanel() {
           <h2 className="mb-7 text-5xl font-semibold leading-[1.05] tracking-tight text-white">
             One inbox for
             <br />
-            every customer
+            <span className="text-white">every Business</span>
           </h2>
 
           <ul className="grid grid-cols-3 gap-2.5">

@@ -130,6 +130,43 @@ export async function complete(args: CompleteArgs): Promise<{ text: string; inpu
   };
 }
 
+// Whisper-based speech-to-text. Used to transcribe inbound voice notes
+// from WhatsApp so the AI chatbot can understand and reply to them.
+// Whisper accepts up to 25 MB per file in any of: mp3, mp4, mpeg, mpga,
+// m4a, wav, webm, ogg, flac. WhatsApp voice notes arrive as audio/ogg
+// (with Opus), well inside the supported set.
+//
+// Cost rough-cut: ~$0.006 / minute. We pre-charge ~600 "tokens" (≈ 1
+// chatbot-reply equivalent) against the daily org budget so a flood
+// of long voice notes still trips the cap.
+export interface TranscribeArgs {
+  organizationId: string;
+  bytes: Buffer;
+  filename: string;
+  mimeType?: string;
+}
+
+export async function transcribeAudio(args: TranscribeArgs): Promise<{ text: string }> {
+  const ok = await consumeDailyTokens(args.organizationId, 600);
+  if (!ok) {
+    const err = new Error('Daily AI token budget exceeded — voice transcription paused.');
+    (err as Error & { code?: string }).code = 'TOKEN_BUDGET_EXCEEDED';
+    throw err;
+  }
+  const c = client();
+  const blob = new Blob([new Uint8Array(args.bytes)], { type: args.mimeType ?? 'audio/ogg' });
+  // Cast to File for OpenAI's SDK — Node 20+ has File in globalThis.
+  const file = new File([blob], args.filename, { type: args.mimeType ?? 'audio/ogg' });
+  const res = await c.audio.transcriptions.create({
+    file,
+    model: 'whisper-1',
+    response_format: 'text',
+  });
+  // response_format=text returns a plain string in the SDK.
+  const text = typeof res === 'string' ? res : ((res as { text?: string }).text ?? '');
+  return { text: text.trim() };
+}
+
 // Strict JSON-mode completion. The LLM is asked to return a single JSON
 // object. Used by the booking extractor fallback so we don't depend on
 // the conversational LLM remembering to emit our [BOOKING: {...}] marker.

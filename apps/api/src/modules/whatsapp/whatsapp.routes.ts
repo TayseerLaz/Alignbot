@@ -112,6 +112,96 @@ function sniffMediaContainer(buf: Buffer): string | null {
   return null;
 }
 
+// Whisper-transcribe an inbound voice/audio message. Two-step download
+// from Meta (/{media-id} → url → bytes), then transcription via OpenAI.
+// On success the persisted whatsapp_messages row's body is patched so
+// the inbox shows the transcript instead of the "[audio]" placeholder.
+// All errors are swallowed + logged so a transcription failure never
+// blocks the bot's normal flow.
+async function transcribeInboundVoice(args: {
+  organizationId: string;
+  mediaId: string;
+  mediaMime: string | null;
+  wamid: string | null;
+  log: { warn: (...args: unknown[]) => void; info: (...args: unknown[]) => void };
+}): Promise<string | null> {
+  try {
+    const { withRlsBypass } = await import('../../lib/db.js');
+    // Get the access token for this org's primary channel.
+    const channel = await withRlsBypass((tx) =>
+      tx.whatsAppChannel.findFirst({
+        where: { organizationId: args.organizationId, isPrimary: true },
+      }),
+    );
+    if (!channel?.accessToken) return null;
+
+    // Step 1: Meta returns a download URL for the media id.
+    const metaUrl = `https://graph.facebook.com/v20.0/${encodeURIComponent(args.mediaId)}`;
+    const urlRes = await fetch(metaUrl, {
+      headers: { Authorization: `Bearer ${channel.accessToken}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!urlRes.ok) {
+      args.log.warn(
+        { status: urlRes.status, mediaId: args.mediaId },
+        '[whatsapp] inbound media lookup failed',
+      );
+      return null;
+    }
+    const urlJson = (await urlRes.json()) as { url?: string; mime_type?: string };
+    if (!urlJson.url) return null;
+
+    // Step 2: GET the actual bytes from the signed URL.
+    const fileRes = await fetch(urlJson.url, {
+      headers: { Authorization: `Bearer ${channel.accessToken}` },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!fileRes.ok) {
+      args.log.warn(
+        { status: fileRes.status, mediaId: args.mediaId },
+        '[whatsapp] inbound media download failed',
+      );
+      return null;
+    }
+    const buf = Buffer.from(await fileRes.arrayBuffer());
+
+    // Step 3: Whisper transcribe.
+    const { transcribeAudio } = await import('../../lib/openai.js');
+    const mime = (args.mediaMime ?? urlJson.mime_type ?? 'audio/ogg').split(';')[0]!.trim();
+    const ext = mime === 'audio/ogg' ? 'ogg' : mime === 'audio/mp4' ? 'm4a' : 'webm';
+    const { text } = await transcribeAudio({
+      organizationId: args.organizationId,
+      bytes: buf,
+      filename: `inbound-${args.mediaId}.${ext}`,
+      mimeType: mime,
+    });
+    if (!text) return null;
+
+    // Step 4: patch the persisted inbox row so operators see the
+    // transcript next to the audio bubble. Idempotent (updateMany).
+    if (args.wamid) {
+      await withRlsBypass(async (tx) => {
+        await tx.whatsAppMessage.updateMany({
+          where: {
+            organizationId: args.organizationId,
+            metaMessageId: args.wamid!,
+          },
+          data: { body: `🎙 ${text}` },
+        });
+      });
+    }
+
+    args.log.info(
+      { mediaId: args.mediaId, chars: text.length },
+      '[whatsapp] transcribed inbound voice note',
+    );
+    return text;
+  } catch (err) {
+    args.log.warn({ err, mediaId: args.mediaId }, '[whatsapp] voice transcription threw');
+    return null;
+  }
+}
+
 function maskSecret(s: string | null | undefined): string | null {
   if (!s) return null;
   if (s.length <= 8) return '••••';
@@ -1612,6 +1702,12 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 type?: string;
                 text?: { body?: string };
                 timestamp?: string;
+                // Inbound media payloads: only the `id` is needed to
+                // pull the bytes back from Meta's /media/{id} endpoint.
+                // We only care about audio + voice here so the bot can
+                // transcribe customer voice notes.
+                audio?: { id?: string; mime_type?: string; voice?: boolean };
+                voice?: { id?: string; mime_type?: string };
               }[];
               statuses?: {
                 id?: string; // wamid of the outbound message
@@ -1741,18 +1837,47 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         return type ? `[${type}]` : '';
       }
 
-      const persisted: { from: string; type: string; bodyText: string | null; metaId: string | null }[] = [];
+      // Inbound queue passed to the bot reply path. mediaId is the
+      // Meta /media id for inbound audio/voice messages — used by the
+      // bot to download + Whisper-transcribe customer voice notes so
+      // they go through the same reply pipeline as text.
+      const persisted: {
+        from: string;
+        type: string;
+        bodyText: string | null;
+        metaId: string | null;
+        mediaId: string | null;
+        mediaMime: string | null;
+      }[] = [];
       for (const entry of body.entry ?? []) {
         for (const change of entry.changes ?? []) {
           const value = change.value;
           if (!value || !value.messages) continue;
           for (const m of value.messages) {
             const bodyText = extractInboundBody(m as unknown as Record<string, unknown>);
+            // Pull the Meta media id for audio/voice so the bot can
+            // download + transcribe later. Both `audio` and `voice`
+            // shapes can appear depending on whether the customer
+            // recorded a voice note or shared an audio file.
+            const mediaId =
+              m.type === 'audio'
+                ? m.audio?.id ?? null
+                : m.type === 'voice'
+                  ? m.voice?.id ?? null
+                  : null;
+            const mediaMime =
+              m.type === 'audio'
+                ? m.audio?.mime_type ?? null
+                : m.type === 'voice'
+                  ? m.voice?.mime_type ?? null
+                  : null;
             persisted.push({
               from: m.from ?? '',
               type: m.type ?? 'unknown',
               bodyText: bodyText || null,
               metaId: m.id ?? null,
+              mediaId,
+              mediaMime,
             });
 
             // Every inbound creates a Contact row if we don't already
@@ -1956,7 +2081,14 @@ export default async function whatsappRoutes(app: FastifyInstance) {
 //   - the inbound message has no text (image/template/system event)
 async function maybeReplyAsBot(args: {
   organizationId: string;
-  messages: { from: string; type: string; bodyText: string | null; metaId: string | null }[];
+  messages: {
+    from: string;
+    type: string;
+    bodyText: string | null;
+    metaId: string | null;
+    mediaId: string | null;
+    mediaMime: string | null;
+  }[];
   log: { error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; info: (...args: unknown[]) => void };
 }): Promise<void> {
   const { isOpenAIConfigured } = await import('../../lib/openai.js');
@@ -1966,6 +2098,23 @@ async function maybeReplyAsBot(args: {
   const { buildBotResponse, gatherBotData } = await import('../../lib/bot-engine.js');
 
   for (const m of args.messages) {
+    // Voice-note path: customer sent an audio/voice message. Download
+    // the bytes from Meta, run Whisper, then feed the transcript into
+    // the same bot reply pipeline as a text message. We also patch the
+    // already-persisted whatsapp_messages row so the inbox shows the
+    // transcript instead of the "[audio]" placeholder.
+    if (!m.bodyText && m.from && (m.type === 'audio' || m.type === 'voice') && m.mediaId) {
+      const transcript = await transcribeInboundVoice({
+        organizationId: args.organizationId,
+        mediaId: m.mediaId,
+        mediaMime: m.mediaMime,
+        wamid: m.metaId,
+        log: args.log,
+      });
+      if (transcript) {
+        m.bodyText = transcript;
+      }
+    }
     if (!m.bodyText || !m.from) continue;
 
     // tx1: read everything we need to decide whether to reply + the prompt

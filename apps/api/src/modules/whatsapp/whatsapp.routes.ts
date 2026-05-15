@@ -1056,17 +1056,38 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       // with 200, then drops the message with code 131053 ("uploaded
       // as audio/mp4 but on processing it is application/octet-stream").
       //
-      // Until we transcode server-side with ffmpeg, the only reliable
-      // delivery path for browser-recorded audio is WhatsApp's document
-      // type — the bubble shows the filename and the customer plays it
-      // back by tapping. We degrade unconditionally for now.
+      // Fix: transcode server-side via ffmpeg to canonical audio/ogg +
+      // libopus, 16kHz mono — exactly what WhatsApp uses for native
+      // voice notes. After transcode we set audio.voice=true so the
+      // bubble renders with the waveform UI, not as a file attachment.
+      // If ffmpeg fails for any reason we fall back to the document
+      // delivery path so the audio still reaches the customer.
       let effectiveMediaType = req.body.mediaType;
+      let voiceNoteFlag = false;
       if (effectiveMediaType === 'audio') {
-        req.log.warn(
-          { sniffed, raw: rawContentType },
-          '[whatsapp] degrading audio → document (browser MediaRecorder output is not Meta-deliverable)',
-        );
-        effectiveMediaType = 'document';
+        const { transcodeToOggOpus } = await import('../../lib/audio-transcode.js');
+        const t0 = Date.now();
+        const srcLen = fileBytes.length;
+        const result = await transcodeToOggOpus(fileBytes);
+        if (result.ok) {
+          fileBytes = result.bytes;
+          baseContentType = result.mime;
+          voiceNoteFlag = true;
+          req.log.info(
+            {
+              srcBytes: srcLen,
+              outBytes: result.bytes.length,
+              durationMs: Date.now() - t0,
+            },
+            '[AL-VOICE-DEBUG] transcoded to audio/ogg+opus',
+          );
+        } else {
+          req.log.warn(
+            { error: result.error },
+            '[whatsapp] audio transcode failed — degrading to document so the file at least delivers',
+          );
+          effectiveMediaType = 'document';
+        }
       }
       req.log.info(
         {
@@ -1191,6 +1212,11 @@ export default async function whatsappRoutes(app: FastifyInstance) {
           ...(mediaType === 'document'
             ? { filename: isDegradedVoice ? `voice-note.${ext}` : filenameWithExt }
             : {}),
+          // Render as a play-in-place WhatsApp voice note (waveform UI)
+          // rather than a generic audio attachment. Only legal on
+          // type=audio with audio/ogg + opus, which is exactly what
+          // our transcoder produces.
+          ...(mediaType === 'audio' && voiceNoteFlag ? { voice: true } : {}),
         },
       };
       let sendBody = '';

@@ -37,6 +37,25 @@ import { cn } from '@/lib/utils';
 
 type ThreadStatus = 'open' | 'pending' | 'resolved' | 'escalated';
 
+// Minimal shape we use from the dynamically-imported opus-recorder
+// package. The library doesn't ship TS types of its own, so we keep
+// this shim local rather than pulling in a separate @types package.
+interface OpusRecorderLike {
+  start: () => Promise<void>;
+  stop: () => Promise<void> | void;
+  ondataavailable?: (data: Uint8Array) => void;
+  onstop?: () => void;
+  onerror?: (err: unknown) => void;
+}
+interface OpusRecorderOptions {
+  encoderPath: string;
+  streamPages?: boolean;
+  encoderApplication?: number;
+  encoderSampleRate?: number;
+  numberOfChannels?: number;
+}
+type OpusRecorderCtor = new (opts: OpusRecorderOptions) => OpusRecorderLike;
+
 interface Thread {
   id: string;
   customerPhone: string;
@@ -987,6 +1006,7 @@ function ReplyBox({
   //      so the customer still receives the audio, just as a file.
   async function startOpusRecording(): Promise<boolean> {
     try {
+      // @ts-expect-error — opus-recorder ships no TS types
       const mod = await import('opus-recorder');
       const RecorderCtor = (mod as { default: OpusRecorderCtor }).default;
       if (!RecorderCtor) return false;
@@ -1041,6 +1061,18 @@ function ReplyBox({
 
   async function startRecording() {
     if (recording) return;
+    // Tier 1: try opus-recorder first.
+    const opusOk = await startOpusRecording();
+    if (opusOk) {
+      recordStartRef.current = Date.now();
+      setRecording(true);
+      setRecordedSec(0);
+      recordTimerRef.current = setInterval(() => {
+        setRecordedSec(Math.round((Date.now() - recordStartRef.current) / 1000));
+      }, 250);
+      return;
+    }
+    // Tier 2: MediaRecorder fallback.
     const mime = pickRecorderMime();
     if (!mime) {
       toast.error('Voice recording not supported in this browser.');
@@ -1128,18 +1160,99 @@ function ReplyBox({
     }
   }
 
-  function stopRecording() {
-    if (!recording || !recorderRef.current) return;
+  async function finishOpusRecording(durationSec: number) {
+    // ondataavailable fires synchronously during rec.stop(); give the
+    // worker a tick to post back if we got here too fast.
+    if (!opusBytesRef.current) await new Promise((r) => setTimeout(r, 50));
+    const bytes = opusBytesRef.current;
+    opusBytesRef.current = null;
+    opusRecorderRef.current = null;
+    if (!bytes || bytes.byteLength < 500) {
+      toast.error('Recording too short — try again.');
+      return;
+    }
+    const filename = `voice-${new Date().toISOString().replace(/[:.]/g, '-')}.ogg`;
+    const file = new File([bytes as BlobPart], filename, { type: 'audio/ogg' });
+    setAttaching(true);
     try {
-      recorderRef.current.stop();
-    } catch {
-      /* already stopped */
+      const { uploadFile } = await import('@/lib/upload');
+      const { assetId } = await uploadFile(file, 'document');
+      setAttaching(false);
+      setSendingMedia(true);
+      try {
+        const res = await api.post<{ data: { ok: boolean; errorMessage: string | null } }>(
+          '/api/v1/whatsapp/send-media',
+          { to, assetId, mediaType: 'audio' },
+        );
+        if (res.data.ok) {
+          toast.success(`Voice note (${durationSec}s) sent`);
+          qc.invalidateQueries({ queryKey: ['inbox-thread'] });
+          qc.invalidateQueries({ queryKey: ['inbox-threads'] });
+        } else {
+          toast.error(res.data.errorMessage ?? 'Voice send failed');
+        }
+      } catch (sendErr) {
+        toast.error(sendErr instanceof Error ? sendErr.message : 'Voice send failed');
+      } finally {
+        setSendingMedia(false);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setAttaching(false);
+    }
+  }
+
+  function stopRecording() {
+    if (!recording) return;
+    if (opusRecorderRef.current) {
+      const durationSec = Math.round((Date.now() - recordStartRef.current) / 1000);
+      try {
+        opusRecorderRef.current.stop();
+      } catch {
+        /* already stopped */
+      }
+      if (recordTimerRef.current) {
+        clearInterval(recordTimerRef.current);
+        recordTimerRef.current = null;
+      }
+      setRecording(false);
+      setRecordedSec(0);
+      void finishOpusRecording(durationSec);
+      return;
+    }
+    if (recorderRef.current) {
+      try {
+        recorderRef.current.stop();
+      } catch {
+        /* already stopped */
+      }
     }
   }
 
   function cancelRecording() {
     if (!recording) return;
-    // Discard recorded chunks before stopping so onstop doesn't upload.
+    // Opus path: discard the worker output before stopping.
+    if (opusRecorderRef.current) {
+      opusBytesRef.current = null;
+      try {
+        opusRecorderRef.current.stop();
+      } catch {
+        /* */
+      }
+      opusRecorderRef.current = null;
+      recordStreamRef.current?.getTracks().forEach((t) => t.stop());
+      recordStreamRef.current = null;
+      if (recordTimerRef.current) {
+        clearInterval(recordTimerRef.current);
+        recordTimerRef.current = null;
+      }
+      setRecording(false);
+      setRecordedSec(0);
+      return;
+    }
+    // MediaRecorder path: discard chunks before stopping so onstop
+    // doesn't upload them.
     recordChunksRef.current = [];
     recorderRef.current?.stop();
     recordStreamRef.current?.getTracks().forEach((t) => t.stop());

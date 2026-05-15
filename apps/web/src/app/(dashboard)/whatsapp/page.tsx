@@ -225,25 +225,25 @@ export default function WhatsAppPage() {
       {/* Honesty banner — Phase 1.5 only stores credentials + verifies + receives;
           autonomous bot replies still belong to your bot runtime. */}
       <Card className="mb-6 border border-amber-200 bg-amber-50/40 dark:border-amber-400/30 dark:bg-amber-400/10">
-        {/* Force black text in light mode via !important so no Tailwind
-            utility override or cached CSS can mute it. Dark mode keeps
-            the warm cream tone. */}
-        <CardContent className="flex items-start gap-3 py-3 text-xs !text-black dark:!text-amber-200">
-          <MessageCircle className="mt-0.5 size-4 shrink-0 !text-black dark:!text-amber-200" />
+        {/* text-foreground resolves to near-black in light mode and the
+            pale token in dark mode, so the banner reads on both. Inline
+            `color` style on the body wrapper is a belt-and-suspenders
+            fallback in case any cascade rule sneaks in — child elements
+            inherit it. */}
+        <CardContent
+          className="flex items-start gap-3 py-3 text-xs text-foreground"
+          style={{ color: 'var(--color-foreground)' }}
+        >
+          <MessageCircle className="mt-0.5 size-4 shrink-0" />
           <div className="space-y-1">
-            <p className="font-semibold !text-black dark:!text-amber-200">
-              This page connects credentials, not conversations.
-            </p>
-            <p className="leading-relaxed !text-black dark:!text-amber-200">
+            <p className="font-semibold">This page connects credentials, not conversations.</p>
+            <p className="leading-relaxed">
               The platform will verify your token, expose a webhook URL Meta can call, and persist
-              inbound messages for the audit log.{' '}
-              <strong className="!text-black dark:!text-amber-100">
-                Auto-responding to customers
-              </strong>{' '}
-              is still done by your bot runtime — Landbot, an in-house bridge, or Phase 2 when it
+              inbound messages for the audit log. <strong>Auto-responding to customers</strong> is
+              still done by your bot runtime — Landbot, an in-house bridge, or Phase 2 when it
               ships. See the{' '}
               <a
-                className="font-medium !text-black underline underline-offset-2 dark:!text-amber-100"
+                className="font-medium text-foreground underline underline-offset-2"
                 href="/docs/NO_CODE_CHATBOT_PLAYBOOK.md"
               >
                 no-code playbook

@@ -2704,6 +2704,12 @@ async function maybeReplyAsBot(args: {
           where: { organizationId: args.organizationId, customerPhone: m.from },
         });
         if (!thread) return;
+        // If the reply was successfully delivered as a TTS voice note,
+        // record the message as `audio` so the inbox renders the 🎙
+        // Voice-note bubble (matches the inbound voice-note treatment)
+        // instead of a plain text bubble. `body` still holds the
+        // transcript for search + LLM history.
+        const sentAsVoice = wantsVoice && sendOk;
         await tx.whatsAppMessage.create({
           data: {
             threadId: thread.id,
@@ -2711,16 +2717,18 @@ async function maybeReplyAsBot(args: {
             direction: 'outbound',
             metaMessageId,
             toNumber: m.from,
-            messageType: 'text',
+            messageType: sentAsVoice ? 'audio' : 'text',
             body: reply,
-            rawPayload: { sentBy: 'bot' } as never,
+            rawPayload: { sentBy: 'bot', tts: sentAsVoice } as never,
           },
         });
         await tx.whatsAppThread.update({
           where: { id: thread.id },
           data: {
             lastMessageAt: new Date(),
-            lastMessagePreview: reply.slice(0, 200),
+            lastMessagePreview: sentAsVoice
+              ? '🎙 Voice note'
+              : reply.slice(0, 200),
             outboundCount: { increment: 1 },
             ...(wantsHandoff ? { status: 'escalated' as never } : {}),
           },

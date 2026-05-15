@@ -415,7 +415,13 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
                 category,
                 bodyText: bodyText || existing.bodyText,
                 components: components as never,
-                rejectionReason: t.rejected_reason ?? null,
+                // Meta returns "NONE" for approved templates that have no
+                // rejection reason — treat that as null at ingest time so
+                // the UI never has to guess.
+                rejectionReason:
+                  t.rejected_reason && t.rejected_reason.toUpperCase() !== 'NONE'
+                    ? t.rejected_reason
+                    : null,
               },
             });
             updated += 1;
@@ -430,7 +436,13 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
                 components: components as never,
                 status,
                 metaTemplateId: t.id ?? null,
-                rejectionReason: t.rejected_reason ?? null,
+                // Meta returns "NONE" for approved templates that have no
+                // rejection reason — treat that as null at ingest time so
+                // the UI never has to guess.
+                rejectionReason:
+                  t.rejected_reason && t.rejected_reason.toUpperCase() !== 'NONE'
+                    ? t.rejected_reason
+                    : null,
               },
             });
             imported += 1;

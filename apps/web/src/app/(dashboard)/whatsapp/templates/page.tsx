@@ -161,8 +161,15 @@ export default function TemplatesPage() {
                           <span className="text-xs text-foreground-subtle">{t.language}</span>
                         </div>
                         <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{t.bodyText}</p>
-                        {t.rejectionReason ? (
-                          <p className="mt-1 text-xs text-red-700">
+                        {/* Only surface a rejection reason when Meta has
+                            actually rejected the template. Meta returns the
+                            literal string "NONE" for approved templates,
+                            which is truthy — guarding on status fixes the
+                            "approved · Rejected: NONE" rendering. */}
+                        {t.status === 'rejected' &&
+                        t.rejectionReason &&
+                        t.rejectionReason.toUpperCase() !== 'NONE' ? (
+                          <p className="mt-1 text-xs text-red-700 dark:text-red-300">
                             <strong>Rejected:</strong> {t.rejectionReason}
                           </p>
                         ) : null}

@@ -6,6 +6,7 @@ import { Toaster } from 'sonner';
 
 import { SessionProvider } from '@/lib/session';
 
+import { ThemeProvider } from './theme-provider';
 import { ConfirmDialogRoot } from './ui/confirm-dialog';
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -19,10 +20,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <SessionProvider>{children}</SessionProvider>
-      <Toaster position="top-right" richColors closeButton />
-      <ConfirmDialogRoot />
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <SessionProvider>{children}</SessionProvider>
+        <Toaster position="top-right" richColors closeButton theme="system" />
+        <ConfirmDialogRoot />
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }

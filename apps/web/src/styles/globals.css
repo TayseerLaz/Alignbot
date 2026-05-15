@@ -68,6 +68,53 @@
 }
 
 /* ============================================================================
+   DARK MODE — Tailwind v4 `dark` variant. Toggled by adding `dark` class to
+   <html> (handled by the ThemeToggle component + system preference). Tokens
+   are overridden in @theme so every Tailwind utility re-themes automatically.
+   ============================================================================ */
+.dark {
+  /* Brand stays the same hue but lifted for contrast on dark surfaces. */
+  --color-brand-50: #0e2a3e;
+  --color-brand-100: #133852;
+  --color-brand-200: #174363;
+  --color-brand-300: #1b4f72;
+  --color-brand-400: #2f6d99;
+  --color-brand-500: #4a90c8;
+  --color-brand-600: #7fb1da;
+  --color-brand-700: #adcce8;
+  --color-brand-800: #d6e6f3;
+  --color-brand-900: #eef5fb;
+
+  /* Surfaces — deep slate with a slight blue tint. */
+  --color-surface: #1a2230;
+  --color-surface-muted: #0f1623;
+  --color-surface-elevated: #232c3d;
+  --color-border: #2a3447;
+  --color-border-strong: #3a4661;
+
+  /* Foreground */
+  --color-foreground: #e8ecf2;
+  --color-foreground-muted: #a3aabd;
+  --color-foreground-subtle: #6b7388;
+
+  /* Semantic — bumped saturation a touch so they read on dark. */
+  --color-success: #4ade80;
+  --color-success-100: #14322a;
+  --color-warning: #facc15;
+  --color-warning-100: #3a2c0a;
+  --color-danger: #f87171;
+  --color-danger-100: #3a1b1f;
+  --color-info: #60a5fa;
+  --color-info-100: #112338;
+
+  /* Shadows — much deeper so cards still feel elevated against dark bg. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-brand: 0 10px 26px rgba(74, 144, 200, 0.35);
+}
+
+/* ============================================================================
    BASE
    ============================================================================ */
 @layer base {

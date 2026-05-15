@@ -17,6 +17,8 @@ import {
 import { useSession } from '@/lib/session';
 import { fullName, initials } from '@/lib/utils';
 
+import { ThemeToggle } from '../theme-toggle';
+
 import { NotificationsBell } from './notifications-bell';
 
 export function TopBar() {
@@ -66,6 +68,7 @@ export function TopBar() {
       </DropdownMenu>
 
       <div className="flex items-center gap-1">
+        <ThemeToggle />
         <NotificationsBell />
 
         <DropdownMenu>

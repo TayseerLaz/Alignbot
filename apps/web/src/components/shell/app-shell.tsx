@@ -49,7 +49,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <nav overflow-y-auto> actually has a bounded parent to scroll
           against. */}
       <aside
-        className={`hidden h-dvh shrink-0 border-r border-border bg-white transition-[width] duration-200 ease-in-out lg:block ${
+        className={`hidden h-dvh shrink-0 border-r border-border bg-surface transition-[width] duration-200 ease-in-out lg:block ${
           collapsed ? 'w-[4.5rem]' : 'w-64'
         }`}
       >
@@ -65,7 +65,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         />
       ) : null}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r border-border bg-white transition-transform lg:hidden ${
+        className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r border-border bg-surface transition-transform lg:hidden ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -73,7 +73,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-white px-4 lg:px-6">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-surface px-4 lg:px-6">
           <Button
             variant="ghost"
             size="icon"

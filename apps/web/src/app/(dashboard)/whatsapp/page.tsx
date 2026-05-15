@@ -224,17 +224,20 @@ export default function WhatsAppPage() {
 
       {/* Honesty banner — Phase 1.5 only stores credentials + verifies + receives;
           autonomous bot replies still belong to your bot runtime. */}
-      <Card className="mb-6 border-amber-200 bg-amber-50/30">
-        <CardContent className="flex items-start gap-3 py-3 text-xs text-amber-900">
+      <Card className="mb-6 border border-amber-200 bg-amber-50/40 dark:border-amber-400/30 dark:bg-amber-400/10">
+        <CardContent className="flex items-start gap-3 py-3 text-xs text-amber-900 dark:text-amber-200">
           <MessageCircle className="mt-0.5 size-4 shrink-0" />
-          <div>
-            <p className="font-medium">This page connects credentials, not conversations.</p>
-            <p className="mt-0.5">
+          <div className="space-y-1">
+            <p className="font-semibold">This page connects credentials, not conversations.</p>
+            <p className="leading-relaxed">
               The platform will verify your token, expose a webhook URL Meta can call, and persist
               inbound messages for the audit log. <strong>Auto-responding to customers</strong> is
               still done by your bot runtime — Landbot, an in-house bridge, or Phase 2 when it
               ships. See the{' '}
-              <a className="underline" href="/docs/NO_CODE_CHATBOT_PLAYBOOK.md">
+              <a
+                className="font-medium text-amber-900 underline underline-offset-2 dark:text-amber-100"
+                href="/docs/NO_CODE_CHATBOT_PLAYBOOK.md"
+              >
                 no-code playbook
               </a>{' '}
               for the wiring.

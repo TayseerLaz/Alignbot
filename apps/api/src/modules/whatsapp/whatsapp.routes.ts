@@ -964,6 +964,18 @@ export default async function whatsappRoutes(app: FastifyInstance) {
     },
     async (req) => {
       const orgId = req.auth!.organizationId;
+      // Tag every step of the voice/media send with a distinctive
+      // prefix so we can grep the journalctl output cleanly. Drop
+      // these once the path is confirmed healthy in prod.
+      req.log.info(
+        {
+          assetId: req.body.assetId,
+          mediaType: req.body.mediaType,
+          to: req.body.to,
+          hasCaption: !!req.body.caption,
+        },
+        '[AL-VOICE-DEBUG] send-media route start',
+      );
       const channel = await app.tenant(req, (tx) =>
         tx.whatsAppChannel.findFirst({ where: { organizationId: orgId, isPrimary: true } }),
       );
@@ -1056,6 +1068,17 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         );
         effectiveMediaType = 'document';
       }
+      req.log.info(
+        {
+          assetContentType: rawContentType,
+          sniffed,
+          baseContentType,
+          requestedMediaType: req.body.mediaType,
+          effectiveMediaType,
+          fileBytesLen: fileBytes.length,
+        },
+        '[AL-VOICE-DEBUG] after sniff',
+      );
       // Filename + extension matter to Meta — it uses the extension to
       // dispatch the file to the right downstream pipeline. Sending
       // "upload.bin" makes Meta accept the upload, but WhatsApp can't
@@ -1098,6 +1121,10 @@ export default async function whatsappRoutes(app: FastifyInstance) {
           },
         );
         const upText = await upRes.text();
+        req.log.info(
+          { status: upRes.status, bodySnippet: upText.slice(0, 400) },
+          '[AL-VOICE-DEBUG] Meta /media response',
+        );
         if (!upRes.ok) {
           return {
             data: { ok: false, metaMessageId: null, errorMessage: `Meta media upload ${upRes.status}: ${upText.slice(0, 200)}` },
@@ -1106,6 +1133,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         const upJson = JSON.parse(upText) as { id?: string };
         metaMediaId = upJson.id ?? null;
       } catch (err) {
+        req.log.warn({ err }, '[AL-VOICE-DEBUG] Meta /media threw');
         return {
           data: {
             ok: false,
@@ -1115,6 +1143,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         };
       }
       if (!metaMediaId) {
+        req.log.warn({}, '[AL-VOICE-DEBUG] Meta returned no media id');
         return { data: { ok: false, metaMessageId: null, errorMessage: 'Meta returned no media id' } };
       }
 
@@ -1166,6 +1195,10 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       };
       let sendBody = '';
       let sendStatus = 0;
+      req.log.info(
+        { payloadSnippet: JSON.stringify(payload).slice(0, 400) },
+        '[AL-VOICE-DEBUG] sending Meta /messages',
+      );
       try {
         const res = await fetch(
           `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId)}/messages`,
@@ -1182,6 +1215,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         sendStatus = res.status;
         sendBody = await res.text();
       } catch (err) {
+        req.log.warn({ err }, '[AL-VOICE-DEBUG] Meta /messages threw');
         return {
           data: {
             ok: false,
@@ -1190,6 +1224,10 @@ export default async function whatsappRoutes(app: FastifyInstance) {
           },
         };
       }
+      req.log.info(
+        { status: sendStatus, bodySnippet: sendBody.slice(0, 400) },
+        '[AL-VOICE-DEBUG] Meta /messages response',
+      );
 
       let parsedSend: Record<string, unknown> | null = null;
       try {

@@ -48,12 +48,119 @@ function StatusBadge({ status }: { status: Status }) {
 }
 
 // ---------- Date / time extraction --------------------------------------
-// The booking form can capture appointment date + time as answer fields.
-// Pull them out so we can render them in dedicated columns and avoid
-// repeating them inside the Answers cell. Two strategies:
-//   1. Field type matches 'date' / 'time' / 'datetime' / 'datetime-local'.
-//   2. Field key/label contains 'date' or 'time' (case-insensitive).
-// If neither matches, fall back to the booking's createdAt timestamp.
+// The booking form's date/time fields can hold either ISO values
+// ("2026-05-12", "17:00") OR natural-language phrases ("tomorrow at 5",
+// "next Monday", "5pm") because the LLM extractor stores what the
+// customer wrote. We resolve relative phrases against the booking's
+// createdAt timestamp so the columns always show an explicit date + time.
+
+const WEEKDAYS: Record<string, number> = {
+  sunday: 0, sun: 0,
+  monday: 1, mon: 1,
+  tuesday: 2, tue: 2, tues: 2,
+  wednesday: 3, wed: 3,
+  thursday: 4, thu: 4, thurs: 4,
+  friday: 5, fri: 5,
+  saturday: 6, sat: 6,
+};
+
+function stripTime(d: Date): Date {
+  const out = new Date(d);
+  out.setHours(0, 0, 0, 0);
+  return out;
+}
+
+/** Resolve a natural-language date phrase relative to `anchor`. */
+function parseDatePhrase(raw: string, anchor: Date): Date | null {
+  const s = raw.toLowerCase().trim();
+  if (!s) return null;
+
+  // ISO YYYY-MM-DD (with optional time chunk) — happy path.
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    const d = new Date(`${iso[1]}-${iso[2]}-${iso[3]}T00:00:00`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  // DD/MM/YYYY or MM/DD/YYYY — assume day-first (EU/UK default).
+  const dmy = s.match(/(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})/);
+  if (dmy) {
+    const day = Number(dmy[1]);
+    const month = Number(dmy[2]) - 1;
+    let year = Number(dmy[3]);
+    if (year < 100) year += 2000;
+    const d = new Date(year, month, day);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+
+  const base = stripTime(anchor);
+  if (/\btoday\b/.test(s)) return base;
+  if (/\btomorrow\b|\btmrw\b|\btmr\b/.test(s)) {
+    const d = new Date(base);
+    d.setDate(d.getDate() + 1);
+    return d;
+  }
+  if (/\byesterday\b/.test(s)) {
+    const d = new Date(base);
+    d.setDate(d.getDate() - 1);
+    return d;
+  }
+  // "in N days"
+  const inDays = s.match(/in\s+(\d+)\s+day/);
+  if (inDays) {
+    const d = new Date(base);
+    d.setDate(d.getDate() + Number(inDays[1]));
+    return d;
+  }
+  // Weekday name (optionally "next monday")
+  for (const [name, dow] of Object.entries(WEEKDAYS)) {
+    const re = new RegExp(`\\b(next\\s+)?${name}\\b`);
+    const m = s.match(re);
+    if (m) {
+      const d = new Date(base);
+      let delta = (dow - d.getDay() + 7) % 7;
+      if (delta === 0 || m[1] /* "next" */) delta += 7;
+      // Special case: "next monday" said on a Monday → next Monday (7 days);
+      // bare "monday" said on Monday → today (delta = 0 → keep 0).
+      if (delta === 0) delta = 0;
+      d.setDate(d.getDate() + delta);
+      return d;
+    }
+  }
+  return null;
+}
+
+/** Resolve a time phrase to { hour, minute } in 24h. Returns null if unparseable. */
+function parseTimePhrase(raw: string): { h: number; m: number } | null {
+  const s = raw.toLowerCase().trim();
+  if (!s) return null;
+  if (/\bnoon\b|\bmidday\b/.test(s)) return { h: 12, m: 0 };
+  if (/\bmidnight\b/.test(s)) return { h: 0, m: 0 };
+
+  // HH:MM with optional am/pm
+  let m = s.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/);
+  if (m) {
+    let h = Number(m[1]);
+    const min = Number(m[2]);
+    if (m[3] === 'pm' && h < 12) h += 12;
+    if (m[3] === 'am' && h === 12) h = 0;
+    if (h >= 0 && h < 24 && min >= 0 && min < 60) return { h, m: min };
+  }
+  // "at 5", "5pm", "5 pm"
+  m = s.match(/(?:at\s+)?(\d{1,2})\s*(am|pm)?(?!\d)/);
+  if (m) {
+    let h = Number(m[1]);
+    const mer = m[2];
+    if (h >= 0 && h <= 23) {
+      if (mer === 'pm' && h < 12) h += 12;
+      else if (mer === 'am' && h === 12) h = 0;
+      else if (!mer && h >= 1 && h <= 7) h += 12; // bare "5" → assume PM business hours
+      return { h, m: 0 };
+    }
+  }
+  return null;
+}
+
 function pickAppointment(fields: BookingAnswer[]): {
   dateFieldKey: string | null;
   timeFieldKey: string | null;
@@ -68,15 +175,16 @@ function pickAppointment(fields: BookingAnswer[]): {
         f.key.toLowerCase().includes(needle) || f.label.toLowerCase().includes(needle),
     );
 
-  // Datetime (single combined field) — split it.
+  // datetime (single combined field) — split it.
   const dt = findByType('datetime', 'datetime-local') ?? findByText('datetime');
   if (dt && typeof dt.value === 'string' && dt.value) {
     const [d, t] = dt.value.split(/[T\s]/);
     return { dateFieldKey: dt.key, timeFieldKey: dt.key, dateRaw: d ?? null, timeRaw: t ?? null };
   }
 
-  const dateField = findByType('date') ?? findByText('date');
-  const timeField = findByType('time') ?? findByText('time');
+  const dateField =
+    findByType('date') ?? findByText('date') ?? findByText('day') ?? findByText('when');
+  const timeField = findByType('time') ?? findByText('time') ?? findByText('hour');
   return {
     dateFieldKey: dateField?.key ?? null,
     timeFieldKey: timeField?.key ?? null,
@@ -87,11 +195,15 @@ function pickAppointment(fields: BookingAnswer[]): {
   };
 }
 
-// Format a YYYY-MM-DD string as "Mon, 12 May" (or with the year if not
-// current year). Always weekday + day + month — no "tomorrow", no relative.
-function formatBookingDate(iso: string | null, fallback: Date): string {
-  const d = iso ? new Date(iso) : fallback;
-  if (Number.isNaN(d.getTime())) return iso ?? '';
+/** Build the date label from a (possibly natural-language) raw value. */
+function formatBookingDate(raw: string | null, anchor: Date): string {
+  let d: Date | null = null;
+  if (raw) d = parseDatePhrase(raw, anchor);
+  if (!d) {
+    // No raw value → use createdAt as the proxy. Operators see "captured on" below.
+    d = anchor;
+  }
+  if (!d || Number.isNaN(d.getTime())) return raw ?? '';
   const now = new Date();
   const fmt = new Intl.DateTimeFormat('en-GB', {
     weekday: 'short',
@@ -102,20 +214,19 @@ function formatBookingDate(iso: string | null, fallback: Date): string {
   return fmt.format(d);
 }
 
-// Format an HH:MM (or HH:MM:SS) string, or pull H/M from a Date.
-function formatBookingTime(raw: string | null, fallback: Date): string {
+/** Build the time label from a (possibly natural-language) raw value. */
+function formatBookingTime(raw: string | null, fallbackPhrase: string | null): string {
+  // 1) Try the dedicated time field.
   if (raw) {
-    // Strip any trailing seconds; render as HH:MM 24-hour for clarity.
-    const m = raw.match(/^(\d{1,2}):(\d{2})/);
-    if (m) return `${m[1]!.padStart(2, '0')}:${m[2]}`;
+    const t = parseTimePhrase(raw);
+    if (t) return `${String(t.h).padStart(2, '0')}:${String(t.m).padStart(2, '0')}`;
   }
-  const d = fallback;
-  if (Number.isNaN(d.getTime())) return '';
-  return new Intl.DateTimeFormat('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(d);
+  // 2) If the date phrase carried a time ("tomorrow at 5"), try that.
+  if (fallbackPhrase) {
+    const t = parseTimePhrase(fallbackPhrase);
+    if (t) return `${String(t.h).padStart(2, '0')}:${String(t.m).padStart(2, '0')}`;
+  }
+  return raw ?? '—';
 }
 
 export default function BookingsPage() {
@@ -227,7 +338,10 @@ export default function BookingsPage() {
                 const created = new Date(b.createdAt);
                 const apt = pickAppointment(b.fields);
                 const dateLabel = formatBookingDate(apt.dateRaw, created);
-                const timeLabel = formatBookingTime(apt.timeRaw, created);
+                // Time falls back to whatever was in the date phrase
+                // ("tomorrow at 5" → 17:00) when the dedicated time field
+                // is empty.
+                const timeLabel = formatBookingTime(apt.timeRaw, apt.dateRaw);
                 // Hide the date/time fields from the Answers cell since we
                 // surface them in their own columns now.
                 const otherFields = b.fields.filter(
@@ -240,6 +354,13 @@ export default function BookingsPage() {
                     {!apt.dateRaw ? (
                       <div className="text-[10px] font-normal text-foreground-subtle">
                         captured
+                      </div>
+                    ) : null}
+                    {apt.dateRaw && parseDatePhrase(apt.dateRaw, created) === null ? (
+                      // We failed to parse the natural language — surface the
+                      // original phrase so the operator isn't misled.
+                      <div className="mt-0.5 text-[10px] font-normal italic text-foreground-subtle">
+                        said: {apt.dateRaw}
                       </div>
                     ) : null}
                   </td>

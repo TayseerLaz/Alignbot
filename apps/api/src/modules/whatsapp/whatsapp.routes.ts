@@ -2103,7 +2103,11 @@ async function maybeReplyAsBot(args: {
     // the same bot reply pipeline as a text message. We also patch the
     // already-persisted whatsapp_messages row so the inbox shows the
     // transcript instead of the "[audio]" placeholder.
-    if (!m.bodyText && m.from && (m.type === 'audio' || m.type === 'voice') && m.mediaId) {
+    //
+    // bodyText for inbound audio defaults to "[audio]" (truthy), so we
+    // can't gate on `!m.bodyText` — we gate on the type + mediaId. If
+    // Whisper succeeds, we overwrite the placeholder with the transcript.
+    if (m.from && (m.type === 'audio' || m.type === 'voice') && m.mediaId) {
       const transcript = await transcribeInboundVoice({
         organizationId: args.organizationId,
         mediaId: m.mediaId,
@@ -2113,6 +2117,11 @@ async function maybeReplyAsBot(args: {
       });
       if (transcript) {
         m.bodyText = transcript;
+      } else {
+        // Transcription failed — skip this message entirely so the LLM
+        // doesn't see "[audio]" and reply with a generic "can't listen"
+        // fallback. The audio bubble still shows in the inbox.
+        continue;
       }
     }
     if (!m.bodyText || !m.from) continue;

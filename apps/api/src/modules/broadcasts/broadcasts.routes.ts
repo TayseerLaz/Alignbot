@@ -84,6 +84,16 @@ interface BroadcastRow {
   updatedAt: Date;
 }
 
+// Variable maps stored in the DB are JSON. They CAN drift from the current
+// Zod schema (older drafts, partial migrations, hand-edits). Strict
+// .parse() would throw a 500 and block the whole detail page. safeParse
+// + fallback to {} keeps the response valid and lets the broadcast load.
+type VariableMap = ReturnType<(typeof variableMappingSchema)['parse']>;
+function safeVariableMap(raw: unknown): VariableMap {
+  const parsed = variableMappingSchema.safeParse(raw ?? {});
+  return parsed.success ? parsed.data : ({} as VariableMap);
+}
+
 function toDto(row: BroadcastRow) {
   return {
     id: row.id,
@@ -96,10 +106,8 @@ function toDto(row: BroadcastRow) {
     abTest: row.abTest,
     variantATemplateId: row.variantATemplateId,
     variantBTemplateId: row.variantBTemplateId,
-    variantAVariables: variableMappingSchema.parse(row.variantAVariables ?? {}),
-    variantBVariables: row.variantBVariables
-      ? variableMappingSchema.parse(row.variantBVariables)
-      : null,
+    variantAVariables: safeVariableMap(row.variantAVariables),
+    variantBVariables: row.variantBVariables ? safeVariableMap(row.variantBVariables) : null,
     scheduledFor: row.scheduledFor?.toISOString() ?? null,
     startedAt: row.startedAt?.toISOString() ?? null,
     completedAt: row.completedAt?.toISOString() ?? null,
@@ -455,6 +463,13 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
       const scheduledFor = scheduledForIso ? new Date(scheduledForIso) : null;
       const isScheduled = scheduledFor !== null && scheduledFor.getTime() > Date.now() + 5_000;
 
+      // Top-level log line for every send attempt. Pairs with the
+      // pino-prettied error below if anything throws — makes it
+      // possible to grep the systemd journal for /send 500s without
+      // hunting for the cause across multiple log entries.
+      req.log.info({ id, orgId, isScheduled, scheduledForIso }, '[broadcasts] /send begin');
+
+      try {
       const result = await app.tenant(req, async (tx) => {
         const existing = await tx.broadcast.findUnique({ where: { id } });
         if (!existing) throw notFound('Broadcast not found.');
@@ -561,6 +576,27 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
       });
 
       return { data: toDto(result) };
+      } catch (err) {
+        // Surface the real cause in logs so future 500s on /send aren't
+        // a black box. HttpErrors (4xx) re-throw as-is — Fastify's
+        // errorHandler already serialises those. Anything else gets a
+        // detailed log line so a future 500 is grep-able by request id.
+        const isHttpError =
+          !!err &&
+          typeof err === 'object' &&
+          'statusCode' in err &&
+          typeof (err as { statusCode?: unknown }).statusCode === 'number';
+        if (isHttpError) throw err;
+        req.log.error(
+          {
+            id,
+            orgId,
+            err: err instanceof Error ? { message: err.message, stack: err.stack } : err,
+          },
+          '[broadcasts] /send 500 — unexpected error',
+        );
+        throw err;
+      }
     },
   );
 

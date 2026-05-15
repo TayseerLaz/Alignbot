@@ -393,7 +393,7 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     // support; otherwise apologise briefly in the first listed
     // supported language and offer to continue there. This makes the
     // Languages chip selector on /bot actually mean something.
-    `- Languages: this business supports ${languageList}. Detect the language the customer wrote in and reply in the same language IF it's one of those. If they message you in a language NOT in the supported list, reply in ${LANGUAGE_NAMES[langCodes[0] ?? 'en'] ?? 'English'}, briefly apologise that you can't yet support that language, and ask if they're comfortable continuing in one of the supported languages.`,
+    `- Languages: detect the language and dialect the customer wrote in and ALWAYS reply in the SAME language and dialect. Pay special attention to Arabic dialects: Lebanese / Levantine ("شو الأخبار؟"), Egyptian ("إزيك"), Gulf / Saudi ("شلونك"), Maghrebi, and Modern Standard Arabic each have distinct vocabulary — match the customer's dialect, don't fall back to MSA if the customer wrote Lebanese. The operator has indicated their staff speaks: ${languageList}, but reply in the customer's language regardless — fluency in every language is what the AI is for. Only default to ${LANGUAGE_NAMES[langCodes[0] ?? 'en'] ?? 'English'} if the message is genuinely unintelligible or empty.`,
     // Intent / preferred phrasings rule — wires the Conversation flow
     // canvas into the LLM. Only emitted when the operator has authored
     // intents; silent otherwise so simple bots aren't burdened with

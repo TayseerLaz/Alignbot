@@ -146,7 +146,10 @@ export interface TranscribeArgs {
   mimeType?: string;
 }
 
-export async function transcribeAudio(args: TranscribeArgs): Promise<{ text: string }> {
+export async function transcribeAudio(args: TranscribeArgs): Promise<{
+  text: string;
+  language: string | null;
+}> {
   const ok = await consumeDailyTokens(args.organizationId, 600);
   if (!ok) {
     const err = new Error('Daily AI token budget exceeded — voice transcription paused.');
@@ -155,16 +158,24 @@ export async function transcribeAudio(args: TranscribeArgs): Promise<{ text: str
   }
   const c = client();
   const blob = new Blob([new Uint8Array(args.bytes)], { type: args.mimeType ?? 'audio/ogg' });
-  // Cast to File for OpenAI's SDK — Node 20+ has File in globalThis.
   const file = new File([blob], args.filename, { type: args.mimeType ?? 'audio/ogg' });
-  const res = await c.audio.transcriptions.create({
+  // verbose_json gives us the detected language so the bot path can
+  // log + reason about Arabic dialects, Spanish vs Portuguese, etc.
+  //
+  // The `prompt` hint biases Whisper to recognise dialectal vocabulary
+  // it would otherwise round-trip to Modern Standard. It's a bias, not
+  // a constraint — English / French / etc. transcripts are unaffected.
+  const res = (await c.audio.transcriptions.create({
     file,
     model: 'whisper-1',
-    response_format: 'text',
-  });
-  // response_format=text returns a plain string in the SDK.
-  const text = typeof res === 'string' ? res : ((res as { text?: string }).text ?? '');
-  return { text: text.trim() };
+    response_format: 'verbose_json',
+    prompt:
+      'Customer-service voice note. Possible Arabic dialects include Lebanese / Levantine: شو، كيفك، بدي، عم. Egyptian: إزيك، عايز، فين. Gulf: شلونك، أبغى. Also English, French, Spanish.',
+  })) as { text?: string; language?: string };
+  return {
+    text: (res.text ?? '').trim(),
+    language: res.language ?? null,
+  };
 }
 
 // Strict JSON-mode completion. The LLM is asked to return a single JSON

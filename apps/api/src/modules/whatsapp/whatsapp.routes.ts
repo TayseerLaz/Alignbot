@@ -169,12 +169,16 @@ async function transcribeInboundVoice(args: {
     const { transcribeAudio } = await import('../../lib/openai.js');
     const mime = (args.mediaMime ?? urlJson.mime_type ?? 'audio/ogg').split(';')[0]!.trim();
     const ext = mime === 'audio/ogg' ? 'ogg' : mime === 'audio/mp4' ? 'm4a' : 'webm';
-    const { text } = await transcribeAudio({
+    const { text, language } = await transcribeAudio({
       organizationId: args.organizationId,
       bytes: buf,
       filename: `inbound-${args.mediaId}.${ext}`,
       mimeType: mime,
     });
+    args.log.info(
+      { mediaId: args.mediaId, language, chars: text.length, preview: text.slice(0, 200) },
+      '[whatsapp] Whisper transcript',
+    );
     if (!text) return null;
 
     // Step 4: patch the persisted inbox row so operators see the

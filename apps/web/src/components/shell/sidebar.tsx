@@ -64,6 +64,7 @@ const groups: NavGroup[] = [
       { href: '/services', label: 'Services', icon: Briefcase },
       { href: '/categories', label: 'Categories', icon: Building2 },
       { href: '/business-info', label: 'Business info', icon: Building2 },
+      { href: '/imports', label: 'Imports', icon: Upload },
     ],
   },
   {
@@ -99,12 +100,6 @@ const groups: NavGroup[] = [
     items: [
       { href: '/bot', label: 'AI bot builder', icon: Bot },
       { href: '/analytics', label: 'Analytics', icon: TrendingUp },
-    ],
-  },
-  {
-    label: 'Data',
-    items: [
-      { href: '/imports', label: 'Imports', icon: Upload },
     ],
   },
   {

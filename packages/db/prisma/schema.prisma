@@ -1196,6 +1196,10 @@ model WhatsAppThread {
   assignedToUserId     String?              @map("assigned_to_user_id") @db.Uuid
   // Optional skill that auto-assign should match a member by.
   requiredSkill        String?              @map("required_skill")
+  // Phase 6 — per-thread bot reply-mode override. NULL = inherit
+  // BotConfig.replyMode. Lets operators flip a single conversation
+  // to text or voice without changing the org-wide default.
+  botReplyMode         String?              @map("bot_reply_mode")
   lastMessageAt        DateTime             @default(now()) @map("last_message_at")
   lastMessagePreview   String?              @map("last_message_preview")
   inboundCount         Int                  @default(0) @map("inbound_count")

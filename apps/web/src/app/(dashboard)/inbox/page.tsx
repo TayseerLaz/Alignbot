@@ -71,6 +71,8 @@ interface Thread {
   outboundCount: number;
   tags: string[];
   noteCount: number;
+  // Phase 6 — per-thread bot reply-mode override. null = inherit BotConfig.
+  botReplyMode: 'text' | 'voice' | 'match_customer' | null;
   createdAt: string;
 }
 
@@ -404,6 +406,21 @@ function ThreadView({
     },
   });
 
+  // Phase 6 — per-thread bot reply-mode override. NULL clears the
+  // override and inherits BotConfig.replyMode again.
+  const setBotReplyMode = useMutation({
+    mutationFn: (botReplyMode: 'text' | 'voice' | 'match_customer' | null) =>
+      thread
+        ? api.patch(`/api/v1/inbox/threads/${thread.id}`, { botReplyMode })
+        : Promise.reject(new Error('no thread')),
+    onSuccess: () => {
+      toast.success('Bot reply mode updated');
+      onChanged();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Update failed'),
+  });
+
   // Rename the customer's display name. Backend mirrors the change to
   // Contact.displayName so /contacts stays in sync automatically.
   const renameContact = useMutation({
@@ -480,6 +497,7 @@ function ThreadView({
         onHandoff={() => handoff.mutate()}
         onRename={(name) => renameContact.mutate(name)}
         renameSaving={renameContact.isPending}
+        onBotReplyModeChange={(m) => setBotReplyMode.mutate(m)}
       />
       <TagBar thread={thread} onAdd={(t) => addTag.mutate(t)} onRemove={(t) => removeTag.mutate(t)} />
       <AiStatusBanner thread={thread} botDeployed={botDeployed} />
@@ -526,6 +544,7 @@ function ThreadHeader({
   onHandoff,
   onRename,
   renameSaving,
+  onBotReplyModeChange,
 }: {
   thread: Thread;
   onStatusChange: (s: ThreadStatus) => void;
@@ -534,6 +553,7 @@ function ThreadHeader({
   onHandoff: () => void;
   onRename: (name: string | null) => void;
   renameSaving: boolean;
+  onBotReplyModeChange: (m: 'text' | 'voice' | 'match_customer' | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(thread.customerName ?? '');
@@ -708,6 +728,29 @@ function ThreadHeader({
             WhatsApp: <span className="font-medium">{thread.customerWhatsappName}</span>
           </span>
         ) : null}
+        {/* Phase 6 — per-thread bot reply-mode override. "Default" inherits
+            BotConfig.replyMode (set on /bot). */}
+        <span className="ml-auto inline-flex items-center gap-1.5">
+          <span className="text-foreground-subtle">Bot reply:</span>
+          <select
+            value={thread.botReplyMode ?? ''}
+            onChange={(e) => {
+              const v = e.target.value;
+              onBotReplyModeChange(
+                v === ''
+                  ? null
+                  : (v as 'text' | 'voice' | 'match_customer'),
+              );
+            }}
+            className="rounded-md border border-border bg-surface px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-surface-muted"
+            title="Override how the bot replies to THIS conversation only. Default = use org-wide setting from /bot."
+          >
+            <option value="">Default (org-wide)</option>
+            <option value="text">Always text</option>
+            <option value="voice">Always voice</option>
+            <option value="match_customer">Match customer</option>
+          </select>
+        </span>
       </div>
     </div>
   );

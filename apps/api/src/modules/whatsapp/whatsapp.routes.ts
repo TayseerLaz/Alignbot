@@ -2162,15 +2162,20 @@ async function maybeReplyAsBot(args: {
       });
       const data = await gatherBotData(tx as never, args.organizationId);
 
+      // Phase 6 — per-thread override beats org-wide default. NULL on
+      // the thread means "inherit BotConfig.replyMode".
+      const threadOverride =
+        ((thread as { botReplyMode?: string | null }).botReplyMode ?? null) || null;
+      const effectiveReplyMode =
+        threadOverride && ['text', 'voice', 'match_customer'].includes(threadOverride)
+          ? threadOverride
+          : (config.replyMode as string | undefined) ?? 'text';
       return {
         history: history.reverse(),
         data,
         channel: ch,
         threadId: thread.id,
-        // Phase 6 — voice-reply preferences. Plumbed through to the
-        // send block so it can branch text vs TTS without re-reading
-        // BotConfig.
-        replyMode: (config.replyMode as string | undefined) ?? 'text',
+        replyMode: effectiveReplyMode,
         ttsVoiceName: (config.ttsVoiceName as string | null | undefined) ?? null,
       };
     });

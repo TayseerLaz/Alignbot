@@ -47,6 +47,8 @@ const threadDtoSchema = z.object({
   outboundCount: z.number().int(),
   tags: z.array(z.string()),
   noteCount: z.number().int(),
+  // Phase 6 — per-thread reply-mode override. NULL = inherit BotConfig.
+  botReplyMode: z.enum(['text', 'voice', 'match_customer']).nullable(),
   createdAt: z.string().datetime(),
 });
 
@@ -87,6 +89,7 @@ function serializeThread(t: {
   status: string;
   assignedToUserId: string | null;
   requiredSkill?: string | null;
+  botReplyMode?: string | null;
   lastMessageAt: Date;
   lastMessagePreview: string | null;
   inboundCount: number;
@@ -96,6 +99,12 @@ function serializeThread(t: {
   tags?: { tag: string }[];
   _count?: { notes: number };
 }) {
+  const rawMode = (t.botReplyMode ?? null) as
+    | 'text'
+    | 'voice'
+    | 'match_customer'
+    | null
+    | string;
   return {
     id: t.id,
     customerPhone: t.customerPhone,
@@ -109,6 +118,10 @@ function serializeThread(t: {
           t.assignedTo.email
         : null,
     requiredSkill: t.requiredSkill ?? null,
+    botReplyMode:
+      rawMode && ['text', 'voice', 'match_customer'].includes(rawMode)
+        ? (rawMode as 'text' | 'voice' | 'match_customer')
+        : null,
     lastMessageAt: t.lastMessageAt.toISOString(),
     lastMessagePreview: t.lastMessagePreview,
     inboundCount: t.inboundCount,
@@ -286,6 +299,9 @@ export default async function inboxRoutes(app: FastifyInstance) {
           status: threadStatusSchema.optional(),
           customerName: z.string().trim().max(120).nullable().optional(),
           assignedToUserId: uuidSchema.nullable().optional(),
+          // Phase 6 — per-thread bot reply-mode override. NULL clears
+          // the override and inherits BotConfig.replyMode again.
+          botReplyMode: z.enum(['text', 'voice', 'match_customer']).nullable().optional(),
         }),
       },
       preHandler: [app.requireRole('editor')],
@@ -330,6 +346,8 @@ export default async function inboxRoutes(app: FastifyInstance) {
               req.body.customerName === undefined ? undefined : req.body.customerName,
             assignedToUserId:
               req.body.assignedToUserId === undefined ? undefined : req.body.assignedToUserId,
+            botReplyMode:
+              req.body.botReplyMode === undefined ? undefined : req.body.botReplyMode,
           },
           include: {
             assignedTo: { select: { firstName: true, lastName: true, email: true } },

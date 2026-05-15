@@ -6,16 +6,26 @@ import {
   type ImportJobRowDto,
 } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Ban, ChevronDown, ChevronRight, Download, Loader2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  Ban,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  Loader2,
+  RotateCw,
+  Save,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { api, ApiError, getAccessToken } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -147,7 +157,7 @@ export default function ImportDetailPage() {
           ) : (
             <ul className="divide-y divide-border">
               {rows.data?.data.map((row) => (
-                <RowItem key={row.id} row={row} />
+                <RowItem key={row.id} row={row} jobId={j.id} entityKind={j.entityKind} />
               ))}
             </ul>
           )}
@@ -157,8 +167,99 @@ export default function ImportDetailPage() {
   );
 }
 
-function RowItem({ row }: { row: ImportJobRowDto }) {
+// Schema-aware field hint set per import kind. Keys here line up with the
+// Zod schemas the worker / retry endpoint use; anything outside the list
+// is still shown but flagged as "extra" so operators don't think a typo
+// in their header is a real field.
+const KIND_FIELDS: Record<string, string[]> = {
+  product: [
+    'sku',
+    'name',
+    'shortDescription',
+    'description',
+    'priceMinor',
+    'currency',
+    'isAvailable',
+    'stockQuantity',
+    'categorySlug',
+  ],
+  service: [
+    'name',
+    'shortDescription',
+    'description',
+    'durationMinutes',
+    'basePriceMinor',
+    'currency',
+    'priceUnit',
+    'isAvailable',
+    'categorySlug',
+  ],
+  faq: ['question', 'answer', 'visibility', 'tags'],
+  business_info: ['legalName', 'tagline', 'about', 'websiteUrl', 'timezone', 'currency'],
+};
+
+function RowItem({
+  row,
+  jobId,
+  entityKind,
+}: {
+  row: ImportJobRowDto;
+  jobId: string;
+  entityKind: string;
+}) {
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+
+  // Initialise the edit form from the existing rawData each time the
+  // row opens — keeps the editor in sync if a parallel retry succeeded.
+  useEffect(() => {
+    if (!editing) return;
+    const seed: Record<string, string> = {};
+    const fieldList = KIND_FIELDS[entityKind] ?? [];
+    const raw = (row.rawData ?? {}) as Record<string, unknown>;
+    // Start with every expected field (empty if missing), then layer
+    // every extra key the original row had so nothing is lost on save.
+    for (const k of fieldList) seed[k] = raw[k] == null ? '' : String(raw[k]);
+    for (const k of Object.keys(raw)) {
+      if (!(k in seed)) seed[k] = raw[k] == null ? '' : String(raw[k]);
+    }
+    setDraft(seed);
+  }, [editing, row.rawData, entityKind]);
+
+  const retry = useMutation({
+    mutationFn: (rawData: Record<string, unknown>) =>
+      api.patch<{ data: ImportJobRowDto }>(
+        `/api/v1/imports/${jobId}/rows/${row.id}`,
+        { rawData },
+      ),
+    onSuccess: (res) => {
+      const ok = res.data.status === 'succeeded';
+      toast[ok ? 'success' : 'error'](ok ? 'Row fixed' : 'Still failing — see errors');
+      qc.invalidateQueries({ queryKey: ['import', jobId] });
+      qc.invalidateQueries({ queryKey: ['import-rows', jobId] });
+      if (ok) setEditing(false);
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Retry failed'),
+  });
+
+  const save = () => {
+    // Trim whitespace, drop empty strings so optional fields aren't
+    // forced through validation as the empty string.
+    const cleaned: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(draft)) {
+      const t = v.trim();
+      if (t === '') continue;
+      cleaned[k] = t;
+    }
+    retry.mutate(cleaned);
+  };
+
+  const fieldList = KIND_FIELDS[entityKind] ?? Object.keys(row.rawData ?? {});
+  const extras = Object.keys(row.rawData ?? {}).filter((k) => !fieldList.includes(k));
+  const canEdit = row.status === 'failed';
+
   return (
     <li>
       <button
@@ -201,7 +302,52 @@ function RowItem({ row }: { row: ImportJobRowDto }) {
               ))}
             </ul>
           ) : null}
-          {row.rawData ? (
+
+          {canEdit && !editing ? (
+            <div className="flex justify-end">
+              <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+                <RotateCw className="size-4" /> Edit & retry
+              </Button>
+            </div>
+          ) : null}
+
+          {editing ? (
+            <div className="space-y-3 rounded-md border border-border bg-surface p-3">
+              <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">
+                Edit fields, then save to re-validate
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {[...fieldList, ...extras].map((key) => (
+                  <label key={key} className="flex flex-col gap-1 text-xs">
+                    <span className="font-mono text-foreground-muted">
+                      {key}
+                      {extras.includes(key) ? (
+                        <span className="ml-1 text-foreground-subtle">(extra)</span>
+                      ) : null}
+                    </span>
+                    <Input
+                      value={draft[key] ?? ''}
+                      onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
+                      placeholder={extras.includes(key) ? 'extra column from your file' : undefined}
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditing(false)}
+                  disabled={retry.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={save} loading={retry.isPending}>
+                  <Save className="size-4" /> Save & retry
+                </Button>
+              </div>
+            </div>
+          ) : row.rawData ? (
             <pre className="overflow-x-auto rounded bg-surface p-3 text-xs">
               {JSON.stringify(row.rawData, null, 2)}
             </pre>

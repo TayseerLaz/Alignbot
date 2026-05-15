@@ -209,6 +209,131 @@ export default async function importRoutes(app: FastifyInstance) {
       }),
   );
 
+  // ---------- PATCH /imports/:id/rows/:rowId ------------------------------
+  // Edit a failed row and retry it. The operator opens the row inline,
+  // fixes the invalid field(s), and POSTs the new raw record. We re-run
+  // the same Zod validator + upsert the worker uses, then write the
+  // result back onto the ImportJobRow and bump the parent job's counters.
+  r.patch(
+    '/imports/:id/rows/:rowId',
+    {
+      schema: {
+        tags: ['imports'],
+        summary: 'Edit a single import row and retry it. Re-runs validation + upsert.',
+        params: z.object({ id: uuidSchema, rowId: uuidSchema }),
+        body: z.object({
+          // We accept an arbitrary object — validation is done downstream
+          // by the same per-kind schema the worker uses.
+          rawData: z.record(z.string(), z.unknown()),
+        }),
+        response: { 200: itemEnvelopeSchema(importJobRowSchema) },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const job = await tx.importJob.findUnique({ where: { id: req.params.id } });
+        if (!job) throw notFound('Import job not found.');
+        const row = await tx.importJobRow.findUnique({ where: { id: req.params.rowId } });
+        if (!row || row.importJobId !== job.id) throw notFound('Row not found.');
+        if (row.status === 'succeeded') {
+          throw badRequest(
+            ApiErrorCode.VALIDATION_ERROR,
+            'This row already succeeded. Delete the resulting record and re-import if you need to change it.',
+          );
+        }
+
+        const { upsertOne, ZodError, zodErrorToImportErrors } = await import(
+          '../../lib/import-upsert.js'
+        );
+
+        let nextStatus: 'succeeded' | 'failed' = 'failed';
+        let resultEntityId: string | null = null;
+        let errors: { path: string; message: string }[] = [];
+
+        try {
+          resultEntityId = await upsertOne(
+            tx as never,
+            job.organizationId,
+            job.entityKind as ImportEntityKind,
+            req.body.rawData,
+          );
+          nextStatus = 'succeeded';
+        } catch (err) {
+          if (err instanceof ZodError) {
+            errors = zodErrorToImportErrors(err);
+          } else {
+            errors = [
+              {
+                path: '_',
+                message: err instanceof Error ? err.message : 'Upsert failed.',
+              },
+            ];
+          }
+          nextStatus = 'failed';
+        }
+
+        // Job counter delta. The row was previously failed or skipped
+        // (succeeded was rejected above), so the only counter that can
+        // move is failedRows decreasing when we just succeeded.
+        const wasFailed = row.status === 'failed';
+        const nowSucceeded = nextStatus === 'succeeded';
+        const nowFailed = nextStatus === 'failed';
+        const failedDelta = (nowFailed ? 1 : 0) - (wasFailed ? 1 : 0);
+        const succeededDelta = nowSucceeded ? 1 : 0;
+
+        const updated = await tx.importJobRow.update({
+          where: { id: row.id },
+          data: {
+            status: nextStatus,
+            resultEntityId,
+            rawData: req.body.rawData as never,
+            errors: errors.length > 0 ? (errors as never) : (null as never),
+          },
+        });
+
+        if (failedDelta !== 0 || succeededDelta !== 0) {
+          await tx.importJob.update({
+            where: { id: job.id },
+            data: {
+              failedRows: { increment: failedDelta },
+              succeededRows: { increment: succeededDelta },
+              // If the worker had marked the job 'partial' or 'failed' and
+              // the operator just fixed the last failure, flip it back to
+              // 'succeeded' — otherwise leave the lifecycle status alone.
+              ...(failedDelta < 0 && job.failedRows + failedDelta === 0 && job.status === 'partial'
+                ? { status: 'succeeded' as never }
+                : {}),
+            },
+          });
+        }
+
+        await recordAudit({
+          action: 'import_completed',
+          organizationId: job.organizationId,
+          actorUserId: req.auth!.userId,
+          entityType: 'import_job_row',
+          entityId: row.id,
+          metadata: {
+            event: nextStatus === 'succeeded' ? 'row_fixed' : 'row_retry_failed',
+            rowNumber: row.rowNumber,
+          },
+        });
+
+        return {
+          data: {
+            id: updated.id,
+            rowNumber: updated.rowNumber,
+            status: updated.status,
+            resultEntityId: updated.resultEntityId,
+            rawData: (updated.rawData ?? null) as Record<string, unknown> | null,
+            errors:
+              (updated.errors as { path: string; message: string }[] | null | undefined) ?? null,
+          },
+        };
+      }),
+  );
+
   // ---------- GET /imports/:id/errors.csv ---------------------------------
   // Downloadable CSV of failed rows — per PDF spec §3.1.2 task 7.7.
   // Columns: row_number, errors, <original headers…>. Errors are joined with

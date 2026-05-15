@@ -1049,22 +1049,22 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       let baseContentType = rawContentType.split(';')[0]!.trim();
       const sniffed = sniffMediaContainer(fileBytes);
       if (sniffed) baseContentType = sniffed;
-      const META_AUDIO_OK = new Set([
-        'audio/aac',
-        'audio/mp4',
-        'audio/mpeg',
-        'audio/amr',
-        'audio/ogg',
-      ]);
+      // Browser MediaRecorder doesn't produce Meta-compatible audio.
+      // Safari emits fragmented MP4 (no moov atom), Chrome emits
+      // WebM/Opus, Firefox ogg/opus — none of which survive Meta's
+      // async delivery validator. Meta accepts /media + /messages
+      // with 200, then drops the message with code 131053 ("uploaded
+      // as audio/mp4 but on processing it is application/octet-stream").
+      //
+      // Until we transcode server-side with ffmpeg, the only reliable
+      // delivery path for browser-recorded audio is WhatsApp's document
+      // type — the bubble shows the filename and the customer plays it
+      // back by tapping. We degrade unconditionally for now.
       let effectiveMediaType = req.body.mediaType;
-      if (effectiveMediaType === 'audio' && !META_AUDIO_OK.has(baseContentType)) {
-        // Most common cause: Chrome recorded WebM/Opus. Meta doesn't
-        // play that back as audio, but it WILL deliver it as a document
-        // — the customer taps it and their phone plays it back. Keep
-        // the voice-note filename so the bubble is recognisable.
+      if (effectiveMediaType === 'audio') {
         req.log.warn(
           { sniffed, raw: rawContentType },
-          '[whatsapp] audio container not in Meta allowlist — falling back to document',
+          '[whatsapp] degrading audio → document (browser MediaRecorder output is not Meta-deliverable)',
         );
         effectiveMediaType = 'document';
       }
@@ -1174,7 +1174,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       // sending one yields error (#100). Drop the caption silently
       // for audio; image / video / document keep it.
       const mediaType = effectiveMediaType;
-      const allowsCaption = mediaType !== 'audio';
+      const allowsCaption = (mediaType as string) !== 'audio';
       // When we degraded an audio note to a document, include the
       // filename so the WhatsApp bubble shows "voice-note.webm" instead
       // of a generic "file" label. Documents need it anyway.

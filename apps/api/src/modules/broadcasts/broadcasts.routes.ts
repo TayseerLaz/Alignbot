@@ -615,29 +615,42 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
     async (req) => {
       const orgId = req.auth!.organizationId;
       const id = req.params.id;
-      const result = await app.tenant(req, async (tx) => {
-        const existing = await tx.broadcast.findUnique({ where: { id } });
-        if (!existing) throw notFound('Broadcast not found.');
-        if (existing.status !== 'sending' && existing.status !== 'scheduled') {
-          throw conflict(`Cannot pause a broadcast in status "${existing.status}".`);
-        }
-        const updated = await tx.broadcast.update({
-          where: { id },
-          data: { status: 'paused' },
+      req.log.info({ id, orgId }, '[broadcasts] /pause begin');
+      try {
+        const result = await app.tenant(req, async (tx) => {
+          const existing = await tx.broadcast.findUnique({ where: { id } });
+          if (!existing) throw notFound('Broadcast not found.');
+          if (existing.status !== 'sending' && existing.status !== 'scheduled') {
+            throw conflict(`Cannot pause a broadcast in status "${existing.status}".`);
+          }
+          const updated = await tx.broadcast.update({
+            where: { id },
+            data: { status: 'paused' },
+          });
+          await tx.broadcastEvent.create({
+            data: { organizationId: orgId, broadcastId: id, kind: 'paused' },
+          });
+          return updated;
         });
-        await tx.broadcastEvent.create({
-          data: { organizationId: orgId, broadcastId: id, kind: 'paused' },
+        await recordAudit({
+          action: 'broadcast_paused',
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          entityType: 'broadcast',
+          entityId: id,
         });
-        return updated;
-      });
-      await recordAudit({
-        action: 'broadcast_paused',
-        organizationId: orgId,
-        actorUserId: req.auth!.userId,
-        entityType: 'broadcast',
-        entityId: id,
-      });
-      return { data: toDto(result) };
+        return { data: toDto(result) };
+      } catch (err) {
+        req.log.error(
+          {
+            id,
+            orgId,
+            err: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : err,
+          },
+          '[broadcasts] /pause failed',
+        );
+        throw err;
+      }
     },
   );
 
@@ -656,35 +669,63 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
     async (req) => {
       const orgId = req.auth!.organizationId;
       const id = req.params.id;
-      const result = await app.tenant(req, async (tx) => {
-        const existing = await tx.broadcast.findUnique({ where: { id } });
-        if (!existing) throw notFound('Broadcast not found.');
-        if (existing.status !== 'paused') {
-          throw conflict('Only paused broadcasts can be resumed.');
-        }
-        const updated = await tx.broadcast.update({
-          where: { id },
-          data: { status: 'sending' },
+      req.log.info({ id, orgId }, '[broadcasts] /resume begin');
+      try {
+        const result = await app.tenant(req, async (tx) => {
+          const existing = await tx.broadcast.findUnique({ where: { id } });
+          if (!existing) throw notFound('Broadcast not found.');
+          if (existing.status !== 'paused') {
+            throw conflict(
+              `Only paused broadcasts can be resumed. This one is "${existing.status}".`,
+            );
+          }
+          // Phase 5.1 left old paused broadcasts with recipients flipped to
+          // 'skipped' (the obsolete behaviour). Resume should bring those
+          // back so the fanout has something to do.
+          await tx.broadcastRecipient.updateMany({
+            where: { broadcastId: id, status: 'skipped' },
+            data: { status: 'pending', failedAt: null },
+          });
+          const updated = await tx.broadcast.update({
+            where: { id },
+            data: { status: 'sending' },
+          });
+          await tx.broadcastEvent.create({
+            data: { organizationId: orgId, broadcastId: id, kind: 'resumed' },
+          });
+          return updated;
         });
-        await tx.broadcastEvent.create({
-          data: { organizationId: orgId, broadcastId: id, kind: 'resumed' },
+        // Re-enqueue fanout with a unique jobId so we never collide with
+        // a still-locked job. The fanout worker is idempotent — it
+        // re-scans pending/queued recipients and adds send jobs for them,
+        // so running it twice is safe.
+        await getBroadcastFanoutQueue().add(
+          'fanout',
+          { organizationId: orgId, broadcastId: id },
+          { jobId: `broadcast:${id}:resume:${Date.now()}` },
+        );
+        await recordAudit({
+          action: 'broadcast_resumed',
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          entityType: 'broadcast',
+          entityId: id,
         });
-        return updated;
-      });
-      // Re-enqueue fanout (idempotent — it skips already-queued recipients).
-      await getBroadcastFanoutQueue().add(
-        'fanout',
-        { organizationId: orgId, broadcastId: id },
-        { jobId: `broadcast:${id}:resume:${Date.now()}` },
-      );
-      await recordAudit({
-        action: 'broadcast_resumed',
-        organizationId: orgId,
-        actorUserId: req.auth!.userId,
-        entityType: 'broadcast',
-        entityId: id,
-      });
-      return { data: toDto(result) };
+        req.log.info({ id, orgId }, '[broadcasts] /resume ok');
+        return { data: toDto(result) };
+      } catch (err) {
+        // Surface the actual cause in logs (with broadcast id + stack)
+        // so any future 500 here is diagnosable from journalctl alone.
+        req.log.error(
+          {
+            id,
+            orgId,
+            err: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : err,
+          },
+          '[broadcasts] /resume failed',
+        );
+        throw err;
+      }
     },
   );
 
@@ -703,41 +744,54 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
     async (req) => {
       const orgId = req.auth!.organizationId;
       const id = req.params.id;
-      const result = await app.tenant(req, async (tx) => {
-        const existing = await tx.broadcast.findUnique({ where: { id } });
-        if (!existing) throw notFound('Broadcast not found.');
-        if (existing.status === 'completed' || existing.status === 'cancelled') {
-          throw conflict(`Already ${existing.status}.`);
-        }
-        await tx.broadcastRecipient.updateMany({
-          where: { broadcastId: id, status: 'pending' },
-          data: { status: 'skipped' },
-        });
-        const updated = await tx.broadcast.update({
-          where: { id },
-          data: { status: 'cancelled', completedAt: new Date() },
-        });
-        await tx.broadcastEvent.create({
-          data: { organizationId: orgId, broadcastId: id, kind: 'cancelled' },
-        });
-        return updated;
-      });
-      // Best-effort: remove any still-delayed fanout job. If it has already
-      // fired or doesn't exist, BullMQ returns 0 — harmless.
+      req.log.info({ id, orgId }, '[broadcasts] /cancel begin');
       try {
-        const job = await getBroadcastFanoutQueue().getJob(`broadcast:${id}`);
-        if (job) await job.remove();
+        const result = await app.tenant(req, async (tx) => {
+          const existing = await tx.broadcast.findUnique({ where: { id } });
+          if (!existing) throw notFound('Broadcast not found.');
+          if (existing.status === 'completed' || existing.status === 'cancelled') {
+            throw conflict(`Already ${existing.status}.`);
+          }
+          await tx.broadcastRecipient.updateMany({
+            where: { broadcastId: id, status: 'pending' },
+            data: { status: 'skipped' },
+          });
+          const updated = await tx.broadcast.update({
+            where: { id },
+            data: { status: 'cancelled', completedAt: new Date() },
+          });
+          await tx.broadcastEvent.create({
+            data: { organizationId: orgId, broadcastId: id, kind: 'cancelled' },
+          });
+          return updated;
+        });
+        // Best-effort: remove any still-delayed fanout job. If it has already
+        // fired or doesn't exist, BullMQ returns 0 — harmless.
+        try {
+          const job = await getBroadcastFanoutQueue().getJob(`broadcast:${id}`);
+          if (job) await job.remove();
+        } catch (err) {
+          req.log.warn({ err, id }, '[broadcasts] failed to remove delayed fanout job');
+        }
+        await recordAudit({
+          action: 'broadcast_cancelled',
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          entityType: 'broadcast',
+          entityId: id,
+        });
+        return { data: toDto(result) };
       } catch (err) {
-        req.log.warn({ err, id }, '[broadcasts] failed to remove delayed fanout job');
+        req.log.error(
+          {
+            id,
+            orgId,
+            err: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : err,
+          },
+          '[broadcasts] /cancel failed',
+        );
+        throw err;
       }
-      await recordAudit({
-        action: 'broadcast_cancelled',
-        organizationId: orgId,
-        actorUserId: req.auth!.userId,
-        entityType: 'broadcast',
-        entityId: id,
-      });
-      return { data: toDto(result) };
     },
   );
 

@@ -947,12 +947,17 @@ function ReplyBox({
     durationSec?: number;
   } | null>(null);
   const [sendingMedia, setSendingMedia] = useState(false);
-  // Voice recording state. recordingMime is whatever MediaRecorder
-  // negotiated with the browser (audio/ogg;opus on Chrome/Firefox,
-  // audio/mp4 on Safari — both are accepted by Meta).
+  // Voice recording state. We prefer opus-recorder (canonical OGG/Opus
+  // — passes Meta's strict media validator and lands as a real
+  // WhatsApp voice bubble). MediaRecorder is the fallback for older
+  // browsers; its output gets degraded to a document on the server.
   const [recording, setRecording] = useState(false);
   const [recordedSec, setRecordedSec] = useState(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  // opus-recorder is dynamically imported so the 80-100kB worker
+  // doesn't ship to non-voice users on initial bundle.
+  const opusRecorderRef = useRef<OpusRecorderLike | null>(null);
+  const opusBytesRef = useRef<Uint8Array | null>(null);
   const recordChunksRef = useRef<Blob[]>([]);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordStartRef = useRef<number>(0);
@@ -970,12 +975,56 @@ function ReplyBox({
     requestAnimationFrame(() => taRef.current?.focus());
   };
 
-  // Voice recording: tries the WhatsApp-native ogg/opus first, falls
-  // back to audio/mp4 (Safari). If neither is supported, the button
-  // is disabled (handled below via canRecord). Stop returns a Blob
-  // which we upload as a 'document'-kind asset (no MIME restriction
-  // server-side) and then stage as a 'audio'-mediaType pending
-  // attachment so Send fires /whatsapp/send-media with type=audio.
+  // Two-tier voice recording strategy:
+  //
+  //   1) Prefer opus-recorder — a JS lib that produces a canonical
+  //      OGG/Opus container (the exact format WhatsApp uses for native
+  //      voice notes). Meta's strict async validator accepts it, so
+  //      the customer sees a real voice bubble with the play button.
+  //   2) Fallback: native MediaRecorder. Its MP4/WebM output passes
+  //      Meta's /media upload but fails the deeper delivery validation
+  //      with error 131053 — the server then degrades it to a document
+  //      so the customer still receives the audio, just as a file.
+  async function startOpusRecording(): Promise<boolean> {
+    try {
+      const mod = await import('opus-recorder');
+      const RecorderCtor = (mod as { default: OpusRecorderCtor }).default;
+      if (!RecorderCtor) return false;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordStreamRef.current = stream;
+      const rec = new RecorderCtor({
+        encoderPath: '/opus/encoderWorker.min.js',
+        // streamPages:false → ondataavailable fires ONCE at stop with
+        // the entire OGG file as a Uint8Array. We just collect it
+        // into opusBytesRef and build a File in stopRecording.
+        streamPages: false,
+        encoderApplication: 2048, // VOIP — what WhatsApp / phone calls use
+        encoderSampleRate: 16_000, // matches WhatsApp voice notes
+        numberOfChannels: 1,
+      });
+      rec.ondataavailable = (typedArray: Uint8Array) => {
+        opusBytesRef.current = typedArray;
+      };
+      rec.onstop = () => {
+        // Tear down the mic so the OS recording indicator clears.
+        recordStreamRef.current?.getTracks().forEach((t) => t.stop());
+        recordStreamRef.current = null;
+      };
+      rec.onerror = (err: unknown) => {
+        console.warn('[voice] opus-recorder error', err);
+      };
+      opusBytesRef.current = null;
+      await rec.start();
+      opusRecorderRef.current = rec;
+      return true;
+    } catch (err) {
+      console.warn('[voice] opus-recorder failed to start, falling back to MediaRecorder', err);
+      recordStreamRef.current?.getTracks().forEach((t) => t.stop());
+      recordStreamRef.current = null;
+      return false;
+    }
+  }
+
   function pickRecorderMime(): string | null {
     if (typeof window === 'undefined' || typeof MediaRecorder === 'undefined') return null;
     const candidates = ['audio/ogg;codecs=opus', 'audio/ogg', 'audio/mp4', 'audio/webm;codecs=opus'];

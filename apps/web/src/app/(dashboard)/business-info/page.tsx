@@ -1046,7 +1046,7 @@ function BookingFormPanel() {
                 {draft.fields.map((f, i) => (
                   <div
                     key={i}
-                    className="grid grid-cols-1 gap-2 rounded border border-border bg-white p-3 sm:grid-cols-[1fr_1.5fr_140px_120px_36px]"
+                    className="grid grid-cols-1 gap-2 rounded border border-border bg-surface p-3 sm:grid-cols-[1fr_1.5fr_140px_120px_36px]"
                   >
                     <Input
                       placeholder="key (e.g. name)"

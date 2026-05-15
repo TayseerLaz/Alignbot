@@ -202,7 +202,7 @@ function RowItem({ row }: { row: ImportJobRowDto }) {
             </ul>
           ) : null}
           {row.rawData ? (
-            <pre className="overflow-x-auto rounded bg-white p-3 text-xs">
+            <pre className="overflow-x-auto rounded bg-surface p-3 text-xs">
               {JSON.stringify(row.rawData, null, 2)}
             </pre>
           ) : null}

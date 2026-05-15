@@ -83,7 +83,7 @@ export function MarkdownEditor({
   return (
     <div
       className={cn(
-        'overflow-hidden rounded-md border border-border bg-white shadow-sm focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-400',
+        'overflow-hidden rounded-md border border-border bg-surface shadow-sm focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-400',
         disabled && 'cursor-not-allowed opacity-60',
         className,
       )}
@@ -157,7 +157,7 @@ export function MarkdownEditor({
             onClick={() => setMode('edit')}
             className={cn(
               'inline-flex items-center gap-1 rounded px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
-              mode === 'edit' ? 'bg-white text-foreground shadow-sm' : 'text-foreground hover:bg-surface-muted',
+              mode === 'edit' ? 'bg-surface text-foreground shadow-sm' : 'text-foreground hover:bg-surface-muted',
             )}
             aria-pressed={mode === 'edit'}
             aria-label="Edit mode"
@@ -169,7 +169,7 @@ export function MarkdownEditor({
             onClick={() => setMode('preview')}
             className={cn(
               'inline-flex items-center gap-1 rounded px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
-              mode === 'preview' ? 'bg-white text-foreground shadow-sm' : 'text-foreground hover:bg-surface-muted',
+              mode === 'preview' ? 'bg-surface text-foreground shadow-sm' : 'text-foreground hover:bg-surface-muted',
             )}
             aria-pressed={mode === 'preview'}
             aria-label="Preview mode"
@@ -196,7 +196,7 @@ export function MarkdownEditor({
               wrapSelection('*', '*', 'italic');
             }
           }}
-          className="block w-full resize-y border-0 bg-white px-3 py-2 font-mono text-sm leading-6 focus:outline-none focus:ring-0"
+          className="block w-full resize-y border-0 bg-surface px-3 py-2 font-mono text-sm leading-6 focus:outline-none focus:ring-0"
           aria-label={rest['aria-label']}
         />
       ) : (

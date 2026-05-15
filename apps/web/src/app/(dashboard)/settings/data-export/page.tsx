@@ -98,7 +98,7 @@ export default function DataExportPage() {
             <RefreshCw className="size-4" /> {inflight ? 'Export in progress…' : 'Start a new export'}
           </Button>
 
-          <ul className="divide-y divide-border rounded-md border border-border bg-white">
+          <ul className="divide-y divide-border rounded-md border border-border bg-surface">
             {rows.length === 0 ? (
               <li className="px-4 py-6 text-center text-sm text-foreground-muted">
                 No exports yet. Click <strong>Start a new export</strong> above.

@@ -5,15 +5,16 @@ import { cn } from '@/lib/utils';
 /**
  * AlignedLogo — single source of truth for the brand mark.
  *
- * - Full lockup (`iconOnly=false`): wide horizontal logo for top bars and
- *   sidebars at their expanded width.
- * - Icon-only (`iconOnly=true`): a square crop of the same image for the
- *   collapsed sidebar. Kept as the same asset to avoid serving two files;
- *   the right portion of the lockup is clipped via object-cover + width.
+ * The asset (/public/aligned-logo.webp) is a white wordmark on a transparent
+ * background. On its own it disappears against a white sidebar in light mode,
+ * so we tint it:
+ *   - Light mode  → `filter: brightness(0)`              (black silhouette)
+ *   - Dark mode   → `filter: brightness(0) invert(1)`    (back to white)
+ * Both states render clearly on the surface color underneath.
  *
- * The asset auto-inverts on dark mode via a CSS filter — the logo is a
- * blue-on-transparent mark, so `brightness(0) invert(1)` flips it to
- * white on dark backgrounds without needing a second asset.
+ * `iconOnly` (collapsed sidebar): we can't crop the wide horizontal lockup
+ * into a square cleanly, so we render a brand-blue rounded square with "A".
+ * Keeps the look on-brand without needing a second asset.
  */
 export function AlignedLogo({
   className,
@@ -27,20 +28,12 @@ export function AlignedLogo({
     return (
       <div
         className={cn(
-          'relative size-9 overflow-hidden rounded-md',
+          'flex size-9 items-center justify-center rounded-md bg-brand-500 font-semibold text-white shadow-sm',
           className,
         )}
         aria-label="ALIGNED"
       >
-        <Image
-          src="/aligned-logo.webp"
-          alt="ALIGNED"
-          fill
-          priority
-          sizes="36px"
-          className="object-contain object-left dark:[filter:brightness(0)_invert(1)]"
-          style={{ objectPosition: 'left center' }}
-        />
+        A
       </div>
     );
   }
@@ -52,7 +45,13 @@ export function AlignedLogo({
       width={160}
       height={32}
       priority
-      className={cn('h-8 w-auto dark:[filter:brightness(0)_invert(1)]', className)}
+      className={cn(
+        'h-8 w-auto',
+        // Tint the white asset so it reads on whatever background.
+        '[filter:brightness(0)]',
+        'dark:[filter:brightness(0)_invert(1)]',
+        className,
+      )}
     />
   );
 }

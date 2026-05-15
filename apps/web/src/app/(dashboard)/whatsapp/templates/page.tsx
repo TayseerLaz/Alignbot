@@ -534,7 +534,7 @@ function CreateTemplateDialog({
               </div>
             </div>
             {buttons.map((b, i) => (
-              <div key={i} className="flex items-start gap-2 rounded border border-border bg-white p-2">
+              <div key={i} className="flex items-start gap-2 rounded border border-border bg-surface p-2">
                 <span className="mt-2 w-20 shrink-0 text-xs font-medium text-foreground-muted">
                   {b.type === 'QUICK_REPLY'
                     ? 'Quick'

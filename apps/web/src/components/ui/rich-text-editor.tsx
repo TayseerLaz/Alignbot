@@ -90,7 +90,7 @@ export function RichTextEditor({
     return (
       <div
         className={cn(
-          'overflow-hidden rounded-md border border-border bg-white shadow-sm',
+          'overflow-hidden rounded-md border border-border bg-surface shadow-sm',
           className,
         )}
       >
@@ -114,7 +114,7 @@ export function RichTextEditor({
   return (
     <div
       className={cn(
-        'overflow-hidden rounded-md border border-border bg-white shadow-sm focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-400',
+        'overflow-hidden rounded-md border border-border bg-surface shadow-sm focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-400',
         disabled && 'cursor-not-allowed opacity-60',
         className,
       )}

@@ -144,7 +144,7 @@ export default function InboxPage() {
         }
       />
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-hidden rounded-lg border border-border bg-white lg:grid-cols-[22rem_1fr]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-hidden rounded-lg border border-border bg-surface lg:grid-cols-[22rem_1fr]">
         <div className="flex min-h-0 flex-col border-r border-border">
           {/* Filters pinned to the top of the thread-list column so the
               conversation pane on the right gets the full vertical space. */}
@@ -636,7 +636,7 @@ function ThreadHeader({
           )}
           {/* The three ownership actions, visually grouped via a rounded
               container so they read as a single control. */}
-          <div className="flex items-center overflow-hidden rounded-md border border-border bg-white">
+          <div className="flex items-center overflow-hidden rounded-md border border-border bg-surface">
             <Button
               size="sm"
               variant="ghost"
@@ -705,7 +705,7 @@ function TagBar({
 }) {
   const [input, setInput] = useState('');
   return (
-    <div className="flex items-center gap-2 border-b border-border bg-white px-4 py-2">
+    <div className="flex items-center gap-2 border-b border-border bg-surface px-4 py-2">
       <TagIcon className="size-3.5 shrink-0 text-foreground-muted" />
       {thread.tags.map((t) => (
         <Badge key={t} variant="outline" className="gap-1 text-xs">
@@ -732,7 +732,7 @@ function TagBar({
         }}
         placeholder="+ tag"
         aria-label="Add tag"
-        className="h-7 w-32 rounded border border-border bg-white px-2 text-xs placeholder:text-foreground-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
+        className="h-7 w-32 rounded border border-border bg-surface px-2 text-xs placeholder:text-foreground-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
       />
     </div>
   );
@@ -1168,7 +1168,7 @@ function ReplyBox({
           aria-pressed={mode === 'reply'}
           className={cn(
             'rounded px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
-            mode === 'reply' ? 'bg-white text-foreground shadow-sm' : 'text-foreground hover:bg-surface-muted',
+            mode === 'reply' ? 'bg-surface text-foreground shadow-sm' : 'text-foreground hover:bg-surface-muted',
           )}
         >
           Reply
@@ -1256,7 +1256,7 @@ function ReplyBox({
             <Clock className="size-3.5" /> Canned <ChevronDown className="size-3" />
           </Button>
           {showCanned ? (
-            <div className="absolute right-0 z-10 mt-1 w-64 rounded-md border border-border bg-white shadow-lg">
+            <div className="absolute right-0 z-10 mt-1 w-64 rounded-md border border-border bg-surface shadow-lg">
               {cannedResponses.length === 0 ? (
                 <p className="px-3 py-2 text-xs text-foreground-muted">
                   No canned responses yet. Manage in Settings.

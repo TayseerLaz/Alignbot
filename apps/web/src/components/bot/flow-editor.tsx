@@ -194,7 +194,7 @@ function FlowEditorInner({
   const selected = useMemo(() => nodes.find((n) => n.id === selectedId) ?? null, [nodes, selectedId]);
 
   return (
-    <div className="flex h-[min(78vh,900px)] min-h-[640px] w-full overflow-hidden rounded-lg border border-border bg-white">
+    <div className="flex h-[min(78vh,900px)] min-h-[640px] w-full overflow-hidden rounded-lg border border-border bg-surface">
       <div className="flex-1">
         <ReactFlow
           nodes={nodes}
@@ -215,7 +215,7 @@ function FlowEditorInner({
         </ReactFlow>
       </div>
       <div className="flex w-80 shrink-0 flex-col border-l border-border bg-surface-muted/30">
-        <div className="flex items-center justify-between gap-2 border-b border-border bg-white p-3">
+        <div className="flex items-center justify-between gap-2 border-b border-border bg-surface p-3">
           <Button size="sm" variant="secondary" onClick={addNode}>
             <Plus className="size-4" /> Add intent
           </Button>
@@ -280,7 +280,7 @@ function IntentNodeView({ data, selected }: NodeProps<IntentNode>) {
         // readable without zooming. line-clamp on the response keeps
         // very long templates bounded but operator can still see the
         // first ~5 lines at a glance.
-        'w-[300px] rounded-lg border bg-white px-4 py-3 shadow-sm',
+        'w-[300px] rounded-lg border bg-surface px-4 py-3 shadow-sm',
         selected ? 'border-brand-500 ring-2 ring-brand-300' : 'border-border',
       )}
     >

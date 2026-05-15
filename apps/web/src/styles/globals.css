@@ -114,6 +114,63 @@
   --shadow-brand: 0 10px 26px rgba(74, 144, 200, 0.35);
 }
 
+/* ----------------------------------------------------------------------------
+   Dark-mode utility overrides.
+
+   A lot of pages were authored before dark mode existed and use hardcoded
+   Tailwind palette classes (bg-white, bg-emerald-50 text-emerald-700, etc.)
+   that don't re-theme via tokens. Instead of touching every file, we
+   re-skin those exact class combinations when the user is in dark mode.
+   This is intentionally narrow — only the classes actually used in the
+   codebase, mapped to readable dark equivalents.
+---------------------------------------------------------------------------- */
+.dark .bg-white { background-color: var(--color-surface); }
+
+/* Status-pill pairs (broadcasts, recipients, members, inbox tags) */
+.dark .bg-emerald-50  { background-color: rgba(74, 222, 128, 0.12); }
+.dark .text-emerald-700, .dark .text-emerald-800 { color: #6ee7b7; }
+.dark .bg-emerald-100 { background-color: rgba(74, 222, 128, 0.18); }
+
+.dark .bg-amber-50  { background-color: rgba(250, 204, 21, 0.12); }
+.dark .text-amber-700, .dark .text-amber-800 { color: #fde047; }
+.dark .bg-amber-100 { background-color: rgba(250, 204, 21, 0.18); }
+
+.dark .bg-yellow-50  { background-color: rgba(250, 204, 21, 0.12); }
+.dark .text-yellow-700, .dark .text-yellow-800 { color: #fde047; }
+
+.dark .bg-red-50  { background-color: rgba(248, 113, 113, 0.12); }
+.dark .text-red-600, .dark .text-red-700 { color: #fca5a5; }
+.dark .bg-red-100 { background-color: rgba(248, 113, 113, 0.18); }
+
+.dark .bg-blue-50  { background-color: rgba(96, 165, 250, 0.12); }
+.dark .text-blue-700 { color: #93c5fd; }
+.dark .bg-blue-100 { background-color: rgba(96, 165, 250, 0.18); }
+
+.dark .bg-cyan-50  { background-color: rgba(34, 211, 238, 0.12); }
+.dark .text-cyan-700 { color: #67e8f9; }
+
+.dark .bg-slate-100, .dark .bg-zinc-100, .dark .bg-gray-100 {
+  background-color: var(--color-surface-elevated);
+}
+.dark .text-slate-500, .dark .text-slate-600, .dark .text-zinc-500,
+.dark .text-zinc-600, .dark .text-gray-500, .dark .text-gray-600 {
+  color: var(--color-foreground-muted);
+}
+.dark .text-slate-700, .dark .text-slate-800, .dark .text-slate-900,
+.dark .text-zinc-800, .dark .text-zinc-900, .dark .text-gray-800, .dark .text-gray-900 {
+  color: var(--color-foreground);
+}
+
+.dark .border-zinc-200, .dark .border-slate-200, .dark .border-gray-200 {
+  border-color: var(--color-border);
+}
+.dark .bg-zinc-50, .dark .bg-slate-50, .dark .bg-gray-50 {
+  background-color: var(--color-surface-elevated);
+}
+
+/* divider classes used by lists */
+.dark .divide-border > * + * { border-color: var(--color-border); }
+
 /* ============================================================================
    BASE
    ============================================================================ */

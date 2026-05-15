@@ -262,7 +262,7 @@ function CategoryLinkedList({
   items: { key: string; primary: string; secondary: string; href: string }[];
 }) {
   return (
-    <div className="rounded-md border border-border bg-white p-3">
+    <div className="rounded-md border border-border bg-surface p-3">
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-foreground-subtle">
         {title}
       </p>

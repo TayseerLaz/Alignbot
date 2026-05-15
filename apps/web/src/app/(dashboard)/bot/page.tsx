@@ -160,7 +160,7 @@ function LanguagePicker({
               'rounded-full border px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
               on
                 ? 'border-brand-500 bg-brand-500 text-white'
-                : 'border-border bg-white text-foreground hover:bg-surface-muted',
+                : 'border-border bg-surface text-foreground hover:bg-surface-muted',
             )}
           >
             {lang.label}
@@ -856,7 +856,7 @@ function Simulator() {
                       'inline-block max-w-[85%] whitespace-pre-wrap break-words rounded-lg px-3 py-2',
                       t.role === 'user'
                         ? 'bg-brand-500 text-white'
-                        : 'bg-white text-foreground border border-border',
+                        : 'bg-surface text-foreground border border-border',
                     )}
                   >
                     {t.body}
@@ -865,7 +865,7 @@ function Simulator() {
               ))}
               {send.isPending ? (
                 <li className="flex justify-start">
-                  <span className="inline-flex items-center gap-1 rounded-lg border border-border bg-white px-3 py-2 text-xs text-foreground-muted">
+                  <span className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-foreground-muted">
                     <Loader2 className="size-3 animate-spin" /> thinking…
                   </span>
                 </li>

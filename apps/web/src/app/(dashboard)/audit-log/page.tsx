@@ -239,7 +239,7 @@ function AuditRow({ row }: { row: AuditEntry }) {
       </button>
       {open && hasMeta ? (
         <div className="border-t border-border bg-surface-muted/40 px-6 py-3">
-          <pre className="overflow-x-auto rounded bg-white p-3 text-xs">
+          <pre className="overflow-x-auto rounded bg-surface p-3 text-xs">
             {JSON.stringify(row.metadata, null, 2)}
           </pre>
         </div>

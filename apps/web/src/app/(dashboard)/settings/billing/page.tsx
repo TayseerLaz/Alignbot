@@ -140,7 +140,7 @@ export default function BillingPage() {
             <CardTitle>Plans</CardTitle>
             <CardDescription>Pick a plan to upgrade. Stripe handles payment.</CardDescription>
           </div>
-          <div className="inline-flex rounded-md border border-border bg-white p-0.5 text-xs">
+          <div className="inline-flex rounded-md border border-border bg-surface p-0.5 text-xs">
             {(['monthly', 'yearly'] as const).map((v) => (
               <button
                 key={v}
@@ -164,7 +164,7 @@ export default function BillingPage() {
                 key={p.id}
                 className={cn(
                   'flex flex-col rounded-lg border p-4',
-                  sub?.planCode === p.code ? 'border-brand-500 bg-brand-50/40' : 'border-border bg-white',
+                  sub?.planCode === p.code ? 'border-brand-500 bg-brand-50/40' : 'border-border bg-surface',
                 )}
               >
                 <p className="text-sm font-semibold">{p.name}</p>

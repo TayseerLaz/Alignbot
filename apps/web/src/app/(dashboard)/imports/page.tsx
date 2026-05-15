@@ -128,7 +128,7 @@ export default function ImportsPage() {
                   toast.error(err instanceof ApiError ? err.payload.message : 'Download failed'),
                 );
               }}
-              className="flex items-center justify-between rounded-md border border-border bg-white px-4 py-3 text-sm transition-colors hover:bg-surface-muted"
+              className="flex items-center justify-between rounded-md border border-border bg-surface px-4 py-3 text-sm transition-colors hover:bg-surface-muted"
             >
               <div className="flex items-center gap-3">
                 <FileSpreadsheet className="size-5 text-brand-500" />

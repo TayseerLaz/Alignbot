@@ -131,7 +131,7 @@ export default function BrandingPage() {
                 <img
                   src={q.data.data.logoUrl}
                   alt="Org logo"
-                  className="h-16 w-16 rounded-md border border-border bg-white object-contain"
+                  className="h-16 w-16 rounded-md border border-border bg-surface object-contain"
                 />
               ) : (
                 <div className="flex h-16 w-16 items-center justify-center rounded-md border border-dashed border-border bg-surface-muted text-foreground-subtle">

@@ -1592,6 +1592,10 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 status?: 'sent' | 'delivered' | 'read' | 'failed';
                 timestamp?: string;
                 recipient_id?: string;
+                // On status=failed, Meta attaches at least one error
+                // object describing why the message wasn't delivered.
+                // Log it so voice / media debugging isn't a black box.
+                errors?: { code?: number; title?: string; message?: string; error_data?: { details?: string } }[];
               }[];
             };
           }[];
@@ -1605,6 +1609,19 @@ export default async function whatsappRoutes(app: FastifyInstance) {
           for (const s of change.value?.statuses ?? []) {
             if (!s.id || !s.status) continue;
             const ts = s.timestamp ? new Date(Number(s.timestamp) * 1000) : new Date();
+            if (s.status === 'failed') {
+              // Surface the exact Meta error so voice / media failures
+              // stop being silent. We see the wamid, recipient, and
+              // the errors[].{code,title,message,error_data.details}.
+              req.log.warn(
+                {
+                  wamid: s.id,
+                  recipient: s.recipient_id,
+                  errors: s.errors,
+                },
+                '[AL-VOICE-DEBUG] Meta marked outbound as FAILED',
+              );
+            }
             await withRlsBypass(async (tx) => {
               await tx.whatsAppMessage.updateMany({
                 where: {

@@ -431,7 +431,7 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
       // Best-effort: remove any still-pending fanout job for this broadcast.
       // If it has already fired or doesn't exist, BullMQ returns 0 — harmless.
       try {
-        const job = await getBroadcastFanoutQueue().getJob(`broadcast:${id}`);
+        const job = await getBroadcastFanoutQueue().getJob(`broadcast-${id}`);
         if (job) await job.remove();
       } catch (err) {
         req.log.warn({ err, id }, '[broadcasts] failed to remove fanout job on delete');
@@ -537,7 +537,7 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
       // existing job before adding the new one. BullMQ throws on a
       // duplicate jobId otherwise, which previously surfaced as a 500.
       const fanoutQueue = getBroadcastFanoutQueue();
-      const jobId = `broadcast:${id}`;
+      const jobId = `broadcast-${id}`;
       const existingJob = await fanoutQueue.getJob(jobId).catch(() => null);
       if (existingJob) {
         await existingJob.remove().catch((err) =>
@@ -702,7 +702,7 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
         await getBroadcastFanoutQueue().add(
           'fanout',
           { organizationId: orgId, broadcastId: id },
-          { jobId: `broadcast:${id}:resume:${Date.now()}` },
+          { jobId: `broadcast-${id}-resume-${Date.now()}` },
         );
         await recordAudit({
           action: 'broadcast_resumed',
@@ -768,7 +768,7 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
         // Best-effort: remove any still-delayed fanout job. If it has already
         // fired or doesn't exist, BullMQ returns 0 — harmless.
         try {
-          const job = await getBroadcastFanoutQueue().getJob(`broadcast:${id}`);
+          const job = await getBroadcastFanoutQueue().getJob(`broadcast-${id}`);
           if (job) await job.remove();
         } catch (err) {
           req.log.warn({ err, id }, '[broadcasts] failed to remove delayed fanout job');
@@ -1012,7 +1012,7 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
         await getBroadcastFanoutQueue().add(
           'fanout',
           { organizationId: orgId, broadcastId: id },
-          { jobId: `broadcast:${id}:rerun:${Date.now()}` },
+          { jobId: `broadcast-${id}-rerun-${Date.now()}` },
         );
       }
       return { data: { requeued } };

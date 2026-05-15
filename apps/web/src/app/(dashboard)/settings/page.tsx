@@ -16,7 +16,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { api, ApiError, getAccessToken } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 
 function SettingsLink({
@@ -57,33 +57,7 @@ export default function SettingsPage() {
   const organization = session?.organization;
   const user = session?.user;
   const isOrgAdmin = organization?.role === 'admin';
-  const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
-
-  async function exportOrgData() {
-    setExporting(true);
-    try {
-      const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/organization/export`;
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${getAccessToken() ?? ''}` },
-        credentials: 'include',
-      });
-      if (!res.ok) throw new Error(`Export failed (${res.status})`);
-      const blob = await res.blob();
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `aligned-org-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(a.href);
-      toast.success('Organization archive downloaded.');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Export failed');
-    } finally {
-      setExporting(false);
-    }
-  }
 
   async function deleteOrganization() {
     const confirmed = await confirmDialog({
@@ -222,29 +196,6 @@ export default function SettingsPage() {
             />
           </CardContent>
         </Card>
-
-        {isOrgAdmin ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>Organization data</CardTitle>
-              <CardDescription>
-                Export everything about <strong>{organization?.name}</strong> as JSON, or
-                permanently delete the organisation. Org-admin only.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Button variant="secondary" loading={exporting} onClick={exportOrgData}>
-                <Download className="size-4" /> Download organization archive
-              </Button>
-              <p className="text-xs text-foreground-muted">
-                Includes products, services, business info, FAQs, policies, members (without
-                password hashes), audit log, webhook endpoints, connectors, and WhatsApp config.
-                API keys + WhatsApp tokens are <em>not</em> included — those are issued, not
-                portable.
-              </p>
-            </CardContent>
-          </Card>
-        ) : null}
 
         {isOrgAdmin ? (
           <Card className="border-red-200">

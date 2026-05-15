@@ -2,6 +2,7 @@
 
 import { Download, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { QRCodeSVG } from 'qrcode.react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -389,12 +390,37 @@ function TwoFactorCard() {
         ) : setupOtpUri ? (
           <>
             <p className="text-sm">
-              Scan this URI with your authenticator app, or paste the secret manually.
+              Scan this QR with your authenticator app (Google Authenticator, 1Password, Authy,
+              etc.). Can&apos;t scan? Paste the secret manually below.
             </p>
-            <pre className="break-all rounded bg-surface-muted p-2 text-xs">{setupOtpUri}</pre>
-            <p className="text-xs text-foreground-muted">
-              Manual secret: <code className="font-mono">{setupSecret}</code>
-            </p>
+
+            {/* QR code — white tile around it gives the scanner contrast
+                even when the card is on a dark surface. */}
+            <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-start">
+              <div className="rounded-md bg-white p-3 shadow-sm">
+                <QRCodeSVG
+                  value={setupOtpUri}
+                  size={168}
+                  level="M"
+                  includeMargin={false}
+                  bgColor="#ffffff"
+                  fgColor="#0f172a"
+                />
+              </div>
+
+              <div className="flex-1 space-y-2 text-xs">
+                <div>
+                  <p className="font-medium text-foreground">Manual secret</p>
+                  <code className="mt-1 block break-all rounded bg-surface-muted px-2 py-1.5 font-mono">
+                    {setupSecret}
+                  </code>
+                </div>
+                <p className="text-foreground-muted">
+                  Algorithm SHA-1 · 6 digits · 30-second window — defaults for every authenticator.
+                </p>
+              </div>
+            </div>
+
             <div className="space-y-1.5">
               <Label htmlFor="otp-code">Enter the 6-digit code from your app</Label>
               <Input
@@ -404,6 +430,7 @@ function TwoFactorCard() {
                 inputMode="numeric"
                 maxLength={6}
                 placeholder="000000"
+                className="font-mono text-center tracking-[0.4em]"
               />
             </div>
             <Button onClick={enable} loading={busy} disabled={code.length !== 6}>

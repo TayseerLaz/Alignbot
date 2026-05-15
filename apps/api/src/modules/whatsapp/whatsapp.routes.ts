@@ -2268,6 +2268,11 @@ async function maybeReplyAsBot(args: {
       continue;
     }
 
+    // Did the customer's CURRENT inbound arrive as a voice note? Affects
+    // the LLM's delivery-mode banner (match_customer) and the eventual
+    // wantsVoice decision below — compute once, reuse both places.
+    const customerSpokeAudio = m.type === 'audio' || m.type === 'voice';
+
     // OpenAI call — outside the tx. Safe to be slow.
     const result = await buildBotResponse({
       organizationId: args.organizationId,
@@ -2277,6 +2282,8 @@ async function maybeReplyAsBot(args: {
         content: h.body ?? '',
       })),
       data: ctx.data,
+      replyMode: ctx.replyMode as 'text' | 'voice' | 'match_customer',
+      customerSpokeAudio,
     }).catch((err) => {
       args.log.warn({ err }, '[whatsapp] bot-engine failed');
       return null;
@@ -2336,8 +2343,8 @@ async function maybeReplyAsBot(args: {
     // Phase 6 — decide text vs voice. `voice` always sends TTS. `match_customer`
     // only sends TTS when the customer's last inbound was itself a voice
     // note (so they don't get audio replies after typing a text question).
-    // `text` keeps existing behaviour.
-    const customerSpokeAudio = m.type === 'audio' || m.type === 'voice';
+    // `text` keeps existing behaviour. `customerSpokeAudio` already computed
+    // above so we could feed it into the LLM's delivery-mode banner.
     const wantsVoice =
       ctx.replyMode === 'voice' ||
       (ctx.replyMode === 'match_customer' && customerSpokeAudio);

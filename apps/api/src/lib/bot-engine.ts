@@ -280,6 +280,14 @@ interface BotResponseArgs {
   userMessage: string;
   history?: { role: 'user' | 'assistant'; content: string }[];
   data: BotData;
+  // Delivery hint — lets the LLM know whether the platform will speak
+  // its reply (TTS) or send plain text. Without this the model defaults
+  // to "I'm a text chatbot" and apologises for voice notes. Values mirror
+  // BotConfig.replyMode / WhatsAppThread.botReplyMode.
+  replyMode?: 'text' | 'voice' | 'match_customer' | null;
+  // Whether the customer's current inbound was an audio/voice note —
+  // used to give the model a clean signal for match_customer mode.
+  customerSpokeAudio?: boolean;
 }
 
 // Composes the system prompt from gathered data + asks the LLM. NO Prisma
@@ -331,8 +339,32 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     .map((c) => LANGUAGE_NAMES[c] ?? c.toUpperCase())
     .join(', ');
 
+  // Phase 6 — delivery-mode banner. The LLM doesn't know about the TTS
+  // pipeline unless we tell it explicitly. Without this banner, the model
+  // defaults to "I'm a text chatbot, I can't send voice notes" — which is
+  // false: the platform synthesises every reply when voice mode is on.
+  // We resolve the EFFECTIVE mode here (mirrors whatsapp.routes.ts) so
+  // match_customer is collapsed into a concrete "voice" or "text" signal.
+  const effectiveDeliveryMode =
+    args.replyMode === 'voice'
+      ? 'voice'
+      : args.replyMode === 'match_customer'
+        ? args.customerSpokeAudio
+          ? 'voice'
+          : 'text'
+        : 'text';
+  const deliveryBanner =
+    effectiveDeliveryMode === 'voice'
+      ? [
+          `# ⚠️ DELIVERY MODE: VOICE`,
+          `Your reply WILL be spoken aloud to the customer as a WhatsApp voice note. The platform's text-to-speech pipeline converts every word you write into audio automatically — you do not need to record anything, you do not need any new capability, and you absolutely DO NOT lack the ability to send voice. NEVER write phrases like "I can't send voice notes", "I'm not able to send audio", "I can only reply in text", or any apology along those lines. Just answer the question normally — your text becomes the voice note. Write in natural spoken sentences (no markdown, no bullet points, no URLs, no emojis), since these will be read aloud.`,
+          ``,
+        ]
+      : [];
+
   // Compose the system prompt — long but cache-friendly.
   const sys = [
+    ...deliveryBanner,
     `You are a customer-service chatbot for the business below. Reply in WhatsApp-style: short, scannable, plain text. No markdown headings. Use bullets sparingly.`,
     ``,
     `# Personality`,
@@ -350,7 +382,7 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     // handles that transparently. Just answer the question. If a customer
     // explicitly requests a voice note and voice mode is OFF, the platform
     // will simply send the text reply; the bot should not pre-apologise.
-    `- Voice notes: if the customer requests a voice reply, DO NOT apologise or say you can't send voice. Just answer normally — the platform will speak your reply automatically when voice mode is enabled. Treat every reply as if it could be spoken aloud, so use natural sentence structure (no lists / markdown / URLs) when the customer is using voice notes themselves.`,
+    `- Voice notes: NEVER tell the customer you can't send voice, can't make audio, are "just text", or anything along those lines. That is FALSE — the platform handles voice delivery automatically through text-to-speech. When voice mode is ON (see DELIVERY MODE banner above if present), your text reply is converted into a real WhatsApp voice note. When voice mode is OFF, the platform simply sends text — but the customer doesn't need to be told that. Either way: just answer the question. Use natural spoken sentence structure (no lists, markdown, URLs, or emojis) whenever the customer used a voice note themselves, since they may be reading on the go.`,
     // Image attachment protocol — operator-side maybeReplyAsBot parses
     // this marker, fetches the product's primary image, and sends it
     // as a follow-up WhatsApp media message. Strip the marker from

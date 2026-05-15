@@ -1,20 +1,22 @@
 import type { Metadata } from 'next';
-import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google';
+import { JetBrains_Mono, Plus_Jakarta_Sans } from 'next/font/google';
 
 import { Providers } from '@/components/providers';
 import '@/styles/globals.css';
 
-const plexSans = IBM_Plex_Sans({
+// Aligned design system — Plus Jakarta Sans (display + body) +
+// JetBrains Mono (SKUs, IDs, code, mono numerics).
+const jakarta = Plus_Jakarta_Sans({
   subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700'],
-  variable: '--font-plex-sans',
+  weight: ['300', '400', '500', '600', '700', '800'],
+  variable: '--font-jakarta',
   display: 'swap',
 });
 
-const plexMono = IBM_Plex_Mono({
+const monoJb = JetBrains_Mono({
   subsets: ['latin'],
   weight: ['400', '500'],
-  variable: '--font-plex-mono',
+  variable: '--font-mono-jb',
   display: 'swap',
 });
 
@@ -29,7 +31,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${plexSans.variable} ${plexMono.variable}`}>
+    <html lang="en" className={`${jakarta.variable} ${monoJb.variable}`}>
       <body className="min-h-dvh antialiased">
         <Providers>{children}</Providers>
       </body>

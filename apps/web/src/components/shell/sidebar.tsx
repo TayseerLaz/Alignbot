@@ -166,10 +166,10 @@ export function Sidebar({
         title={collapsed ? `${item.label}${showBadge ? ` (${badgeCount})` : ''}` : undefined}
         aria-label={item.label}
         className={cn(
-          'relative flex items-center rounded-md text-sm font-medium transition-colors',
-          collapsed ? 'justify-center px-2 py-2' : 'gap-2.5 px-3 py-2',
+          'relative flex items-center rounded-full text-sm font-medium transition-all duration-150',
+          collapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-4 py-2.5',
           active
-            ? 'bg-brand-50 text-brand-700'
+            ? 'bg-brand-500 text-white shadow-brand'
             : 'text-foreground-muted hover:bg-surface-muted hover:text-foreground',
         )}
       >
@@ -206,7 +206,7 @@ export function Sidebar({
             {/* Hide group headers when collapsed — the icons themselves
                 are the only grouping the operator needs at that width. */}
             {!collapsed ? (
-              <p className="px-3 text-[11px] font-semibold uppercase tracking-wider text-foreground-subtle">
+              <p className="px-4 pb-1 text-[10px] font-bold uppercase tracking-[0.15em] text-foreground-subtle">
                 {group.label}
               </p>
             ) : null}

@@ -5,24 +5,32 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 
+// Aligned design system — pill buttons with soft purple-tinted shadow.
+// Variants map to the .al-btn-* set in tokens. Brand uses lavender
+// (var(--color-brand-500)) + var(--shadow-brand) glow; coral is for
+// secondary CTAs and accent actions like Send broadcast / Send template.
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full font-semibold text-sm tracking-[-0.005em] ring-offset-background transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {
         primary:
-          'bg-brand-500 text-white hover:bg-brand-600 active:bg-brand-700 shadow-sm',
+          'bg-brand-500 text-white hover:bg-brand-600 active:bg-brand-700 shadow-brand',
         secondary:
-          'bg-white text-foreground border border-border hover:bg-surface-muted active:bg-surface-muted/70',
+          'bg-white text-foreground border border-border-strong hover:bg-surface-muted',
         ghost: 'text-foreground hover:bg-surface-muted',
-        danger: 'bg-red-600 text-white hover:bg-red-700 active:bg-red-800 shadow-sm',
+        soft: 'bg-brand-100 text-brand-700 hover:bg-brand-200',
+        coral:
+          'bg-coral-500 text-white hover:bg-coral-600 shadow-coral',
+        dark: 'bg-[#1a1828] text-white hover:bg-[#2e2a40]',
+        danger: 'bg-danger text-white hover:bg-danger/90 shadow-sm',
         link: 'text-brand-500 underline-offset-4 hover:underline',
       },
       size: {
-        sm: 'h-8 px-3 text-xs',
-        md: 'h-10 px-4',
-        lg: 'h-11 px-6 text-base',
-        icon: 'h-9 w-9 p-0',
+        sm: 'h-8 px-3.5 text-xs',
+        md: 'h-10 px-5',
+        lg: 'h-12 px-6 text-[15px]',
+        icon: 'h-10 w-10 p-0 rounded-full',
       },
     },
     defaultVariants: { variant: 'primary', size: 'md' },
@@ -38,8 +46,6 @@ export interface ButtonProps
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild, loading, disabled, children, ...props }, ref) => {
-    // Radix Slot requires exactly one child. When asChild=true, the caller
-    // owns the children, so we render *just* their child (no loader spinner).
     if (asChild) {
       return (
         <Slot

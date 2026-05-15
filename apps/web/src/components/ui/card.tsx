@@ -2,11 +2,15 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 
+// Aligned design system — cards default to 28px radius (rounded-lg in our
+// token override) and a soft purple-tinted shadow instead of a hairline
+// border. The original gray-1px border looked harsh against the new soft
+// lavender background; the shadow alone does the elevation work.
 export const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
     <div
       ref={ref}
-      className={cn('rounded-xl border border-border bg-white shadow-sm', className)}
+      className={cn('rounded-lg bg-white shadow-md', className)}
       {...props}
     />
   ),
@@ -22,7 +26,7 @@ CardHeader.displayName = 'CardHeader';
 
 export const CardTitle = React.forwardRef<HTMLHeadingElement, React.HTMLAttributes<HTMLHeadingElement>>(
   ({ className, ...props }, ref) => (
-    <h3 ref={ref} className={cn('text-lg font-semibold leading-tight tracking-tight', className)} {...props} />
+    <h3 ref={ref} className={cn('text-lg font-semibold leading-tight tracking-[-0.025em]', className)} {...props} />
   ),
 );
 CardTitle.displayName = 'CardTitle';

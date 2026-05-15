@@ -1,0 +1,450 @@
+/* =========================================================
+   ALIGNED — DESIGN TOKENS
+   Soft lavender + coral, very rounded, friendly-professional
+   ========================================================= */
+
+:root {
+  /* ---------- COLOR ---------- */
+  /* Surface */
+  --al-bg: #F4F2F8;
+  --al-bg-2: #ECE9F4;
+  --al-surface: #FFFFFF;
+  --al-surface-2: #FAF9FD;
+
+  /* Primary (lavender) */
+  --al-primary: #7C6BFF;
+  --al-primary-600: #6856E8;
+  --al-primary-700: #5546D9;
+  --al-primary-100: #EEEAFF;
+  --al-primary-200: #DCD4FF;
+  --al-primary-dark: #2E2666;
+
+  /* Coral accent */
+  --al-coral: #FF8A6B;
+  --al-coral-600: #F37454;
+  --al-coral-100: #FFE5DC;
+
+  /* Supporting */
+  --al-yellow: #FFD66B;
+  --al-yellow-100: #FFF3D1;
+  --al-green: #5BC97A;
+  --al-green-100: #D8F2DE;
+  --al-blue: #6BB7FF;
+  --al-blue-100: #DCEEFF;
+  --al-red: #FF6B7C;
+  --al-red-100: #FFE0E4;
+
+  /* Text */
+  --al-text: #1A1828;
+  --al-text-2: #3D3950;
+  --al-muted: #6B6880;
+  --al-mute-2: #9C99B0;
+
+  /* Border */
+  --al-border: #ECE9F4;
+  --al-border-2: #DDD8EA;
+
+  /* WhatsApp (kept for chat surfaces) */
+  --al-wa-green: #25D366;
+  --al-wa-bubble: #DCF8C6;
+
+  /* ---------- RADII ---------- */
+  --al-r-xs: 8px;
+  --al-r-sm: 14px;
+  --al-r-md: 20px;
+  --al-r-lg: 28px;
+  --al-r-xl: 36px;
+  --al-r-pill: 999px;
+
+  /* ---------- SHADOWS ---------- */
+  --al-shadow-sm: 0 1px 2px rgba(40, 30, 80, 0.04), 0 2px 8px rgba(40, 30, 80, 0.04);
+  --al-shadow: 0 4px 16px rgba(40, 30, 80, 0.06), 0 1px 3px rgba(40, 30, 80, 0.04);
+  --al-shadow-lg: 0 14px 40px rgba(40, 30, 80, 0.08), 0 4px 12px rgba(40, 30, 80, 0.04);
+  --al-shadow-primary: 0 10px 26px rgba(124, 107, 255, 0.30);
+  --al-shadow-coral: 0 10px 26px rgba(255, 138, 107, 0.30);
+
+  /* ---------- SPACING ---------- */
+  --al-s-1: 4px;
+  --al-s-2: 8px;
+  --al-s-3: 12px;
+  --al-s-4: 16px;
+  --al-s-5: 20px;
+  --al-s-6: 24px;
+  --al-s-8: 32px;
+  --al-s-10: 40px;
+  --al-s-12: 48px;
+
+  /* ---------- TYPE ---------- */
+  --al-font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --al-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+}
+
+/* =========================================================
+   BASE
+   ========================================================= */
+.al, .al * { box-sizing: border-box; }
+.al {
+  font-family: var(--al-font);
+  color: var(--al-text);
+  background: var(--al-bg);
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* =========================================================
+   LOGO
+   ========================================================= */
+.al-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.al-logo-mark {
+  width: 30px;
+  height: 26px;
+}
+.al-logo-mark rect { fill: var(--al-primary); }
+.al-logo-word {
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: -0.015em;
+  color: var(--al-text);
+}
+
+/* =========================================================
+   BUTTONS
+   ========================================================= */
+.al-btn {
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: var(--al-r-pill);
+  padding: 11px 22px;
+  cursor: pointer;
+  transition: transform 0.08s, background 0.15s, box-shadow 0.15s, border-color 0.15s, color 0.15s;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+  letter-spacing: -0.005em;
+}
+.al-btn:active { transform: scale(0.985); }
+.al-btn-primary {
+  background: var(--al-primary);
+  color: #fff;
+  box-shadow: var(--al-shadow-primary);
+}
+.al-btn-primary:hover { background: var(--al-primary-600); }
+.al-btn-coral {
+  background: var(--al-coral);
+  color: #fff;
+  box-shadow: var(--al-shadow-coral);
+}
+.al-btn-coral:hover { background: var(--al-coral-600); }
+.al-btn-dark {
+  background: #1A1828;
+  color: #fff;
+}
+.al-btn-dark:hover { background: #2E2A40; }
+.al-btn-ghost {
+  background: transparent;
+  color: var(--al-text);
+  border-color: var(--al-border-2);
+}
+.al-btn-ghost:hover {
+  background: var(--al-surface);
+}
+.al-btn-soft {
+  background: var(--al-primary-100);
+  color: var(--al-primary-700);
+}
+.al-btn-soft:hover { background: var(--al-primary-200); }
+.al-btn-sm { padding: 7px 14px; font-size: 12.5px; }
+.al-btn-lg { padding: 14px 26px; font-size: 15px; }
+.al-btn-icon {
+  padding: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+}
+
+/* =========================================================
+   INPUTS
+   ========================================================= */
+.al-input, .al-select, .al-textarea {
+  width: 100%;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--al-text);
+  background: var(--al-surface);
+  border: 1px solid var(--al-border);
+  border-radius: var(--al-r-pill);
+  padding: 12px 18px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.al-textarea { border-radius: var(--al-r-md); padding: 14px 18px; resize: vertical; }
+.al-input::placeholder, .al-textarea::placeholder { color: var(--al-mute-2); }
+.al-input:focus, .al-select:focus, .al-textarea:focus {
+  outline: none;
+  border-color: var(--al-primary);
+  box-shadow: 0 0 0 4px rgba(124, 107, 255, 0.12);
+}
+.al-field { display: flex; flex-direction: column; gap: 6px; }
+.al-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--al-text-2);
+  padding-left: 4px;
+}
+
+/* search input */
+.al-search {
+  position: relative;
+}
+.al-search input {
+  padding-left: 42px;
+  background: var(--al-surface);
+}
+.al-search svg {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--al-mute-2);
+}
+
+/* =========================================================
+   CARDS / SURFACES
+   ========================================================= */
+.al-card {
+  background: var(--al-surface);
+  border-radius: var(--al-r-lg);
+  padding: 24px;
+  box-shadow: var(--al-shadow);
+}
+.al-card-lg { padding: 28px; border-radius: var(--al-r-xl); }
+.al-card-flat {
+  background: var(--al-surface);
+  border-radius: var(--al-r-lg);
+  padding: 20px;
+  border: 1px solid var(--al-border);
+}
+
+/* =========================================================
+   BADGES / CHIPS
+   ========================================================= */
+.al-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: var(--al-r-pill);
+  background: var(--al-primary-100);
+  color: var(--al-primary-700);
+  white-space: nowrap;
+}
+.al-badge.coral { background: var(--al-coral-100); color: #B14322; }
+.al-badge.green { background: var(--al-green-100); color: #2E8849; }
+.al-badge.yellow { background: var(--al-yellow-100); color: #8A6A12; }
+.al-badge.blue { background: var(--al-blue-100); color: #1F6CB5; }
+.al-badge.red { background: var(--al-red-100); color: #C13241; }
+.al-badge.gray { background: var(--al-bg-2); color: var(--al-muted); }
+.al-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+/* =========================================================
+   AVATARS
+   ========================================================= */
+.al-avatar {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--al-primary), var(--al-primary-700));
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 13px;
+  flex: none;
+}
+.al-avatar.coral { background: linear-gradient(135deg, var(--al-coral), #E55F3F); }
+.al-avatar.yellow { background: linear-gradient(135deg, var(--al-yellow), #F0AE2E); color: #5A3F00; }
+.al-avatar.green { background: linear-gradient(135deg, var(--al-green), #2E8849); }
+.al-avatar.sm { width: 28px; height: 28px; font-size: 11px; }
+.al-avatar.lg { width: 56px; height: 56px; font-size: 18px; }
+.al-avatar-stack { display: inline-flex; }
+.al-avatar-stack > * {
+  border: 2px solid var(--al-surface);
+  margin-left: -10px;
+}
+.al-avatar-stack > *:first-child { margin-left: 0; }
+
+/* =========================================================
+   NAV ITEMS (sidebar)
+   ========================================================= */
+.al-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 16px;
+  border-radius: var(--al-r-pill);
+  color: var(--al-text-2);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.al-nav-item:hover { background: var(--al-bg-2); color: var(--al-text); }
+.al-nav-item .ico {
+  width: 18px; height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--al-muted);
+}
+.al-nav-item.active {
+  background: var(--al-primary);
+  color: #fff;
+  box-shadow: var(--al-shadow-primary);
+}
+.al-nav-item.active .ico { color: #fff; }
+.al-nav-item .chev { margin-left: auto; opacity: 0.6; }
+.al-nav-item .count {
+  margin-left: auto;
+  background: var(--al-bg-2);
+  color: var(--al-muted);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--al-r-pill);
+}
+.al-nav-item.active .count { background: rgba(255,255,255,0.2); color: #fff; }
+
+/* =========================================================
+   TABLE
+   ========================================================= */
+.al-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13.5px;
+}
+.al-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--al-mute-2);
+  padding: 14px 16px;
+  background: var(--al-surface-2);
+  border-bottom: 1px solid var(--al-border);
+}
+.al-table th:first-child { border-top-left-radius: var(--al-r-md); }
+.al-table th:last-child { border-top-right-radius: var(--al-r-md); }
+.al-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--al-border);
+  color: var(--al-text);
+  vertical-align: middle;
+}
+.al-table tr:last-child td { border-bottom: none; }
+.al-table tr:hover td { background: var(--al-surface-2); }
+
+/* =========================================================
+   TOGGLE
+   ========================================================= */
+.al-toggle {
+  width: 38px; height: 22px;
+  border-radius: var(--al-r-pill);
+  background: var(--al-border-2);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.al-toggle::after {
+  content: '';
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: left 0.15s;
+}
+.al-toggle.on { background: var(--al-primary); }
+.al-toggle.on::after { left: 19px; }
+
+/* =========================================================
+   MISC
+   ========================================================= */
+.al-divider {
+  height: 1px;
+  background: var(--al-border);
+  border: none;
+}
+.al-dot-row {
+  display: inline-flex;
+  gap: 4px;
+}
+.al-dot-row span {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--al-border-2);
+}
+.al-dot-row span.on { background: var(--al-primary); }
+
+/* =========================================================
+   APP SHELL
+   ========================================================= */
+.al-shell {
+  display: grid;
+  grid-template-columns: 248px 1fr;
+  background: var(--al-bg);
+  min-height: 100%;
+}
+.al-sidebar {
+  background: var(--al-surface);
+  padding: 22px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  border-right: 1px solid var(--al-border);
+}
+.al-sidebar-section {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--al-mute-2);
+  padding: 0 16px 4px;
+}
+.al-main {
+  padding: 24px 32px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.al-topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 4px;
+}
+.al-topbar .al-search {
+  flex: 1;
+  max-width: 440px;
+}
+
+/* breadcrumb */
+.al-crumb {
+  font-size: 13px;
+  color: var(--al-muted);
+}
+.al-crumb b { color: var(--al-text); font-weight: 600; }
+.al-crumb .sep { margin: 0 8px; color: var(--al-mute-2); }

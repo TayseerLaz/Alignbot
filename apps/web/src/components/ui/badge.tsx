@@ -3,17 +3,20 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 
+// Aligned design system — pill badges with semantic warm-palette colors.
 const badgeVariants = cva(
-  'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium transition-colors',
+  'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold tracking-[-0.005em]',
   {
     variants: {
       variant: {
-        default: 'bg-brand-50 text-brand-700',
-        muted: 'bg-slate-100 text-slate-800',
-        success: 'bg-emerald-50 text-emerald-700',
-        warning: 'bg-amber-50 text-amber-700',
-        danger: 'bg-red-50 text-red-700',
-        outline: 'border border-border text-foreground-muted',
+        default: 'bg-brand-100 text-brand-700',
+        muted: 'bg-surface-muted text-foreground-muted',
+        success: 'bg-success-100 text-success',
+        warning: 'bg-warning-100 text-warning',
+        danger: 'bg-danger-100 text-danger',
+        coral: 'bg-coral-100 text-coral-700',
+        info: 'bg-info-100 text-info',
+        outline: 'border border-border-strong text-foreground-muted',
       },
     },
     defaultVariants: { variant: 'default' },

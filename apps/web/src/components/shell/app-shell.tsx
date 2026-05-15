@@ -99,7 +99,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <TopBar />
         </header>
         <main className="flex-1 overflow-y-auto">
-          <div className="container-page py-8">{children}</div>
+          {/* space-y-6 applies a 1.5rem vertical gap between every direct
+              child block on every page. Stops sibling cards / sections from
+              touching without each page having to remember to wrap them. */}
+          <div className="container-page space-y-6 py-8">{children}</div>
         </main>
       </div>
     </div>

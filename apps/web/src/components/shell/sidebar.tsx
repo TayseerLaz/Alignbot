@@ -67,34 +67,44 @@ const groups: NavGroup[] = [
     ],
   },
   {
-    label: 'Data',
+    label: 'Integrations',
     items: [
-      { href: '/imports', label: 'Imports', icon: Upload },
       { href: '/connectors', label: 'API connectors', icon: PlugZap },
+      { href: '/api-keys', label: 'API keys', icon: KeyRound },
+      { href: '/webhooks', label: 'Webhooks', icon: BarChart3 },
     ],
   },
   {
-    label: 'Chatbot',
+    label: 'WhatsApp',
     items: [
-      { href: '/api-keys', label: 'API keys', icon: KeyRound },
-      { href: '/webhooks', label: 'Webhooks', icon: BarChart3 },
       { href: '/whatsapp', label: 'WhatsApp', icon: MessageCircle },
       { href: '/whatsapp/templates', label: 'Templates', icon: BarChart3 },
       { href: '/whatsapp/onboarding', label: 'Meta verification', icon: ShieldCheck },
+    ],
+  },
+  {
+    label: 'Engagement',
+    items: [
       { href: '/inbox', label: 'Inbox', icon: Inbox, badgeKey: 'inboxEscalated' },
       { href: '/inbox/canned', label: 'Canned replies', icon: Inbox },
+      { href: '/contacts', label: 'Contacts', icon: ContactIcon },
+      { href: '/segments', label: 'Segments', icon: Users },
+      { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone },
+      { href: '/sequences', label: 'Sequences', icon: Activity },
       { href: '/bookings', label: 'Bookings', icon: CalendarCheck },
+    ],
+  },
+  {
+    label: 'Intelligence',
+    items: [
       { href: '/bot', label: 'AI bot builder', icon: Bot },
       { href: '/analytics', label: 'Analytics', icon: TrendingUp },
     ],
   },
   {
-    label: 'Outreach',
+    label: 'Data',
     items: [
-      { href: '/contacts', label: 'Contacts', icon: ContactIcon },
-      { href: '/segments', label: 'Segments', icon: Users },
-      { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone },
-      { href: '/sequences', label: 'Sequences', icon: Activity },
+      { href: '/imports', label: 'Imports', icon: Upload },
     ],
   },
   {

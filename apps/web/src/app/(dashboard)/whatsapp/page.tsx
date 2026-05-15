@@ -225,7 +225,7 @@ export default function WhatsAppPage() {
       {/* Honesty banner — Phase 1.5 only stores credentials + verifies + receives;
           autonomous bot replies still belong to your bot runtime. */}
       <Card className="mb-6 border border-amber-200 bg-amber-50/40 dark:border-amber-400/30 dark:bg-amber-400/10">
-        <CardContent className="flex items-start gap-3 py-3 text-xs text-amber-900 dark:text-amber-200">
+        <CardContent className="flex items-start gap-3 py-3 text-xs text-black dark:text-amber-200">
           <MessageCircle className="mt-0.5 size-4 shrink-0" />
           <div className="space-y-1">
             <p className="font-semibold">This page connects credentials, not conversations.</p>
@@ -235,7 +235,7 @@ export default function WhatsAppPage() {
               still done by your bot runtime — Landbot, an in-house bridge, or Phase 2 when it
               ships. See the{' '}
               <a
-                className="font-medium text-amber-900 underline underline-offset-2 dark:text-amber-100"
+                className="font-medium text-black underline underline-offset-2 dark:text-amber-100"
                 href="/docs/NO_CODE_CHATBOT_PLAYBOOK.md"
               >
                 no-code playbook

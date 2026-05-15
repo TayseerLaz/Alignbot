@@ -49,14 +49,31 @@ export default fp(async function errorHandler(app: FastifyInstance) {
       return reply.code(429).send(payload);
     }
 
-    // Unknown — 500. Log full stack but never leak to client.
-    req.log.error({ err, requestId }, 'unhandled error');
+    // Unknown — 500. Log full stack always; surface the underlying
+    // message to ALIGNED super-admins so they can diagnose without
+    // needing SSH access to the systemd journal. Regular users still
+    // see the generic "Internal server error." text.
+    req.log.error({ err, requestId, route: req.routeOptions?.url }, 'unhandled error');
     captureError(err, { requestId, route: req.routeOptions?.url });
+    const e = err as Error;
+    const isSuperAdmin = (req as { auth?: { isAlignedAdmin?: boolean } }).auth?.isAlignedAdmin === true;
+    const exposeDetails = isSuperAdmin || process.env.NODE_ENV !== 'production';
     const payload: ApiErrorPayload = {
       error: {
         code: ApiErrorCode.INTERNAL,
         message: 'Internal server error.',
         requestId,
+        details: exposeDetails
+          ? {
+              name: e?.name,
+              message: e?.message,
+              // Trim stack so the response isn't huge; first 8 frames is plenty.
+              stack: typeof e?.stack === 'string'
+                ? e.stack.split('\n').slice(0, 8).join('\n')
+                : undefined,
+              route: req.routeOptions?.url,
+            }
+          : undefined,
       },
     };
     return reply.code(500).send(payload);

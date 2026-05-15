@@ -133,15 +133,6 @@ export default function SettingsPage() {
               title="Data export"
               description="Download all your products, conversations, and bot config (GDPR)."
             />
-            <div className="rounded-lg border border-dashed border-border p-4">
-              <p className="text-sm font-medium text-foreground-muted">
-                Organization name, logo & billing
-              </p>
-              <p className="mt-0.5 text-xs text-foreground-subtle">
-                Coming in a future release. Contact ALIGNED to rename your
-                organization for now.
-              </p>
-            </div>
           </CardContent>
         </Card>
 

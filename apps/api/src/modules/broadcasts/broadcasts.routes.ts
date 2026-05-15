@@ -1019,6 +1019,146 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- POST /broadcasts/:id/resend ----------------------------------
+  // Clone a broadcast and immediately send it to the same recipients.
+  // Used from the detail page to fire the exact same template + audience
+  // again as a fresh campaign — keeps the original's history intact so
+  // the resend shows up as its own row.
+  r.post(
+    '/broadcasts/:id/resend',
+    {
+      schema: {
+        tags: ['broadcasts'],
+        summary: 'Clone this broadcast + immediately send to the same recipients.',
+        params: z.object({ id: uuidSchema }),
+        response: { 201: itemEnvelopeSchema(broadcastDtoSchema) },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req, reply) => {
+      const orgId = req.auth!.organizationId;
+      const id = req.params.id;
+      req.log.info({ id, orgId }, '[broadcasts] /resend begin');
+      try {
+        const created = await app.tenant(req, async (tx) => {
+          const source = await tx.broadcast.findUnique({ where: { id } });
+          if (!source) throw notFound('Broadcast not found.');
+          // Collect every recipient phone except the ones we deliberately
+          // suppressed (opted-out, deleted, skipped). Failed recipients are
+          // included — the underlying issue may have been transient.
+          const recipients = await tx.broadcastRecipient.findMany({
+            where: { broadcastId: id, NOT: { status: 'skipped' } },
+            select: { phoneE164: true, contactId: true, variables: true, variant: true },
+          });
+          if (recipients.length === 0) {
+            throw badRequest(
+              ApiErrorCode.VALIDATION_ERROR,
+              'Original broadcast has no recipients to resend to.',
+            );
+          }
+          // Verify channel + template are still usable.
+          const template = await tx.whatsAppTemplate.findUnique({
+            where: { id: source.variantATemplateId },
+          });
+          if (!template || template.status !== 'approved') {
+            throw badRequest(
+              ApiErrorCode.VALIDATION_ERROR,
+              'Template is no longer approved — submit/approve before resending.',
+            );
+          }
+          // Build a unique name. "<original> (resend)" or with a counter
+          // suffix if the name is already taken (unique within org).
+          let name = `${source.name} (resend)`;
+          let dup = await tx.broadcast
+            .findFirst({ where: { organizationId: orgId, name } })
+            .catch(() => null);
+          let suffix = 2;
+          while (dup) {
+            name = `${source.name} (resend ${suffix})`;
+            dup = await tx.broadcast
+              .findFirst({ where: { organizationId: orgId, name } })
+              .catch(() => null);
+            suffix += 1;
+            if (suffix > 50) break; // guard
+          }
+
+          const fresh = await tx.broadcast.create({
+            data: {
+              organizationId: orgId,
+              name,
+              status: 'sending',
+              channelId: source.channelId,
+              audienceKind: 'manual',
+              abTest: source.abTest,
+              variantATemplateId: source.variantATemplateId,
+              variantBTemplateId: source.variantBTemplateId,
+              variantAVariables: source.variantAVariables as never,
+              variantBVariables: source.variantBVariables as never,
+              sendWindowStartHour: source.sendWindowStartHour,
+              sendWindowEndHour: source.sendWindowEndHour,
+              sendWindowTimezone: source.sendWindowTimezone,
+              abWinnerStrategy: source.abWinnerStrategy,
+              createdByUserId: req.auth!.userId,
+              startedAt: new Date(),
+              totalRecipients: recipients.length,
+            },
+          });
+          // Carry the resolved variables + variant over so the worker
+          // doesn't have to re-derive them from contact attributes.
+          await tx.broadcastRecipient.createMany({
+            data: recipients.map((r) => ({
+              organizationId: orgId,
+              broadcastId: fresh.id,
+              contactId: r.contactId,
+              phoneE164: r.phoneE164,
+              variant: r.variant,
+              variables: r.variables as never,
+            })),
+            skipDuplicates: true,
+          });
+          await tx.broadcastEvent.create({
+            data: {
+              organizationId: orgId,
+              broadcastId: fresh.id,
+              kind: 'created',
+              detail: { resendOf: source.id },
+            },
+          });
+          return fresh;
+        });
+
+        // Enqueue fanout (unique jobId so we never collide).
+        await getBroadcastFanoutQueue().add(
+          'fanout',
+          { organizationId: orgId, broadcastId: created.id },
+          { jobId: `broadcast-${created.id}-resend-${Date.now()}` },
+        );
+
+        await recordAudit({
+          action: 'broadcast_sent',
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          entityType: 'broadcast',
+          entityId: created.id,
+          metadata: { resendOf: id },
+        });
+
+        reply.code(201);
+        return { data: toDto(created) };
+      } catch (err) {
+        req.log.error(
+          {
+            id,
+            orgId,
+            err: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : err,
+          },
+          '[broadcasts] /resend failed',
+        );
+        throw err;
+      }
+    },
+  );
+
   // ---------- GET /broadcasts/:id/sse --------------------------------------
   // Tick every 2 seconds with a "refetch" signal. The detail page in the web
   // app turns this into React Query invalidation so counters/recipients/timeline

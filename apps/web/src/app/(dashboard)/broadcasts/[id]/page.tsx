@@ -15,6 +15,7 @@ import {
   Pause,
   Play,
   RefreshCw,
+  Send,
   StopCircle,
   Trash2,
 } from 'lucide-react';
@@ -142,6 +143,18 @@ export default function BroadcastDetailPage() {
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Delete failed'),
   });
+  const resendMutation = useMutation({
+    mutationFn: () =>
+      api.post<{ data: { id: string; name: string } }>(`/api/v1/broadcasts/${id}/resend`),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['broadcasts'] });
+      toast.success(`Resending as "${res.data.name}"`);
+      // Hop straight to the new broadcast so the operator can watch
+      // counters tick on the fresh campaign.
+      window.location.href = `/broadcasts/${res.data.id}`;
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Resend failed'),
+  });
 
   const exportCsv = () => {
     const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/broadcasts/${id}/recipients.csv`;
@@ -223,6 +236,29 @@ export default function BroadcastDetailPage() {
             {b && b.totalRecipients > 0 ? (
               <Button variant="ghost" onClick={exportCsv}>
                 <Download className="size-4" /> Export CSV
+              </Button>
+            ) : null}
+            {/* Resend only makes sense once the original is in a terminal
+                state — for an active campaign the operator can pause +
+                cancel + re-run instead. */}
+            {b &&
+            ['completed', 'cancelled', 'failed'].includes(b.status) &&
+            b.totalRecipients > 0 ? (
+              <Button
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `Resend "${b.name}" to the same ${b.totalRecipients} recipient${
+                        b.totalRecipients === 1 ? '' : 's'
+                      }? Creates a new broadcast and fires it immediately.`,
+                    )
+                  )
+                    resendMutation.mutate();
+                }}
+                disabled={resendMutation.isPending}
+              >
+                <Send className="size-4" />{' '}
+                {resendMutation.isPending ? 'Resending…' : 'Resend'}
               </Button>
             ) : null}
             {b ? (

@@ -51,6 +51,12 @@ jobs:
           NEW_GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
           NEW_GOOGLE_TTS_DEFAULT_VOICE_EN: ${{ vars.GOOGLE_TTS_DEFAULT_VOICE_EN }}
           NEW_GOOGLE_TTS_DEFAULT_VOICE_AR: ${{ vars.GOOGLE_TTS_DEFAULT_VOICE_AR }}
+          # ElevenLabs — alternate voice provider. API key is a secret;
+          # voice ID + model are repo variables so the operator can switch
+          # voices without re-saving the secret.
+          NEW_ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          NEW_ELEVENLABS_VOICE_ID: ${{ vars.ELEVENLABS_VOICE_ID }}
+          NEW_ELEVENLABS_MODEL: ${{ vars.ELEVENLABS_MODEL }}
           # Domain config — single source of truth is GH secrets. Other
           # URLs (CORS, public URLs, cookie domain, NEXT_PUBLIC_API_URL)
           # are DERIVED from these on the server, so a domain swap is
@@ -65,7 +71,7 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           command_timeout: 20m
           script_stop: true
-          envs: NEW_OPENAI_API_KEY,NEW_OPENAI_MODEL,NEW_EMAIL_SMTP_USER,NEW_EMAIL_SMTP_PASS,NEW_EMAIL_SMTP_HOST,NEW_EMAIL_SMTP_PORT,NEW_EMAIL_SMTP_SECURE,NEW_EMAIL_FROM,NEW_WASABI_ACCESS_KEY_ID,NEW_WASABI_SECRET_ACCESS_KEY,NEW_WASABI_BUCKET,NEW_WASABI_REGION,NEW_WASABI_ENDPOINT,NEW_WASABI_PUBLIC_URL_BASE,NEW_GOOGLE_TTS_API_KEY,NEW_GOOGLE_TTS_DEFAULT_VOICE_EN,NEW_GOOGLE_TTS_DEFAULT_VOICE_AR,NEW_WEB_DOMAIN,NEW_API_DOMAIN,NEW_ACME_EMAIL
+          envs: NEW_OPENAI_API_KEY,NEW_OPENAI_MODEL,NEW_EMAIL_SMTP_USER,NEW_EMAIL_SMTP_PASS,NEW_EMAIL_SMTP_HOST,NEW_EMAIL_SMTP_PORT,NEW_EMAIL_SMTP_SECURE,NEW_EMAIL_FROM,NEW_WASABI_ACCESS_KEY_ID,NEW_WASABI_SECRET_ACCESS_KEY,NEW_WASABI_BUCKET,NEW_WASABI_REGION,NEW_WASABI_ENDPOINT,NEW_WASABI_PUBLIC_URL_BASE,NEW_GOOGLE_TTS_API_KEY,NEW_GOOGLE_TTS_DEFAULT_VOICE_EN,NEW_GOOGLE_TTS_DEFAULT_VOICE_AR,NEW_ELEVENLABS_API_KEY,NEW_ELEVENLABS_VOICE_ID,NEW_ELEVENLABS_MODEL,NEW_WEB_DOMAIN,NEW_API_DOMAIN,NEW_ACME_EMAIL
           script: |
             set -euo pipefail
             cd /opt/aligned/app
@@ -89,6 +95,7 @@ jobs:
                 'WASABI_PUBLIC_URL_BASE': 'https://alignbotbucket.s3.eu-central-1.wasabisys.com',
                 'GOOGLE_TTS_DEFAULT_VOICE_EN': 'en-US-Neural2-J',
                 'GOOGLE_TTS_DEFAULT_VOICE_AR': 'ar-XA-Wavenet-B',
+                'ELEVENLABS_MODEL': 'eleven_multilingual_v2',
                 'WEB_DOMAIN': 'hader.ai',
                 'API_DOMAIN': 'api.hader.ai',
                 'ACME_EMAIL': 'ops@hader.ai',
@@ -124,6 +131,9 @@ jobs:
                 'GOOGLE_TTS_API_KEY':       os.environ.get('NEW_GOOGLE_TTS_API_KEY', ''),
                 'GOOGLE_TTS_DEFAULT_VOICE_EN': os.environ.get('NEW_GOOGLE_TTS_DEFAULT_VOICE_EN', '') or DEFAULTS['GOOGLE_TTS_DEFAULT_VOICE_EN'],
                 'GOOGLE_TTS_DEFAULT_VOICE_AR': os.environ.get('NEW_GOOGLE_TTS_DEFAULT_VOICE_AR', '') or DEFAULTS['GOOGLE_TTS_DEFAULT_VOICE_AR'],
+                'ELEVENLABS_API_KEY':       os.environ.get('NEW_ELEVENLABS_API_KEY', ''),
+                'ELEVENLABS_VOICE_ID':      os.environ.get('NEW_ELEVENLABS_VOICE_ID', ''),
+                'ELEVENLABS_MODEL':         os.environ.get('NEW_ELEVENLABS_MODEL', '') or DEFAULTS['ELEVENLABS_MODEL'],
                 'WEB_DOMAIN':       web_domain,
                 'API_DOMAIN':       api_domain,
                 'ACME_EMAIL':       os.environ.get('NEW_ACME_EMAIL', '') or DEFAULTS['ACME_EMAIL'],

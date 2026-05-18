@@ -2176,6 +2176,8 @@ async function maybeReplyAsBot(args: {
         channel: ch,
         threadId: thread.id,
         replyMode: effectiveReplyMode,
+        ttsProvider:
+          ((config as { ttsProvider?: string | null }).ttsProvider as string | null) ?? 'google',
         ttsVoiceName: (config.ttsVoiceName as string | null | undefined) ?? null,
       };
     });
@@ -2353,27 +2355,61 @@ async function maybeReplyAsBot(args: {
     let sendOk = false;
 
     if (wantsVoice && reply) {
-      const { isGoogleTtsConfigured, synthesizeSpeech } = await import(
-        '../../lib/tts-google.js'
-      );
       const { transcodeToOggOpus } = await import('../../lib/audio-transcode.js');
-      if (!isGoogleTtsConfigured()) {
+      // Dispatch based on org's chosen provider. ElevenLabs uses voice
+      // IDs (20-char strings); Google uses named voices. ttsVoiceName
+      // carries the right format for whichever provider is selected.
+      const provider = ctx.ttsProvider === 'elevenlabs' ? 'elevenlabs' : 'google';
+      let isConfigured: () => boolean;
+      let synthesizeSpeech: (a: {
+        text: string;
+        voiceName?: string;
+        voiceId?: string | null;
+      }) => Promise<
+        | { ok: true; bytes: Buffer; mime: 'audio/ogg' }
+        | { ok: false; error: string; status?: number }
+      >;
+      if (provider === 'elevenlabs') {
+        const mod = await import('../../lib/tts-elevenlabs.js');
+        isConfigured = mod.isElevenLabsConfigured;
+        synthesizeSpeech = (a) =>
+          mod.synthesizeSpeech({ text: a.text, voiceId: a.voiceId ?? null });
+      } else {
+        const mod = await import('../../lib/tts-google.js');
+        isConfigured = mod.isGoogleTtsConfigured;
+        synthesizeSpeech = (a) =>
+          mod.synthesizeSpeech({
+            text: a.text,
+            voiceName:
+              a.voiceName ||
+              (/[؀-ۿ]/.test(a.text)
+                ? env.GOOGLE_TTS_DEFAULT_VOICE_AR
+                : env.GOOGLE_TTS_DEFAULT_VOICE_EN),
+          });
+      }
+      if (!isConfigured()) {
         args.log.warn(
-          { orgId: args.organizationId },
-          '[whatsapp] voice reply requested but GOOGLE_TTS_API_KEY not set — falling back to text',
+          { orgId: args.organizationId, provider },
+          '[whatsapp] voice reply requested but TTS provider not configured — falling back to text',
         );
       } else {
-        // Pick the configured voice, fall back to language-appropriate
-        // env defaults. Crude language sniff: any Arabic Unicode block
-        // in the reply → use the Arabic default.
-        const isArabic = /[؀-ۿ]/.test(reply);
-        const voiceName =
-          ctx.ttsVoiceName ||
-          (isArabic ? env.GOOGLE_TTS_DEFAULT_VOICE_AR : env.GOOGLE_TTS_DEFAULT_VOICE_EN);
-        const tts = await synthesizeSpeech({ text: reply, voiceName });
+        // For Google, ttsVoiceName is a voice NAME; for ElevenLabs, a
+        // voice ID. We pass it through unchanged to whichever provider
+        // dispatches below — both accept null to mean "use env default".
+        const tts = await synthesizeSpeech({
+          text: reply,
+          voiceName: ctx.ttsVoiceName ?? '',
+          voiceId: ctx.ttsVoiceName ?? null,
+        });
         if (!tts.ok) {
           args.log.warn(
-            { err: tts.error, status: tts.status, orgId: args.organizationId, voiceName },
+            {
+              err: tts.error,
+              status: tts.status,
+              orgId: args.organizationId,
+              provider,
+              voice: ctx.ttsVoiceName ?? null,
+            },
             '[whatsapp] TTS failed — falling back to text',
           );
         } else {

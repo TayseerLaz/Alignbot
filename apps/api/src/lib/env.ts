@@ -58,6 +58,12 @@ const envSchema = z.object({
   GOOGLE_TTS_API_KEY: z.string().optional(),
   GOOGLE_TTS_DEFAULT_VOICE_EN: z.string().default('en-US-Neural2-J'),
   GOOGLE_TTS_DEFAULT_VOICE_AR: z.string().default('ar-XA-Wavenet-B'),
+  // ElevenLabs — alternate TTS provider. Same fallback behaviour as Google:
+  // missing key + voice id ⇒ provider is unavailable, the bot routes
+  // silently fall back to text.
+  ELEVENLABS_API_KEY: z.string().optional(),
+  ELEVENLABS_VOICE_ID: z.string().optional(),
+  ELEVENLABS_MODEL: z.string().default('eleven_multilingual_v2'),
 
   RATE_LIMIT_AUTH_PER_MINUTE: z.coerce.number().int().positive().default(10),
   RATE_LIMIT_API_PER_SECOND: z.coerce.number().int().positive().default(100),

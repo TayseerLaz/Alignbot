@@ -44,8 +44,11 @@ const botConfigDto = z.object({
   conversationFlow: z.record(z.string(), z.unknown()).nullable(),
   responseTemplates: z.record(z.string(), z.unknown()).nullable(),
   deployedAt: z.string().datetime().nullable(),
-  // Phase 6 — voice replies via Google Cloud TTS.
+  // Phase 6 — voice replies. ttsProvider picks Google or ElevenLabs;
+  // ttsVoiceName carries the provider-appropriate identifier (voice
+  // NAME for Google, voice ID for ElevenLabs).
   replyMode: z.enum(['text', 'voice', 'match_customer']),
+  ttsProvider: z.enum(['google', 'elevenlabs']),
   ttsVoiceName: z.string().nullable(),
   version: z.number().int(),
   createdAt: z.string().datetime(),
@@ -121,6 +124,7 @@ function serializeConfig(c: {
   responseTemplates: unknown;
   deployedAt: Date | null;
   replyMode?: string;
+  ttsProvider?: string | null;
   ttsVoiceName?: string | null;
   version: number;
   createdAt: Date;
@@ -141,6 +145,9 @@ function serializeConfig(c: {
     responseTemplates: (c.responseTemplates ?? null) as Record<string, unknown> | null,
     deployedAt: c.deployedAt?.toISOString() ?? null,
     replyMode: ['text', 'voice', 'match_customer'].includes(mode) ? mode : 'text',
+    ttsProvider: ((c.ttsProvider ?? 'google') === 'elevenlabs' ? 'elevenlabs' : 'google') as
+      | 'google'
+      | 'elevenlabs',
     ttsVoiceName: c.ttsVoiceName ?? null,
     version: c.version,
     createdAt: c.createdAt.toISOString(),
@@ -185,6 +192,7 @@ export default async function botRoutes(app: FastifyInstance) {
           responseTemplates: z.record(z.string(), z.unknown()).nullable().optional(),
           // Phase 6 — voice replies.
           replyMode: z.enum(['text', 'voice', 'match_customer']).optional(),
+          ttsProvider: z.enum(['google', 'elevenlabs']).optional(),
           ttsVoiceName: z.string().trim().max(100).nullable().optional(),
         }),
         response: { 200: itemEnvelopeSchema(botConfigDto) },
@@ -209,6 +217,7 @@ export default async function botRoutes(app: FastifyInstance) {
             conversationFlow: (req.body.conversationFlow ?? undefined) as never,
             responseTemplates: (req.body.responseTemplates ?? undefined) as never,
             replyMode: req.body.replyMode ?? undefined,
+            ttsProvider: req.body.ttsProvider ?? undefined,
             ttsVoiceName:
               req.body.ttsVoiceName === undefined ? undefined : req.body.ttsVoiceName,
             version: { increment: 1 },

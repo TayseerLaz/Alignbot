@@ -45,6 +45,7 @@ interface BotConfig {
   responseTemplates: Record<string, unknown> | null;
   deployedAt: string | null;
   replyMode: 'text' | 'voice' | 'match_customer';
+  ttsProvider: 'google' | 'elevenlabs';
   ttsVoiceName: string | null;
   version: number;
   createdAt: string;
@@ -1135,11 +1136,15 @@ function VoiceReplyCard({ config }: { config: BotConfig | null }) {
   const [replyMode, setReplyMode] = useState<'text' | 'voice' | 'match_customer'>(
     config?.replyMode ?? 'text',
   );
+  const [ttsProvider, setTtsProvider] = useState<'google' | 'elevenlabs'>(
+    config?.ttsProvider ?? 'google',
+  );
   const [voiceName, setVoiceName] = useState<string>(config?.ttsVoiceName ?? '');
 
   useEffect(() => {
     if (!config) return;
     setReplyMode(config.replyMode ?? 'text');
+    setTtsProvider(config.ttsProvider ?? 'google');
     setVoiceName(config.ttsVoiceName ?? '');
   }, [config]);
 
@@ -1147,6 +1152,7 @@ function VoiceReplyCard({ config }: { config: BotConfig | null }) {
     mutationFn: () =>
       api.put('/api/v1/bot/config', {
         replyMode,
+        ttsProvider,
         ttsVoiceName: voiceName || null,
       }),
     onSuccess: () => {
@@ -1161,8 +1167,9 @@ function VoiceReplyCard({ config }: { config: BotConfig | null }) {
       <CardHeader>
         <CardTitle>Voice replies</CardTitle>
         <CardDescription>
-          Speak the bot&apos;s answers as WhatsApp voice notes instead of plain text. Uses Google
-          Cloud TTS — the free tier covers ~5,000 replies/month.
+          Speak the bot&apos;s answers as WhatsApp voice notes instead of plain text. Pick your TTS
+          provider below — Google&apos;s free tier covers ~5,000 replies/month; ElevenLabs uses
+          characters from your existing plan.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -1208,36 +1215,109 @@ function VoiceReplyCard({ config }: { config: BotConfig | null }) {
         </div>
 
         {replyMode !== 'text' ? (
-          <div className="space-y-1.5">
-            <label htmlFor="bot-voice" className="text-xs font-medium text-foreground-muted">
-              Voice
-            </label>
-            <select
-              id="bot-voice"
-              value={voiceName}
-              onChange={(e) => setVoiceName(e.target.value)}
-              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
-            >
-              <option value="">— Use default for the bot&apos;s reply language —</option>
-              {VOICE_OPTIONS.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.label}
-                </option>
-              ))}
-            </select>
-            <p className="text-[11px] text-foreground-subtle">
-              You can preview voices at{' '}
-              <a
-                href="https://cloud.google.com/text-to-speech"
-                target="_blank"
-                rel="noreferrer"
-                className="underline"
-              >
-                cloud.google.com/text-to-speech
-              </a>
-              .
-            </p>
-          </div>
+          <>
+            <div className="space-y-2">
+              <p className="text-xs font-medium uppercase tracking-wider text-foreground-subtle">
+                Voice provider
+              </p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {(
+                  [
+                    {
+                      v: 'google' as const,
+                      label: 'Google Cloud TTS',
+                      hint: 'Standard + Neural2 voices. Free tier ~5k replies/month.',
+                    },
+                    {
+                      v: 'elevenlabs' as const,
+                      label: 'ElevenLabs',
+                      hint: 'Use a voice you cloned or picked on your ElevenLabs plan.',
+                    },
+                  ]
+                ).map((opt) => (
+                  <button
+                    key={opt.v}
+                    type="button"
+                    onClick={() => {
+                      setTtsProvider(opt.v);
+                      // Different providers use different voice
+                      // identifiers (Google names vs ElevenLabs IDs).
+                      // Clear the field so the user re-picks for the
+                      // new provider — env defaults kick in otherwise.
+                      setVoiceName('');
+                    }}
+                    className={`rounded-lg border p-3 text-left transition ${
+                      ttsProvider === opt.v
+                        ? 'border-brand-500 bg-brand-50/60 dark:bg-brand-500/10'
+                        : 'border-border bg-surface hover:bg-surface-muted'
+                    }`}
+                  >
+                    <div className="text-sm font-semibold">{opt.label}</div>
+                    <div className="mt-1 text-xs text-foreground-muted">{opt.hint}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="bot-voice" className="text-xs font-medium text-foreground-muted">
+                Voice
+              </label>
+              {ttsProvider === 'google' ? (
+                <select
+                  id="bot-voice"
+                  value={voiceName}
+                  onChange={(e) => setVoiceName(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+                >
+                  <option value="">— Use default for the bot&apos;s reply language —</option>
+                  {VOICE_OPTIONS.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  id="bot-voice"
+                  type="text"
+                  value={voiceName}
+                  onChange={(e) => setVoiceName(e.target.value)}
+                  placeholder="ElevenLabs voice ID (e.g. 21m00Tcm4TlvDq8ikWAM) — leave blank to use the env default"
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs"
+                />
+              )}
+              <p className="text-[11px] text-foreground-subtle">
+                {ttsProvider === 'google' ? (
+                  <>
+                    Preview voices at{' '}
+                    <a
+                      href="https://cloud.google.com/text-to-speech"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline"
+                    >
+                      cloud.google.com/text-to-speech
+                    </a>
+                    .
+                  </>
+                ) : (
+                  <>
+                    Find voice IDs at{' '}
+                    <a
+                      href="https://elevenlabs.io/app/voice-lab"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline"
+                    >
+                      elevenlabs.io/app/voice-lab
+                    </a>
+                    .
+                  </>
+                )}
+              </p>
+            </div>
+          </>
         ) : null}
 
         <Button onClick={() => save.mutate()} loading={save.isPending}>

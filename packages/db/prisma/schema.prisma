@@ -1370,8 +1370,13 @@ model BotConfig {
   //   match_customer  : voice when the customer's last inbound was a
   //                     voice note; text otherwise.
   replyMode         String    @default("text") @map("reply_mode")
-  // Google Cloud TTS voice name (e.g. en-US-Neural2-J, ar-XA-Wavenet-B).
-  // Falls back to GOOGLE_TTS_DEFAULT_VOICE_EN env when null.
+  // TTS provider — `google` (default) or `elevenlabs`. Each provider
+  // has independent credentials in env; falling back to text if the
+  // chosen provider isn't configured.
+  ttsProvider       String    @default("google") @map("tts_provider")
+  // Voice identifier — for Google this is the voice NAME
+  // (en-US-Neural2-J, ar-XA-Wavenet-B). For ElevenLabs it's the 20-char
+  // VOICE ID. Falls back to provider-specific env defaults when null.
   ttsVoiceName      String?   @map("tts_voice_name")
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")

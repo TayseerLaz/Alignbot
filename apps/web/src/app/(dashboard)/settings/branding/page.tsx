@@ -190,7 +190,7 @@ export default function BrandingPage() {
             />
             <p className="text-xs text-foreground-muted">
               Point a CNAME at{' '}
-              <span className="font-mono">{q.data?.data.cnameTarget ?? 'alignbot.aligned-tech.com'}</span>{' '}
+              <span className="font-mono">{q.data?.data.cnameTarget ?? 'hader.ai'}</span>{' '}
               on your DNS provider, then save and click <strong>Verify now</strong>. We issue a TLS
               cert via Caddy on-demand once verification succeeds.
             </p>

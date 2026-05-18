@@ -61,7 +61,7 @@ export default async function StatusPage() {
       <div className="mx-auto max-w-2xl">
         <h1 className="text-2xl font-semibold">AlignBot status</h1>
         <p className="mt-1 text-sm text-zinc-500">
-          Live availability of api.aligned-tech.com and the portal. Updated every minute.
+          Live availability of the API and the portal. Updated every minute.
         </p>
 
         <div className="mt-6 flex items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-4">

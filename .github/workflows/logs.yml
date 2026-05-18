@@ -87,7 +87,10 @@ jobs:
             # reaching the box (4xx/5xx at proxy = nothing reaches the api).
             sudo journalctl -u caddy --no-pager --since "$SINCE" -n "$LINES" 2>/dev/null \
               | { [ -n "$GREP" ] && grep -E "$GREP" || cat; } | tail -n "$LINES" || echo "(no caddy unit)"
-            for f in /var/log/caddy/access.log /var/log/caddy/error.log /var/log/caddy/api.aligned-tech.com.log; do
+            # Glob picks up per-domain access logs regardless of which
+            # hostname Caddy is currently serving (alignbot.aligned-tech.com,
+            # api.aligned-tech.com, hader.ai, api.hader.ai, ...).
+            for f in /var/log/caddy/access.log /var/log/caddy/error.log /var/log/caddy/*.log; do
               if [ -f "$f" ]; then
                 echo ""
                 echo "--- $f (last $LINES lines) ---"

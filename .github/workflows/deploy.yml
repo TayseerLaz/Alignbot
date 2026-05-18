@@ -51,6 +51,13 @@ jobs:
           NEW_GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
           NEW_GOOGLE_TTS_DEFAULT_VOICE_EN: ${{ vars.GOOGLE_TTS_DEFAULT_VOICE_EN }}
           NEW_GOOGLE_TTS_DEFAULT_VOICE_AR: ${{ vars.GOOGLE_TTS_DEFAULT_VOICE_AR }}
+          # Domain config — single source of truth is GH secrets. Other
+          # URLs (CORS, public URLs, cookie domain, NEXT_PUBLIC_API_URL)
+          # are DERIVED from these on the server, so a domain swap is
+          # a one-secret change followed by a redeploy.
+          NEW_WEB_DOMAIN: ${{ secrets.WEB_DOMAIN }}
+          NEW_API_DOMAIN: ${{ secrets.API_DOMAIN }}
+          NEW_ACME_EMAIL: ${{ vars.ACME_EMAIL }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           port: ${{ secrets.DEPLOY_PORT }}
@@ -58,7 +65,7 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           command_timeout: 20m
           script_stop: true
-          envs: NEW_OPENAI_API_KEY,NEW_OPENAI_MODEL,NEW_EMAIL_SMTP_USER,NEW_EMAIL_SMTP_PASS,NEW_EMAIL_SMTP_HOST,NEW_EMAIL_SMTP_PORT,NEW_EMAIL_SMTP_SECURE,NEW_EMAIL_FROM,NEW_WASABI_ACCESS_KEY_ID,NEW_WASABI_SECRET_ACCESS_KEY,NEW_WASABI_BUCKET,NEW_WASABI_REGION,NEW_WASABI_ENDPOINT,NEW_WASABI_PUBLIC_URL_BASE,NEW_GOOGLE_TTS_API_KEY,NEW_GOOGLE_TTS_DEFAULT_VOICE_EN,NEW_GOOGLE_TTS_DEFAULT_VOICE_AR
+          envs: NEW_OPENAI_API_KEY,NEW_OPENAI_MODEL,NEW_EMAIL_SMTP_USER,NEW_EMAIL_SMTP_PASS,NEW_EMAIL_SMTP_HOST,NEW_EMAIL_SMTP_PORT,NEW_EMAIL_SMTP_SECURE,NEW_EMAIL_FROM,NEW_WASABI_ACCESS_KEY_ID,NEW_WASABI_SECRET_ACCESS_KEY,NEW_WASABI_BUCKET,NEW_WASABI_REGION,NEW_WASABI_ENDPOINT,NEW_WASABI_PUBLIC_URL_BASE,NEW_GOOGLE_TTS_API_KEY,NEW_GOOGLE_TTS_DEFAULT_VOICE_EN,NEW_GOOGLE_TTS_DEFAULT_VOICE_AR,NEW_WEB_DOMAIN,NEW_API_DOMAIN,NEW_ACME_EMAIL
           script: |
             set -euo pipefail
             cd /opt/aligned/app
@@ -82,7 +89,23 @@ jobs:
                 'WASABI_PUBLIC_URL_BASE': 'https://alignbotbucket.s3.eu-central-1.wasabisys.com',
                 'GOOGLE_TTS_DEFAULT_VOICE_EN': 'en-US-Neural2-J',
                 'GOOGLE_TTS_DEFAULT_VOICE_AR': 'ar-XA-Wavenet-B',
+                'WEB_DOMAIN': 'hader.ai',
+                'API_DOMAIN': 'api.hader.ai',
+                'ACME_EMAIL': 'ops@hader.ai',
             }
+            web_domain = os.environ.get('NEW_WEB_DOMAIN', '') or DEFAULTS['WEB_DOMAIN']
+            api_domain = os.environ.get('NEW_API_DOMAIN', '') or DEFAULTS['API_DOMAIN']
+            # Cookie domain must cover both portal + api hostnames so the
+            # refresh cookie set by api.* is sent on requests from app.*.
+            # We pick the longest shared suffix (with leading dot).
+            def _shared_suffix(a: str, b: str) -> str:
+                pa, pb = a.split('.'), b.split('.')
+                shared = []
+                while pa and pb and pa[-1] == pb[-1]:
+                    shared.insert(0, pa.pop())
+                    pb.pop()
+                return '.' + '.'.join(shared) if len(shared) >= 2 else '.' + a
+            cookie_domain = _shared_suffix(web_domain, api_domain)
             updates = {
                 'OPENAI_API_KEY':           os.environ.get('NEW_OPENAI_API_KEY', ''),
                 'OPENAI_MODEL':             os.environ.get('NEW_OPENAI_MODEL', '') or DEFAULTS['OPENAI_MODEL'],
@@ -101,6 +124,16 @@ jobs:
                 'GOOGLE_TTS_API_KEY':       os.environ.get('NEW_GOOGLE_TTS_API_KEY', ''),
                 'GOOGLE_TTS_DEFAULT_VOICE_EN': os.environ.get('NEW_GOOGLE_TTS_DEFAULT_VOICE_EN', '') or DEFAULTS['GOOGLE_TTS_DEFAULT_VOICE_EN'],
                 'GOOGLE_TTS_DEFAULT_VOICE_AR': os.environ.get('NEW_GOOGLE_TTS_DEFAULT_VOICE_AR', '') or DEFAULTS['GOOGLE_TTS_DEFAULT_VOICE_AR'],
+                'WEB_DOMAIN':       web_domain,
+                'API_DOMAIN':       api_domain,
+                'ACME_EMAIL':       os.environ.get('NEW_ACME_EMAIL', '') or DEFAULTS['ACME_EMAIL'],
+                # Derived from web/api domain — keep these aligned so we
+                # never end up with a CORS or cookie scope mismatch.
+                'WEB_PUBLIC_URL':   f'https://{web_domain}',
+                'API_PUBLIC_URL':   f'https://{api_domain}',
+                'NEXT_PUBLIC_API_URL': f'https://{api_domain}',
+                'CORS_ORIGINS':     f'https://{web_domain}',
+                'COOKIE_DOMAIN':    cookie_domain,
             }
             path = '.env.production'
             with open(path) as f:
@@ -198,8 +231,44 @@ jobs:
               else
                 echo "Caddyfile already allows microphone or uses a different syntax — leaving alone."
               fi
-            else
-              echo "No /etc/caddy/Caddyfile on this host — skipping."
+            fi
+
+            echo "=== sync domain in live Caddyfile to WEB_DOMAIN / API_DOMAIN ==="
+            # If WEB_DOMAIN/API_DOMAIN changed since last deploy, rewrite
+            # only those two hostnames in /etc/caddy/Caddyfile in place.
+            # We do NOT regenerate from the repo template because the live
+            # Caddyfile has bare-metal upstreams (localhost:3000 / :4000)
+            # whereas the template ships with Docker Compose names. Sed +
+            # validate + reload is the minimal-risk path.
+            #
+            # The previous domain is whichever hostname currently appears
+            # at the top of a site-address block (line starts with a
+            # hostname followed by `{`). We replace any of the known prior
+            # domains we've used with $WEB_DOMAIN / $API_DOMAIN.
+            if [ -f /etc/caddy/Caddyfile ] && [ -n "${WEB_DOMAIN:-}" ] && [ -n "${API_DOMAIN:-}" ]; then
+              if sudo grep -qE "(^|[^.[:alnum:]])($WEB_DOMAIN|$API_DOMAIN)([[:space:]{]|$)" /etc/caddy/Caddyfile; then
+                echo "Caddyfile already references $WEB_DOMAIN + $API_DOMAIN; skipping rewrite."
+              else
+                echo "Rewriting Caddyfile hostnames to $WEB_DOMAIN / $API_DOMAIN"
+                sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak.$(date +%Y%m%d-%H%M%S)
+                # Replace known prior public hostnames. Add a new entry
+                # here whenever you switch domains again so older live
+                # files can still be auto-upgraded.
+                sudo sed -i \
+                  -e "s/alignbot\.aligned-tech\.com/$WEB_DOMAIN/g" \
+                  -e "s/api\.aligned-tech\.com/$API_DOMAIN/g" \
+                  -e "s/app\.aligned\.example/$WEB_DOMAIN/g" \
+                  -e "s/api\.aligned\.example/$API_DOMAIN/g" \
+                  /etc/caddy/Caddyfile
+                if sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile; then
+                  sudo systemctl reload caddy || sudo systemctl restart caddy
+                  echo "Caddyfile updated + reloaded. Caddy will fetch fresh certs for new domains via ACME on first request."
+                else
+                  echo "WARN: rewritten Caddyfile failed validation; restoring backup."
+                  LATEST_BAK=$(ls -t /etc/caddy/Caddyfile.bak.* 2>/dev/null | head -1)
+                  if [ -n "$LATEST_BAK" ]; then sudo cp "$LATEST_BAK" /etc/caddy/Caddyfile; fi
+                fi
+              fi
             fi
 
             echo "=== restart services ==="

@@ -51,12 +51,13 @@ jobs:
           NEW_GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
           NEW_GOOGLE_TTS_DEFAULT_VOICE_EN: ${{ vars.GOOGLE_TTS_DEFAULT_VOICE_EN }}
           NEW_GOOGLE_TTS_DEFAULT_VOICE_AR: ${{ vars.GOOGLE_TTS_DEFAULT_VOICE_AR }}
-          # ElevenLabs — alternate voice provider. API key is a secret;
-          # voice ID + model are repo variables so the operator can switch
-          # voices without re-saving the secret.
+          # ElevenLabs — alternate voice provider. Read each value from
+          # secrets first, fall back to a repo variable. Voice IDs aren't
+          # really secret (they're listed publicly under your ElevenLabs
+          # voice lab), but storing in either bucket should work.
           NEW_ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
-          NEW_ELEVENLABS_VOICE_ID: ${{ vars.ELEVENLABS_VOICE_ID }}
-          NEW_ELEVENLABS_MODEL: ${{ vars.ELEVENLABS_MODEL }}
+          NEW_ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID || vars.ELEVENLABS_VOICE_ID }}
+          NEW_ELEVENLABS_MODEL: ${{ secrets.ELEVENLABS_MODEL || vars.ELEVENLABS_MODEL }}
           # Domain config — single source of truth is GH secrets. Other
           # URLs (CORS, public URLs, cookie domain, NEXT_PUBLIC_API_URL)
           # are DERIVED from these on the server, so a domain swap is

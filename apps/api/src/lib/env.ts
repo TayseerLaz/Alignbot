@@ -95,7 +95,7 @@ const envSchema = z.object({
   // Phase 3 §5.1.4 — custom CNAMEs. Customers point a CNAME at this host;
   // we verify with `dns.promises.resolveCname` before the row goes
   // 'verified' (which is the gate for Caddy on-demand TLS).
-  CUSTOM_CNAME_TARGET: z.string().default('alignbot.aligned-tech.com'),
+  CUSTOM_CNAME_TARGET: z.string().default('hader.ai'),
 });
 
 export type Env = z.infer<typeof envSchema>;

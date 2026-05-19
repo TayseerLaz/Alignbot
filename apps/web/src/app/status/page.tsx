@@ -59,7 +59,7 @@ export default async function StatusPage() {
   return (
     <main className="min-h-screen bg-white px-6 py-12 font-sans text-zinc-900">
       <div className="mx-auto max-w-2xl">
-        <h1 className="text-2xl font-semibold">AlignBot status</h1>
+        <h1 className="text-2xl font-semibold">Hader status</h1>
         <p className="mt-1 text-sm text-zinc-500">
           Live availability of the API and the portal. Updated every minute.
         </p>

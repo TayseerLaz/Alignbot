@@ -56,7 +56,7 @@ async function fetchOnePage(url: string): Promise<{
     const res = await undiciRequest(url, {
       method: 'GET',
       headers: {
-        'user-agent': 'AlignedBot/1.0 (+https://alignbot.aligned-tech.com/bot)',
+        'user-agent': 'HaderBot/1.0 (+https://hader.ai/bot)',
         accept: 'text/html,application/xhtml+xml',
       },
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),

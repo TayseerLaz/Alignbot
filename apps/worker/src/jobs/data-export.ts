@@ -144,10 +144,10 @@ export function startDataExportWorker() {
         // longer than the URL's lifetime.
         const downloadUrl = `${env.WEB_PUBLIC_URL.replace(/\/$/, '')}/settings/data-export`;
         const sizeMb = (bytes / (1024 * 1024)).toFixed(2);
-        const subject = 'Your AlignBot data export is ready';
+        const subject = 'Your data export is ready';
         const text = `Your data export is ready (${sizeMb} MB, gzipped JSON).\n\nDownload from the portal: ${downloadUrl}\n\nThis email is sent to admins of the organization that requested the export.`;
         const html = `
-          <p>Your AlignBot data export is ready.</p>
+          <p>Your data export is ready.</p>
           <p><strong>Size:</strong> ${sizeMb} MB (gzipped JSON)</p>
           <p><a href="${downloadUrl}">Download from the portal</a></p>
           <p style="color:#64748b;font-size:12px;margin-top:24px">Download links are short-lived and minted on demand. If the link expires, request a new one from the same page.</p>

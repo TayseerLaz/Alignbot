@@ -2274,6 +2274,18 @@ async function maybeReplyAsBot(args: {
     // the LLM's delivery-mode banner (match_customer) and the eventual
     // wantsVoice decision below — compute once, reuse both places.
     const customerSpokeAudio = m.type === 'audio' || m.type === 'voice';
+    args.log.info(
+      {
+        orgId: args.organizationId,
+        threadId: ctx.threadId,
+        inboundType: m.type,
+        customerSpokeAudio,
+        replyMode: ctx.replyMode,
+        ttsProvider: ctx.ttsProvider,
+        ttsVoiceName: ctx.ttsVoiceName,
+      },
+      '[whatsapp] bot reply: voice-config resolution',
+    );
 
     // OpenAI call — outside the tx. Safe to be slow.
     const result = await buildBotResponse({

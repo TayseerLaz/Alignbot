@@ -1,9 +1,19 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BellOff, BellRing, CalendarCheck, CheckCircle2, Filter, MessageSquare, Trash2 } from 'lucide-react';
+import {
+  BellOff,
+  BellRing,
+  CalendarCheck,
+  CalendarDays,
+  CheckCircle2,
+  Filter,
+  List as ListIcon,
+  MessageSquare,
+  Trash2,
+} from 'lucide-react';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shell/page-header';
@@ -12,7 +22,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { api, ApiError } from '@/lib/api';
+
+import { BookingsCalendar } from './bookings-calendar';
 
 const STATUSES = ['new', 'confirmed', 'completed', 'cancelled'] as const;
 type Status = (typeof STATUSES)[number];
@@ -338,12 +351,32 @@ export default function BookingsPage() {
 
   const rows = list.data?.data ?? [];
 
+  // Stable identity so the calendar's useMemo doesn't bust the day index
+  // on every keystroke — the parser itself is purely functional.
+  const resolveAppointmentIsoStable = useCallback(
+    (fields: BookingAnswer[], createdAt: string) => resolveAppointmentIso(fields, createdAt),
+    [],
+  );
+
   return (
     <>
       <PageHeader
         title="Bookings"
         description="Customer intakes captured by the AI chatbot. Configure the form on /business-info → Booking form."
       />
+      <Tabs defaultValue="list">
+        <TabsList>
+          <TabsTrigger value="list">
+            <ListIcon className="mr-1.5 size-4" />
+            List
+          </TabsTrigger>
+          <TabsTrigger value="calendar">
+            <CalendarDays className="mr-1.5 size-4" />
+            Calendar
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="list">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">
           <CardTitle className="flex items-center gap-2">
@@ -676,6 +709,21 @@ export default function BookingsPage() {
           </table>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="calendar">
+          <Card>
+            <CardContent className="p-4">
+              <BookingsCalendar
+                bookings={rows}
+                isLoading={list.isLoading}
+                resolveAppointmentIso={resolveAppointmentIsoStable}
+                onChangeStatus={(id, status) => setStatus.mutate({ id, status })}
+              />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </>
   );
 }

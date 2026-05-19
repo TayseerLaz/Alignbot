@@ -227,10 +227,10 @@ jobs:
             pnpm --filter @aligned/db exec tsx ./seed/super-admin.ts
 
             echo "=== sync Wasabi bucket CORS to portal domain ==="
-            # Run from inside apps/api so @aws-sdk/client-s3 resolves
-            # against the api's node_modules (pnpm workspace hoists nothing
-            # to root). Idempotent: PutBucketCors replaces the rule set.
-            (cd apps/api && node ../../infra/scripts/wasabi-cors.mjs) || echo "[wasabi-cors] failed — image uploads may still be blocked"
+            # Script lives under apps/api/scripts so Node's ESM package
+            # resolution walks up into apps/api/node_modules and finds
+            # @aws-sdk/client-s3. Idempotent: PutBucketCors replaces.
+            node apps/api/scripts/wasabi-cors.mjs || echo "[wasabi-cors] failed — image uploads may still be blocked"
 
             echo "=== ensure Caddy Permissions-Policy allows microphone ==="
             # The portal's voice-note recorder (MediaRecorder in the

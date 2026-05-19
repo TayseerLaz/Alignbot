@@ -30,6 +30,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
+import { bumpUsage, capCheck } from '../../lib/billing.js';
 import { env } from '../../lib/env.js';
 import { badRequest, conflict, notFound } from '../../lib/errors.js';
 
@@ -477,6 +478,16 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
           throw conflict(`Cannot send a broadcast in status "${existing.status}".`);
         }
 
+        // Plan cap: starting (or scheduling) a campaign consumes one
+        // unit of the org's monthly broadcast quota. Sending a draft
+        // that was already scheduled doesn't re-consume — the bumpUsage
+        // call below is gated on the previous status being `draft`.
+        if (existing.status === 'draft') {
+          await capCheck(tx as never, orgId, 'monthly_broadcast', {
+            actorIsAlignedAdmin: req.auth!.isAlignedAdmin,
+          });
+        }
+
         // Materialize recipients for segment/manual now. CSV is deferred to
         // the fanout worker because the file may be large.
         if (existing.audienceKind === 'segment' && existing.segmentId) {
@@ -521,7 +532,7 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
         }
         // CSV recipients land at fanout time.
 
-        return tx.broadcast.update({
+        const updated = await tx.broadcast.update({
           where: { id },
           data: {
             status: isScheduled ? 'scheduled' : 'sending',
@@ -529,6 +540,10 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
             startedAt: isScheduled ? null : new Date(),
           },
         });
+        // First-time send (draft → scheduled/sending) counts against the
+        // monthly broadcast cap. Returning a flag so the caller can
+        // bumpUsage outside the tenant transaction.
+        return { broadcast: updated, fromDraft: existing.status === 'draft' };
       });
 
       // Enqueue fanout. For scheduled, BullMQ delay handles the wait.
@@ -575,7 +590,12 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
         metadata: { scheduledFor: scheduledForIso, isScheduled },
       });
 
-      return { data: toDto(result) };
+      if (result.fromDraft) {
+        const { prisma } = await import('../../lib/db.js');
+        void bumpUsage(prisma as never, orgId, 'broadcast_started');
+      }
+
+      return { data: toDto(result.broadcast) };
       } catch (err) {
         // Surface the real cause in logs so future 500s on /send aren't
         // a black box. HttpErrors (4xx) re-throw as-is — Fastify's
@@ -1043,6 +1063,12 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
         const created = await app.tenant(req, async (tx) => {
           const source = await tx.broadcast.findUnique({ where: { id } });
           if (!source) throw notFound('Broadcast not found.');
+
+          // A resend is a brand-new campaign — counts against the
+          // monthly broadcast quota just like /send does for drafts.
+          await capCheck(tx as never, orgId, 'monthly_broadcast', {
+            actorIsAlignedAdmin: req.auth!.isAlignedAdmin,
+          });
           // Collect every recipient phone except the ones we deliberately
           // suppressed (opted-out, deleted, skipped). Failed recipients are
           // included — the underlying issue may have been transient.
@@ -1142,6 +1168,9 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
           entityId: created.id,
           metadata: { resendOf: id },
         });
+
+        const { prisma } = await import('../../lib/db.js');
+        void bumpUsage(prisma as never, orgId, 'broadcast_started');
 
         reply.code(201);
         return { data: toDto(created) };

@@ -69,6 +69,7 @@ export type CapKind =
   | 'service'
   | 'member'
   | 'monthly_message'
+  | 'monthly_broadcast'
   | 'monthly_import'
   | 'api_key'
   | 'webhook';
@@ -93,6 +94,7 @@ interface PlanRow {
   serviceCap: number | null;
   memberCap: number | null;
   monthlyMessageCap: number | null;
+  monthlyBroadcastCap: number | null;
   monthlyImportCap: number | null;
   apiKeyCap: number | null;
   webhookCap: number | null;
@@ -115,6 +117,7 @@ export async function resolveOrgPlan(tx: MinimalTx, orgId: string): Promise<Plan
     serviceCap: null,
     memberCap: null,
     monthlyMessageCap: null,
+    monthlyBroadcastCap: null,
     monthlyImportCap: null,
     apiKeyCap: null,
     webhookCap: null,
@@ -140,6 +143,7 @@ export async function capCheck(
     : kind === 'service' ? plan.serviceCap
     : kind === 'member' ? plan.memberCap
     : kind === 'monthly_message' ? plan.monthlyMessageCap
+    : kind === 'monthly_broadcast' ? plan.monthlyBroadcastCap
     : kind === 'monthly_import' ? plan.monthlyImportCap
     : kind === 'api_key' ? plan.apiKeyCap
     : plan.webhookCap;
@@ -153,9 +157,12 @@ export async function capCheck(
   else if (kind === 'api_key') current = await tx.apiKey.count({ where: { revokedAt: null } });
   else if (kind === 'webhook') current = await tx.webhookEndpoint.count();
   else {
-    // monthly_message / monthly_import — read the rolling counter.
+    // monthly_message / monthly_broadcast / monthly_import — rolling counter.
     const ym = currentYearMonth();
-    const eventKind = kind === 'monthly_message' ? 'message_outbound' : 'import_started';
+    const eventKind =
+      kind === 'monthly_message' ? 'message_outbound'
+      : kind === 'monthly_broadcast' ? 'broadcast_started'
+      : 'import_started';
     const row = await tx.usageMonthly.findFirst({
       where: { organizationId: orgId, yearMonth: ym, kind: eventKind },
     });

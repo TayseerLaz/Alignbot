@@ -32,6 +32,7 @@ interface Plan {
   serviceCap: number | null;
   memberCap: number | null;
   monthlyMessageCap: number | null;
+  monthlyBroadcastCap: number | null;
   monthlyImportCap: number | null;
   apiKeyCap: number | null;
   webhookCap: number | null;
@@ -55,6 +56,7 @@ interface Subscription {
     serviceCap: number | null;
     memberCap: number | null;
     monthlyMessageCap: number | null;
+    monthlyBroadcastCap: number | null;
     monthlyImportCap: number | null;
     apiKeyCap: number | null;
     webhookCap: number | null;
@@ -66,6 +68,7 @@ interface Subscription {
     apiKeys: number;
     webhooks: number;
     monthlyMessages: number;
+    monthlyBroadcasts: number;
     monthlyImports: number;
   };
   yearMonth: string;
@@ -271,6 +274,11 @@ function CurrentPlanCard({
           <UsageBar label="Services" used={sub.usage.services} cap={sub.caps.serviceCap} />
           <UsageBar label="Members" used={sub.usage.members} cap={sub.caps.memberCap} />
           <UsageBar label="Messages (out)" used={sub.usage.monthlyMessages} cap={sub.caps.monthlyMessageCap} />
+          <UsageBar
+            label="Broadcasts (mo)"
+            used={sub.usage.monthlyBroadcasts}
+            cap={sub.caps.monthlyBroadcastCap}
+          />
           <UsageBar label="Imports (mo)" used={sub.usage.monthlyImports} cap={sub.caps.monthlyImportCap} />
           <UsageBar label="API keys" used={sub.usage.apiKeys} cap={sub.caps.apiKeyCap} />
           <UsageBar label="Webhooks" used={sub.usage.webhooks} cap={sub.caps.webhookCap} />

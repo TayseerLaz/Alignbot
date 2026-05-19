@@ -35,6 +35,7 @@ const planDto = z.object({
   serviceCap: z.number().int().nullable(),
   memberCap: z.number().int().nullable(),
   monthlyMessageCap: z.number().int().nullable(),
+  monthlyBroadcastCap: z.number().int().nullable(),
   monthlyImportCap: z.number().int().nullable(),
   apiKeyCap: z.number().int().nullable(),
   webhookCap: z.number().int().nullable(),
@@ -58,6 +59,7 @@ const subscriptionDto = z.object({
     serviceCap: z.number().int().nullable(),
     memberCap: z.number().int().nullable(),
     monthlyMessageCap: z.number().int().nullable(),
+    monthlyBroadcastCap: z.number().int().nullable(),
     monthlyImportCap: z.number().int().nullable(),
     apiKeyCap: z.number().int().nullable(),
     webhookCap: z.number().int().nullable(),
@@ -69,6 +71,7 @@ const subscriptionDto = z.object({
     apiKeys: z.number().int(),
     webhooks: z.number().int(),
     monthlyMessages: z.number().int(),
+    monthlyBroadcasts: z.number().int(),
     monthlyImports: z.number().int(),
   }),
   yearMonth: z.string(),
@@ -103,6 +106,7 @@ export default async function billingRoutes(app: FastifyInstance) {
           serviceCap: p.serviceCap,
           memberCap: p.memberCap,
           monthlyMessageCap: p.monthlyMessageCap,
+          monthlyBroadcastCap: p.monthlyBroadcastCap,
           monthlyImportCap: p.monthlyImportCap,
           apiKeyCap: p.apiKeyCap,
           webhookCap: p.webhookCap,
@@ -139,7 +143,7 @@ export default async function billingRoutes(app: FastifyInstance) {
           throw notFound('No subscription on this organisation. Run the billing migration.');
         }
         const ym = currentYearMonth();
-        const [products, services, members, apiKeys, webhooks, msgs, imports] = await Promise.all([
+        const [products, services, members, apiKeys, webhooks, msgs, broadcasts, imports] = await Promise.all([
           tx.product.count({ where: { deletedAt: null } }),
           tx.service.count({ where: { deletedAt: null } }),
           tx.membership.count({ where: { isActive: true } }),
@@ -147,6 +151,9 @@ export default async function billingRoutes(app: FastifyInstance) {
           tx.webhookEndpoint.count(),
           tx.usageMonthly
             .findFirst({ where: { organizationId: orgId, yearMonth: ym, kind: 'message_outbound' } })
+            .then((r) => r?.count ?? 0),
+          tx.usageMonthly
+            .findFirst({ where: { organizationId: orgId, yearMonth: ym, kind: 'broadcast_started' } })
             .then((r) => r?.count ?? 0),
           tx.usageMonthly
             .findFirst({ where: { organizationId: orgId, yearMonth: ym, kind: 'import_started' } })
@@ -178,6 +185,7 @@ export default async function billingRoutes(app: FastifyInstance) {
                   serviceCap: null,
                   memberCap: null,
                   monthlyMessageCap: null,
+                  monthlyBroadcastCap: null,
                   monthlyImportCap: null,
                   apiKeyCap: null,
                   webhookCap: null,
@@ -187,6 +195,7 @@ export default async function billingRoutes(app: FastifyInstance) {
                   serviceCap: sub.plan.serviceCap,
                   memberCap: sub.plan.memberCap,
                   monthlyMessageCap: sub.plan.monthlyMessageCap,
+                  monthlyBroadcastCap: sub.plan.monthlyBroadcastCap,
                   monthlyImportCap: sub.plan.monthlyImportCap,
                   apiKeyCap: sub.plan.apiKeyCap,
                   webhookCap: sub.plan.webhookCap,
@@ -198,6 +207,7 @@ export default async function billingRoutes(app: FastifyInstance) {
               apiKeys,
               webhooks,
               monthlyMessages: msgs,
+              monthlyBroadcasts: broadcasts,
               monthlyImports: imports,
             },
             yearMonth: ym,

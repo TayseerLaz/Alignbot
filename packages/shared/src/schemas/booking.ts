@@ -22,6 +22,16 @@ export const bookingSchema = z.object({
   fields: z.array(bookingAnswerSchema),
   status: z.enum(BOOKING_STATUSES),
   notes: z.string().nullable(),
+  // Resolved appointment timestamp (UTC ISO). NULL when the row's date/
+  // time fields couldn't be parsed or the operator hasn't enabled a
+  // reminder yet.
+  appointmentAt: z.string().datetime().nullable(),
+  // Operator-picked WhatsApp template that fires 2h before appointmentAt.
+  // NULL = reminder disabled. Must reference an `approved` template at
+  // send time; we re-check inside the tick worker.
+  reminderTemplateId: uuidSchema.nullable(),
+  // Set after the reminder is delivered to Meta. Suppresses re-fires.
+  reminderSentAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -49,4 +59,10 @@ export const updateBookingBodySchema = z.object({
   fields: z.array(bookingAnswerSchema).max(40).optional(),
   status: z.enum(BOOKING_STATUSES).optional(),
   notes: z.string().max(2000).nullable().optional(),
+  // Reminder configuration. The bookings page computes appointmentAt
+  // client-side from the parsed date/time fields and sends both keys
+  // when the operator toggles a template on; passing reminderTemplateId
+  // null clears the reminder.
+  appointmentAt: z.string().datetime().nullable().optional(),
+  reminderTemplateId: uuidSchema.nullable().optional(),
 });

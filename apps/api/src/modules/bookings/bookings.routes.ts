@@ -32,6 +32,9 @@ function serialize(b: NonNullable<BookingRow>) {
     fields: (Array.isArray(b.fields) ? b.fields : []) as never,
     status: b.status as (typeof BOOKING_STATUSES)[number],
     notes: b.notes,
+    appointmentAt: b.appointmentAt ? b.appointmentAt.toISOString() : null,
+    reminderTemplateId: b.reminderTemplateId,
+    reminderSentAt: b.reminderSentAt ? b.reminderSentAt.toISOString() : null,
     createdAt: b.createdAt.toISOString(),
     updatedAt: b.updatedAt.toISOString(),
   };
@@ -167,6 +170,32 @@ export default async function bookingsRoutes(app: FastifyInstance) {
       return app.tenant(req, async (tx) => {
         const existing = await tx.booking.findUnique({ where: { id: req.params.id } });
         if (!existing) throw notFound('Booking not found.');
+
+        // Reminder: when the operator picks a template, verify it exists
+        // in this org and is `approved` — Meta will reject anything else
+        // at send time and we'd rather fail loud here than have the tick
+        // silently drop the reminder. Passing null clears the choice.
+        if (req.body.reminderTemplateId) {
+          const tpl = await tx.whatsAppTemplate.findUnique({
+            where: { id: req.body.reminderTemplateId },
+          });
+          if (!tpl) throw notFound('Selected reminder template not found.');
+          if (tpl.status !== 'approved') {
+            throw notFound(
+              'Selected reminder template is not approved by Meta — pick an approved template or wait for approval.',
+            );
+          }
+        }
+        // If the operator turns the reminder off (sets template to null)
+        // or moves the appointment, clear reminderSentAt so a fresh fire
+        // is possible. Otherwise we'd silently suppress every reminder
+        // after the first cycle.
+        const clearSentStamp =
+          (req.body.reminderTemplateId === null && existing.reminderTemplateId !== null) ||
+          (req.body.appointmentAt !== undefined &&
+            req.body.appointmentAt !== null &&
+            existing.appointmentAt?.toISOString() !== req.body.appointmentAt);
+
         const updated = await tx.booking.update({
           where: { id: existing.id },
           data: {
@@ -177,6 +206,17 @@ export default async function bookingsRoutes(app: FastifyInstance) {
                 : (req.body.fields as unknown as Prisma.InputJsonValue),
             status: req.body.status === undefined ? undefined : req.body.status,
             notes: req.body.notes === undefined ? undefined : req.body.notes,
+            appointmentAt:
+              req.body.appointmentAt === undefined
+                ? undefined
+                : req.body.appointmentAt === null
+                  ? null
+                  : new Date(req.body.appointmentAt),
+            reminderTemplateId:
+              req.body.reminderTemplateId === undefined
+                ? undefined
+                : req.body.reminderTemplateId,
+            ...(clearSentStamp ? { reminderSentAt: null } : {}),
           },
         });
         await recordAudit({

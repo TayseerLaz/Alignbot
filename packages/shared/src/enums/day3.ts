@@ -95,6 +95,7 @@ export const WebhookEventKind = {
   // Bookings
   booking_created: 'booking_created',
   booking_status_changed: 'booking_status_changed',
+  booking_reminder_sent: 'booking_reminder_sent',
 } as const;
 export type WebhookEventKind = (typeof WebhookEventKind)[keyof typeof WebhookEventKind];
 

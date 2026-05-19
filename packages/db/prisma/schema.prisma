@@ -236,6 +236,7 @@ enum WebhookEventKind {
   // Bookings
   booking_created
   booking_status_changed
+  booking_reminder_sent
 }
 
 enum AssetKind {
@@ -1240,14 +1241,30 @@ model Booking {
   fields         Json     @default("[]")
   status         String   @default("new")
   notes          String?
+  // Resolved appointment timestamp. The bookings page parses the
+  // (possibly natural-language) date+time fields on the row and PATCHes
+  // this back; the reminder tick reads it directly to decide when to fire.
+  // Nullable because not every booking has a parseable appointment.
+  appointmentAt       DateTime? @map("appointment_at")
+  // Operator-picked, pre-approved WhatsApp template to send as the
+  // 2-hour reminder. NULL = reminder disabled for this booking.
+  reminderTemplateId  String?   @map("reminder_template_id") @db.Uuid
+  // Stamped by the reminder tick after a successful Meta send so we
+  // never send twice for the same booking.
+  reminderSentAt      DateTime? @map("reminder_sent_at")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  thread       WhatsAppThread? @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  thread           WhatsAppThread?   @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  reminderTemplate WhatsAppTemplate? @relation(fields: [reminderTemplateId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, status, createdAt(sort: Desc)])
   @@index([organizationId, customerPhone])
+  // Tick query: confirmed bookings with a reminder configured whose
+  // appointment falls inside the firing window. Partial index is the
+  // cheapest way to make the tick scan tiny.
+  @@index([status, reminderSentAt, appointmentAt], map: "bookings_reminder_due_idx")
   @@map("bookings")
 }
 
@@ -1313,6 +1330,9 @@ model WhatsAppTemplate {
   metaTemplateId  String?  @map("meta_template_id")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Bookings that picked this template as their 2-hour reminder.
+  reminderBookings Booking[]
 
   @@unique([organizationId, name, language])
   @@index([organizationId])
@@ -1521,6 +1541,12 @@ model Plan {
   memberCap            Int?     @map("member_cap")
   monthlyMessageCap    Int?     @map("monthly_message_cap")
   monthlyImportCap     Int?     @map("monthly_import_cap")
+  // Dedicated cap on broadcast campaigns started per calendar month
+  // (a "broadcast" = one campaign, regardless of recipient count).
+  // Recipient sends still count against monthlyMessageCap; this is a
+  // separate ceiling so heavy senders can't burn the plan with one
+  // gigantic fanout.
+  monthlyBroadcastCap  Int?     @map("monthly_broadcast_cap")
   apiKeyCap            Int?     @map("api_key_cap")
   webhookCap           Int?     @map("webhook_cap")
   // Pricing display + Stripe wiring.

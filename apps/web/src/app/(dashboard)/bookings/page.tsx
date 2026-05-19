@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarCheck, Filter, MessageSquare, Trash2 } from 'lucide-react';
+import { BellOff, BellRing, CalendarCheck, CheckCircle2, Filter, MessageSquare, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
@@ -33,8 +33,18 @@ interface Booking {
   fields: BookingAnswer[];
   status: Status;
   notes: string | null;
+  appointmentAt: string | null;
+  reminderTemplateId: string | null;
+  reminderSentAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+interface WhatsAppTemplate {
+  id: string;
+  name: string;
+  language: string;
+  status: string;
 }
 
 function StatusBadge({ status }: { status: Status }) {
@@ -214,6 +224,29 @@ function formatBookingDate(raw: string | null, anchor: Date): string {
   return fmt.format(d);
 }
 
+/** Resolve a booking row to a UTC ISO datetime suitable for the reminder
+ * tick. Returns null if either date or time can't be parsed — the
+ * reminder column then disables the picker for that row. Kept in sync
+ * with formatBookingDate/Time so the operator sees the same answer
+ * we'll fire on.
+ */
+function resolveAppointmentIso(
+  fields: BookingAnswer[],
+  createdAt: string,
+): string | null {
+  const created = new Date(createdAt);
+  const apt = pickAppointment(fields);
+  const day = apt.dateRaw ? parseDatePhrase(apt.dateRaw, created) : null;
+  if (!day) return null;
+  const time =
+    (apt.timeRaw ? parseTimePhrase(apt.timeRaw) : null) ??
+    (apt.dateRaw ? parseTimePhrase(apt.dateRaw) : null);
+  if (!time) return null;
+  const dt = new Date(day);
+  dt.setHours(time.h, time.m, 0, 0);
+  return dt.toISOString();
+}
+
 /** Build the time label from a (possibly natural-language) raw value. */
 function formatBookingTime(raw: string | null, fallbackPhrase: string | null): string {
   // 1) Try the dedicated time field.
@@ -269,6 +302,40 @@ export default function BookingsPage() {
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Delete failed'),
   });
 
+  // Approved WhatsApp templates only — Meta will reject anything else
+  // when the reminder fires, so we don't surface them to the operator
+  // in the first place. `staleTime` keeps the dropdown snappy.
+  const templates = useQuery({
+    queryKey: ['whatsapp-templates', 'approved'],
+    queryFn: () =>
+      api.get<{ data: WhatsAppTemplate[] }>('/api/v1/whatsapp/templates'),
+    staleTime: 60_000,
+  });
+  const approvedTemplates =
+    templates.data?.data.filter((t) => t.status === 'approved') ?? [];
+
+  const setReminder = useMutation({
+    mutationFn: (args: {
+      id: string;
+      reminderTemplateId: string | null;
+      appointmentAt: string | null;
+    }) =>
+      api.patch(`/api/v1/bookings/${args.id}`, {
+        reminderTemplateId: args.reminderTemplateId,
+        appointmentAt: args.appointmentAt,
+      }),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['bookings'] });
+      toast.success(
+        vars.reminderTemplateId
+          ? 'Reminder scheduled for 2 h before the appointment.'
+          : 'Reminder disabled.',
+      );
+    },
+    onError: (e) =>
+      toast.error(e instanceof ApiError ? e.payload.message : 'Could not update reminder'),
+  });
+
   const rows = list.data?.data ?? [];
 
   return (
@@ -316,20 +383,21 @@ export default function BookingsPage() {
                 <th className="px-6 py-3">Answers</th>
                 <th className="px-6 py-3">Notes</th>
                 <th className="px-6 py-3">Status</th>
+                <th className="px-6 py-3">Reminder</th>
                 <th className="w-32 px-6 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {list.isLoading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-foreground-muted">
+                  <td colSpan={8} className="px-6 py-12 text-center text-foreground-muted">
                     Loading…
                   </td>
                 </tr>
               ) : null}
               {!list.isLoading && rows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-16 text-center text-foreground-muted">
+                  <td colSpan={8} className="px-6 py-16 text-center text-foreground-muted">
                     No bookings yet. When a customer asks the bot to book something, the captured
                     answers will appear here.
                   </td>
@@ -453,6 +521,135 @@ export default function BookingsPage() {
                         ))}
                       </SelectContent>
                     </Select>
+                  </td>
+                  <td className="px-6 py-4">
+                    {(() => {
+                      // Reminders only fire for confirmed bookings — Meta
+                      // session-window rules + the user's spec require it.
+                      // For other statuses we surface the gate so the
+                      // operator isn't confused by an inactive dropdown.
+                      if (b.status !== 'confirmed') {
+                        return (
+                          <span className="text-xs italic text-foreground-subtle">
+                            confirmed only
+                          </span>
+                        );
+                      }
+                      // Already fired — show a stamp so it's clear we won't
+                      // re-send (toggling the template off + on resets it).
+                      if (b.reminderSentAt) {
+                        return (
+                          <div className="flex flex-col gap-0.5 text-xs">
+                            <span className="inline-flex items-center gap-1 font-medium text-emerald-700">
+                              <CheckCircle2 className="size-3.5" />
+                              Sent {new Date(b.reminderSentAt).toLocaleString()}
+                            </span>
+                            <button
+                              type="button"
+                              className="text-left text-[10px] text-foreground-subtle hover:underline"
+                              onClick={() =>
+                                setReminder.mutate({
+                                  id: b.id,
+                                  reminderTemplateId: null,
+                                  appointmentAt: null,
+                                })
+                              }
+                            >
+                              Clear &amp; reset
+                            </button>
+                          </div>
+                        );
+                      }
+                      const computedAppointment = resolveAppointmentIso(
+                        b.fields,
+                        b.createdAt,
+                      );
+                      const hasAppointment = Boolean(
+                        b.appointmentAt ?? computedAppointment,
+                      );
+                      const canArm =
+                        hasAppointment && approvedTemplates.length > 0;
+                      const value = b.reminderTemplateId ?? '__off__';
+                      return (
+                        <div className="flex flex-col gap-1">
+                          <Select
+                            value={value}
+                            onValueChange={(v) => {
+                              if (v === '__off__') {
+                                setReminder.mutate({
+                                  id: b.id,
+                                  reminderTemplateId: null,
+                                  appointmentAt: null,
+                                });
+                                return;
+                              }
+                              const appointmentAt =
+                                b.appointmentAt ?? computedAppointment;
+                              if (!appointmentAt) {
+                                toast.error(
+                                  "Can't parse a date+time from this booking's fields — set them first.",
+                                );
+                                return;
+                              }
+                              setReminder.mutate({
+                                id: b.id,
+                                reminderTemplateId: v,
+                                appointmentAt,
+                              });
+                            }}
+                            disabled={!canArm && !b.reminderTemplateId}
+                          >
+                            <SelectTrigger className="w-48">
+                              <SelectValue placeholder="Off">
+                                {b.reminderTemplateId ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <BellRing className="size-3.5 text-brand-600" />
+                                    {approvedTemplates.find(
+                                      (t) => t.id === b.reminderTemplateId,
+                                    )?.name ?? 'Reminder set'}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-foreground-subtle">
+                                    <BellOff className="size-3.5" />
+                                    Off
+                                  </span>
+                                )}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__off__">Off</SelectItem>
+                              {approvedTemplates.map((t) => (
+                                <SelectItem key={t.id} value={t.id}>
+                                  {t.name}
+                                  <span className="ml-1 text-[10px] text-foreground-subtle">
+                                    {t.language}
+                                  </span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {!hasAppointment ? (
+                            <span className="text-[10px] italic text-foreground-subtle">
+                              no date+time set
+                            </span>
+                          ) : approvedTemplates.length === 0 ? (
+                            <Link
+                              href="/whatsapp/templates"
+                              className="text-[10px] text-brand-600 hover:underline"
+                            >
+                              No approved templates — submit one
+                            </Link>
+                          ) : b.reminderTemplateId ? (
+                            <span className="text-[10px] text-foreground-subtle">
+                              Fires 2 h before{' '}
+                              {new Date(
+                                b.appointmentAt ?? computedAppointment!,
+                              ).toLocaleString()}
+                            </span>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-6 py-4 text-right">
                     <Button

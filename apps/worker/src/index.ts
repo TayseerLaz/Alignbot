@@ -5,6 +5,7 @@ import pino from 'pino';
 import { collectDefaultMetrics, Counter, Gauge, Registry } from 'prom-client';
 
 import { env } from './lib/env.js';
+import { startBookingReminderTick } from './jobs/booking-reminder-tick.js';
 import { startBroadcastFanoutWorker } from './jobs/broadcast-fanout.js';
 import { startBroadcastSendWorker } from './jobs/broadcast-send.js';
 import { startCrawlWorker } from './jobs/crawl.js';
@@ -89,6 +90,10 @@ async function main() {
   // grace window; auto-suspends the org + notifies admins.
   const dunningTick = startDunningTick();
   log.info({ name: dunningTick.name }, 'tick started');
+  // Booking reminder tick: every minute, send the operator-picked
+  // template 2 hours before each confirmed booking's appointmentAt.
+  const bookingReminderTick = startBookingReminderTick();
+  log.info({ name: bookingReminderTick.name }, 'tick started');
 
   const workers = [
     startImportWorker(),

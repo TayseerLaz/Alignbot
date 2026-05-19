@@ -121,12 +121,9 @@ export default function SettingsPage() {
               title="Billing & plan"
               description="Subscription, usage caps, Stripe self-serve management."
             />
-            <SettingsLink
-              href="/settings/branding"
-              icon={Palette}
-              title="Branding"
-              description="White-label: accent colour, footer, custom CNAME."
-            />
+            {/* Branding is Phase 2 — hidden until logo/accent/footer
+                are wired into the actual portal layout. The /settings/branding
+                route still loads via direct URL, but no UI links to it. */}
             <SettingsLink
               href="/settings/data-export"
               icon={Download}

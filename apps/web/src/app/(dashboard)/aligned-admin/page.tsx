@@ -1,7 +1,8 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, Building2, Pause, Play, Search, Trash2, Users } from 'lucide-react';
+import { Activity, Building2, Pause, Play, Plus, Search, Trash2, Users } from 'lucide-react';
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -97,7 +98,17 @@ export default function AlignedAdminPage() {
 
   return (
     <>
-      <PageHeader title="ALIGNED admin" description="Cross-tenant operations and system health." />
+      <PageHeader
+        title="ALIGNED admin"
+        description="Cross-tenant operations and system health."
+        actions={
+          <Button asChild>
+            <Link href="/aligned-admin/new-tenant">
+              <Plus className="size-4" /> New tenant
+            </Link>
+          </Button>
+        }
+      />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
         <StatCard

@@ -1,6 +1,8 @@
 // ALIGNED super-admin endpoints. Always run with RLS bypass since they
 // inspect / manage data across tenants. Gated by `requireAlignedAdmin`.
 import {
+  adminCreateTenantBodySchema,
+  adminCreateTenantResponseSchema,
   adminListOrgsQuerySchema,
   adminUpdateOrgBodySchema,
   itemEnvelopeSchema,
@@ -14,11 +16,27 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
+import { generateTempPassword, hashPassword } from '../../lib/crypto.js';
 import { withRlsBypass } from '../../lib/db.js';
+import { sendEmail, tenantProvisionedTemplate } from '../../lib/email.js';
 import { env } from '../../lib/env.js';
-import { notFound } from '../../lib/errors.js';
+import { conflict, notFound } from '../../lib/errors.js';
 import { getImportQueue, getSyncQueue, getWebhookQueue } from '../../lib/queues.js';
 import { getRedis } from '../../lib/redis.js';
+
+// Derives a URL-safe slug from a human org name. Strips diacritics,
+// non-ASCII letters, collapses whitespace + punctuation into hyphens,
+// trims trailing hyphens, lowercases. Caller must still de-dupe against
+// existing slugs.
+function slugifyName(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
 
 export default async function adminRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -90,6 +108,143 @@ export default async function adminRoutes(app: FastifyInstance) {
         );
       });
       return { data: orgs, nextCursor: null };
+    },
+  );
+
+  // ---------- POST /aligned-admin/orgs ------------------------------------
+  // Provision a tenant on the customer's behalf. Skips email verification
+  // (we're vouching for them) and optionally emails the new admin their
+  // login + temporary password.
+  r.post(
+    '/aligned-admin/orgs',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Create a new tenant + admin user (skips email verify).',
+        body: adminCreateTenantBodySchema,
+        response: { 201: adminCreateTenantResponseSchema },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req, reply) => {
+      const body = req.body;
+      // Resolve slug: explicit value takes priority, else derived from name.
+      // Append a numeric suffix if the candidate collides with an existing org.
+      let candidate = body.organizationSlug?.trim().toLowerCase() || slugifyName(body.organizationName);
+      if (!candidate) throw conflict('Organization name produces an empty slug.');
+
+      const result = await withRlsBypass(async (tx) => {
+        const existingUser = await tx.user.findUnique({ where: { email: body.adminEmail } });
+        if (existingUser) throw conflict('A user with this email already exists.');
+
+        // Ensure slug is unique. Loop with `-2`, `-3`, ... suffixes until
+        // we find an open one. Bounded at 50 to avoid infinite loops on a
+        // pathologically common name.
+        let slug = candidate;
+        for (let n = 2; n < 50; n++) {
+          const taken = await tx.organization.findUnique({ where: { slug } });
+          if (!taken) break;
+          slug = `${candidate}-${n}`;
+        }
+
+        const password = body.adminPassword ?? generateTempPassword();
+        const passwordHash = await hashPassword(password);
+
+        const organization = await tx.organization.create({
+          data: { slug, name: body.organizationName, status: 'active' },
+        });
+        const admin = await tx.user.create({
+          data: {
+            email: body.adminEmail,
+            passwordHash,
+            firstName: body.adminFirstName,
+            lastName: body.adminLastName || null,
+            // Operator-provisioned ⇒ skip the verify-email flow.
+            emailVerifiedAt: new Date(),
+            status: 'active',
+          },
+        });
+        await tx.membership.create({
+          data: {
+            userId: admin.id,
+            organizationId: organization.id,
+            role: 'admin',
+            isActive: true,
+          },
+        });
+
+        // Bootstrap a subscription on the requested plan (default `free`)
+        // so usage caps + the billing UI render correctly from the get-go.
+        const planCode = body.planCode ?? 'free';
+        const plan = await tx.plan.findUnique({ where: { code: planCode } });
+        if (plan) {
+          await tx.subscription.create({
+            data: {
+              organizationId: organization.id,
+              planId: plan.id,
+              status: 'trialing',
+            },
+          });
+        }
+
+        await recordAudit({
+          action: 'org_created',
+          organizationId: organization.id,
+          actorUserId: req.auth!.userId,
+          metadata: { provisionedByAdmin: true, planCode },
+        });
+        await recordAudit({
+          action: 'user_created',
+          organizationId: organization.id,
+          actorUserId: req.auth!.userId,
+          entityType: 'user',
+          entityId: admin.id,
+          metadata: { provisionedByAdmin: true },
+        });
+
+        return { organization, admin, generatedPassword: body.adminPassword ? null : password };
+      });
+
+      // Email — outside the tx. Failure logs but doesn't roll back the
+      // provision; operator can resend or reset password from the UI.
+      let welcomeEmailSent = false;
+      if (body.sendWelcomeEmail) {
+        const tpl = tenantProvisionedTemplate({
+          firstName: body.adminFirstName,
+          organizationName: result.organization.name,
+          email: result.admin.email,
+          password: result.generatedPassword ?? body.adminPassword ?? '',
+          loginUrl: `${env.WEB_PUBLIC_URL.replace(/\/$/, '')}/login`,
+        });
+        try {
+          await sendEmail({ to: result.admin.email, ...tpl });
+          welcomeEmailSent = true;
+        } catch (err) {
+          req.log.warn({ err }, '[admin] tenant welcome email failed');
+        }
+      }
+
+      reply.code(201);
+      return {
+        data: {
+          organization: {
+            id: result.organization.id,
+            slug: result.organization.slug,
+            name: result.organization.name,
+            status: result.organization.status,
+            createdAt: result.organization.createdAt.toISOString(),
+            updatedAt: result.organization.updatedAt.toISOString(),
+          },
+          admin: {
+            id: result.admin.id,
+            email: result.admin.email,
+            firstName: result.admin.firstName,
+            lastName: result.admin.lastName,
+          },
+          generatedPassword: result.generatedPassword,
+          welcomeEmailSent,
+        },
+      };
     },
   );
 

@@ -30,3 +30,40 @@ export const adminUpdateOrgBodySchema = z.object({
   status: z.nativeEnum(OrgStatus).optional(),
   name: z.string().trim().min(2).max(120).optional(),
 });
+
+// Aligned-admin tenant creation. Bypasses email-verify because the operator
+// is vouching for the customer; the admin user lands `active` + verified.
+// `password` is optional — if not supplied, the server generates a strong
+// one and returns it once in the response so the operator can copy it.
+export const adminCreateTenantBodySchema = z.object({
+  organizationName: z.string().trim().min(2).max(120),
+  organizationSlug: slugSchema.optional(),
+  planCode: z.enum(['free', 'starter', 'growth', 'enterprise']).optional(),
+  adminFirstName: z.string().trim().min(1).max(60),
+  adminLastName: z.string().trim().min(0).max(60).default(''),
+  adminEmail: z.string().trim().toLowerCase().email(),
+  // Operator-provided password (≥12 chars) or null/undefined to let the
+  // server generate one. Plain text in transit; over TLS only.
+  adminPassword: z.string().min(12).max(128).optional(),
+  // When true (default), the new admin gets an email with the login URL +
+  // their credentials. Disable to onboard silently for QA / migrations.
+  sendWelcomeEmail: z.boolean().default(true),
+});
+export type AdminCreateTenantBody = z.infer<typeof adminCreateTenantBodySchema>;
+
+export const adminCreateTenantResponseSchema = z.object({
+  data: z.object({
+    organization: organizationSchema,
+    admin: z.object({
+      id: uuidSchema,
+      email: z.string().email(),
+      firstName: z.string().nullable(),
+      lastName: z.string().nullable(),
+    }),
+    // Only present when the server generated the password (i.e. operator
+    // left it blank). Shown to the operator ONCE — never persisted to a UI
+    // store or query cache. Email also contains it for the end user.
+    generatedPassword: z.string().nullable(),
+    welcomeEmailSent: z.boolean(),
+  }),
+});

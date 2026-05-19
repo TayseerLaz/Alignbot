@@ -118,6 +118,39 @@ export function passwordResetTemplate(args: { firstName: string | null; url: str
   return { subject: 'Reset your ALIGNED password', html, text };
 }
 
+/**
+ * Sent when an ALIGNED super-admin provisions a tenant on the customer's
+ * behalf (skipping the customer-driven signup flow). The customer's
+ * password is delivered here in plain text — they're nudged to change
+ * it on first login. Pre-verified email, so no verify-email step.
+ */
+export function tenantProvisionedTemplate(args: {
+  firstName: string | null;
+  organizationName: string;
+  email: string;
+  password: string;
+  loginUrl: string;
+}) {
+  const greeting = args.firstName ? `Hi ${args.firstName},` : 'Hello,';
+  const html = wrap(`
+    <p>${greeting}</p>
+    <p>The ALIGNED team has set up your <strong>${args.organizationName}</strong> workspace. You can log in right away with the credentials below.</p>
+    <p style="background:#f4f6f8;padding:14px;border-radius:6px;font-family:Menlo,Consolas,monospace;font-size:14px">
+      <strong>Email:</strong> ${args.email}<br>
+      <strong>Password:</strong> ${args.password}
+    </p>
+    <p><a class="btn" href="${args.loginUrl}">Log in</a></p>
+    <p><strong>Please change your password</strong> on first login (Settings → Profile → Change password). The temporary password above is shared by email, so treat it as compromised once you're in.</p>
+    <p>Reply to this email if you need help getting started.</p>
+  `);
+  const text = `${greeting}\n\nYour ${args.organizationName} workspace on ALIGNED is ready.\n\nEmail:    ${args.email}\nPassword: ${args.password}\n\nLog in: ${args.loginUrl}\n\nPlease change your password on first login (Settings → Profile → Change password).`;
+  return {
+    subject: `Your ${args.organizationName} workspace on ALIGNED is ready`,
+    html,
+    text,
+  };
+}
+
 export function invitationTemplate(args: { orgName: string; inviterName: string; url: string }) {
   const html = wrap(`
     <p><strong>${args.inviterName}</strong> has invited you to join <strong>${args.orgName}</strong> on ALIGNED.</p>

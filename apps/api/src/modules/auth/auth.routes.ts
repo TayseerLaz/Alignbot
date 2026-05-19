@@ -15,7 +15,7 @@ import {
   updateProfileResponseSchema,
   verifyEmailBodySchema,
 } from '@aligned/shared';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
@@ -48,12 +48,15 @@ export default async function authRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
 
   // Stricter rate limit on auth endpoints. Env-driven so local QA can raise it.
-  const authLimit = {
+  // `keyGenerator` takes a FastifyRequest at runtime; using the full type
+  // satisfies @fastify/rate-limit's RateLimitOptions augmentation of
+  // FastifyContextConfig (Fastify expects an intersection with its base
+  // context-config shape, not just our literal object).
+  const authLimit: { rateLimit: import('@fastify/rate-limit').RateLimitOptions } = {
     rateLimit: {
       max: env.RATE_LIMIT_AUTH_PER_MINUTE,
       timeWindow: '1 minute',
-      keyGenerator: (req: { ip: string; routeOptions: { url: string } }) =>
-        `${req.ip}:${req.routeOptions.url}`,
+      keyGenerator: (req: FastifyRequest) => `${req.ip}:${req.routeOptions.url ?? ''}`,
     },
   };
 

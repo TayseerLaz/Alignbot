@@ -216,9 +216,24 @@ export default async function adminRoutes(app: FastifyInstance) {
           orgs: { active: orgsActive, suspended: orgsSuspended, deleted: orgsDeleted },
           users: { total: usersTotal, pending: usersPending, disabled: usersDisabled },
           queues: {
-            import: { waiting: importCounts.waiting, active: importCounts.active, failed: importCounts.failed },
-            sync: { waiting: syncCounts.waiting, active: syncCounts.active, failed: syncCounts.failed },
-            webhook: { waiting: webhookCounts.waiting, active: webhookCounts.active, failed: webhookCounts.failed },
+            // BullMQ's getJobCounts() types each bucket as `number | undefined`
+            // even though it always returns 0 when the bucket has no jobs.
+            // Coerce to 0 to satisfy the strict z.number() response schema.
+            import: {
+              waiting: importCounts.waiting ?? 0,
+              active: importCounts.active ?? 0,
+              failed: importCounts.failed ?? 0,
+            },
+            sync: {
+              waiting: syncCounts.waiting ?? 0,
+              active: syncCounts.active ?? 0,
+              failed: syncCounts.failed ?? 0,
+            },
+            webhook: {
+              waiting: webhookCounts.waiting ?? 0,
+              active: webhookCounts.active ?? 0,
+              failed: webhookCounts.failed ?? 0,
+            },
           },
           redis: { connected, opsPerSec },
         },

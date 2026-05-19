@@ -258,6 +258,7 @@ export default async function segmentsRoutes(app: FastifyInstance) {
               id: c.id,
               phoneE164: c.phoneE164,
               displayName: c.displayName,
+              whatsappName: c.whatsappName,
               locale: c.locale,
               optedInAt: c.optedInAt?.toISOString() ?? null,
               optedOutAt: c.optedOutAt?.toISOString() ?? null,

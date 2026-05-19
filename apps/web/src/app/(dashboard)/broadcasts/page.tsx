@@ -6,8 +6,9 @@ import {
   type BroadcastStatus,
 } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, RotateCw, Trash2 } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shell/page-header';
@@ -27,6 +28,7 @@ const STATUS_CLASS: Record<BroadcastStatus, string> = {
 
 export default function BroadcastsPage() {
   const qc = useQueryClient();
+  const router = useRouter();
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/broadcasts/${id}`),
     onSuccess: () => {
@@ -34,6 +36,16 @@ export default function BroadcastsPage() {
       toast.success('Broadcast deleted');
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Delete failed'),
+  });
+  const resendMutation = useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ data: BroadcastDto }>(`/api/v1/broadcasts/${id}/resend`, {}),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['broadcasts'] });
+      toast.success('Resend queued — sending to the same recipients.');
+      router.push(`/broadcasts/${res.data.id}`);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Resend failed'),
   });
 
   const broadcastsQuery = useQuery({
@@ -73,20 +85,21 @@ export default function BroadcastsPage() {
                   <th className="px-6 py-3">Audience</th>
                   <th className="px-6 py-3">Sent / Delivered / Read</th>
                   <th className="px-6 py-3">Scheduled</th>
+                  <th className="px-6 py-3">Resend</th>
                   <th className="w-20 px-6 py-3" />
                 </tr>
               </thead>
               <tbody>
                 {broadcastsQuery.isLoading ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-foreground-muted">
+                    <td colSpan={7} className="px-6 py-8 text-center text-foreground-muted">
                       Loading…
                     </td>
                   </tr>
                 ) : null}
                 {broadcastsQuery.data?.data.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-foreground-muted">
+                    <td colSpan={7} className="px-6 py-12 text-center text-foreground-muted">
                       No broadcasts yet. Create your first one to start reaching customers.
                     </td>
                   </tr>
@@ -126,6 +139,40 @@ export default function BroadcastsPage() {
                         : b.startedAt
                           ? new Date(b.startedAt).toLocaleString()
                           : '—'}
+                    </td>
+                    <td className="px-6 py-4">
+                      {b.status === 'completed' ||
+                      b.status === 'sending' ||
+                      b.status === 'paused' ||
+                      b.status === 'failed' ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={
+                            resendMutation.isPending && resendMutation.variables === b.id
+                          }
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Resend "${b.name}" to the same ${b.totalRecipients} recipient${b.totalRecipients === 1 ? '' : 's'}? This creates a new broadcast that starts sending immediately.`,
+                              )
+                            ) {
+                              resendMutation.mutate(b.id);
+                            }
+                          }}
+                        >
+                          <RotateCw
+                            className={`size-3.5 ${
+                              resendMutation.isPending && resendMutation.variables === b.id
+                                ? 'animate-spin'
+                                : ''
+                            }`}
+                          />
+                          Resend
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-foreground-subtle">—</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-right">
                       <Link href={`/broadcasts/${b.id}`}>

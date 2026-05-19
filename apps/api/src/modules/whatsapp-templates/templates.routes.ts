@@ -454,7 +454,10 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
           organizationId: orgId,
           actorUserId: req.auth!.userId,
           entityType: 'whatsapp_template',
-          entityId: null,
+          // The sync touches the whole template set, not a single row.
+          // recordAudit's entityId is string | undefined; pass undefined
+          // (no entity) rather than null (typing mismatch).
+          entityId: undefined,
           metadata: { event: 'templates_synced', imported, updated, total: remote.length },
         });
 

@@ -24,6 +24,10 @@ export const NotificationKind = {
   webhook_disabled: 'webhook_disabled',
   api_key_first_use: 'api_key_first_use',
   generic: 'generic',
+  // Phase 5.9 — billing dunning auto-suspend. Mirrors the Prisma enum
+  // value so the API DTO can serialise notifications emitted by the
+  // hourly dunning tick.
+  org_suspended_for_billing: 'org_suspended_for_billing',
 } as const;
 export type NotificationKind = (typeof NotificationKind)[keyof typeof NotificationKind];
 

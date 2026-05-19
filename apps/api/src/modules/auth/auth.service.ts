@@ -500,7 +500,7 @@ export async function changePassword(
   if (!user) throw notFound('User not found.');
 
   const ok = await verifyPassword(args.currentPassword, user.passwordHash);
-  if (!ok) throw unauthorized('Current password is incorrect.');
+  if (!ok) throw unauthorized(ApiErrorCode.AUTH_INVALID_CREDENTIALS, 'Current password is incorrect.');
 
   const newHash = await hashPassword(args.newPassword);
   await prisma.user.update({

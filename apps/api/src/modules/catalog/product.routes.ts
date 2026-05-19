@@ -154,7 +154,11 @@ export default async function productRoutes(app: FastifyInstance) {
             isAvailable: req.body.isAvailable ?? true,
             stockQuantity: req.body.stockQuantity ?? null,
             trackInventory: req.body.trackInventory ?? false,
-            attributes: req.body.attributes ?? undefined,
+            // Prisma's InputJsonValue type is recursive and rejects a
+            // plain Record<string, unknown>; cast through `never` so the
+            // value passes the JSON column type-check at compile time.
+            // (Runtime is unchanged — Prisma serialises Record/objects to JSON.)
+            attributes: (req.body.attributes ?? undefined) as never,
             categoryId: req.body.categoryId ?? null,
           },
         });

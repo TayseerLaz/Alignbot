@@ -39,10 +39,13 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
 }
 
 function BrandPanel() {
-  const features = [
-    { n: 1, label: 'AI WhatsApp\nchatbot' },
-    { n: 2, label: 'Synced catalog\n& FAQs' },
-    { n: 3, label: 'Bookings captured\nautomatically' },
+  // `active` toggles the highlighted (white) tile vs the dim glassy ones.
+  // Currently all tiles render in the dim state; flip one to true to
+  // visually emphasise it without changing layout.
+  const features: { n: number; label: string; active: boolean }[] = [
+    { n: 1, label: 'AI WhatsApp\nchatbot', active: false },
+    { n: 2, label: 'Synced catalog\n& FAQs', active: false },
+    { n: 3, label: 'Bookings captured\nautomatically', active: false },
   ];
   return (
     <aside

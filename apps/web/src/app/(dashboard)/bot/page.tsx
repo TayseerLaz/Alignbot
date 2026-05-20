@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import {
   AlertTriangle,
@@ -699,6 +699,7 @@ function FlowRecommendationsCard() {
   const list = useQuery({
     queryKey: ['bot-flow-candidates'],
     queryFn: () => api.get<{ data: FlowCandidate[] }>('/api/v1/bot/conversation-flows'),
+    placeholderData: keepPreviousData,
   });
   const recommend = useMutation({
     mutationFn: () => api.post('/api/v1/bot/conversation-flows/recommend'),
@@ -761,7 +762,7 @@ function FlowRecommendationsCard() {
         </Button>
       </CardHeader>
       <CardContent className="p-0">
-        {candidates.length === 0 && !list.isLoading ? (
+        {candidates.length === 0 && list.isSuccess && !list.isFetching ? (
           <div className="px-6 py-10 text-center text-sm text-foreground-muted">
             No candidates yet. Press <span className="font-medium">Generate candidates</span> — we'll
             propose a few different ways your bot can engage customers, tailored to your business.
@@ -1130,6 +1131,11 @@ function ScenarioRunner() {
   const last = useQuery({
     queryKey: ['bot-scenarios-last'],
     queryFn: () => api.get<{ data: ScenarioRun[] }>('/api/v1/bot/scenarios/last'),
+    // Keep the prior rows rendered while a refetch (after override / run) is
+    // in flight. Without this, the list briefly empties between the optimistic
+    // close-the-editor + the refetch returning, which looks like "everything
+    // disappeared" for a few hundred ms.
+    placeholderData: keepPreviousData,
   });
   const run = useMutation({
     mutationFn: () =>
@@ -1258,7 +1264,10 @@ function ScenarioRunner() {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        {rows.length === 0 && !last.isLoading ? (
+        {rows.length === 0 && last.isSuccess && !last.isFetching ? (
+          // Only show the empty state when the query has succeeded AND is
+          // not currently re-fetching — otherwise a save-then-invalidate
+          // would briefly empty the list between transitions.
           <div className="px-6 py-10 text-center text-sm text-foreground-muted">
             No scenarios yet. Press <span className="font-medium">Run all</span> — we'll draft them
             from your current knowledge base and grade each reply.

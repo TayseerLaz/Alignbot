@@ -1,23 +1,19 @@
-import Image from 'next/image';
-
 import { cn } from '@/lib/utils';
 
 /**
  * AlignedLogo — single source of truth for the brand mark.
  *
- * Two raw assets, one per theme, so no CSS filter trickery is needed:
- *   - /aligned-logo-light-v2.png  → dark wordmark on transparent (light mode)
- *   - /aligned-logo.webp          → white wordmark on transparent (dark mode)
+ * Uses plain <img> rather than next/image because the new light-mode
+ * wordmark has an extreme aspect ratio (5.95:1) which kept hitting
+ * width/height auto-sizing edge cases in next/image. <img> with
+ * explicit width attributes is the simplest path that "just works"
+ * on every viewport.
  *
- * The `-v2` suffix is intentional cache-busting after the asset swap;
- * browsers that cached the old jpg ignore the new png at the same URL,
- * so the new filename forces a fresh fetch.
+ *   - /aligned-logo-light-v2.png  → black wordmark (light mode)
+ *   - /aligned-logo.webp          → white wordmark (dark mode)
  *
- * Both are loaded; we toggle visibility via Tailwind's `dark:` variant
- * so SSR/CSR don't mismatch and there's no first-paint swap.
- *
- * `iconOnly` (collapsed sidebar): we render a brand-blue rounded square
- * with "A" since the wide lockup can't crop cleanly into 36×36.
+ * `iconOnly` (collapsed sidebar): brand-blue rounded square with "A"
+ * since the wide lockup can't crop cleanly into 36×36.
  */
 export function AlignedLogo({
   className,
@@ -42,25 +38,29 @@ export function AlignedLogo({
   }
 
   return (
-    <span className={cn('inline-flex h-9 items-center', className)} aria-label="ALIGNED">
-      {/* Light-mode wordmark — 4880×820 PNG; intrinsic dimensions match
-          so Next.js Image picks the right srcset for retina renders. */}
-      <Image
+    <span
+      className={cn('inline-flex items-center', className)}
+      style={{ height: 36 }}
+      aria-label="ALIGNED"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
         src="/aligned-logo-light-v2.png"
         alt="ALIGNED Business Platform"
-        width={488}
-        height={82}
-        priority
-        className="block h-9 w-auto dark:hidden"
+        height={36}
+        // Native aspect ratio = 4880/820 ≈ 5.95, so at height=36
+        // the rendered width is ~214 px which fits the 256 px sidebar
+        // header (256 − 40 px horizontal padding = 216 px content).
+        style={{ height: 36, width: 'auto' }}
+        className="block dark:hidden"
       />
-      {/* Dark-mode wordmark — same shape, white-on-transparent. */}
-      <Image
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
         src="/aligned-logo.webp"
         alt="ALIGNED Business Platform"
-        width={200}
-        height={40}
-        priority
-        className="hidden h-8 w-auto dark:block"
+        height={32}
+        style={{ height: 32, width: 'auto' }}
+        className="hidden dark:block"
       />
     </span>
   );

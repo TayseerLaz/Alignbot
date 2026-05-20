@@ -34,34 +34,41 @@ const SHOWCASE_SKUS = [
   'ATK-SPEC-MACINTOSH',
 ] as const;
 
-// 3 image URLs per SKU. Unsplash CDN links — visually close to each
-// product, deterministic, no auth needed. Replace with Aseer Time's
-// own product photos once they're available.
+// 3 image URLs per SKU. picsum.photos seeded URLs: deterministic, no
+// auth, never 404 (the seed string is hashed to pick an image from
+// their corpus). Visually generic placeholders — swap for real Aseer
+// Time product photos by editing this map before the next deploy.
+const PICSUM_WIDTH = 1200;
+const PICSUM_HEIGHT = 800;
+function picsumSeeded(seed: string): string {
+  // jpeg by default, served fast off their CDN
+  return `https://picsum.photos/seed/${encodeURIComponent(seed)}/${PICSUM_WIDTH}/${PICSUM_HEIGHT}`;
+}
 const IMAGES: Record<string, string[]> = {
   'ATK-MIX-HEARTATTACK': [
-    'https://images.unsplash.com/photo-1505252585461-04db1eb84625?w=1200',
-    'https://images.unsplash.com/photo-1623065422902-30a2d299bbe4?w=1200',
-    'https://images.unsplash.com/photo-1638176067000-9e2e60beb3b1?w=1200',
+    picsumSeeded('aligned-heartattack-1'),
+    picsumSeeded('aligned-heartattack-2'),
+    picsumSeeded('aligned-heartattack-3'),
   ],
   'ATK-MIX-VIP': [
-    'https://images.unsplash.com/photo-1623065422902-30a2d299bbe4?w=1200',
-    'https://images.unsplash.com/photo-1502741338009-cac2772e18bc?w=1200',
-    'https://images.unsplash.com/photo-1612257999691-c7b3ddb56251?w=1200',
+    picsumSeeded('aligned-vip-1'),
+    picsumSeeded('aligned-vip-2'),
+    picsumSeeded('aligned-vip-3'),
   ],
   'ATK-SWEET-DUBAICREPE': [
-    'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=1200',
-    'https://images.unsplash.com/photo-1587132137056-bfbf0166836e?w=1200',
-    'https://images.unsplash.com/photo-1551024601-bec78aea704b?w=1200',
+    picsumSeeded('aligned-dubaicrepe-1'),
+    picsumSeeded('aligned-dubaicrepe-2'),
+    picsumSeeded('aligned-dubaicrepe-3'),
   ],
   'ATK-COF-CAPPUCCINO': [
-    'https://images.unsplash.com/photo-1572442388796-11668a67e53d?w=1200',
-    'https://images.unsplash.com/photo-1509042239860-f550ce710b93?w=1200',
-    'https://images.unsplash.com/photo-1517256064527-09c73fc73e38?w=1200',
+    picsumSeeded('aligned-cappuccino-1'),
+    picsumSeeded('aligned-cappuccino-2'),
+    picsumSeeded('aligned-cappuccino-3'),
   ],
   'ATK-SPEC-MACINTOSH': [
-    'https://images.unsplash.com/photo-1549007994-cb92caebd54b?w=1200',
-    'https://images.unsplash.com/photo-1481391319762-47dff72954d9?w=1200',
-    'https://images.unsplash.com/photo-1481391319762-47dff72954d9?w=1200&blur=2',
+    picsumSeeded('aligned-macintosh-1'),
+    picsumSeeded('aligned-macintosh-2'),
+    picsumSeeded('aligned-macintosh-3'),
   ],
 };
 
@@ -237,44 +244,59 @@ async function main(): Promise<void> {
       }
 
       console.log(`[showcase] ${product.sku} (${product.name}) → uploading 3 images…`);
+      let okCount = 0;
       for (let i = 0; i < urls.length; i++) {
         const url = urls[i]!;
-        const { buffer, contentType } = await downloadImage(url);
-        const assetId = randomUUID();
-        const now = new Date();
-        const yyyy = now.getUTCFullYear();
-        const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
-        const storageKey = `org/${org.id}/image/${yyyy}/${mm}/${assetId}${extOf(contentType)}`;
-        await uploadToWasabi({
-          client: s3,
-          bucket: env.WASABI_BUCKET,
-          key: storageKey,
-          body: buffer,
-          contentType,
-        });
-        const asset = await prisma.asset.create({
-          data: {
-            id: assetId,
-            organizationId: org.id,
-            kind: 'image',
-            storageKey,
+        // Per-image try/catch so a single fetch / upload failure doesn't
+        // abort the whole seed. The deploy logs will show which step
+        // failed for which SKU.
+        try {
+          const { buffer, contentType } = await downloadImage(url);
+          const assetId = randomUUID();
+          const now = new Date();
+          const yyyy = now.getUTCFullYear();
+          const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+          const storageKey = `org/${org.id}/image/${yyyy}/${mm}/${assetId}${extOf(contentType)}`;
+          await uploadToWasabi({
+            client: s3,
+            bucket: env.WASABI_BUCKET,
+            key: storageKey,
+            body: buffer,
             contentType,
-            byteSize: buffer.length,
-            metadata: { source: 'aligned-showcase-seed', sourceUrl: url },
-          },
-        });
-        await prisma.productImage.create({
-          data: {
-            organizationId: org.id,
-            productId: product.id,
-            assetId: asset.id,
-            altText: `${product.name} — image ${i + 1}`,
-            sortOrder: i,
-            isPrimary: i === 0,
-          },
-        });
-        console.log(`[showcase]   uploaded ${i + 1}/3 (${(buffer.length / 1024).toFixed(0)} KB)`);
+          });
+          const asset = await prisma.asset.create({
+            data: {
+              id: assetId,
+              organizationId: org.id,
+              kind: 'image',
+              storageKey,
+              contentType,
+              byteSize: buffer.length,
+              metadata: { source: 'aligned-showcase-seed', sourceUrl: url },
+            },
+          });
+          await prisma.productImage.create({
+            data: {
+              organizationId: org.id,
+              productId: product.id,
+              assetId: asset.id,
+              altText: `${product.name} — image ${i + 1}`,
+              sortOrder: i,
+              isPrimary: i === 0,
+            },
+          });
+          okCount++;
+          console.log(
+            `[showcase]   ${i + 1}/3 ok (${(buffer.length / 1024).toFixed(0)} KB) — ${storageKey}`,
+          );
+        } catch (err) {
+          console.error(
+            `[showcase]   ${i + 1}/3 FAILED for ${product.sku} (url=${url}):`,
+            err instanceof Error ? `${err.name}: ${err.message}` : err,
+          );
+        }
       }
+      console.log(`[showcase] ${product.sku} → ${okCount}/3 images attached`);
     }
 
     console.log('\n[showcase] ✓ done. ALIGNED catalog now has 5 products, 3 images each.');

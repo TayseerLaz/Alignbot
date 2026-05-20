@@ -631,6 +631,101 @@ export default async function botRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- POST /bot/factory-reset ----------
+  // Nuke EVERY data source the bot grounds its replies on, so the next
+  // simulator turn produces only catalog-derived answers. Useful when the
+  // bot keeps citing facts that no longer match the business (yoga mats
+  // on a juice-bar org is the canonical example).
+  //
+  // Wipes:
+  //   - every KnowledgeBaseEntry row
+  //   - every BotConversationFlowOption row (the recommender's candidates,
+  //     including the currently-selected one)
+  //   - every BotTestScenario + BotTestRun row
+  //   - BotConfig.conversationFlow → null
+  //   - BotConfig.responseTemplates → null
+  //   - BotConfig.customPersonality → null
+  //   - BotConfig.greeting          → null
+  //
+  // Does NOT touch:
+  //   - Product / Service / Category rows (use catalog UI for that)
+  //   - BusinessInfo (use /business-info)
+  //   - FAQ / Policy rows (use /business-info tabs)
+  //   - WhatsApp channel config / templates / deployment state
+  //
+  // Admin-only + irreversible.
+  r.post(
+    '/bot/factory-reset',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Wipe every bot-grounding source (KB + flows + scenarios + config text).',
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              kbDeleted: z.number(),
+              flowsDeleted: z.number(),
+              scenariosDeleted: z.number(),
+              runsDeleted: z.number(),
+              configCleared: z.boolean(),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const result = await app.tenant(req, async (tx) => {
+        const kb = await tx.knowledgeBaseEntry.deleteMany({});
+        const flows = await tx.botConversationFlowOption.deleteMany({});
+        const runs = await tx.botTestRun.deleteMany({});
+        const scenarios = await tx.botTestScenario.deleteMany({});
+        // Null out the bot-config text fields without dropping the row —
+        // operator can still tweak personality / greeting afterwards from
+        // the UI, and BotConfig.id is referenced elsewhere (deployment
+        // state, version counter).
+        let configCleared = false;
+        const existing = await tx.botConfig.findUnique({
+          where: { organizationId: orgId },
+        });
+        if (existing) {
+          await tx.botConfig.update({
+            where: { id: existing.id },
+            data: {
+              conversationFlow: undefined as never,
+              responseTemplates: undefined as never,
+              customPersonality: null,
+              greeting: null,
+            },
+          });
+          // Prisma's `undefined` skips the column — to actually NULL JSON
+          // columns we need a raw update.
+          await tx.$executeRawUnsafe(
+            `UPDATE bot_configs SET conversation_flow = NULL, response_templates = NULL WHERE id = $1`,
+            existing.id,
+          );
+          configCleared = true;
+        }
+        return {
+          kbDeleted: kb.count,
+          flowsDeleted: flows.count,
+          scenariosDeleted: scenarios.count,
+          runsDeleted: runs.count,
+          configCleared,
+        };
+      });
+      await recordAudit({
+        action: 'business_info_updated',
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        entityType: 'bot_config',
+        metadata: { event: 'bot_factory_reset', ...result },
+      });
+      return { data: result };
+    },
+  );
+
   // ---------- POST /bot/knowledge-base/approve-all ----------
   r.post(
     '/bot/knowledge-base/approve-all',

@@ -189,18 +189,68 @@ export default function BotPage() {
   });
   const config = configQ.data?.data ?? null;
 
+  // Factory reset — wipes every data source the bot grounds replies on so
+  // a polluted demo state (e.g. "yoga mats" leaking into a juice-bar
+  // account) can be cleared in one click. Doesn't touch the catalog,
+  // business info or templates — operator rebuilds those via the normal UI.
+  const factoryReset = useMutation({
+    mutationFn: () =>
+      api.post<{
+        data: {
+          kbDeleted: number;
+          flowsDeleted: number;
+          scenariosDeleted: number;
+          runsDeleted: number;
+          configCleared: boolean;
+        };
+      }>('/api/v1/bot/factory-reset'),
+    onSuccess: (res) => {
+      const d = res.data;
+      toast.success(
+        `Bot brain reset. Cleared ${d.kbDeleted} KB entries, ${d.flowsDeleted} flow candidates, ${d.scenariosDeleted} scenarios.`,
+      );
+      qc.invalidateQueries({ queryKey: ['bot-config'] });
+      qc.invalidateQueries({ queryKey: ['bot-kb'] });
+      qc.invalidateQueries({ queryKey: ['bot-scenarios-last'] });
+      qc.invalidateQueries({ queryKey: ['bot-flow-candidates'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Reset failed'),
+  });
+
   return (
     <>
       <PageHeader
         title="AI bot builder"
         description="Crawl your site, review the auto-generated knowledge base, set personality + greeting, simulate, deploy."
         actions={
-          config ? (
-            <DeployToggle
-              config={config}
-              onChanged={() => qc.invalidateQueries({ queryKey: ['bot-config'] })}
-            />
-          ) : null
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={factoryReset.isPending}
+              onClick={async () => {
+                if (
+                  await confirmDialog({
+                    title: 'Reset the bot’s brain?',
+                    body:
+                      'Wipes every data source the bot uses to ground its replies: all knowledge base entries, conversation-flow candidates (including the active one), test scenarios and their runs, plus the personality / greeting / response templates on the bot config. Your catalog, business info, FAQ, policies and WhatsApp channel are NOT touched. Use this when the bot keeps citing facts that don’t match the business anymore.',
+                    confirmLabel: 'Reset bot brain',
+                    destructive: true,
+                  })
+                ) {
+                  factoryReset.mutate();
+                }
+              }}
+            >
+              <Trash2 className="size-4" /> Reset bot brain
+            </Button>
+            {config ? (
+              <DeployToggle
+                config={config}
+                onChanged={() => qc.invalidateQueries({ queryKey: ['bot-config'] })}
+              />
+            ) : null}
+          </div>
         }
       />
 

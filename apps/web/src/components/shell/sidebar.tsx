@@ -14,7 +14,6 @@ import {
   Inbox,
   LayoutDashboard,
   type LucideIcon,
-  MessageCircle,
   Megaphone,
   Package,
   Settings,
@@ -69,14 +68,15 @@ const groups: NavGroup[] = [
   // from the sidebar — those routes still exist for direct-URL access,
   // but normal operators don't need to see them. Re-add the group here
   // to surface them again.
+  // WhatsApp section hidden from the sidebar — the channel connection
+  // lives under /settings → Integrations now, and Templates moved into
+  // the Engagement group below. Routes (/whatsapp, /whatsapp/templates,
+  // /whatsapp/onboarding) still resolve by direct URL.
   {
-    label: 'WhatsApp',
+    label: 'Intelligence',
     items: [
-      { href: '/whatsapp', label: 'WhatsApp', icon: MessageCircle },
-      { href: '/whatsapp/templates', label: 'Templates', icon: BarChart3 },
-      // Meta verification (/whatsapp/onboarding) hidden — the page is
-      // still reachable by URL, but operators don't need it in the nav
-      // once the channel is connected. Re-add this line to surface it.
+      { href: '/bot', label: 'AI bot builder', icon: Bot },
+      { href: '/analytics', label: 'Analytics', icon: TrendingUp },
     ],
   },
   {
@@ -84,18 +84,12 @@ const groups: NavGroup[] = [
     items: [
       { href: '/inbox', label: 'Inbox', icon: Inbox, badgeKey: 'inboxEscalated' },
       { href: '/inbox/canned', label: 'Canned replies', icon: Inbox },
+      { href: '/whatsapp/templates', label: 'Templates', icon: BarChart3 },
       { href: '/contacts', label: 'Contacts', icon: ContactIcon },
       { href: '/segments', label: 'Segments', icon: Users },
       { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone },
       { href: '/sequences', label: 'Sequences', icon: Activity },
       { href: '/bookings', label: 'Bookings', icon: CalendarCheck },
-    ],
-  },
-  {
-    label: 'Intelligence',
-    items: [
-      { href: '/bot', label: 'AI bot builder', icon: Bot },
-      { href: '/analytics', label: 'Analytics', icon: TrendingUp },
     ],
   },
   {

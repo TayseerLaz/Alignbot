@@ -85,6 +85,17 @@ export default function ProductsPage() {
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Delete failed'),
   });
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: (vars: { ids?: string[]; all?: boolean }) =>
+      api.post<{ data: { deleted: number } }>('/api/v1/products/bulk-delete', vars),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      setSelected(new Set());
+      toast.success(`Deleted ${res.data.deleted} product${res.data.deleted === 1 ? '' : 's'}`);
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Delete failed'),
+  });
+
   const createDraft = async () => {
     setCreating(true);
     try {
@@ -128,9 +139,33 @@ export default function ProductsPage() {
         title="Products"
         description="Catalog items the chatbot can answer questions about and the team can sell."
         actions={
-          <Button onClick={createDraft} loading={creating}>
-            <Plus className="size-4" /> New product
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Wipe-all is gated by a second-step confirmation that
+                requires typing DELETE — keeps an itchy click from
+                nuking every product in the catalog. Admin role only. */}
+            <Button
+              variant="ghost"
+              loading={bulkDeleteMutation.isPending}
+              onClick={async () => {
+                const ok = await confirmDialog({
+                  title: 'Delete every product?',
+                  body: 'This soft-deletes every product in your catalog. The chatbot stops answering about all of them immediately. Type DELETE in the next step to confirm — you can restore from the activity log if needed.',
+                  confirmLabel: 'Continue',
+                  destructive: true,
+                });
+                if (!ok) return;
+                const typed = window.prompt('Type DELETE to confirm wiping every product:');
+                if (typed?.trim().toUpperCase() === 'DELETE') {
+                  bulkDeleteMutation.mutate({ all: true });
+                }
+              }}
+            >
+              <Trash2 className="size-4" /> Delete all
+            </Button>
+            <Button onClick={createDraft} loading={creating}>
+              <Plus className="size-4" /> New product
+            </Button>
+          </div>
         }
       />
 
@@ -193,6 +228,22 @@ export default function ProductsPage() {
                 }
               >
                 <EyeOff className="size-4" /> Mark unavailable
+              </Button>
+              <Button
+                size="sm"
+                variant="danger"
+                loading={bulkDeleteMutation.isPending}
+                onClick={async () => {
+                  const ok = await confirmDialog({
+                    title: `Delete ${selected.size} product${selected.size === 1 ? '' : 's'}?`,
+                    body: 'This soft-deletes the selected products. The chatbot stops answering questions about them immediately. You can restore from the activity log if needed.',
+                    confirmLabel: 'Delete',
+                    destructive: true,
+                  });
+                  if (ok) bulkDeleteMutation.mutate({ ids: Array.from(selected) });
+                }}
+              >
+                <Trash2 className="size-4" /> Delete
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
                 Clear

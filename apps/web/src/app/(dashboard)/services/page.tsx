@@ -37,6 +37,7 @@ export default function ServicesPage() {
   const [categoryId, setCategoryId] = useState<string>(ALL_CATEGORIES);
   const [availability, setAvailability] = useState<string>(ALL_AVAILABILITY);
   const [creating, setCreating] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(searchInput.trim()), 300);
@@ -70,6 +71,17 @@ export default function ServicesPage() {
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Delete failed'),
   });
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: (vars: { ids?: string[]; all?: boolean }) =>
+      api.post<{ data: { deleted: number } }>('/api/v1/services/bulk-delete', vars),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['services'] });
+      setSelected(new Set());
+      toast.success(`Deleted ${res.data.deleted} service${res.data.deleted === 1 ? '' : 's'}`);
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Delete failed'),
+  });
+
   const createDraft = async () => {
     setCreating(true);
     try {
@@ -89,6 +101,20 @@ export default function ServicesPage() {
   };
 
   const services = servicesQuery.data?.data ?? [];
+  const allSelected = services.length > 0 && services.every((s) => selected.has(s.id));
+  const someSelected = selected.size > 0;
+  const toggleAll = () => {
+    if (allSelected) setSelected(new Set());
+    else setSelected(new Set(services.map((s) => s.id)));
+  };
+  const toggleOne = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   return (
     <>
@@ -96,9 +122,30 @@ export default function ServicesPage() {
         title="Services"
         description="Bookable services with pricing tiers and availability windows."
         actions={
-          <Button onClick={createDraft} loading={creating}>
-            <Plus className="size-4" /> New service
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              loading={bulkDeleteMutation.isPending}
+              onClick={async () => {
+                const ok = await confirmDialog({
+                  title: 'Delete every service?',
+                  body: 'This soft-deletes every service in your catalog. The chatbot stops answering about all of them immediately. Type DELETE in the next step to confirm — you can restore from the activity log if needed.',
+                  confirmLabel: 'Continue',
+                  destructive: true,
+                });
+                if (!ok) return;
+                const typed = window.prompt('Type DELETE to confirm wiping every service:');
+                if (typed?.trim().toUpperCase() === 'DELETE') {
+                  bulkDeleteMutation.mutate({ all: true });
+                }
+              }}
+            >
+              <Trash2 className="size-4" /> Delete all
+            </Button>
+            <Button onClick={createDraft} loading={creating}>
+              <Plus className="size-4" /> New service
+            </Button>
+          </div>
         }
       />
 
@@ -138,6 +185,35 @@ export default function ServicesPage() {
           </Select>
         </div>
 
+        {someSelected ? (
+          <div className="flex items-center justify-between gap-3 border-b border-border bg-brand-50/40 px-4 py-2 text-sm">
+            <span>
+              <strong>{selected.size}</strong> selected
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="danger"
+                loading={bulkDeleteMutation.isPending}
+                onClick={async () => {
+                  const ok = await confirmDialog({
+                    title: `Delete ${selected.size} service${selected.size === 1 ? '' : 's'}?`,
+                    body: 'This soft-deletes the selected services. The chatbot stops answering about them immediately. You can restore from the activity log if needed.',
+                    confirmLabel: 'Delete',
+                    destructive: true,
+                  });
+                  if (ok) bulkDeleteMutation.mutate({ ids: Array.from(selected) });
+                }}
+              >
+                <Trash2 className="size-4" /> Delete
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+                Clear
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         <CardContent className="p-0">
           {servicesQuery.isLoading ? (
             <div className="px-6 py-12 text-center text-sm text-foreground-muted">Loading…</div>
@@ -163,6 +239,15 @@ export default function ServicesPage() {
               <table className="w-full text-left text-sm">
                 <thead className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
                   <tr>
+                    <th className="w-10 px-4 py-3">
+                      <input
+                        type="checkbox"
+                        className="size-4 cursor-pointer rounded border-border accent-brand-500"
+                        checked={allSelected}
+                        aria-label={allSelected ? 'Deselect all services' : 'Select all services on this page'}
+                        onChange={toggleAll}
+                      />
+                    </th>
                     <th className="px-4 py-3">Service</th>
                     <th className="px-4 py-3">Category</th>
                     <th className="px-4 py-3">Duration</th>
@@ -175,6 +260,15 @@ export default function ServicesPage() {
                 <tbody>
                   {services.map((s) => (
                     <tr key={s.id} className="border-b border-border last:border-0 hover:bg-surface-muted/50">
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          className="size-4 cursor-pointer rounded border-border accent-brand-500"
+                          checked={selected.has(s.id)}
+                          aria-label={`Select ${s.name}`}
+                          onChange={() => toggleOne(s.id)}
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <Link href={`/services/${s.id}`} className="block">
                           <p className="font-medium">{s.name}</p>

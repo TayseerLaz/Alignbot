@@ -123,3 +123,16 @@ export const upsertAvailabilityBodySchema = z.object({
 export const setAvailabilityBodySchema = z.object({
   windows: z.array(upsertAvailabilityBodySchema),
 });
+
+// Bulk soft-delete services. Mirrors the products endpoint — accepts
+// either an explicit ID list or `all: true` to wipe every non-deleted
+// service in the org.
+export const bulkDeleteServicesBodySchema = z
+  .object({
+    ids: z.array(uuidSchema).min(1).max(500).optional(),
+    all: z.boolean().optional(),
+  })
+  .refine((v) => Boolean(v.ids?.length) !== Boolean(v.all), {
+    message: 'Provide either `ids` or `all: true`, not both.',
+  });
+export type BulkDeleteServicesBody = z.infer<typeof bulkDeleteServicesBodySchema>;

@@ -1,6 +1,7 @@
 import {
   ApiErrorCode,
   attachImageBodySchema,
+  bulkDeleteProductsBodySchema,
   bulkUpdateProductsBodySchema,
   createProductBodySchema,
   itemEnvelopeSchema,
@@ -477,6 +478,47 @@ export default async function productRoutes(app: FastifyInstance) {
           ),
         );
         return { ok: true as const };
+      });
+    },
+  );
+
+  // ---------- POST /products/bulk-delete ----------------------------------
+  // Soft-deletes many products in one round trip. Accepts either an
+  // explicit ID list (max 500) or `all: true` to delete every active
+  // product in the org. The `all` shorthand exists for the "delete every
+  // product" admin affordance — RLS still scopes the updateMany to the
+  // current org, so there's no cross-tenant blast radius.
+  r.post(
+    '/products/bulk-delete',
+    {
+      schema: {
+        tags: ['catalog'],
+        summary: 'Soft-delete many products at once (or every product when all=true).',
+        body: bulkDeleteProductsBodySchema,
+        response: { 200: itemEnvelopeSchema(z.object({ deleted: z.number().int() })) },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      return app.tenant(req, async (tx) => {
+        const where = req.body.all
+          ? { deletedAt: null }
+          : { id: { in: req.body.ids ?? [] }, deletedAt: null };
+        const result = await tx.product.updateMany({
+          where,
+          data: { deletedAt: new Date(), isAvailable: false },
+        });
+        await recordAudit({
+          action: 'product_deleted',
+          organizationId: req.auth!.organizationId,
+          actorUserId: req.auth!.userId,
+          metadata: {
+            bulk: true,
+            mode: req.body.all ? 'all' : 'selected',
+            count: result.count,
+          },
+        });
+        return { data: { deleted: result.count } };
       });
     },
   );

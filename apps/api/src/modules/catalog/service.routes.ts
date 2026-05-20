@@ -1,5 +1,6 @@
 import {
   ApiErrorCode,
+  bulkDeleteServicesBodySchema,
   createServiceBodySchema,
   itemEnvelopeSchema,
   listEnvelopeSchema,
@@ -391,6 +392,45 @@ export default async function serviceRoutes(app: FastifyInstance) {
           });
         }
         return { data: await loadService(tx, service.id) };
+      });
+    },
+  );
+
+  // ---------- POST /services/bulk-delete ----------------------------------
+  // Soft-deletes many services in one call. Mirrors /products/bulk-delete:
+  // accepts either an explicit ID list (max 500) or `all: true` to wipe
+  // every active service in the org. RLS keeps the scope per-tenant.
+  r.post(
+    '/services/bulk-delete',
+    {
+      schema: {
+        tags: ['catalog'],
+        summary: 'Soft-delete many services at once (or every service when all=true).',
+        body: bulkDeleteServicesBodySchema,
+        response: { 200: itemEnvelopeSchema(z.object({ deleted: z.number().int() })) },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      return app.tenant(req, async (tx) => {
+        const where = req.body.all
+          ? { deletedAt: null }
+          : { id: { in: req.body.ids ?? [] }, deletedAt: null };
+        const result = await tx.service.updateMany({
+          where,
+          data: { deletedAt: new Date(), isAvailable: false },
+        });
+        await recordAudit({
+          action: 'service_deleted',
+          organizationId: req.auth!.organizationId,
+          actorUserId: req.auth!.userId,
+          metadata: {
+            bulk: true,
+            mode: req.body.all ? 'all' : 'selected',
+            count: result.count,
+          },
+        });
+        return { data: { deleted: result.count } };
       });
     },
   );

@@ -140,3 +140,17 @@ export const bulkUpdateProductsBodySchema = z.object({
   categoryId: uuidSchema.nullable().optional(),
 });
 export type BulkUpdateProductsBody = z.infer<typeof bulkUpdateProductsBodySchema>;
+
+// Bulk soft-delete. Accepts a list of IDs OR `all: true` to wipe every
+// non-deleted row in the org. The `all` shorthand lets the UI offer a
+// real "delete every product" affordance without first paginating
+// through hundreds of IDs.
+export const bulkDeleteProductsBodySchema = z
+  .object({
+    ids: z.array(uuidSchema).min(1).max(500).optional(),
+    all: z.boolean().optional(),
+  })
+  .refine((v) => Boolean(v.ids?.length) !== Boolean(v.all), {
+    message: 'Provide either `ids` or `all: true`, not both.',
+  });
+export type BulkDeleteProductsBody = z.infer<typeof bulkDeleteProductsBodySchema>;

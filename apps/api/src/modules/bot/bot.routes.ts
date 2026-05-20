@@ -600,6 +600,37 @@ export default async function botRoutes(app: FastifyInstance) {
       }),
   );
 
+  // ---------- DELETE /bot/knowledge-base ----------
+  // Bulk wipe every KB entry for the org. Useful when a previous crawl /
+  // import left stale facts that the bot keeps citing (e.g. "yoga mats"
+  // on a juice-bar account). Admin-only — destructive + non-reversible.
+  r.delete(
+    '/bot/knowledge-base',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Delete every KB entry for this org (irreversible).',
+        response: { 200: itemEnvelopeSchema(z.object({ deleted: z.number() })) },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const result = await app.tenant(req, async (tx) => {
+        const r = await tx.knowledgeBaseEntry.deleteMany({});
+        return r.count;
+      });
+      await recordAudit({
+        action: 'business_info_updated',
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        entityType: 'knowledge_base_entry',
+        metadata: { event: 'kb_wiped_all', count: result },
+      });
+      return { data: { deleted: result } };
+    },
+  );
+
   // ---------- POST /bot/knowledge-base/approve-all ----------
   r.post(
     '/bot/knowledge-base/approve-all',

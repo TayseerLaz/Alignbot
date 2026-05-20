@@ -438,6 +438,18 @@ function KnowledgeBaseCard() {
     },
   });
 
+  // Bulk wipe — useful when the bot keeps citing stale facts from a
+  // previous crawl that no longer match the current catalog.
+  const wipeAll = useMutation({
+    mutationFn: () => api.delete<{ data: { deleted: number } }>('/api/v1/bot/knowledge-base'),
+    onSuccess: (res) => {
+      toast.success(`Deleted ${res.data.deleted} knowledge base entries.`);
+      qc.invalidateQueries({ queryKey: ['bot-kb'] });
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Delete-all failed'),
+  });
+
   const rows = list.data?.data ?? [];
   const pending = rows.filter((r) => !r.approved);
 
@@ -448,19 +460,43 @@ function KnowledgeBaseCard() {
           <CardTitle>Knowledge base</CardTitle>
           <CardDescription>
             What the bot answers from. AI entries start unapproved — review them, then approve or
-            edit before deploy.
+            edit before deploy. If the bot keeps citing stale facts (e.g. items from a previous
+            crawl), use Delete all to wipe and re-analyse.
           </CardDescription>
         </div>
-        {pending.length > 0 ? (
-          <Button
-            size="sm"
-            variant="secondary"
-            loading={approveAll.isPending}
-            onClick={() => approveAll.mutate()}
-          >
-            <CheckCircle2 className="size-4" /> Approve all ({pending.length})
-          </Button>
-        ) : null}
+        <div className="flex items-center gap-2">
+          {pending.length > 0 ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={approveAll.isPending}
+              onClick={() => approveAll.mutate()}
+            >
+              <CheckCircle2 className="size-4" /> Approve all ({pending.length})
+            </Button>
+          ) : null}
+          {rows.length > 0 ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={wipeAll.isPending}
+              onClick={async () => {
+                if (
+                  await confirmDialog({
+                    title: 'Delete every knowledge base entry?',
+                    body: `Permanently removes all ${rows.length} entries. The bot will stop citing them immediately. You can re-run "Analyse my website" or manually add new entries afterwards.`,
+                    confirmLabel: 'Delete all',
+                    destructive: true,
+                  })
+                ) {
+                  wipeAll.mutate();
+                }
+              }}
+            >
+              <Trash2 className="size-4" /> Delete all
+            </Button>
+          ) : null}
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         {list.isLoading ? (

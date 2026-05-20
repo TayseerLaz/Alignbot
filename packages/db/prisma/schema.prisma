@@ -1476,6 +1476,60 @@ model KnowledgeBaseEntry {
 // Test scenarios: pre-defined transcripts the operator runs to score the
 // bot before deploy. We persist the LAST run so the UI can show last
 // scores without re-spending LLM tokens on every page load.
+// Bot test scenarios — DB-backed (replaces the formerly-hardcoded
+// `SCENARIOS` array in bot.routes.ts). Each org owns its own set, generated
+// from its current knowledge base + catalog by an LLM and editable / deletable
+// by the operator. Re-generating from a refreshed KB produces a new batch.
+model BotTestScenario {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  // Stable slug per scenario (e.g. "menu_question_juices", "delivery_zones",
+  // "halal_query"). Used to dedupe across regenerations.
+  key            String
+  // The user-side prompt the bot should be tested against.
+  prompt         String
+  // Plain-English description of what a passing response looks like —
+  // fed to the LLM-as-judge alongside the bot's reply.
+  expectation    String
+  // 'ai_generated' = derived from current KB; 'manual' = operator-authored
+  // and preserved across regenerations.
+  source         String   @default("ai_generated")
+  // Soft sort key so operators can drag-reorder later if they like.
+  sortOrder      Int      @default(0) @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([organizationId, key])
+  @@index([organizationId, sortOrder])
+  @@map("bot_test_scenarios")
+}
+
+// Bot conversation-flow candidates — the AI builder recommends 3-5 flow
+// templates tailored to the business (e.g. "Quick Order Bot", "Hospitality
+// Concierge", "Support First"). Exactly one is marked active and its `flow`
+// JSON gets mirrored into BotConfig.conversationFlow so the runtime keeps
+// reading a single source of truth.
+model BotConversationFlowOption {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  name            String
+  description     String
+  // Flow JSON in the same { nodes: [{ intent, label, response }] } shape
+  // bot-engine already consumes.
+  flow            Json
+  // The LLM's pick for this business — exactly one option per org carries
+  // `isRecommended = true`; the others are alternatives.
+  isRecommended   Boolean  @default(false) @map("is_recommended")
+  // Why the LLM thinks this fits — short, shown under the card title.
+  recommendReason String?  @map("recommend_reason")
+  isSelected      Boolean  @default(false) @map("is_selected")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([organizationId, isSelected])
+  @@map("bot_conversation_flow_options")
+}
+
 model BotTestRun {
   id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId   String    @map("organization_id") @db.Uuid

@@ -83,9 +83,15 @@ interface QuestionnaireItem {
 }
 
 interface ScenarioRun {
-  id: string | null;
+  // The scenario row id (BotTestScenario). Always present now that scenarios
+  // are DB-backed.
+  id: string;
   key: string;
   prompt: string;
+  expectation: string;
+  source: 'ai_generated' | 'manual' | string;
+  // The latest run id (BotTestRun). Null when the scenario has never run yet.
+  runId: string | null;
   reply: string | null;
   score: number | null;
   notes: string | null;
@@ -210,6 +216,13 @@ export default function BotPage() {
           <Questionnaire />
           <Simulator />
         </div>
+      </div>
+
+      {/* The recommender shows 3-5 candidate flows tailored to the
+          business; selecting one mirrors its JSON onto BotConfig so
+          the editor below opens with that flow already loaded. */}
+      <div className="mt-6">
+        <FlowRecommendationsCard />
       </div>
 
       {/* Conversation flow gets the full content width — the editor
@@ -667,6 +680,208 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
   );
 }
 
+// ---------- Flow recommendations ------------------------------------------
+// LLM proposes 3-5 different ways to converse with customers (Quick Order,
+// Hospitality Concierge, Support-First, etc.) — operator picks one and the
+// editor below opens with that flow.
+interface FlowCandidate {
+  id: string;
+  name: string;
+  description: string;
+  isRecommended: boolean;
+  recommendReason: string | null;
+  isSelected: boolean;
+  flow: { nodes?: { intent: string; label: string; response: string }[] };
+}
+
+function FlowRecommendationsCard() {
+  const qc = useQueryClient();
+  const list = useQuery({
+    queryKey: ['bot-flow-candidates'],
+    queryFn: () => api.get<{ data: FlowCandidate[] }>('/api/v1/bot/conversation-flows'),
+  });
+  const recommend = useMutation({
+    mutationFn: () => api.post('/api/v1/bot/conversation-flows/recommend'),
+    onSuccess: () => {
+      toast.success('Generated fresh flow candidates from your business profile.');
+      qc.invalidateQueries({ queryKey: ['bot-flow-candidates'] });
+      qc.invalidateQueries({ queryKey: ['bot-config'] });
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Could not generate flows'),
+  });
+  const select = useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/bot/conversation-flows/${id}/select`),
+    onSuccess: () => {
+      toast.success('Active flow updated. The editor below reflects the new selection.');
+      qc.invalidateQueries({ queryKey: ['bot-flow-candidates'] });
+      qc.invalidateQueries({ queryKey: ['bot-config'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Select failed'),
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/bot/conversation-flows/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bot-flow-candidates'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Delete failed'),
+  });
+
+  const candidates = list.data?.data ?? [];
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between gap-2">
+        <div>
+          <CardTitle>Conversation flow recommendations</CardTitle>
+          <CardDescription>
+            Different ways your bot can talk to customers — generated from your business profile.
+            Pick the one that matches how you want to reach customers, then fine-tune in the editor
+            below. Re-generate after major KB updates.
+          </CardDescription>
+        </div>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={async () => {
+            if (
+              await confirmDialog({
+                title: 'Generate new flow candidates?',
+                body:
+                  'Drafts 3–5 fresh recommendations using your current knowledge base, products and services. Replaces any unselected candidates. Your currently-selected flow is preserved until you pick a different one.',
+                confirmLabel: 'Generate',
+              })
+            ) {
+              recommend.mutate();
+            }
+          }}
+          loading={recommend.isPending}
+        >
+          <Sparkles className="size-4" /> {candidates.length > 0 ? 'Re-generate' : 'Generate candidates'}
+        </Button>
+      </CardHeader>
+      <CardContent className="p-0">
+        {candidates.length === 0 && !list.isLoading ? (
+          <div className="px-6 py-10 text-center text-sm text-foreground-muted">
+            No candidates yet. Press <span className="font-medium">Generate candidates</span> — we'll
+            propose a few different ways your bot can engage customers, tailored to your business.
+          </div>
+        ) : (
+          <ul className="divide-y divide-border">
+            {candidates.map((c) => (
+              <FlowCandidateRow
+                key={c.id}
+                candidate={c}
+                onSelect={() => select.mutate(c.id)}
+                onDelete={async () => {
+                  if (
+                    await confirmDialog({
+                      title: 'Delete this candidate?',
+                      body: `"${c.name}" will be removed. You can re-generate fresh candidates anytime.`,
+                      confirmLabel: 'Delete',
+                      destructive: true,
+                    })
+                  ) {
+                    remove.mutate(c.id);
+                  }
+                }}
+                selecting={select.isPending && select.variables === c.id}
+              />
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function FlowCandidateRow({
+  candidate,
+  onSelect,
+  onDelete,
+  selecting,
+}: {
+  candidate: FlowCandidate;
+  onSelect: () => void;
+  onDelete: () => void;
+  selecting: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const nodes = candidate.flow.nodes ?? [];
+  return (
+    <li className={`px-6 py-4 ${candidate.isSelected ? 'bg-brand-50/40' : ''}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-sm font-semibold">{candidate.name}</span>
+            {candidate.isSelected ? (
+              <Badge variant="success" className="text-[10px]">
+                <CheckCircle2 className="mr-1 size-3" /> Active
+              </Badge>
+            ) : null}
+            {candidate.isRecommended && !candidate.isSelected ? (
+              <Badge variant="default" className="text-[10px]">
+                <Sparkles className="mr-1 size-3" /> Recommended for you
+              </Badge>
+            ) : null}
+            <span className="text-[10px] text-foreground-subtle">
+              {nodes.length} intent{nodes.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-foreground-muted">{candidate.description}</p>
+          {candidate.isRecommended && candidate.recommendReason ? (
+            <p className="mt-1 text-[11px] italic text-brand-700">
+              Why this fits: {candidate.recommendReason}
+            </p>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+          >
+            {expanded ? 'Hide' : 'Preview'}
+          </Button>
+          {candidate.isSelected ? null : (
+            <>
+              <Button size="sm" onClick={onSelect} loading={selecting}>
+                Use this flow
+              </Button>
+              <Button size="icon" variant="ghost" aria-label="Delete candidate" onClick={onDelete}>
+                <Trash2 className="size-4" />
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+      {expanded ? (
+        <div className="mt-3 rounded-md border border-border bg-surface-muted/40 px-3 py-2">
+          {nodes.length === 0 ? (
+            <p className="text-xs italic text-foreground-subtle">No intents in this candidate.</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {nodes.map((n, idx) => (
+                <li key={idx} className="text-xs">
+                  <span className="font-mono text-[10px] text-foreground-subtle">{n.intent}</span>{' '}
+                  <span className="font-medium">{n.label}</span>
+                  <p className="ml-3 mt-0.5 text-foreground-muted">{n.response}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-2 text-[10px] italic text-foreground-subtle">
+            {candidate.isSelected
+              ? 'Edit this flow node-by-node in the editor below.'
+              : 'Select this flow to load it into the editor for fine-tuning.'}
+          </p>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
 // ---------- Flow + templates -----------------------------------------------
 function FlowAndTemplatesCard({ config }: { config: BotConfig | null }) {
   const qc = useQueryClient();
@@ -920,15 +1135,51 @@ function ScenarioRunner() {
     mutationFn: () =>
       api.post<{ data: { runs: ScenarioRun[]; averageScore: number } }>('/api/v1/bot/scenarios/run'),
     onSuccess: (res) => {
-      toast.success(`Avg score: ${res.data.averageScore}/100`);
+      const count = res.data.runs.length;
+      toast.success(`Ran ${count} scenario${count === 1 ? '' : 's'} — avg ${res.data.averageScore}/100`);
       qc.invalidateQueries({ queryKey: ['bot-scenarios-last'] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'AI not configured'),
   });
 
+  // Regenerate from the current KB — wipes prior AI-generated scenarios +
+  // their run history, keeps anything marked `source = manual`. Good to
+  // press after re-crawling the website / approving new KB entries.
+  const regen = useMutation({
+    mutationFn: () =>
+      api.post<{ data: { scenarios: { id: string }[] } }>('/api/v1/bot/scenarios/generate'),
+    onSuccess: (res) => {
+      const n = res.data.scenarios.length;
+      toast.success(`Generated ${n} fresh scenario${n === 1 ? '' : 's'} from your knowledge base.`);
+      qc.invalidateQueries({ queryKey: ['bot-scenarios-last'] });
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Could not regenerate'),
+  });
+
+  // Wipe ALL scenarios + their runs.
+  const deleteAll = useMutation({
+    mutationFn: () => api.delete('/api/v1/bot/scenarios'),
+    onSuccess: () => {
+      toast.success('All scenarios deleted. Press Run all to generate a fresh set.');
+      qc.invalidateQueries({ queryKey: ['bot-scenarios-last'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Delete failed'),
+  });
+
+  // Delete a single scenario row + its run history.
+  const deleteOne = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/bot/scenarios/${id}`),
+    onSuccess: () => {
+      toast.success('Scenario deleted.');
+      qc.invalidateQueries({ queryKey: ['bot-scenarios-last'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Delete failed'),
+  });
+
   const override = useMutation({
-    mutationFn: (args: { id: string; overrideScore: number | null; overrideNotes: string | null }) =>
-      api.patch(`/api/v1/bot/scenarios/runs/${args.id}`, {
+    mutationFn: (args: { runId: string; overrideScore: number | null; overrideNotes: string | null }) =>
+      api.patch(`/api/v1/bot/scenarios/runs/${args.runId}`, {
         overrideScore: args.overrideScore,
         overrideNotes: args.overrideNotes,
       }),
@@ -950,8 +1201,9 @@ function ScenarioRunner() {
         <div>
           <CardTitle>Test scenarios</CardTitle>
           <CardDescription>
-            Five canned customer queries. Each reply is scored 0–100 by an LLM judge — override any
-            score below if you disagree.
+            Generated from your knowledge base. Each reply is scored 0–100 by an LLM judge — override
+            any score if you disagree. Press <span className="font-medium">Regenerate from KB</span>{' '}
+            after you update the knowledge base to refresh the scenarios.
           </CardDescription>
         </div>
         <div className="flex items-center gap-2">
@@ -960,28 +1212,76 @@ function ScenarioRunner() {
               Avg {avg}
             </Badge>
           ) : null}
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={async () => {
+              if (
+                await confirmDialog({
+                  title: 'Regenerate scenarios from KB?',
+                  body:
+                    'Wipes the current AI-generated scenarios and their run history, then drafts a fresh batch from your current knowledge base + catalog. Any scenarios you marked as manual are preserved.',
+                  confirmLabel: 'Regenerate',
+                })
+              ) {
+                regen.mutate();
+              }
+            }}
+            loading={regen.isPending}
+          >
+            <Sparkles className="size-4" /> Regenerate from KB
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={async () => {
+              if (
+                await confirmDialog({
+                  title: 'Delete every scenario?',
+                  body:
+                    'Removes all scenarios (manual + AI) and every run history. The next Run all click will generate a brand-new set from your current KB.',
+                  confirmLabel: 'Delete all',
+                  destructive: true,
+                })
+              ) {
+                deleteAll.mutate();
+              }
+            }}
+            loading={deleteAll.isPending}
+            disabled={rows.length === 0}
+          >
+            <Trash2 className="size-4" /> Delete all
+          </Button>
           <Button size="sm" onClick={() => run.mutate()} loading={run.isPending}>
             <Play className="size-4" /> Run all
           </Button>
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <ul className="divide-y divide-border">
-          {rows.map((r) => (
-            <ScenarioRow
-              key={r.key}
-              r={r}
-              onOverride={(score, notes) => {
-                if (!r.id) {
-                  toast.error('Run this scenario first, then override.');
-                  return;
-                }
-                override.mutate({ id: r.id, overrideScore: score, overrideNotes: notes });
-              }}
-              saving={override.isPending}
-            />
-          ))}
-        </ul>
+        {rows.length === 0 && !last.isLoading ? (
+          <div className="px-6 py-10 text-center text-sm text-foreground-muted">
+            No scenarios yet. Press <span className="font-medium">Run all</span> — we'll draft them
+            from your current knowledge base and grade each reply.
+          </div>
+        ) : (
+          <ul className="divide-y divide-border">
+            {rows.map((r) => (
+              <ScenarioRow
+                key={r.id}
+                r={r}
+                onOverride={(score, notes) => {
+                  if (!r.runId) {
+                    toast.error('Run this scenario first, then override.');
+                    return;
+                  }
+                  override.mutate({ runId: r.runId, overrideScore: score, overrideNotes: notes });
+                }}
+                onDelete={() => deleteOne.mutate(r.id)}
+                saving={override.isPending}
+              />
+            ))}
+          </ul>
+        )}
       </CardContent>
     </Card>
   );
@@ -990,10 +1290,12 @@ function ScenarioRunner() {
 function ScenarioRow({
   r,
   onOverride,
+  onDelete,
   saving,
 }: {
   r: ScenarioRun;
   onOverride: (score: number | null, notes: string | null) => void;
+  onDelete: () => void;
   saving: boolean;
 }) {
   const [editing, setEditing] = useState(false);
@@ -1013,7 +1315,14 @@ function ScenarioRow({
   return (
     <li className="px-6 py-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium capitalize">{r.key.replace(/_/g, ' ')}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium capitalize">{r.key.replace(/_/g, ' ')}</span>
+          {r.source === 'manual' ? (
+            <Badge variant="muted" className="text-[10px]">
+              manual
+            </Badge>
+          ) : null}
+        </div>
         <div className="flex items-center gap-1.5">
           {eff != null ? (
             <Badge variant={eff >= 85 ? 'success' : eff >= 60 ? 'warning' : 'danger'}>
@@ -1022,7 +1331,7 @@ function ScenarioRow({
           ) : (
             <Badge variant="muted">not run</Badge>
           )}
-          {r.id ? (
+          {r.runId ? (
             <Button
               size="sm"
               variant="ghost"
@@ -1032,6 +1341,25 @@ function ScenarioRow({
               {editing ? 'Cancel' : hasOverride ? 'Edit override' : 'Override'}
             </Button>
           ) : null}
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label="Delete this scenario"
+            onClick={async () => {
+              if (
+                await confirmDialog({
+                  title: 'Delete this scenario?',
+                  body: `"${r.key.replace(/_/g, ' ')}" and its run history will be removed.`,
+                  confirmLabel: 'Delete',
+                  destructive: true,
+                })
+              ) {
+                onDelete();
+              }
+            }}
+          >
+            <Trash2 className="size-4" />
+          </Button>
         </div>
       </div>
       <p className="mt-1 text-xs italic text-foreground-muted">{r.prompt}</p>

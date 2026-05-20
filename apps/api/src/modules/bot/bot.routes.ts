@@ -79,38 +79,164 @@ const kbEntryDto = z.object({
   updatedAt: z.string().datetime(),
 });
 
-const SCENARIOS: { key: string; prompt: string; expectation: string }[] = [
+// Fallback scenarios — used only when LLM generation fails AND the org has
+// no manual scenarios saved. Kept tiny + generic so an admin sees SOMETHING
+// when they click "Run all" on a fresh org.
+const FALLBACK_SCENARIOS: { key: string; prompt: string; expectation: string }[] = [
   {
-    key: 'product_question',
-    prompt: 'Hey, do you sell anything for outdoor running?',
-    expectation:
-      'Bot lists 1–3 relevant products by name with price if known. Politely says "no" if catalog has none.',
-  },
-  {
-    key: 'hours_question',
-    prompt: 'What time do you open tomorrow?',
-    expectation:
-      'Bot gives the opening hour for the next business day or says hours are not configured.',
-  },
-  {
-    key: 'booking',
-    prompt: 'I want to book the consulting session for next Tuesday.',
-    expectation:
-      'Bot acknowledges the service, points to availability or asks for booking details. No fake confirmations.',
-  },
-  {
-    key: 'complaint',
-    prompt: 'I bought something last week and it arrived broken. This is unacceptable.',
-    expectation:
-      'Bot apologises briefly, points at returns / refund policy if it exists, or escalates to a human.',
-  },
-  {
-    key: 'unknown',
+    key: 'unknown_question',
     prompt: 'Do you ship to Antarctica?',
     expectation:
       'Bot says it does not have that information and offers to escalate to a human. No fabrication.',
   },
 ];
+
+// Generate fresh test scenarios from the org's CURRENT knowledge base + catalog.
+// Returns 5–8 scenarios as `{ key, prompt, expectation }`. Each scenario tests
+// a specific KB topic the operator should care about — menu lookups, hours,
+// allergens, delivery, refunds, etc.
+async function generateScenariosFromKb(
+  orgId: string,
+  data: Awaited<ReturnType<typeof gatherBotData>>,
+): Promise<{ key: string; prompt: string; expectation: string }[]> {
+  // Compress the KB / catalog / business info into a tight prompt context.
+  const kbSnippets = data.kb.slice(0, 30).map((k) => `Q: ${k.question}\nA: ${k.answer}`).join('\n\n');
+  const productSnippets = data.products
+    .slice(0, 20)
+    .map((p) => `- ${p.name}${p.shortDescription ? ` (${p.shortDescription})` : ''}`)
+    .join('\n');
+  const serviceSnippets = data.services
+    .slice(0, 10)
+    .map((s) => `- ${s.name}${s.shortDescription ? ` (${s.shortDescription})` : ''}`)
+    .join('\n');
+  const bizContext = data.biz
+    ? `Business: ${data.biz.legalName ?? ''}\nTagline: ${data.biz.tagline ?? ''}\nAbout: ${(data.biz.about ?? '').slice(0, 400)}`
+    : '';
+
+  const sys =
+    'You are a QA test designer for customer-support chatbots. Generate REALISTIC test scenarios a customer of THIS specific business might ask. Cover a spread: product/service lookups, hours, delivery, allergens or policies, edge cases the bot might get wrong, and at least one out-of-scope question. Return STRICT JSON only (no prose, no markdown): {"scenarios": [{"key": "<slug>", "prompt": "<customer message>", "expectation": "<one-sentence pass criterion for an LLM judge>"}]}. 6–8 scenarios, keys are short snake_case slugs, prompts are colloquial first-person customer messages.';
+  const user = `${bizContext}\n\nKnowledge base:\n${kbSnippets || '(empty)'}\n\nProducts:\n${productSnippets || '(none)'}\n\nServices:\n${serviceSnippets || '(none)'}`;
+
+  try {
+    const out = await complete({
+      organizationId: orgId,
+      systemPrompt: sys,
+      messages: [{ role: 'user', content: user }],
+      maxTokens: 1400,
+      temperature: 0.4,
+    });
+    const trimmed = out.text.trim().replace(/^```json/i, '').replace(/```$/i, '').trim();
+    const parsed = JSON.parse(trimmed) as {
+      scenarios?: { key?: unknown; prompt?: unknown; expectation?: unknown }[];
+    };
+    if (!Array.isArray(parsed.scenarios)) return FALLBACK_SCENARIOS;
+    const seen = new Set<string>();
+    const cleaned: { key: string; prompt: string; expectation: string }[] = [];
+    for (const s of parsed.scenarios) {
+      const key = typeof s.key === 'string'
+        ? s.key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60)
+        : '';
+      const prompt = typeof s.prompt === 'string' ? s.prompt.trim() : '';
+      const expectation = typeof s.expectation === 'string' ? s.expectation.trim() : '';
+      if (!key || !prompt || !expectation || seen.has(key)) continue;
+      seen.add(key);
+      cleaned.push({ key, prompt, expectation });
+      if (cleaned.length >= 10) break;
+    }
+    return cleaned.length > 0 ? cleaned : FALLBACK_SCENARIOS;
+  } catch {
+    return FALLBACK_SCENARIOS;
+  }
+}
+
+// Generate 3–5 conversation-flow CANDIDATES tailored to the business.
+// Each candidate is a complete `{ nodes: [{ intent, label, response }] }`
+// shape the bot-engine already consumes. The LLM picks ONE as
+// `isRecommended = true` and justifies why with `recommendReason`.
+async function generateFlowCandidates(
+  orgId: string,
+  data: Awaited<ReturnType<typeof gatherBotData>>,
+): Promise<
+  {
+    name: string;
+    description: string;
+    flow: { nodes: { intent: string; label: string; response: string }[] };
+    isRecommended: boolean;
+    recommendReason: string | null;
+  }[]
+> {
+  const kbSnippets = data.kb.slice(0, 25).map((k) => `Q: ${k.question}\nA: ${k.answer}`).join('\n\n');
+  const productNames = data.products.slice(0, 25).map((p) => p.name).join(', ');
+  const serviceNames = data.services.slice(0, 15).map((s) => s.name).join(', ');
+  const bizContext = data.biz
+    ? `Business: ${data.biz.legalName ?? ''}\nTagline: ${data.biz.tagline ?? ''}\nAbout: ${(data.biz.about ?? '').slice(0, 400)}`
+    : '';
+  const policiesContext = data.policies
+    .slice(0, 8)
+    .map((p) => `- ${p.title} (${p.kind})`)
+    .join('\n');
+
+  const sys =
+    'You are a senior conversation designer. Look at the business and produce 3–5 DIFFERENT conversation-flow CANDIDATES the operator can pick from. Each candidate represents a strategically different way of talking to customers (e.g. "Quick Order First", "Hospitality Concierge", "Support-First", "Concierge Sales", "Self-Serve Menu"). For EACH candidate, also produce 6–10 intent nodes — each intent has a slug like "menu_lookup", a human label, and a SHORT response template (1–3 sentences, in English, that the LLM-driven bot would adapt at runtime). Mark exactly ONE candidate as "isRecommended" with a one-sentence "recommendReason" explaining why it fits this business best. Return STRICT JSON only: {"candidates": [{"name": "...", "description": "...", "isRecommended": true|false, "recommendReason": "..." | null, "nodes": [{"intent": "...", "label": "...", "response": "..."}]}]}. No prose, no markdown.';
+  const user = `${bizContext}\n\nProducts: ${productNames || '(none)'}\nServices: ${serviceNames || '(none)'}\n\nKnowledge base highlights:\n${kbSnippets || '(empty)'}\n\nPolicies:\n${policiesContext || '(none)'}`;
+
+  try {
+    const out = await complete({
+      organizationId: orgId,
+      systemPrompt: sys,
+      messages: [{ role: 'user', content: user }],
+      maxTokens: 4000,
+      temperature: 0.6,
+    });
+    const trimmed = out.text.trim().replace(/^```json/i, '').replace(/```$/i, '').trim();
+    const parsed = JSON.parse(trimmed) as {
+      candidates?: {
+        name?: unknown;
+        description?: unknown;
+        isRecommended?: unknown;
+        recommendReason?: unknown;
+        nodes?: { intent?: unknown; label?: unknown; response?: unknown }[];
+      }[];
+    };
+    if (!Array.isArray(parsed.candidates)) return [];
+    const cleaned = parsed.candidates
+      .map((c) => {
+        const name = typeof c.name === 'string' ? c.name.trim().slice(0, 80) : '';
+        const description = typeof c.description === 'string' ? c.description.trim().slice(0, 400) : '';
+        const recommendReason =
+          typeof c.recommendReason === 'string' ? c.recommendReason.trim().slice(0, 300) : null;
+        const isRecommended = c.isRecommended === true;
+        const nodes = (Array.isArray(c.nodes) ? c.nodes : [])
+          .map((n) => ({
+            intent:
+              typeof n.intent === 'string'
+                ? n.intent.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40)
+                : '',
+            label: typeof n.label === 'string' ? n.label.trim().slice(0, 80) : '',
+            response: typeof n.response === 'string' ? n.response.trim().slice(0, 600) : '',
+          }))
+          .filter((n) => n.intent && n.label && n.response);
+        return { name, description, recommendReason, isRecommended, flow: { nodes } };
+      })
+      .filter((c) => c.name && c.description && c.flow.nodes.length > 0)
+      .slice(0, 5);
+
+    // Ensure exactly one candidate is recommended. If LLM didn't mark any,
+    // pick the first; if it marked several, keep only the first one's flag.
+    let recommendedSeen = false;
+    for (const c of cleaned) {
+      if (c.isRecommended && !recommendedSeen) {
+        recommendedSeen = true;
+      } else if (c.isRecommended) {
+        c.isRecommended = false;
+      }
+    }
+    if (!recommendedSeen && cleaned.length > 0) cleaned[0]!.isRecommended = true;
+    return cleaned;
+  } catch {
+    return [];
+  }
+}
 
 function serializeConfig(c: {
   id: string;
@@ -624,14 +750,16 @@ export default async function botRoutes(app: FastifyInstance) {
     },
   );
 
-  // ---------- POST /bot/scenarios/run ----------
-  // Runs the canned scenarios + LLM-as-judge scoring.
+  // ---------- POST /bot/scenarios/generate ----------
+  // Build a fresh set of scenarios from the CURRENT knowledge base + catalog.
+  // Wipes existing ai_generated scenarios + their runs; preserves any manual
+  // ones the operator authored.
   r.post(
-    '/bot/scenarios/run',
+    '/bot/scenarios/generate',
     {
       schema: {
         tags: ['bot'],
-        summary: 'Run all 5 canned test scenarios and score each with LLM-as-judge.',
+        summary: 'Regenerate test scenarios from the current KB (wipes prior AI ones).',
       },
       preHandler: [app.requireRole('admin')],
     },
@@ -643,19 +771,191 @@ export default async function botRoutes(app: FastifyInstance) {
         );
       }
       const orgId = req.auth!.organizationId;
-      const out: { key: string; prompt: string; reply: string; score: number; notes: string }[] = [];
+      const data = await app.tenant(req, (tx) => gatherBotData(tx, orgId));
+      const generated = await generateScenariosFromKb(orgId, data);
 
-      // Gather data once for the whole run — same KB/catalog/business info
-      // applies to every scenario. Saves ~5 round trips per scenario.
+      const written = await app.tenant(req, async (tx) => {
+        // Wipe AI-generated scenarios + their runs. Manual ones are kept.
+        const stale = await tx.botTestScenario.findMany({
+          where: { source: 'ai_generated' },
+          select: { key: true },
+        });
+        const staleKeys = stale.map((s) => s.key);
+        if (staleKeys.length > 0) {
+          await tx.botTestRun.deleteMany({ where: { scenarioKey: { in: staleKeys } } });
+          await tx.botTestScenario.deleteMany({
+            where: { source: 'ai_generated' },
+          });
+        }
+        const rows = [];
+        for (let i = 0; i < generated.length; i++) {
+          const g = generated[i]!;
+          const row = await tx.botTestScenario.upsert({
+            where: { organizationId_key: { organizationId: orgId, key: g.key } },
+            update: { prompt: g.prompt, expectation: g.expectation, source: 'ai_generated', sortOrder: i },
+            create: {
+              organizationId: orgId,
+              key: g.key,
+              prompt: g.prompt,
+              expectation: g.expectation,
+              source: 'ai_generated',
+              sortOrder: i,
+            },
+          });
+          rows.push(row);
+        }
+        return rows;
+      });
+
+      await recordAudit({
+        action: 'business_info_updated',
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        entityType: 'bot_test_scenario',
+        metadata: { event: 'scenarios_generated', count: written.length },
+      });
+      return {
+        data: {
+          scenarios: written.map((s) => ({
+            id: s.id,
+            key: s.key,
+            prompt: s.prompt,
+            expectation: s.expectation,
+            source: s.source,
+          })),
+        },
+      };
+    },
+  );
+
+  // ---------- DELETE /bot/scenarios ----------
+  // Wipe ALL scenarios (manual + AI) and their runs. Used when the operator
+  // wants a clean slate before a regenerate.
+  r.delete(
+    '/bot/scenarios',
+    {
+      schema: { tags: ['bot'], summary: 'Delete every test scenario + its run history.', response: { 200: successSchema } },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const result = await app.tenant(req, async (tx) => {
+        const before = await tx.botTestScenario.count();
+        await tx.botTestRun.deleteMany({});
+        await tx.botTestScenario.deleteMany({});
+        return before;
+      });
+      await recordAudit({
+        action: 'business_info_updated',
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        entityType: 'bot_test_scenario',
+        metadata: { event: 'scenarios_deleted_all', count: result },
+      });
+      return { ok: true as const };
+    },
+  );
+
+  // ---------- DELETE /bot/scenarios/:id ----------
+  r.delete(
+    '/bot/scenarios/:id',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Delete one scenario + its run history.',
+        params: z.object({ id: uuidSchema }),
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      await app.tenant(req, async (tx) => {
+        const row = await tx.botTestScenario.findUnique({ where: { id: req.params.id } });
+        if (!row) throw notFound('Scenario not found.');
+        await tx.botTestRun.deleteMany({ where: { scenarioKey: row.key } });
+        await tx.botTestScenario.delete({ where: { id: row.id } });
+      });
+      await recordAudit({
+        action: 'business_info_updated',
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        entityType: 'bot_test_scenario',
+        entityId: req.params.id,
+        metadata: { event: 'scenario_deleted' },
+      });
+      return { ok: true as const };
+    },
+  );
+
+  // ---------- POST /bot/scenarios/run ----------
+  // Runs every scenario the org has in the DB + LLM-judges each. If the org
+  // has NO scenarios yet (fresh install or operator just deleted them all),
+  // we auto-generate a fresh batch from the current KB first — so the
+  // operator's "Run all" click after a KB refresh always produces a NEW set.
+  r.post(
+    '/bot/scenarios/run',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Run every saved scenario + LLM-judge. Auto-generates from KB if none saved.',
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      if (!isOpenAIConfigured()) {
+        throw badRequest(
+          ApiErrorCode.SERVICE_UNAVAILABLE,
+          'AI bot is unavailable: OPENAI_API_KEY is not configured.',
+        );
+      }
+      const orgId = req.auth!.organizationId;
       const data = await app.tenant(req, (tx) => gatherBotData(tx, orgId));
 
-      for (const s of SCENARIOS) {
+      // Auto-generate when empty so the button is never a no-op.
+      let scenarios = await app.tenant(req, (tx) =>
+        tx.botTestScenario.findMany({ orderBy: { sortOrder: 'asc' } }),
+      );
+      if (scenarios.length === 0) {
+        const fresh = await generateScenariosFromKb(orgId, data);
+        scenarios = await app.tenant(req, async (tx) => {
+          const rows = [];
+          for (let i = 0; i < fresh.length; i++) {
+            const g = fresh[i]!;
+            const row = await tx.botTestScenario.upsert({
+              where: { organizationId_key: { organizationId: orgId, key: g.key } },
+              update: { prompt: g.prompt, expectation: g.expectation, source: 'ai_generated', sortOrder: i },
+              create: {
+                organizationId: orgId,
+                key: g.key,
+                prompt: g.prompt,
+                expectation: g.expectation,
+                source: 'ai_generated',
+                sortOrder: i,
+              },
+            });
+            rows.push(row);
+          }
+          return rows;
+        });
+      }
+
+      const out: {
+        id: string;
+        key: string;
+        prompt: string;
+        reply: string;
+        score: number;
+        notes: string;
+      }[] = [];
+
+      for (const s of scenarios) {
         const reply = await buildBotResponse({
           organizationId: orgId,
           userMessage: s.prompt,
           data,
         });
-        // LLM-as-judge: score the bot's reply against the expectation.
+        // LLM-as-judge.
         const judgeSys =
           'You are a strict QA judge. Score the bot reply 0–100 against the expectation. Return STRICT JSON: {"score": <int>, "notes": "<one short sentence>"}. No prose, no markdown.';
         const judgeUser = `Expectation:\n${s.expectation}\n\nBot reply:\n${reply.text}`;
@@ -688,7 +988,7 @@ export default async function botRoutes(app: FastifyInstance) {
             },
           }),
         );
-        out.push({ key: s.key, prompt: s.prompt, reply: reply.text, score, notes });
+        out.push({ id: s.id, key: s.key, prompt: s.prompt, reply: reply.text, score, notes });
       }
       const avg = out.reduce((a, b) => a + b.score, 0) / Math.max(1, out.length);
       return { data: { runs: out, averageScore: Math.round(avg) } };
@@ -696,34 +996,33 @@ export default async function botRoutes(app: FastifyInstance) {
   );
 
   // ---------- GET /bot/scenarios/last ----------
+  // Latest run for every scenario the org has saved. Falls back to the
+  // scenario row itself (no run yet) so the UI can render a "not run yet"
+  // state alongside the scored ones.
   r.get(
     '/bot/scenarios/last',
     {
-      schema: { tags: ['bot'], summary: 'Latest test run per scenario.' },
+      schema: { tags: ['bot'], summary: 'Latest test run per saved scenario.' },
       preHandler: [app.requireRole('viewer')],
     },
     async (req) =>
       app.tenant(req, async (tx) => {
-        const out: {
-          id: string | null;
-          key: string;
-          prompt: string;
-          reply: string | null;
-          score: number | null;
-          notes: string | null;
-          overrideScore: number | null;
-          overrideNotes: string | null;
-          ranAt: string | null;
-        }[] = [];
-        for (const s of SCENARIOS) {
+        const scenarios = await tx.botTestScenario.findMany({
+          orderBy: { sortOrder: 'asc' },
+        });
+        const out = [];
+        for (const s of scenarios) {
           const last = await tx.botTestRun.findFirst({
             where: { scenarioKey: s.key },
             orderBy: { createdAt: 'desc' },
           });
           out.push({
-            id: last?.id ?? null,
+            id: s.id,
             key: s.key,
             prompt: s.prompt,
+            expectation: s.expectation,
+            source: s.source,
+            runId: last?.id ?? null,
             reply: last?.botResponse ?? null,
             score: last?.score ?? null,
             notes: last?.judgeNotes ?? null,
@@ -734,6 +1033,263 @@ export default async function botRoutes(app: FastifyInstance) {
         }
         return { data: out };
       }),
+  );
+
+  // ---------- POST /bot/conversation-flows/recommend ----------
+  // Generate 3–5 conversation-flow CANDIDATES tailored to the business.
+  // Replaces any prior unselected candidates so the operator sees a fresh
+  // set. The previously-selected one (if any) is preserved + un-flagged
+  // as recommended; the LLM picks a new recommended candidate.
+  r.post(
+    '/bot/conversation-flows/recommend',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Generate 3–5 conversation-flow candidates tailored to the business.',
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      if (!isOpenAIConfigured()) {
+        throw badRequest(
+          ApiErrorCode.SERVICE_UNAVAILABLE,
+          'AI bot is unavailable: OPENAI_API_KEY is not configured.',
+        );
+      }
+      const orgId = req.auth!.organizationId;
+      const data = await app.tenant(req, (tx) => gatherBotData(tx, orgId));
+      const candidates = await generateFlowCandidates(orgId, data);
+      if (candidates.length === 0) {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'Could not generate flow candidates. Add some KB / products / services first.',
+        );
+      }
+
+      const saved = await app.tenant(req, async (tx) => {
+        // Wipe unselected candidates so the operator only sees the freshest
+        // set. Keep the active one — switching mid-deploy would be jarring.
+        await tx.botConversationFlowOption.deleteMany({ where: { isSelected: false } });
+        // Clear any stale recommended flags on the surviving (selected) one.
+        await tx.botConversationFlowOption.updateMany({
+          where: { isSelected: true },
+          data: { isRecommended: false },
+        });
+        const rows = [];
+        for (const c of candidates) {
+          const row = await tx.botConversationFlowOption.create({
+            data: {
+              organizationId: orgId,
+              name: c.name,
+              description: c.description,
+              flow: c.flow as never,
+              isRecommended: c.isRecommended,
+              recommendReason: c.recommendReason,
+              isSelected: false,
+            },
+          });
+          rows.push(row);
+        }
+        return rows;
+      });
+
+      await recordAudit({
+        action: 'business_info_updated',
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        entityType: 'bot_conversation_flow_option',
+        metadata: { event: 'flow_candidates_generated', count: saved.length },
+      });
+      return {
+        data: {
+          candidates: saved.map((c) => ({
+            id: c.id,
+            name: c.name,
+            description: c.description,
+            isRecommended: c.isRecommended,
+            recommendReason: c.recommendReason,
+            isSelected: c.isSelected,
+            flow: c.flow as Record<string, unknown>,
+          })),
+        },
+      };
+    },
+  );
+
+  // ---------- GET /bot/conversation-flows ----------
+  r.get(
+    '/bot/conversation-flows',
+    {
+      schema: { tags: ['bot'], summary: 'List conversation-flow candidates for this org.' },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const rows = await tx.botConversationFlowOption.findMany({
+          orderBy: [{ isSelected: 'desc' }, { isRecommended: 'desc' }, { createdAt: 'asc' }],
+        });
+        return {
+          data: rows.map((c) => ({
+            id: c.id,
+            name: c.name,
+            description: c.description,
+            isRecommended: c.isRecommended,
+            recommendReason: c.recommendReason,
+            isSelected: c.isSelected,
+            flow: c.flow as Record<string, unknown>,
+            createdAt: c.createdAt.toISOString(),
+          })),
+        };
+      }),
+  );
+
+  // ---------- POST /bot/conversation-flows/:id/select ----------
+  // Mark a candidate as the active flow and mirror its JSON onto the
+  // BotConfig so the runtime keeps a single source of truth.
+  r.post(
+    '/bot/conversation-flows/:id/select',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Select a candidate as the active conversation flow.',
+        params: z.object({ id: uuidSchema }),
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const updated = await app.tenant(req, async (tx) => {
+        const row = await tx.botConversationFlowOption.findUnique({ where: { id: req.params.id } });
+        if (!row) throw notFound('Flow candidate not found.');
+        await tx.botConversationFlowOption.updateMany({ data: { isSelected: false } });
+        const selected = await tx.botConversationFlowOption.update({
+          where: { id: row.id },
+          data: { isSelected: true },
+        });
+        // Mirror onto BotConfig so the runtime keeps reading one source.
+        await tx.botConfig.upsert({
+          where: { organizationId: orgId },
+          create: { organizationId: orgId, conversationFlow: selected.flow as never },
+          update: { conversationFlow: selected.flow as never },
+        });
+        return selected;
+      });
+      await recordAudit({
+        action: 'business_info_updated',
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        entityType: 'bot_conversation_flow_option',
+        entityId: updated.id,
+        metadata: { event: 'flow_selected', name: updated.name },
+      });
+      return {
+        data: {
+          id: updated.id,
+          name: updated.name,
+          isSelected: updated.isSelected,
+        },
+      };
+    },
+  );
+
+  // ---------- PATCH /bot/conversation-flows/:id ----------
+  // Edit a candidate's name, description, or flow JSON. Edits to the
+  // currently-selected candidate are mirrored onto BotConfig.
+  r.patch(
+    '/bot/conversation-flows/:id',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Edit a conversation-flow candidate.',
+        params: z.object({ id: uuidSchema }),
+        body: z.object({
+          name: z.string().trim().min(1).max(80).optional(),
+          description: z.string().trim().min(1).max(400).optional(),
+          flow: z
+            .object({
+              nodes: z.array(
+                z.object({
+                  intent: z.string().trim().min(1).max(40),
+                  label: z.string().trim().min(1).max(80),
+                  response: z.string().trim().min(1).max(600),
+                }),
+              ),
+            })
+            .optional(),
+        }),
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const updated = await app.tenant(req, async (tx) => {
+        const row = await tx.botConversationFlowOption.findUnique({ where: { id: req.params.id } });
+        if (!row) throw notFound('Flow candidate not found.');
+        const next = await tx.botConversationFlowOption.update({
+          where: { id: row.id },
+          data: {
+            name: req.body.name ?? undefined,
+            description: req.body.description ?? undefined,
+            flow: req.body.flow === undefined ? undefined : (req.body.flow as never),
+          },
+        });
+        if (next.isSelected && req.body.flow !== undefined) {
+          await tx.botConfig.update({
+            where: { organizationId: orgId },
+            data: { conversationFlow: next.flow as never },
+          });
+        }
+        return next;
+      });
+      return {
+        data: {
+          id: updated.id,
+          name: updated.name,
+          description: updated.description,
+          flow: updated.flow as Record<string, unknown>,
+        },
+      };
+    },
+  );
+
+  // ---------- DELETE /bot/conversation-flows/:id ----------
+  // Remove a candidate. Refuses to delete the currently-selected one — the
+  // operator must pick another candidate first so the bot never has no
+  // active flow.
+  r.delete(
+    '/bot/conversation-flows/:id',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Delete a conversation-flow candidate (must not be selected).',
+        params: z.object({ id: uuidSchema }),
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      await app.tenant(req, async (tx) => {
+        const row = await tx.botConversationFlowOption.findUnique({ where: { id: req.params.id } });
+        if (!row) throw notFound('Flow candidate not found.');
+        if (row.isSelected) {
+          throw badRequest(
+            ApiErrorCode.VALIDATION_ERROR,
+            'Cannot delete the currently-selected flow. Select a different one first.',
+          );
+        }
+        await tx.botConversationFlowOption.delete({ where: { id: row.id } });
+      });
+      await recordAudit({
+        action: 'business_info_updated',
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        entityType: 'bot_conversation_flow_option',
+        entityId: req.params.id,
+        metadata: { event: 'flow_candidate_deleted' },
+      });
+      return { ok: true as const };
+    },
   );
 
   // ---------- PATCH /bot/scenarios/runs/:id ----------

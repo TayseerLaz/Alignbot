@@ -175,6 +175,9 @@ export const broadcastDtoSchema = z.object({
   ),
   csvAssetId: uuidSchema.nullable(),
   segmentId: uuidSchema.nullable(),
+  // Tag-based audience (audienceKind = 'tags'). Empty for other kinds.
+  audienceTags: z.array(z.string()).default([]),
+  audienceTagsMode: z.enum(['any', 'all']).default('any'),
   abTest: z.boolean(),
   variantATemplateId: uuidSchema,
   variantBTemplateId: uuidSchema.nullable(),
@@ -209,6 +212,8 @@ export const createBroadcastBodySchema = z.object({
   ),
   csvAssetId: uuidSchema.optional().nullable(),
   segmentId: uuidSchema.optional().nullable(),
+  audienceTags: z.array(z.string().trim().min(1).max(40)).max(50).optional(),
+  audienceTagsMode: z.enum(['any', 'all']).optional(),
   manualPhones: z.array(phoneE164Schema).max(10000).optional(),
   abTest: z.boolean().default(false),
   variantATemplateId: uuidSchema,

@@ -33,8 +33,14 @@ export const BROADCAST_STATUS_LABELS: Record<BroadcastStatus, string> = {
 
 export const BroadcastAudienceKind = {
   csv: 'csv',
+  // Legacy — kept on the union so existing broadcast rows still parse, but
+  // the wizard no longer surfaces it. Tag-based audiences replaced segments.
   segment: 'segment',
   manual: 'manual',
+  // Tag-based audience: client-side selects 1..N tags and a mode
+  // ('any' = OR, 'all' = AND). Materialized at send time by intersecting
+  // Contact.tags against the chosen tags.
+  tags: 'tags',
 } as const;
 export type BroadcastAudienceKind =
   (typeof BroadcastAudienceKind)[keyof typeof BroadcastAudienceKind];

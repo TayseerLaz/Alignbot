@@ -12,7 +12,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
-import SegmentsManager from '@/components/segments/segments-manager';
 import SequencesManager from '@/components/sequences/sequences-manager';
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
@@ -30,17 +29,15 @@ const STATUS_CLASS: Record<BroadcastStatus, string> = {
   failed: 'bg-red-50 text-red-700',
 };
 
-type TabValue = 'broadcasts' | 'segments' | 'sequences';
+type TabValue = 'broadcasts' | 'sequences';
 
 export default function BroadcastsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  // Honor ?tab=segments / ?tab=sequences deep-links (and the
-  // /segments + /sequences → /broadcasts redirects). Default to the
-  // broadcasts tab.
+  // Segments tab was removed (audiences are now driven by contact tags).
+  // Legacy ?tab=segments deep-links fall through to the broadcasts tab.
   const rawTab = searchParams.get('tab');
-  const initialTab: TabValue =
-    rawTab === 'segments' ? 'segments' : rawTab === 'sequences' ? 'sequences' : 'broadcasts';
+  const initialTab: TabValue = rawTab === 'sequences' ? 'sequences' : 'broadcasts';
   const [tab, setTab] = useState<TabValue>(initialTab);
 
   // Keep the URL in sync as the user clicks between tabs so deep-links
@@ -70,19 +67,18 @@ export default function BroadcastsPage() {
         }
       />
 
+      {/* Segments tab removed — broadcast audiences are now driven by
+          contact tags. Keep the SegmentsManager import unused below
+          intentionally so the component stays compilable for the
+          /segments redirect route until segments are fully removed. */}
       <Tabs value={tab} onValueChange={(v) => setTab(v as TabValue)}>
         <TabsList>
           <TabsTrigger value="broadcasts">Broadcasts</TabsTrigger>
-          <TabsTrigger value="segments">Segments</TabsTrigger>
           <TabsTrigger value="sequences">Sequences</TabsTrigger>
         </TabsList>
 
         <TabsContent value="broadcasts">
           <BroadcastsTab />
-        </TabsContent>
-
-        <TabsContent value="segments">
-          <SegmentsManager showHeader={false} />
         </TabsContent>
 
         <TabsContent value="sequences">
@@ -181,7 +177,13 @@ function BroadcastsTab() {
                       ? 'CSV'
                       : b.audienceKind === 'segment'
                         ? 'Segment'
-                        : 'Manual'}
+                        : b.audienceKind === 'tags'
+                          ? `Tags · ${b.audienceTags?.join(', ') ?? ''}${
+                              (b.audienceTags?.length ?? 0) > 1
+                                ? ` (${b.audienceTagsMode === 'all' ? 'all' : 'any'})`
+                                : ''
+                            }`
+                          : 'Manual'}
                     {' · '}
                     <span className="font-mono text-xs">{b.totalRecipients}</span>
                   </td>

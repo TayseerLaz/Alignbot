@@ -1768,6 +1768,7 @@ enum BroadcastAudienceKind {
   csv
   segment
   manual
+  tags
 }
 
 enum BroadcastVariant {
@@ -1885,6 +1886,11 @@ model Broadcast {
   audienceKind        BroadcastAudienceKind @map("audience_kind")
   csvAssetId          String?               @map("csv_asset_id") @db.Uuid
   segmentId           String?               @map("segment_id") @db.Uuid
+  // Tag-based audience. Populated when audienceKind = 'tags'. The fanout
+  // worker resolves these to Contact rows at send time by intersecting
+  // ContactTag.tag against this list (mode picks OR vs AND).
+  audienceTags        String[]              @default([]) @map("audience_tags")
+  audienceTagsMode    String                @default("any") @map("audience_tags_mode") // 'any' (OR) | 'all' (AND)
   // A/B test
   abTest              Boolean               @default(false) @map("ab_test")
   variantATemplateId  String                @map("variant_a_template_id") @db.Uuid

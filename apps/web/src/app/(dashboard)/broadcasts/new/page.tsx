@@ -2,7 +2,6 @@
 
 import {
   type CreateBroadcastBody,
-  type SegmentDto,
   type VariableMapping,
   type VariableSource,
 } from '@aligned/shared';
@@ -43,7 +42,7 @@ interface Channel {
   isActive: boolean;
 }
 
-type AudienceKind = 'csv' | 'segment' | 'manual';
+type AudienceKind = 'csv' | 'tags' | 'manual';
 
 const STEPS = ['Basics', 'Audience', 'Personalization', 'Review'] as const;
 
@@ -71,7 +70,9 @@ export default function NewBroadcastPage() {
   const [csvAssetId, setCsvAssetId] = useState<string | null>(null);
   const [csvFilename, setCsvFilename] = useState<string | null>(null);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
-  const [segmentId, setSegmentId] = useState<string | null>(null);
+  // Tag-based audience: list of tag strings + OR/AND mode.
+  const [tagAudience, setTagAudience] = useState<string[]>([]);
+  const [tagAudienceMode, setTagAudienceMode] = useState<'any' | 'all'>('any');
   const [manualPhonesRaw, setManualPhonesRaw] = useState('');
 
   // Step 3 state
@@ -101,9 +102,10 @@ export default function NewBroadcastPage() {
     [templatesQuery.data],
   );
 
-  const segmentsQuery = useQuery({
-    queryKey: ['segments'],
-    queryFn: () => api.get<{ data: SegmentDto[] }>('/api/v1/segments'),
+  // Tag buckets shown by /api/v1/contacts/tags — `{ tag, count }`.
+  const tagBucketsQuery = useQuery({
+    queryKey: ['contacts', 'tags'],
+    queryFn: () => api.get<{ data: { tag: string; count: number }[] }>('/api/v1/contacts/tags'),
   });
 
   const variantATemplate = approvedTemplates.find((t) => t.id === variantATemplateId);
@@ -133,7 +135,8 @@ export default function NewBroadcastPage() {
         channelId: channelId!,
         audienceKind,
         csvAssetId: audienceKind === 'csv' ? csvAssetId ?? undefined : undefined,
-        segmentId: audienceKind === 'segment' ? segmentId ?? undefined : undefined,
+        audienceTags: audienceKind === 'tags' ? tagAudience : undefined,
+        audienceTagsMode: audienceKind === 'tags' ? tagAudienceMode : undefined,
         manualPhones,
         abTest,
         variantATemplateId: variantATemplateId!,
@@ -162,7 +165,7 @@ export default function NewBroadcastPage() {
     }
     if (step === 1) {
       if (audienceKind === 'csv') return Boolean(csvAssetId);
-      if (audienceKind === 'segment') return Boolean(segmentId);
+      if (audienceKind === 'tags') return tagAudience.length > 0;
       return manualPhonesRaw.split(/[\n,;]/).filter((p) => p.trim()).length > 0;
     }
     if (step === 2) {
@@ -179,7 +182,7 @@ export default function NewBroadcastPage() {
     variantBTemplateId,
     audienceKind,
     csvAssetId,
-    segmentId,
+    tagAudience,
     manualPhonesRaw,
     paramsA,
     paramsB,
@@ -309,7 +312,7 @@ export default function NewBroadcastPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex gap-2">
-              {(['manual', 'csv', 'segment'] as const).map((k) => (
+              {(['manual', 'csv', 'tags'] as const).map((k) => (
                 <button
                   key={k}
                   onClick={() => setAudienceKind(k)}
@@ -325,7 +328,7 @@ export default function NewBroadcastPage() {
                       ? 'Paste phone numbers'
                       : k === 'csv'
                         ? 'Upload a CSV'
-                        : 'Pick a saved segment'}
+                        : 'Pick contact tags'}
                   </div>
                 </button>
               ))}
@@ -358,24 +361,86 @@ export default function NewBroadcastPage() {
               />
             ) : null}
 
-            {audienceKind === 'segment' ? (
-              <div>
-                <Label>Segment</Label>
-                <Select value={segmentId ?? ''} onValueChange={(v) => setSegmentId(v)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Pick a segment…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(segmentsQuery.data?.data ?? []).map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}{' '}
-                        <span className="ml-1 text-xs text-foreground-subtle">
-                          · {s.contactCount ?? '?'} contacts
+            {audienceKind === 'tags' ? (
+              <div className="space-y-3">
+                <div>
+                  <Label>Tags</Label>
+                  <p className="mt-0.5 text-xs text-foreground-muted">
+                    Send to every contact carrying the selected tag(s). Tags are added in the
+                    inbox or on the contact list.
+                  </p>
+                </div>
+                {(tagBucketsQuery.data?.data ?? []).length === 0 ? (
+                  <p className="rounded-md border border-dashed border-border bg-surface-muted/40 p-3 text-xs italic text-foreground-muted">
+                    No tags yet. Add tags in the inbox or on the contact list, then come back.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {(tagBucketsQuery.data?.data ?? []).map((t) => {
+                      const on = tagAudience.includes(t.tag);
+                      return (
+                        <button
+                          key={t.tag}
+                          type="button"
+                          onClick={() =>
+                            setTagAudience((prev) =>
+                              on ? prev.filter((x) => x !== t.tag) : [...prev, t.tag],
+                            )
+                          }
+                          className={`rounded-full border px-3 py-1 text-xs ${
+                            on
+                              ? 'border-brand-400 bg-brand-50 text-brand-700'
+                              : 'border-border bg-surface text-foreground hover:bg-surface-muted'
+                          }`}
+                        >
+                          {t.tag}{' '}
+                          <span className="opacity-60">({t.count})</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {tagAudience.length > 1 ? (
+                  <div className="flex items-center gap-2 rounded-md border border-border bg-surface-muted/40 px-3 py-2 text-xs">
+                    <span className="font-medium">Match:</span>
+                    <button
+                      type="button"
+                      onClick={() => setTagAudienceMode('any')}
+                      className={`rounded px-2 py-1 ${
+                        tagAudienceMode === 'any'
+                          ? 'bg-brand-50 font-medium text-brand-700'
+                          : 'text-foreground-muted hover:text-foreground'
+                      }`}
+                    >
+                      Any of these tags
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTagAudienceMode('all')}
+                      className={`rounded px-2 py-1 ${
+                        tagAudienceMode === 'all'
+                          ? 'bg-brand-50 font-medium text-brand-700'
+                          : 'text-foreground-muted hover:text-foreground'
+                      }`}
+                    >
+                      All of these tags
+                    </button>
+                  </div>
+                ) : null}
+                {tagAudience.length > 0 ? (
+                  <p className="text-xs text-foreground-muted">
+                    Selected:{' '}
+                    <span className="font-mono">{tagAudience.join(', ')}</span>
+                    {tagAudience.length > 1 ? (
+                      <>
+                        {' · matching '}
+                        <span className="font-medium">
+                          {tagAudienceMode === 'all' ? 'all tags' : 'any tag'}
                         </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                      </>
+                    ) : null}
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </CardContent>

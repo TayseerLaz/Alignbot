@@ -60,6 +60,8 @@ interface BroadcastRow {
   audienceKind: BroadcastAudienceKind;
   csvAssetId: string | null;
   segmentId: string | null;
+  audienceTags: string[];
+  audienceTagsMode: string;
   abTest: boolean;
   variantATemplateId: string;
   variantBTemplateId: string | null;
@@ -104,6 +106,8 @@ function toDto(row: BroadcastRow) {
     audienceKind: row.audienceKind,
     csvAssetId: row.csvAssetId,
     segmentId: row.segmentId,
+    audienceTags: row.audienceTags ?? [],
+    audienceTagsMode: ((row.audienceTagsMode ?? 'any') as 'any' | 'all'),
     abTest: row.abTest,
     variantATemplateId: row.variantATemplateId,
     variantBTemplateId: row.variantBTemplateId,
@@ -233,6 +237,12 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
           'Manual audience requires at least one phone number.',
         );
       }
+      if (body.audienceKind === 'tags' && (!body.audienceTags || body.audienceTags.length === 0)) {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'Tag audience requires at least one tag.',
+        );
+      }
       if (body.abTest && !body.variantBTemplateId) {
         throw badRequest(
           ApiErrorCode.VALIDATION_ERROR,
@@ -275,6 +285,10 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
           if (!asset) throw notFound('CSV asset not found.');
         }
 
+        const normalizedTags =
+          body.audienceKind === 'tags' && body.audienceTags
+            ? Array.from(new Set(body.audienceTags.map((t) => t.trim().toLowerCase()))).filter((t) => t.length > 0)
+            : [];
         const created = await tx.broadcast.create({
           data: {
             organizationId: orgId,
@@ -283,6 +297,8 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
             audienceKind: body.audienceKind,
             csvAssetId: body.csvAssetId ?? null,
             segmentId: body.segmentId ?? null,
+            audienceTags: normalizedTags,
+            audienceTagsMode: body.audienceTagsMode ?? 'any',
             abTest: body.abTest,
             variantATemplateId: body.variantATemplateId,
             variantBTemplateId: body.variantBTemplateId ?? null,
@@ -528,6 +544,60 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
           await tx.broadcast.update({
             where: { id },
             data: { totalRecipients: count },
+          });
+        } else if (existing.audienceKind === 'tags' && existing.audienceTags && existing.audienceTags.length > 0) {
+          // Resolve tagged contacts. 'any' = OR (contact has at least one of
+          // the chosen tags); 'all' = AND (contact has every chosen tag).
+          // The contact_tags table stores one (contactId, tag) row per
+          // assignment, so AND is just a count(distinct tag) match.
+          const tagList = existing.audienceTags;
+          const isAll = existing.audienceTagsMode === 'all';
+          let contactIds: string[];
+          if (isAll) {
+            const rows = await tx.contactTag.groupBy({
+              by: ['contactId'],
+              where: { tag: { in: tagList } },
+              _count: { tag: true },
+              having: { tag: { _count: { equals: tagList.length } } },
+            });
+            contactIds = rows.map((r) => r.contactId);
+          } else {
+            const rows = await tx.contactTag.findMany({
+              where: { tag: { in: tagList } },
+              select: { contactId: true },
+              distinct: ['contactId'],
+            });
+            contactIds = rows.map((r) => r.contactId);
+          }
+          if (contactIds.length === 0) {
+            throw badRequest(
+              ApiErrorCode.VALIDATION_ERROR,
+              isAll
+                ? 'No contacts carry every selected tag.'
+                : 'No contacts carry any of the selected tags.',
+            );
+          }
+          const contacts = await tx.contact.findMany({
+            where: { id: { in: contactIds }, deletedAt: null },
+            select: { id: true, phoneE164: true },
+            take: 100_000,
+          });
+          await tx.broadcastRecipient.deleteMany({
+            where: { broadcastId: id, status: 'pending' },
+          });
+          await tx.broadcastRecipient.createMany({
+            data: contacts.map((c) => ({
+              organizationId: orgId,
+              broadcastId: id,
+              contactId: c.id,
+              phoneE164: c.phoneE164,
+              variant: assignVariant(c.phoneE164, existing.abTest),
+            })),
+            skipDuplicates: true,
+          });
+          await tx.broadcast.update({
+            where: { id },
+            data: { totalRecipients: contacts.length },
           });
         }
         // CSV recipients land at fanout time.

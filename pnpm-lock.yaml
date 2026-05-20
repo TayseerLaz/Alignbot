@@ -385,9 +385,6 @@ importers:
       '@aligned/config':
         specifier: workspace:*
         version: link:../config
-      '@aws-sdk/client-s3':
-        specifier: ^3.717.0
-        version: 3.1032.0
       '@types/bcryptjs':
         specifier: ^2.4.6
         version: 2.4.6

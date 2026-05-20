@@ -23,7 +23,23 @@
         Permissions-Policy "geolocation=(), camera=(), microphone=(self)"
         -Server
     }
+    # Belt-and-braces MIME fix for Next.js static assets. Next.js itself
+    # serves these with the right Content-Type, but if the upstream ever
+    # 404s (e.g. mismatched build between replicas during a rolling
+    # deploy) Caddy was forwarding the HTML 404 page and the browser
+    # would refuse to apply it as CSS / parse it as JS. Forcing the
+    # Content-Type on the response means even a stale upstream returns
+    # something the browser at least parses correctly.
+    @nextcss path /_next/static/css/*
+    header @nextcss Content-Type "text/css; charset=utf-8"
+    @nextjs path /_next/static/chunks/*.js /_next/static/*.js
+    header @nextjs Content-Type "application/javascript; charset=utf-8"
     reverse_proxy web:3000 {
+        # Pin a client to a single upstream so HTML + its referenced
+        # static assets always come from the same replica. Removes the
+        # cross-replica build-hash mismatch that produced the MIME-type
+        # errors in May 2026. Safe to leave on if replicas==1.
+        lb_policy ip_hash
         health_uri /
         health_interval 10s
     }

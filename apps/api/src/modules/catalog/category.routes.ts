@@ -1,5 +1,6 @@
 import {
   ApiErrorCode,
+  bulkDeleteCategoriesBodySchema,
   categorySchema,
   createCategoryBodySchema,
   itemEnvelopeSchema,
@@ -174,6 +175,75 @@ export default async function categoryRoutes(app: FastifyInstance) {
             updatedAt: c.updatedAt.toISOString(),
           },
         };
+      });
+    },
+  );
+
+  // ---------- POST /categories/bulk-delete --------------------------------
+  // Deletes many categories in one round trip. Three modes:
+  //   ids:       explicit list (max 500)
+  //   all:       wipe every category in the org
+  //   emptyOnly: wipe only categories with zero products + zero services
+  // Products / services that referenced any deleted row get their
+  // categoryId NULL'd by Prisma's onDelete: SetNull — no data is lost
+  // beyond the link.
+  r.post(
+    '/categories/bulk-delete',
+    {
+      schema: {
+        tags: ['catalog'],
+        summary: 'Delete many categories at once (selected / all / empty-only).',
+        body: bulkDeleteCategoriesBodySchema,
+        response: { 200: itemEnvelopeSchema(z.object({ deleted: z.number().int() })) },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      return app.tenant(req, async (tx) => {
+        let where: { id?: { in: string[] } } | object;
+        if (req.body.all) {
+          where = {};
+        } else if (req.body.emptyOnly) {
+          // "Empty" = no non-deleted products + no non-deleted services
+          // currently linked. Compute the set of categories that DO have
+          // at least one link, then delete everything else. Cheaper than
+          // a complex correlated subquery + still small (categories per
+          // tenant are O(100) in practice).
+          const linked = new Set<string>();
+          const [p, s] = await Promise.all([
+            tx.product.findMany({
+              where: { categoryId: { not: null }, deletedAt: null },
+              select: { categoryId: true },
+              distinct: ['categoryId'],
+            }),
+            tx.service.findMany({
+              where: { categoryId: { not: null }, deletedAt: null },
+              select: { categoryId: true },
+              distinct: ['categoryId'],
+            }),
+          ]);
+          for (const r of p) if (r.categoryId) linked.add(r.categoryId);
+          for (const r of s) if (r.categoryId) linked.add(r.categoryId);
+          const empty = await tx.category.findMany({
+            where: linked.size > 0 ? { id: { notIn: Array.from(linked) } } : {},
+            select: { id: true },
+          });
+          where = { id: { in: empty.map((c) => c.id) } };
+        } else {
+          where = { id: { in: req.body.ids ?? [] } };
+        }
+        const result = await tx.category.deleteMany({ where });
+        await recordAudit({
+          action: 'category_deleted',
+          organizationId: req.auth!.organizationId,
+          actorUserId: req.auth!.userId,
+          metadata: {
+            bulk: true,
+            mode: req.body.all ? 'all' : req.body.emptyOnly ? 'emptyOnly' : 'selected',
+            count: result.count,
+          },
+        });
+        return { data: { deleted: result.count } };
       });
     },
   );

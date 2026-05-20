@@ -43,3 +43,22 @@ export const reorderCategoriesBodySchema = z.object({
   order: z.array(z.object({ id: uuidSchema, sortOrder: z.number().int() })).min(1),
 });
 export type ReorderCategoriesBody = z.infer<typeof reorderCategoriesBodySchema>;
+
+// Bulk delete categories. Exactly one of:
+//   ids       — explicit list (max 500)
+//   all       — wipe every category in the org
+//   emptyOnly — wipe only categories with zero products + zero services
+// Products / services that referenced a deleted category have their
+// categoryId set to NULL (Prisma onDelete: SetNull).
+export const bulkDeleteCategoriesBodySchema = z
+  .object({
+    ids: z.array(uuidSchema).min(1).max(500).optional(),
+    all: z.boolean().optional(),
+    emptyOnly: z.boolean().optional(),
+  })
+  .refine(
+    (v) =>
+      [Boolean(v.ids?.length), Boolean(v.all), Boolean(v.emptyOnly)].filter(Boolean).length === 1,
+    { message: 'Provide exactly one of `ids`, `all: true`, or `emptyOnly: true`.' },
+  );
+export type BulkDeleteCategoriesBody = z.infer<typeof bulkDeleteCategoriesBodySchema>;

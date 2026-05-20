@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
@@ -57,6 +58,7 @@ export default function CategoriesPage() {
   const qc = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const cats = useQuery({
     queryKey: ['categories'],
@@ -72,25 +74,135 @@ export default function CategoriesPage() {
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Delete failed'),
   });
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: (vars: { ids?: string[]; all?: boolean; emptyOnly?: boolean }) =>
+      api.post<{ data: { deleted: number } }>('/api/v1/categories/bulk-delete', vars),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['categories'] });
+      setSelected(new Set());
+      toast.success(`Deleted ${res.data.deleted} categor${res.data.deleted === 1 ? 'y' : 'ies'}`);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Delete failed'),
+  });
+
+  const categories = cats.data?.data ?? [];
+  const allSelected = categories.length > 0 && categories.every((c) => selected.has(c.id));
+  const someSelected = selected.size > 0;
+  const toggleAll = () => {
+    if (allSelected) setSelected(new Set());
+    else setSelected(new Set(categories.map((c) => c.id)));
+  };
+  const toggleOne = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   return (
     <>
       <PageHeader
         title="Categories"
         description="Organize products and services into categories for chatbot retrieval and the storefront. Click any row to expand and see what's linked."
         actions={
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus className="size-4" /> New category
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* "Delete empty" wipes only rows with 0 products + 0 services
+                — safe one-click cleanup after a catalog wipe. "Delete all"
+                is the nuclear option behind a typed DELETE prompt. */}
+            <Button
+              variant="ghost"
+              loading={bulkDeleteMutation.isPending}
+              onClick={async () => {
+                const empty = categories.filter(
+                  (c) => (c.productCount ?? 0) === 0 && (c.serviceCount ?? 0) === 0,
+                );
+                if (empty.length === 0) {
+                  toast.message('No empty categories to delete.');
+                  return;
+                }
+                const ok = await confirmDialog({
+                  title: `Delete ${empty.length} empty categor${empty.length === 1 ? 'y' : 'ies'}?`,
+                  body: 'Only categories with zero products and zero services will be removed. Others are kept.',
+                  confirmLabel: 'Delete empty',
+                  destructive: true,
+                });
+                if (ok) bulkDeleteMutation.mutate({ emptyOnly: true });
+              }}
+            >
+              <Trash2 className="size-4" /> Delete empty
+            </Button>
+            <Button
+              variant="ghost"
+              loading={bulkDeleteMutation.isPending}
+              onClick={async () => {
+                const ok = await confirmDialog({
+                  title: 'Delete every category?',
+                  body: 'This removes every category in your org. Products and services keep their data; their category link is cleared. Type DELETE in the next step to confirm.',
+                  confirmLabel: 'Continue',
+                  destructive: true,
+                });
+                if (!ok) return;
+                const typed = window.prompt('Type DELETE to confirm wiping every category:');
+                if (typed?.trim().toUpperCase() === 'DELETE') {
+                  bulkDeleteMutation.mutate({ all: true });
+                }
+              }}
+            >
+              <Trash2 className="size-4" /> Delete all
+            </Button>
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" /> New category
+            </Button>
+          </div>
         }
       />
       <Card>
         <CardHeader>
-          <CardTitle>{cats.data?.data.length ?? 0} categories</CardTitle>
+          <CardTitle>{categories.length} categories</CardTitle>
         </CardHeader>
+        {someSelected ? (
+          <div className="flex items-center justify-between gap-3 border-b border-border bg-brand-50/40 px-4 py-2 text-sm">
+            <span>
+              <strong>{selected.size}</strong> selected
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="danger"
+                loading={bulkDeleteMutation.isPending}
+                onClick={async () => {
+                  const ok = await confirmDialog({
+                    title: `Delete ${selected.size} categor${selected.size === 1 ? 'y' : 'ies'}?`,
+                    body: 'Linked products and services keep their data but lose this category link.',
+                    confirmLabel: 'Delete',
+                    destructive: true,
+                  });
+                  if (ok) bulkDeleteMutation.mutate({ ids: Array.from(selected) });
+                }}
+              >
+                <Trash2 className="size-4" /> Delete
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+                Clear
+              </Button>
+            </div>
+          </div>
+        ) : null}
         <CardContent className="p-0">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-border bg-surface-muted text-xs uppercase tracking-wide text-foreground-subtle">
               <tr>
+                <th className="w-10 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    className="size-4 cursor-pointer rounded border-border accent-brand-500"
+                    checked={allSelected}
+                    aria-label={allSelected ? 'Deselect all categories' : 'Select all categories'}
+                    onChange={toggleAll}
+                  />
+                </th>
                 <th className="w-10 px-4 py-3" />
                 <th className="px-6 py-3">Name</th>
                 <th className="px-6 py-3">Slug</th>
@@ -102,15 +214,15 @@ export default function CategoriesPage() {
             <tbody>
               {cats.isLoading ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-foreground-muted">Loading…</td>
+                  <td colSpan={7} className="px-6 py-8 text-center text-foreground-muted">Loading…</td>
                 </tr>
               ) : null}
-              {cats.data?.data.length === 0 ? (
+              {categories.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-foreground-muted">No categories yet.</td>
+                  <td colSpan={7} className="px-6 py-12 text-center text-foreground-muted">No categories yet.</td>
                 </tr>
               ) : null}
-              {cats.data?.data.map((c) => {
+              {categories.map((c) => {
                 const isOpen = expandedId === c.id;
                 const productCount = c.productCount ?? 0;
                 const serviceCount = c.serviceCount ?? 0;
@@ -119,6 +231,8 @@ export default function CategoriesPage() {
                     key={c.id}
                     cat={c}
                     isOpen={isOpen}
+                    isChecked={selected.has(c.id)}
+                    onToggleChecked={() => toggleOne(c.id)}
                     onToggle={() => setExpandedId(isOpen ? null : c.id)}
                     onDelete={() => {
                       if (
@@ -155,6 +269,8 @@ export default function CategoriesPage() {
 function CategoryRowGroup({
   cat,
   isOpen,
+  isChecked,
+  onToggleChecked,
   onToggle,
   onDelete,
   productCount,
@@ -162,6 +278,8 @@ function CategoryRowGroup({
 }: {
   cat: Category;
   isOpen: boolean;
+  isChecked: boolean;
+  onToggleChecked: () => void;
   onToggle: () => void;
   onDelete: () => void;
   productCount: number;
@@ -190,6 +308,17 @@ function CategoryRowGroup({
         className="cursor-pointer border-b border-border last:border-0 hover:bg-surface-muted/40"
         onClick={onToggle}
       >
+        <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
+          {/* Stop click propagation so ticking the checkbox doesn't
+              also expand/collapse the row group. */}
+          <input
+            type="checkbox"
+            className="size-4 cursor-pointer rounded border-border accent-brand-500"
+            checked={isChecked}
+            aria-label={`Select ${cat.name}`}
+            onChange={onToggleChecked}
+          />
+        </td>
         <td className="px-4 py-4">
           <Chevron className="size-4 text-foreground-muted" />
         </td>
@@ -213,6 +342,10 @@ function CategoryRowGroup({
       </tr>
       {isOpen ? (
         <tr className="border-b border-border bg-surface-muted/30">
+          {/* Two leading empty cells — checkbox column + chevron column —
+              so the colSpan that covers Name/Slug/Products/Services/Actions
+              still lines up after the new select column was added. */}
+          <td className="px-4 py-3" />
           <td className="px-4 py-3" />
           <td colSpan={5} className="px-6 py-3">
             <div className="grid gap-4 sm:grid-cols-2">

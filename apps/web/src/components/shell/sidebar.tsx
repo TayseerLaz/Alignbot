@@ -82,11 +82,12 @@ const groups: NavGroup[] = [
   {
     label: 'Engagement',
     items: [
+      { href: '/contacts', label: 'Contacts', icon: ContactIcon },
       { href: '/inbox', label: 'Inbox', icon: Inbox, badgeKey: 'inboxEscalated' },
       { href: '/inbox/canned', label: 'Canned replies', icon: Inbox },
       { href: '/whatsapp/templates', label: 'Templates', icon: BarChart3 },
-      { href: '/contacts', label: 'Contacts', icon: ContactIcon },
-      { href: '/segments', label: 'Segments', icon: Users },
+      // Segments live under /broadcasts (Segments tab). The /segments
+      // URL is kept as a redirect for old bookmarks.
       { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone },
       { href: '/sequences', label: 'Sequences', icon: Activity },
       { href: '/bookings', label: 'Bookings', icon: CalendarCheck },

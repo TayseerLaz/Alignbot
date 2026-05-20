@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
  * AlignedLogo — single source of truth for the brand mark.
  *
  * Two raw assets, one per theme, so no CSS filter trickery is needed:
- *   - /aligned-logo-light.jpg  → dark wordmark on transparent (light mode)
+ *   - /aligned-logo-light.png  → dark wordmark on transparent (light mode)
  *   - /aligned-logo.webp       → white wordmark on transparent (dark mode)
  *
  * Both are loaded; we toggle visibility via Tailwind's `dark:` variant
@@ -39,12 +39,13 @@ export function AlignedLogo({
 
   return (
     <span className={cn('inline-flex h-8 items-center', className)} aria-label="ALIGNED">
-      {/* Light-mode wordmark */}
+      {/* Light-mode wordmark — 4880×820 PNG; intrinsic dimensions match
+          so Next.js Image picks the right srcset for retina renders. */}
       <Image
-        src="/aligned-logo-light.jpg"
+        src="/aligned-logo-light.png"
         alt="ALIGNED Business Platform"
-        width={200}
-        height={49}
+        width={488}
+        height={82}
         priority
         className="block h-8 w-auto dark:hidden"
       />

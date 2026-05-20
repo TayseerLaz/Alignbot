@@ -8,12 +8,15 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, RotateCw, Trash2 } from 'lucide-react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
+import SegmentsManager from '@/components/segments/segments-manager';
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { api, ApiError } from '@/lib/api';
 
 const STATUS_CLASS: Record<BroadcastStatus, string> = {
@@ -26,9 +29,66 @@ const STATUS_CLASS: Record<BroadcastStatus, string> = {
   failed: 'bg-red-50 text-red-700',
 };
 
+type TabValue = 'broadcasts' | 'segments';
+
 export default function BroadcastsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // Honor ?tab=segments deep-links (and the /segments → /broadcasts
+  // redirect target). Default to the broadcasts tab.
+  const initialTab: TabValue =
+    searchParams.get('tab') === 'segments' ? 'segments' : 'broadcasts';
+  const [tab, setTab] = useState<TabValue>(initialTab);
+
+  // Keep the URL in sync as the user clicks between tabs so deep-links
+  // + the browser back button work.
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams.toString());
+    if (tab === 'broadcasts') next.delete('tab');
+    else next.set('tab', tab);
+    const qs = next.toString();
+    router.replace(`/broadcasts${qs ? `?${qs}` : ''}`, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  return (
+    <>
+      <PageHeader
+        title="Broadcasts"
+        description="Send WhatsApp template messages to a list of contacts, and manage the saved segments you target with them."
+        actions={
+          tab === 'broadcasts' ? (
+            <Link href="/broadcasts/new">
+              <Button>
+                <Plus className="size-4" /> New broadcast
+              </Button>
+            </Link>
+          ) : null
+        }
+      />
+
+      <Tabs value={tab} onValueChange={(v) => setTab(v as TabValue)}>
+        <TabsList>
+          <TabsTrigger value="broadcasts">Broadcasts</TabsTrigger>
+          <TabsTrigger value="segments">Segments</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="broadcasts">
+          <BroadcastsTab />
+        </TabsContent>
+
+        <TabsContent value="segments">
+          <SegmentsManager showHeader={false} />
+        </TabsContent>
+      </Tabs>
+    </>
+  );
+}
+
+function BroadcastsTab() {
   const qc = useQueryClient();
   const router = useRouter();
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/broadcasts/${id}`),
     onSuccess: () => {
@@ -37,6 +97,7 @@ export default function BroadcastsPage() {
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Delete failed'),
   });
+
   const resendMutation = useMutation({
     mutationFn: (id: string) =>
       api.post<{ data: BroadcastDto }>(`/api/v1/broadcasts/${id}/resend`, {}),
@@ -58,151 +119,139 @@ export default function BroadcastsPage() {
   const total = broadcastsQuery.data?.data.length ?? 0;
 
   return (
-    <>
-      <PageHeader
-        title="Broadcasts"
-        description="Send WhatsApp template messages to a list of contacts. Schedule, A/B test, and watch delivery in real time."
-        actions={
-          <Link href="/broadcasts/new">
-            <Button>
-              <Plus className="size-4" /> New broadcast
-            </Button>
-          </Link>
-        }
-      />
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{total} broadcast{total === 1 ? '' : 's'}</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
+    <Card>
+      <CardHeader>
+        <CardTitle>
+          {total} broadcast{total === 1 ? '' : 's'}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
+              <tr>
+                <th className="px-6 py-3">Name</th>
+                <th className="px-6 py-3">Status</th>
+                <th className="px-6 py-3">Audience</th>
+                <th className="px-6 py-3">Sent / Delivered / Read</th>
+                <th className="px-6 py-3">Scheduled</th>
+                <th className="px-6 py-3">Resend</th>
+                <th className="w-20 px-6 py-3" />
+              </tr>
+            </thead>
+            <tbody>
+              {broadcastsQuery.isLoading ? (
                 <tr>
-                  <th className="px-6 py-3">Name</th>
-                  <th className="px-6 py-3">Status</th>
-                  <th className="px-6 py-3">Audience</th>
-                  <th className="px-6 py-3">Sent / Delivered / Read</th>
-                  <th className="px-6 py-3">Scheduled</th>
-                  <th className="px-6 py-3">Resend</th>
-                  <th className="w-20 px-6 py-3" />
+                  <td colSpan={7} className="px-6 py-8 text-center text-foreground-muted">
+                    Loading…
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {broadcastsQuery.isLoading ? (
-                  <tr>
-                    <td colSpan={7} className="px-6 py-8 text-center text-foreground-muted">
-                      Loading…
-                    </td>
-                  </tr>
-                ) : null}
-                {broadcastsQuery.data?.data.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center text-foreground-muted">
-                      No broadcasts yet. Create your first one to start reaching customers.
-                    </td>
-                  </tr>
-                ) : null}
-                {broadcastsQuery.data?.data.map((b) => (
-                  <tr key={b.id} className="border-b border-border last:border-0">
-                    <td className="px-6 py-4 font-medium">
-                      <Link href={`/broadcasts/${b.id}`} className="hover:underline">
-                        {b.name}
-                      </Link>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-xs ${STATUS_CLASS[b.status]}`}
-                      >
-                        {BROADCAST_STATUS_LABELS[b.status]}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-foreground-muted">
-                      {b.audienceKind === 'csv'
-                        ? 'CSV'
-                        : b.audienceKind === 'segment'
-                          ? 'Segment'
-                          : 'Manual'}
-                      {' · '}
-                      <span className="font-mono text-xs">{b.totalRecipients}</span>
-                    </td>
-                    <td className="px-6 py-4 font-mono text-sm text-foreground-muted">
-                      {b.sentCount} / {b.deliveredCount} / {b.readCount}
-                      {b.failedCount > 0 ? (
-                        <span className="ml-2 text-red-600">· {b.failedCount} failed</span>
-                      ) : null}
-                    </td>
-                    <td className="px-6 py-4 text-foreground-muted">
-                      {b.scheduledFor
-                        ? new Date(b.scheduledFor).toLocaleString()
-                        : b.startedAt
-                          ? new Date(b.startedAt).toLocaleString()
-                          : '—'}
-                    </td>
-                    <td className="px-6 py-4">
-                      {b.status === 'completed' ||
-                      b.status === 'sending' ||
-                      b.status === 'paused' ||
-                      b.status === 'failed' ? (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          disabled={
-                            resendMutation.isPending && resendMutation.variables === b.id
-                          }
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                `Resend "${b.name}" to the same ${b.totalRecipients} recipient${b.totalRecipients === 1 ? '' : 's'}? This creates a new broadcast that starts sending immediately.`,
-                              )
-                            ) {
-                              resendMutation.mutate(b.id);
-                            }
-                          }}
-                        >
-                          <RotateCw
-                            className={`size-3.5 ${
-                              resendMutation.isPending && resendMutation.variables === b.id
-                                ? 'animate-spin'
-                                : ''
-                            }`}
-                          />
-                          Resend
-                        </Button>
-                      ) : (
-                        <span className="text-xs text-foreground-subtle">—</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <Link href={`/broadcasts/${b.id}`}>
-                        <Button variant="ghost" size="sm">
-                          Open
-                        </Button>
-                      </Link>
+              ) : null}
+              {broadcastsQuery.data?.data.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-6 py-12 text-center text-foreground-muted">
+                    No broadcasts yet. Create your first one to start reaching customers.
+                  </td>
+                </tr>
+              ) : null}
+              {broadcastsQuery.data?.data.map((b) => (
+                <tr key={b.id} className="border-b border-border last:border-0">
+                  <td className="px-6 py-4 font-medium">
+                    <Link href={`/broadcasts/${b.id}`} className="hover:underline">
+                      {b.name}
+                    </Link>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span
+                      className={`inline-flex rounded-full px-2 py-0.5 text-xs ${STATUS_CLASS[b.status]}`}
+                    >
+                      {BROADCAST_STATUS_LABELS[b.status]}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-foreground-muted">
+                    {b.audienceKind === 'csv'
+                      ? 'CSV'
+                      : b.audienceKind === 'segment'
+                        ? 'Segment'
+                        : 'Manual'}
+                    {' · '}
+                    <span className="font-mono text-xs">{b.totalRecipients}</span>
+                  </td>
+                  <td className="px-6 py-4 font-mono text-sm text-foreground-muted">
+                    {b.sentCount} / {b.deliveredCount} / {b.readCount}
+                    {b.failedCount > 0 ? (
+                      <span className="ml-2 text-red-600">· {b.failedCount} failed</span>
+                    ) : null}
+                  </td>
+                  <td className="px-6 py-4 text-foreground-muted">
+                    {b.scheduledFor
+                      ? new Date(b.scheduledFor).toLocaleString()
+                      : b.startedAt
+                        ? new Date(b.startedAt).toLocaleString()
+                        : '—'}
+                  </td>
+                  <td className="px-6 py-4">
+                    {b.status === 'completed' ||
+                    b.status === 'sending' ||
+                    b.status === 'paused' ||
+                    b.status === 'failed' ? (
                       <Button
-                        size="icon"
-                        variant="ghost"
-                        aria-label={`Delete ${b.name}`}
+                        variant="secondary"
+                        size="sm"
+                        disabled={
+                          resendMutation.isPending && resendMutation.variables === b.id
+                        }
                         onClick={() => {
                           if (
                             window.confirm(
-                              `Delete "${b.name}"? Permanently removes the campaign + all recipient rows + timeline.`,
+                              `Resend "${b.name}" to the same ${b.totalRecipients} recipient${b.totalRecipients === 1 ? '' : 's'}? This creates a new broadcast that starts sending immediately.`,
                             )
-                          )
-                            deleteMutation.mutate(b.id);
+                          ) {
+                            resendMutation.mutate(b.id);
+                          }
                         }}
                       >
-                        <Trash2 className="size-4" />
+                        <RotateCw
+                          className={`size-3.5 ${
+                            resendMutation.isPending && resendMutation.variables === b.id
+                              ? 'animate-spin'
+                              : ''
+                          }`}
+                        />
+                        Resend
                       </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-    </>
+                    ) : (
+                      <span className="text-xs text-foreground-subtle">—</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <Link href={`/broadcasts/${b.id}`}>
+                      <Button variant="ghost" size="sm">
+                        Open
+                      </Button>
+                    </Link>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`Delete ${b.name}`}
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `Delete "${b.name}"? Permanently removes the campaign + all recipient rows + timeline.`,
+                          )
+                        )
+                          deleteMutation.mutate(b.id);
+                      }}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

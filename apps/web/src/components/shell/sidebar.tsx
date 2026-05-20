@@ -74,7 +74,9 @@ const groups: NavGroup[] = [
     items: [
       { href: '/whatsapp', label: 'WhatsApp', icon: MessageCircle },
       { href: '/whatsapp/templates', label: 'Templates', icon: BarChart3 },
-      { href: '/whatsapp/onboarding', label: 'Meta verification', icon: ShieldCheck },
+      // Meta verification (/whatsapp/onboarding) hidden — the page is
+      // still reachable by URL, but operators don't need it in the nav
+      // once the channel is connected. Re-add this line to surface it.
     ],
   },
   {

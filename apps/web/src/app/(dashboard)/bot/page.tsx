@@ -1208,7 +1208,7 @@ function ScenarioRunner() {
           <CardTitle>Test scenarios</CardTitle>
           <CardDescription>
             Generated from your knowledge base. Each reply is scored 0–100 by an LLM judge — override
-            any score if you disagree. Press <span className="font-medium">Regenerate from KB</span>{' '}
+            any score if you disagree. Press <span className="font-medium">Generate new tests</span>{' '}
             after you update the knowledge base to refresh the scenarios.
           </CardDescription>
         </div>
@@ -1220,32 +1220,13 @@ function ScenarioRunner() {
           ) : null}
           <Button
             size="sm"
-            variant="secondary"
-            onClick={async () => {
-              if (
-                await confirmDialog({
-                  title: 'Regenerate scenarios from KB?',
-                  body:
-                    'Wipes the current AI-generated scenarios and their run history, then drafts a fresh batch from your current knowledge base + catalog. Any scenarios you marked as manual are preserved.',
-                  confirmLabel: 'Regenerate',
-                })
-              ) {
-                regen.mutate();
-              }
-            }}
-            loading={regen.isPending}
-          >
-            <Sparkles className="size-4" /> Regenerate from KB
-          </Button>
-          <Button
-            size="sm"
             variant="ghost"
             onClick={async () => {
               if (
                 await confirmDialog({
                   title: 'Delete every scenario?',
                   body:
-                    'Removes all scenarios (manual + AI) and every run history. The next Run all click will generate a brand-new set from your current KB.',
+                    'Removes all scenarios (manual + AI) and every run history. The next Run tests click will generate a brand-new set from your current KB.',
                   confirmLabel: 'Delete all',
                   destructive: true,
                 })
@@ -1258,8 +1239,27 @@ function ScenarioRunner() {
           >
             <Trash2 className="size-4" /> Delete all
           </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={async () => {
+              if (
+                await confirmDialog({
+                  title: 'Generate new tests from your KB?',
+                  body:
+                    'Wipes the current AI-generated scenarios and their run history, then drafts a fresh batch from your current knowledge base + catalog. Any scenarios you marked as manual are preserved.',
+                  confirmLabel: 'Generate',
+                })
+              ) {
+                regen.mutate();
+              }
+            }}
+            loading={regen.isPending}
+          >
+            <Sparkles className="size-4" /> Generate new tests
+          </Button>
           <Button size="sm" onClick={() => run.mutate()} loading={run.isPending}>
-            <Play className="size-4" /> Run all
+            <Play className="size-4" /> Run tests
           </Button>
         </div>
       </CardHeader>
@@ -1269,7 +1269,7 @@ function ScenarioRunner() {
           // not currently re-fetching — otherwise a save-then-invalidate
           // would briefly empty the list between transitions.
           <div className="px-6 py-10 text-center text-sm text-foreground-muted">
-            No scenarios yet. Press <span className="font-medium">Run all</span> — we'll draft them
+            No scenarios yet. Press <span className="font-medium">Run tests</span> — we'll draft them
             from your current knowledge base and grade each reply.
           </div>
         ) : (

@@ -145,8 +145,38 @@ function FlowEditorInner({
         };
       });
       setNodes(laidOut);
-      // Start with no edges — the simple shape doesn't carry fallthroughs.
-      setEdges([]);
+      // Wire fallthrough edges in the AI's intent order so the operator
+      // sees a coherent conversation path on first render:
+      //   1) Sequential chain: node[i] -> node[i+1] for every i, EXCEPT the
+      //      escalation-like terminal node (if any) which sits at the end.
+      //   2) Every non-terminal node ALSO gets an explicit edge to the
+      //      escalation node so "can't handle -> hand off to a human" is the
+      //      universal fallback. Matches the legacy editor's default.
+      // The escalation detection is heuristic (intent matches the regex
+      // below). If the AI flow has no escalation-like node we just chain.
+      const escalationRe = /^(escalation|escalate|handoff|human|agent|transfer|fallback)/;
+      const escalationIdx = laidOut.findIndex((n) => escalationRe.test(n.data.intent));
+      const newEdges: Edge[] = [];
+      // Determine the "main path" order: every node in array order, with
+      // the escalation node (if any) excluded from the chain and tacked on
+      // as a fallback target.
+      const mainPath = escalationIdx >= 0
+        ? laidOut.filter((_, i) => i !== escalationIdx)
+        : laidOut;
+      for (let i = 0; i < mainPath.length - 1; i++) {
+        const src = mainPath[i]!;
+        const dst = mainPath[i + 1]!;
+        newEdges.push({ id: `${src.id}->${dst.id}`, source: src.id, target: dst.id });
+      }
+      if (escalationIdx >= 0) {
+        const esc = laidOut[escalationIdx]!;
+        for (const n of mainPath) {
+          // Skip the edge if a chain edge already points to esc (last main-path node).
+          if (newEdges.some((e) => e.source === n.id && e.target === esc.id)) continue;
+          newEdges.push({ id: `${n.id}->${esc.id}`, source: n.id, target: esc.id });
+        }
+      }
+      setEdges(newEdges);
       return;
     }
     // Legacy layout: read each intent key as a row, lay out left → right.

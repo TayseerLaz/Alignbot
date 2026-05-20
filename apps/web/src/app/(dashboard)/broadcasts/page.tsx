@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import SegmentsManager from '@/components/segments/segments-manager';
+import SequencesManager from '@/components/sequences/sequences-manager';
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -29,15 +30,17 @@ const STATUS_CLASS: Record<BroadcastStatus, string> = {
   failed: 'bg-red-50 text-red-700',
 };
 
-type TabValue = 'broadcasts' | 'segments';
+type TabValue = 'broadcasts' | 'segments' | 'sequences';
 
 export default function BroadcastsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  // Honor ?tab=segments deep-links (and the /segments → /broadcasts
-  // redirect target). Default to the broadcasts tab.
+  // Honor ?tab=segments / ?tab=sequences deep-links (and the
+  // /segments + /sequences → /broadcasts redirects). Default to the
+  // broadcasts tab.
+  const rawTab = searchParams.get('tab');
   const initialTab: TabValue =
-    searchParams.get('tab') === 'segments' ? 'segments' : 'broadcasts';
+    rawTab === 'segments' ? 'segments' : rawTab === 'sequences' ? 'sequences' : 'broadcasts';
   const [tab, setTab] = useState<TabValue>(initialTab);
 
   // Keep the URL in sync as the user clicks between tabs so deep-links
@@ -71,6 +74,7 @@ export default function BroadcastsPage() {
         <TabsList>
           <TabsTrigger value="broadcasts">Broadcasts</TabsTrigger>
           <TabsTrigger value="segments">Segments</TabsTrigger>
+          <TabsTrigger value="sequences">Sequences</TabsTrigger>
         </TabsList>
 
         <TabsContent value="broadcasts">
@@ -79,6 +83,10 @@ export default function BroadcastsPage() {
 
         <TabsContent value="segments">
           <SegmentsManager showHeader={false} />
+        </TabsContent>
+
+        <TabsContent value="sequences">
+          <SequencesManager showHeader={false} />
         </TabsContent>
       </Tabs>
     </>

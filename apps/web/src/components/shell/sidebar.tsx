@@ -86,10 +86,10 @@ const groups: NavGroup[] = [
       { href: '/inbox', label: 'Inbox', icon: Inbox, badgeKey: 'inboxEscalated' },
       { href: '/inbox/canned', label: 'Canned replies', icon: Inbox },
       { href: '/whatsapp/templates', label: 'Templates', icon: BarChart3 },
-      // Segments live under /broadcasts (Segments tab). The /segments
-      // URL is kept as a redirect for old bookmarks.
+      // Segments + Sequences live under /broadcasts as tabs. Their
+      // standalone URLs (/segments, /sequences) are kept as redirects
+      // so old bookmarks + intra-app links keep working.
       { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone },
-      { href: '/sequences', label: 'Sequences', icon: Activity },
       { href: '/bookings', label: 'Bookings', icon: CalendarCheck },
     ],
   },

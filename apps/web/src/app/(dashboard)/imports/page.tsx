@@ -422,10 +422,33 @@ function ImportWizard({
   const nextFromPick = async () => {
     if (!file) return;
     const headers = await readCsvHeaders(file);
-    const targetFields = fieldsQuery.data?.data ?? [];
+    // Make sure the target-fields response has actually arrived before we
+    // run auto-detection — otherwise targetFields is empty and the
+    // auto-detector defaults every column to "__ignored__", which causes
+    // a silent import where the worker stores `{"__ignored__": ...}` as
+    // rawData and Zod fails on required fields (sku / name etc).
+    let targetFields = fieldsQuery.data?.data ?? [];
+    if (targetFields.length === 0) {
+      try {
+        const fresh = await fieldsQuery.refetch();
+        targetFields = fresh.data?.data ?? [];
+      } catch {
+        /* fall through — handled by the empty-targets guard below */
+      }
+    }
     const targetNames = new Set(targetFields.map((f) => f.field));
     if (!headers || headers.every((h) => targetNames.has(h))) {
       // XLSX or already-matching CSV — skip the mapping step.
+      setUploadedHeaders(headers);
+      setMapping({});
+      setStep('review');
+      return;
+    }
+    // Defensive: target fields couldn't be loaded at all. Send no mapping
+    // and let the worker's header-normalizer + alias table take care of
+    // it. Better to attempt the import than to map every column to
+    // __ignored__ and produce a row of nothing.
+    if (targetFields.length === 0) {
       setUploadedHeaders(headers);
       setMapping({});
       setStep('review');
@@ -453,6 +476,7 @@ function ImportWizard({
     if (!uploadedHeaders || uploadedHeaders.length === 0) return undefined;
     const out: Record<string, string> = {};
     let hasNonIdentity = false;
+    let hasRealMapping = false;
     for (const h of uploadedHeaders) {
       const target = mapping[h] ?? MAPPING_IGNORE;
       if (target === MAPPING_IGNORE) {
@@ -461,9 +485,16 @@ function ImportWizard({
         hasNonIdentity = true;
       } else {
         out[h] = target;
+        hasRealMapping = true;
         if (target !== h) hasNonIdentity = true;
       }
     }
+    // Refuse to send a mapping that's entirely "ignore every column" —
+    // that would silently throw away every row. Better to send no
+    // mapping and let the worker's header normalizer try, so the
+    // operator at least gets actionable validation errors instead of
+    // 100% silent drops.
+    if (!hasRealMapping) return undefined;
     return hasNonIdentity ? out : undefined;
   };
 
@@ -674,7 +705,7 @@ function ImportWizard({
               <Button variant="secondary" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
-              <Button onClick={nextFromPick} disabled={!file || fieldsQuery.isLoading}>
+              <Button onClick={nextFromPick} disabled={!file || fieldsQuery.isFetching}>
                 Next
               </Button>
             </>

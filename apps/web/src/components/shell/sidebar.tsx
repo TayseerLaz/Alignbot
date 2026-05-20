@@ -12,13 +12,11 @@ import {
   Contact as ContactIcon,
   CreditCard,
   Inbox,
-  KeyRound,
   LayoutDashboard,
   type LucideIcon,
   MessageCircle,
   Megaphone,
   Package,
-  PlugZap,
   Settings,
   ShieldCheck,
   TrendingUp,
@@ -67,14 +65,10 @@ const groups: NavGroup[] = [
       { href: '/imports', label: 'Imports', icon: Upload },
     ],
   },
-  {
-    label: 'Integrations',
-    items: [
-      { href: '/connectors', label: 'API connectors', icon: PlugZap },
-      { href: '/api-keys', label: 'API keys', icon: KeyRound },
-      { href: '/webhooks', label: 'Webhooks', icon: BarChart3 },
-    ],
-  },
+  // Integrations section (API connectors / API keys / Webhooks) hidden
+  // from the sidebar — those routes still exist for direct-URL access,
+  // but normal operators don't need to see them. Re-add the group here
+  // to surface them again.
   {
     label: 'WhatsApp',
     items: [

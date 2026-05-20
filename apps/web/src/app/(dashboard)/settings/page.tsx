@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Building2, CreditCard, Download, Key, Palette, PlugZap, Trash2, User, Users, Webhook } from 'lucide-react';
+import { ArrowRight, Building2, CreditCard, Download, Key, MessageCircle, Palette, PlugZap, Trash2, User, Users, Webhook } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -160,10 +160,16 @@ export default function SettingsPage() {
               <Key className="size-4" /> Integrations
             </CardTitle>
             <CardDescription>
-              Keys, connectors, and webhooks for your chatbot and automations.
+              WhatsApp, keys, connectors, and webhooks for your chatbot and automations.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
+            <SettingsLink
+              href="/whatsapp"
+              icon={MessageCircle}
+              title="WhatsApp"
+              description="Connect your Meta WhatsApp Business number + manage templates."
+            />
             <SettingsLink
               href="/api-keys"
               icon={Key}

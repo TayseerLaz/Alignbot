@@ -1,15 +1,19 @@
-// One-shot showcase seed for the ALIGNED demo org.
+// Idempotent showcase seed for the ALIGNED demo org.
 //
 // What it does:
 //   1. Finds the org named "ALIGNED" (case-insensitive on name + slug).
-//   2. Picks 5 showcase SKUs (signature mix across the catalog).
-//   3. SOFT-DELETES every other product on that org (deletedAt = now()).
-//   4. Wipes existing images on the 5 showcase products.
-//   5. Downloads 3 product photos per SKU from Unsplash, uploads each to
-//      Wasabi via PutObjectCommand, and creates Asset + ProductImage rows.
+//   2. If the showcase is ALREADY in place (5 visible products, all
+//      with 3 images each, matching the SHOWCASE_SKUS), exits 0 silently.
+//      This makes it safe to run on every deploy.
+//   3. Otherwise: picks 5 showcase SKUs, soft-deletes every other product
+//      on that org, wipes existing images on the 5, downloads 3 product
+//      photos per SKU from Unsplash, uploads each to Wasabi via
+//      PutObjectCommand, and creates Asset + ProductImage rows.
 //
-// Run once on the server (or any machine with prod env access):
+// Run on the server (or any machine with prod env access):
 //   pnpm --filter @aligned/db exec tsx ./seed/aligned-showcase.ts
+//
+// Auto-runs as a step in .github/workflows/deploy.yml after migrations.
 //
 // Required env vars (same names the API + worker use):
 //   DATABASE_URL or DIRECT_DATABASE_URL
@@ -18,15 +22,9 @@
 //   WASABI_REGION (e.g. us-east-1)
 //   WASABI_ENDPOINT (e.g. https://s3.us-east-1.wasabisys.com)
 //   WASABI_BUCKET
-//
-// SELF-DESTRUCTING: on success this script removes itself from disk so it
-// can't be accidentally re-run. Idempotent inside a single run (safe to
-// retry if it fails partway).
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { unlinkSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 const SHOWCASE_SKUS = [
   'ATK-MIX-HEARTATTACK',
@@ -159,10 +157,39 @@ async function main(): Promise<void> {
         ],
       },
     });
-    if (!org) throw new Error('No org named "ALIGNED" (or slug "aligned"). Aborting.');
+    if (!org) {
+      // Not an error — the seed runs on every deploy and not every deploy
+      // target has the ALIGNED demo org configured.
+      console.log('[showcase] no org named "ALIGNED" on this database — skipping.');
+      return;
+    }
     console.log(`[showcase] target org: ${org.name} (${org.id})`);
 
-    // 2. Resolve showcase products by SKU.
+    // 2. Idempotency check — if the catalog is already exactly the 5
+    //    showcase products with 3 images each, skip silently. This makes
+    //    the seed safe to run on every deploy without redoing work.
+    const liveCount = await prisma.product.count({
+      where: { organizationId: org.id, deletedAt: null },
+    });
+    if (liveCount === SHOWCASE_SKUS.length) {
+      const live = await prisma.product.findMany({
+        where: {
+          organizationId: org.id,
+          deletedAt: null,
+          sku: { in: [...SHOWCASE_SKUS] },
+        },
+        select: { sku: true, images: { select: { id: true } } },
+      });
+      if (
+        live.length === SHOWCASE_SKUS.length &&
+        live.every((p) => p.images.length === 3)
+      ) {
+        console.log('[showcase] catalog already in showcase state — nothing to do.');
+        return;
+      }
+    }
+
+    // 3. Resolve showcase products by SKU.
     const showcaseProducts = await prisma.product.findMany({
       where: {
         organizationId: org.id,
@@ -173,9 +200,13 @@ async function main(): Promise<void> {
     const found = new Set(showcaseProducts.map((p) => p.sku));
     const missing = SHOWCASE_SKUS.filter((s) => !found.has(s));
     if (missing.length > 0) {
-      throw new Error(
-        `Missing showcase SKUs in this org: ${missing.join(', ')}. Import them first.`,
+      // Same logic as the org check — not an error, just skip the deploy.
+      // The operator will see the catalog hasn't been trimmed and can
+      // import the showcase products + re-run / wait for next deploy.
+      console.log(
+        `[showcase] missing SKUs on ${org.name}: ${missing.join(', ')} — skipping.`,
       );
+      return;
     }
     console.log(`[showcase] found ${showcaseProducts.length} showcase products`);
 
@@ -249,18 +280,6 @@ async function main(): Promise<void> {
     console.log('\n[showcase] ✓ done. ALIGNED catalog now has 5 products, 3 images each.');
   } finally {
     await prisma.$disconnect();
-  }
-
-  // SELF-DESTRUCT — remove this script so it can't accidentally re-run.
-  // Done last + only on success (caught errors propagate before we get
-  // here). The caller commits the file removal afterward.
-  try {
-    const here = fileURLToPath(import.meta.url);
-    unlinkSync(here);
-    console.log(`[showcase] script removed: ${here}`);
-    console.log('[showcase] remember to commit the deletion so it doesn\'t come back on next deploy.');
-  } catch (err) {
-    console.warn('[showcase] could not self-delete script (permissions?):', err);
   }
 }
 

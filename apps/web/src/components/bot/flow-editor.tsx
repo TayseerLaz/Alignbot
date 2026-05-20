@@ -91,24 +91,62 @@ function FlowEditorInner({
   const [edges, setEdges] = useState<Edge[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Hydrate from existing config. If conversationFlow has the new
-  // graph shape (`nodes` + `edges`), use it. Otherwise fall back to the
-  // legacy intent-keyed object and synthesise a default 5-node row.
+  // Hydrate from existing config. Three input shapes are recognised:
+  //   1. Full graph shape    — { nodes: [{ id, intent, label, response, x, y }], edges }
+  //      Saved here by the editor itself.
+  //   2. Simple AI shape     — { nodes: [{ intent, label, response }] } (no id/x/y, no edges).
+  //      Produced by the conversation-flow recommender; we auto-lay the nodes
+  //      out in a 4-wide grid so they render without overlap, and start with
+  //      no edges (operator wires fallthroughs as they see fit).
+  //   3. Legacy keyed object — { greeting: "Hi", booking: "..." }
+  //      Original v1 shape; fall back to the canonical 5-preset row.
   useEffect(() => {
     const cf = (initial.conversationFlow ?? {}) as {
-      nodes?: { id: string; intent: string; label: string; response: string; x: number; y: number }[];
+      nodes?: { id?: unknown; intent?: unknown; label?: unknown; response?: unknown; x?: unknown; y?: unknown }[];
       edges?: { id: string; source: string; target: string }[];
     };
-    if (cf.nodes && cf.edges) {
-      setNodes(
-        cf.nodes.map((n) => ({
-          id: n.id,
+    if (Array.isArray(cf.nodes) && cf.nodes.length > 0) {
+      const first = cf.nodes[0]!;
+      const isFullShape =
+        typeof first.id === 'string' && typeof first.x === 'number' && typeof first.y === 'number';
+      if (isFullShape) {
+        setNodes(
+          cf.nodes.map((n) => ({
+            id: n.id as string,
+            type: 'intent',
+            position: { x: n.x as number, y: n.y as number },
+            data: {
+              intent: (n.intent as string) ?? '',
+              label: (n.label as string) ?? '',
+              response: (n.response as string) ?? '',
+            },
+          })),
+        );
+        setEdges(
+          (cf.edges ?? []).map((e) => ({ id: e.id, source: e.source, target: e.target })),
+        );
+        return;
+      }
+      // Simple AI shape — auto-lay out the nodes in a 4-wide grid so the
+      // operator sees the selected flow in the editor immediately.
+      const laidOut: IntentNode[] = cf.nodes.map((n, i) => {
+        const col = i % 4;
+        const row = Math.floor(i / 4);
+        const intent = typeof n.intent === 'string' && n.intent.length > 0 ? n.intent : `intent_${i}`;
+        return {
+          id: typeof n.id === 'string' && n.id.length > 0 ? (n.id as string) : intent,
           type: 'intent',
-          position: { x: n.x, y: n.y },
-          data: { intent: n.intent, label: n.label, response: n.response },
-        })),
-      );
-      setEdges(cf.edges.map((e) => ({ id: e.id, source: e.source, target: e.target })));
+          position: { x: 60 + col * 260, y: 60 + row * 180 },
+          data: {
+            intent,
+            label: typeof n.label === 'string' && n.label.length > 0 ? (n.label as string) : intent,
+            response: typeof n.response === 'string' ? (n.response as string) : '',
+          },
+        };
+      });
+      setNodes(laidOut);
+      // Start with no edges — the simple shape doesn't carry fallthroughs.
+      setEdges([]);
       return;
     }
     // Legacy layout: read each intent key as a row, lay out left → right.

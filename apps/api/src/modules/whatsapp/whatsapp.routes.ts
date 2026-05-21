@@ -3340,7 +3340,7 @@ async function maybeReplyAsBot(args: {
               kind: 'cart_received',
               severity: 'info',
               title: `New cart · ${itemsCount} item${itemsCount === 1 ? '' : 's'}`,
-              body: `${thread.customerName ?? thread.customerWhatsappName ?? m.from} · ${totalMinor / (shopForm.currency === 'KWD' || shopForm.currency === 'BHD' || shopForm.currency === 'OMR' ? 1000 : 100)} ${shopForm.currency}`,
+              body: `${thread.customerName ?? thread.customerWhatsappName ?? m.from} · ${totalMinor / (shopForm.currency === 'KWD' || shopForm.currency === 'BHD' || shopForm.currency === 'OMR' || shopForm.currency === 'JOD' ? 1000 : 100)} ${shopForm.currency}`,
               link: `/cart`,
               entityType: 'cart',
               entityId: cart.id,

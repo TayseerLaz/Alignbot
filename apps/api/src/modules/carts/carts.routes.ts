@@ -285,7 +285,7 @@ export default async function cartsRoutes(app: FastifyInstance) {
         kind: 'cart_received',
         severity: 'info',
         title: `New cart · ${result.cart.itemsCount} item${result.cart.itemsCount === 1 ? '' : 's'}`,
-        body: `${result.cart.customerName ?? result.cart.customerPhone} · ${result.cart.totalMinor / (result.cart.currency === 'KWD' || result.cart.currency === 'BHD' || result.cart.currency === 'OMR' ? 1000 : 100)} ${result.cart.currency}`,
+        body: `${result.cart.customerName ?? result.cart.customerPhone} · ${result.cart.totalMinor / (result.cart.currency === 'KWD' || result.cart.currency === 'BHD' || result.cart.currency === 'OMR' || result.cart.currency === 'JOD' ? 1000 : 100)} ${result.cart.currency}`,
         link: `/cart`,
         entityType: 'cart',
         entityId: result.cart.id,

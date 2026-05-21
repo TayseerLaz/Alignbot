@@ -190,8 +190,8 @@ function formatOperatingHours(raw: unknown): string {
 function formatMoney(minor: number | null, currency: string | null): string {
   if (minor == null) return '';
   const code = (currency ?? 'USD').toUpperCase();
-  const minorPerMajor = code === 'KWD' || code === 'BHD' || code === 'OMR' ? 1000 : 100;
-  const decimals = code === 'KWD' || code === 'BHD' || code === 'OMR' ? 3 : 2;
+  const minorPerMajor = code === 'KWD' || code === 'BHD' || code === 'OMR' || code === 'JOD' ? 1000 : 100;
+  const decimals = code === 'KWD' || code === 'BHD' || code === 'OMR' || code === 'JOD' ? 3 : 2;
   const major = (minor / minorPerMajor).toFixed(decimals);
   return `${major} ${code}`;
 }
@@ -611,7 +611,7 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     // the order is LOST.
     shopForm
       ? `- CART FLOW (load-bearing). If the customer wants to ORDER / BUY / DELIVER (or matches one of: ${shopForm.intentKeywords.join(', ') || '"order", "buy", "delivery", "menu"'}):\n` +
-        `  ALWAYS QUOTE PRICES. Every time you add an item to the running cart, state its unit price ("Got it — 3× Oreo Milkshake at 1.250 KWD each, that's 3.750 KWD so far"). When the customer asks "what's the total?", compute it from items × unit prices + delivery fee + show the breakdown. Currency: ${shopForm.currency}. Format as <amount with correct decimals> ${shopForm.currency} — KWD/BHD/OMR use 3 decimals (1.250), USD/EUR use 2 (1.25). NEVER reply "I can't provide the total" — you have the catalog prices, compute it.\n` +
+        `  ALWAYS QUOTE PRICES. Every time you add an item to the running cart, state its unit price ("Got it — 3× Oreo Milkshake at 1.250 KWD each, that's 3.750 KWD so far"). When the customer asks "what's the total?", compute it from items × unit prices + delivery fee + show the breakdown. Currency: ${shopForm.currency}. Format as <amount with correct decimals> ${shopForm.currency} — KWD/BHD/OMR/JOD use 3 decimals (1.250), USD/EUR use 2 (1.25). NEVER reply "I can't provide the total" — you have the catalog prices, compute it.\n` +
         `  Step 1: help them pick products from the CATALOG section below. Use EXACT product NAMES + SKUs as shown — NEVER invent products. Confirm quantity + variant.\n` +
         `  Step 1b (MANDATORY — applies to EVERY item-add reply in the cart flow). When you confirm an item was added, the reply MUST include ALL of:\n` +
         `       i.  the product's short description (the part after " — " in the catalog line);\n` +
@@ -630,7 +630,7 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
         `    [CART: {"items":[{"sku":"<EXACT_SKU>","name":"<EXACT_NAME>","quantity":<N>,"unitPriceMinor":<INT>,"notes":""}],"fields":${JSON.stringify(
           Object.fromEntries(shopForm.fields.map((f) => [f.key, `<${f.label}>`])),
         )}}]\n` +
-        `  All money values are INTEGERS in minor units (no decimals). Get unitPriceMinor from the CATALOG's price (multiply major-unit prices by 100 for USD/EUR, by 1000 for KWD/BHD/OMR — currency: ${shopForm.currency}). Keys EXACTLY as written. Optional missing fields = "". Use ONLY products that appear in the CATALOG list — no invented items.\n` +
+        `  All money values are INTEGERS in minor units (no decimals). Get unitPriceMinor from the CATALOG's price (multiply major-unit prices by 100 for USD/EUR, by 1000 for KWD/BHD/OMR/JOD — currency: ${shopForm.currency}). Keys EXACTLY as written. Optional missing fields = "". Use ONLY products that appear in the CATALOG list — no invented items.\n` +
         `  ${shopForm.minOrderMinor != null ? `Minimum order: ${shopForm.minOrderMinor} minor units (${shopForm.currency}). If the subtotal is below this, politely tell the customer and ask them to add more before confirming. Do NOT emit the marker.\n  ` : ''}` +
         `${shopForm.deliveryFeeMinor != null ? `Delivery fee: ${shopForm.deliveryFeeMinor} minor units${shopForm.freeDeliveryAboveMinor != null ? ` (waived above ${shopForm.freeDeliveryAboveMinor} minor units)` : ''}. Mention it explicitly in the summary.\n  ` : ''}` +
         `After the marker, write a brief confirmation in the customer's language. The receiver replaces it with: "${shopForm.confirmationMessage}".\n` +

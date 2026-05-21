@@ -315,6 +315,40 @@ jobs:
             " || echo "[bot-reply-pairing] query failed (non-fatal)"
             echo ""
 
+            echo "--- last 10 AUDIO inbounds on ALIGNED + their next bot reply ---"
+            # Filtered version that only looks at audio/voice inbounds.
+            # If 'bot_reply' shows 'audio' the TTS path worked end-to-end.
+            # If it shows 'text' the bot fell back — TTS or transcode
+            # error in the logs around that timestamp.
+            PGPASSWORD="$POSTGRES_PASSWORD" psql -h localhost -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=0 -At -c "
+              WITH recent_audio AS (
+                SELECT m.id, m.received_at, m.message_type, m.from_number, m.organization_id,
+                       LEFT(COALESCE(m.body,'(no body)'), 50) AS body_preview
+                FROM whatsapp_messages m
+                JOIN organizations o ON o.id = m.organization_id
+                WHERE m.direction = 'inbound'
+                  AND m.message_type IN ('audio','voice')
+                  AND lower(o.name) = 'aligned'
+                ORDER BY m.received_at DESC LIMIT 10
+              )
+              SELECT
+                to_char(ra.received_at AT TIME ZONE 'UTC', 'HH24:MI:SS') AS at,
+                ra.message_type AS inbound,
+                ra.body_preview,
+                COALESCE((
+                  SELECT mo.message_type
+                  FROM whatsapp_messages mo
+                  WHERE mo.organization_id = ra.organization_id
+                    AND mo.direction = 'outbound'
+                    AND mo.received_at > ra.received_at
+                    AND (mo.raw_payload->>'sentBy') = 'bot'
+                  ORDER BY mo.received_at ASC LIMIT 1
+                ), '(no bot reply)') AS bot_reply
+              FROM recent_audio ra
+              ORDER BY ra.received_at DESC;
+            " || echo "[audio-pairing] query failed (non-fatal)"
+            echo ""
+
             echo "=== voice / TTS configuration audit ==="
             # Print which TTS providers are configured in .env.production
             # so we can diagnose voice-mode failures without server access.

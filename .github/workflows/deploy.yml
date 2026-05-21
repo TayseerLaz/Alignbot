@@ -262,6 +262,59 @@ jobs:
             " || echo "[voice-inbound-audit] follow-up query failed (non-fatal)"
             echo ""
 
+            echo "--- bot_config.replyMode + ttsProvider on ALIGNED (the actual saved values) ---"
+            # Tells us whether the operator's chosen reply mode actually
+            # persisted. If reply_mode='text' here, the bot will ALWAYS
+            # send text regardless of inbound type — switch to
+            # match_customer/voice on /bot to enable voice replies.
+            PGPASSWORD="$POSTGRES_PASSWORD" psql -h localhost -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=0 -At -c "
+              SELECT
+                LEFT(bc.organization_id::text, 8) AS org,
+                bc.reply_mode,
+                bc.tts_provider,
+                COALESCE(bc.tts_voice_name, '(unset)') AS tts_voice,
+                CASE WHEN bc.deployed_at IS NULL THEN 'no' ELSE 'yes' END AS deployed
+              FROM bot_configs bc
+              JOIN organizations o ON o.id = bc.organization_id
+              WHERE lower(o.name) = 'aligned';
+            " || echo "[bot-config-audit] query failed (non-fatal)"
+            echo ""
+
+            echo "--- last 10 inbound+next-outbound on ALIGNED (did audio inbound → audio out?) ---"
+            # Pairs each recent inbound with the bot's very next outbound
+            # so we can see at-a-glance whether audio inbounds are getting
+            # audio replies. The 'match' column is the smoking gun:
+            #   audio→audio = working, audio→text = TTS/transcode failed
+            #   or replyMode='text', text→text = expected.
+            PGPASSWORD="$POSTGRES_PASSWORD" psql -h localhost -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=0 -At -c "
+              WITH recent_in AS (
+                SELECT m.id, m.received_at, m.message_type, m.from_number, m.organization_id
+                FROM whatsapp_messages m
+                JOIN organizations o ON o.id = m.organization_id
+                WHERE m.direction = 'inbound' AND lower(o.name) = 'aligned'
+                ORDER BY m.received_at DESC LIMIT 10
+              )
+              SELECT
+                to_char(ri.received_at AT TIME ZONE 'UTC', 'HH24:MI:SS') AS at,
+                ri.message_type AS inbound,
+                COALESCE((
+                  SELECT mo.message_type
+                  FROM whatsapp_messages mo
+                  WHERE mo.organization_id = ri.organization_id
+                    AND mo.direction = 'outbound'
+                    AND mo.received_at > ri.received_at
+                    AND (mo.raw_payload->>'sentBy') = 'bot'
+                  ORDER BY mo.received_at ASC LIMIT 1
+                ), '(no bot reply)') AS bot_reply,
+                CASE
+                  WHEN ri.message_type IN ('audio','voice') THEN '<-- audio inbound'
+                  ELSE ''
+                END AS note
+              FROM recent_in ri
+              ORDER BY ri.received_at DESC;
+            " || echo "[bot-reply-pairing] query failed (non-fatal)"
+            echo ""
+
             echo "=== voice / TTS configuration audit ==="
             # Print which TTS providers are configured in .env.production
             # so we can diagnose voice-mode failures without server access.

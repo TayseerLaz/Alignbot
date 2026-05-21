@@ -73,6 +73,9 @@ export interface BotData {
     websiteUrl: string | null;
     timezone: string | null;
     operatingHours: unknown;
+    // Org's default currency (ISO 4217). Read from BusinessInfo.currency
+    // by gatherBotData; used by the shop/cart flow to format prices.
+    currency: string;
   } | null;
   faqs: { question: string; answer: string }[];
   policies: { kind: string; title: string; content: string }[];
@@ -351,9 +354,10 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
           typeof s.confirmationMessage === 'string' && s.confirmationMessage.trim()
             ? s.confirmationMessage
             : "Got it! Your order is in 🙏 We'll be in touch shortly.",
-        currency: (biz as { currency?: unknown })?.currency
-          ? String((biz as { currency: string }).currency)
-          : 'USD',
+        currency:
+          biz && typeof (biz as { currency?: unknown }).currency === 'string'
+            ? ((biz as { currency: string }).currency)
+            : 'USD',
       };
     }
   }
@@ -385,7 +389,7 @@ interface BotResponseArgs {
 // Composes the system prompt from gathered data + asks the LLM. NO Prisma
 // tx is held here — callers MUST have already exited their gather-data tx.
 export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: string; usedKbCount: number }> {
-  const { config, kb, products, services, biz, faqs, policies, bookingForm } = args.data;
+  const { config, kb, products, services, biz, faqs, policies, bookingForm, shopForm } = args.data;
 
   const personalityKey = config?.personality ?? config?.detectedTone ?? 'friendly';
   const personalityHint =

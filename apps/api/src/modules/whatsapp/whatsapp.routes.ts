@@ -2677,11 +2677,17 @@ async function maybeReplyAsBot(args: {
           '[whatsapp] voice reply requested but TTS provider not configured — falling back to text',
         );
       } else {
+        // Rewrite prices to spoken form in the matching language so
+        // TTS doesn't say "0.150 kay-double-yoo-dee". Only mutates the
+        // string handed to TTS — the original `reply` is still what
+        // gets saved + sent in the text-fallback branch below.
+        const { rewriteForTts } = await import('../../lib/text-for-tts.js');
+        const spokenText = rewriteForTts(reply);
         // For Google, ttsVoiceName is a voice NAME; for ElevenLabs, a
         // voice ID. We pass it through unchanged to whichever provider
         // dispatches below — both accept null to mean "use env default".
         const tts = await synthesizeSpeech({
-          text: reply,
+          text: spokenText,
           voiceName: ctx.ttsVoiceName ?? '',
           voiceId: ctx.ttsVoiceName ?? null,
         });

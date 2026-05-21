@@ -116,9 +116,29 @@ async function generateScenariosFromKb(
     ? `Business: ${data.biz.legalName ?? ''}\nTagline: ${data.biz.tagline ?? ''}\nAbout: ${(data.biz.about ?? '').slice(0, 400)}`
     : '';
 
+  // Make sure cart + booking flows get test coverage when they're
+  // enabled. Without this nudge the LLM defaults to "what time do you
+  // open?"-style scenarios and never exercises the load-bearing
+  // [CART:] / [BOOKING:] markers.
+  const flowsEnabled: string[] = [];
+  if (data.shopForm?.enabled) {
+    flowsEnabled.push(
+      `- SHOP / CART flow is enabled. Include scenarios that exercise it: (a) a happy-path single-item order, (b) a multi-item order with delivery address + payment method, (c) at least one edge case (below-minimum order, an item NOT in catalog, change-of-mind mid-cart). The bot should refuse off-catalog items and emit a [CART: ...] marker on confirmation — write expectations that check for those.`,
+    );
+  }
+  if (data.bookingForm?.enabled) {
+    flowsEnabled.push(
+      `- BOOKING flow is enabled (title: "${data.bookingForm.title}"). Include scenarios that exercise booking: (a) a happy-path booking, (b) a booking with vague time the bot must clarify. Expectations should check the bot collects every required field + emits a [BOOKING: ...] marker on confirmation.`,
+    );
+  }
+  const flowsContext =
+    flowsEnabled.length > 0
+      ? `\n\nACTIVE FLOWS — must be exercised in the scenarios:\n${flowsEnabled.join('\n')}`
+      : '';
+
   const sys =
     'You are a QA test designer for customer-support chatbots. Generate REALISTIC test scenarios a customer of THIS specific business might ask. Cover a spread: product/service lookups, hours, delivery, allergens or policies, edge cases the bot might get wrong, and at least one out-of-scope question. Return STRICT JSON only (no prose, no markdown): {"scenarios": [{"key": "<slug>", "prompt": "<customer message>", "expectation": "<one-sentence pass criterion for an LLM judge>"}]}. 6–8 scenarios, keys are short snake_case slugs, prompts are colloquial first-person customer messages.';
-  const user = `${bizContext}\n\nKnowledge base:\n${kbSnippets || '(empty)'}\n\nProducts:\n${productSnippets || '(none)'}\n\nServices:\n${serviceSnippets || '(none)'}`;
+  const user = `${bizContext}\n\nKnowledge base:\n${kbSnippets || '(empty)'}\n\nProducts:\n${productSnippets || '(none)'}\n\nServices:\n${serviceSnippets || '(none)'}${flowsContext}`;
 
   try {
     const out = await complete({
@@ -179,9 +199,32 @@ async function generateFlowCandidates(
     .map((p) => `- ${p.title} (${p.kind})`)
     .join('\n');
 
+  // Flow recommender has to know which operator flows are enabled so
+  // its candidates actually include the right intents (cart / order
+  // intents when shop is on, booking intents when booking is on). It
+  // also biases isRecommended toward the candidate that matches the
+  // strongest signal.
+  const enabledFlows: string[] = [];
+  if (data.shopForm?.enabled) {
+    enabledFlows.push(
+      `- SHOP / CART flow is enabled (title: "${data.shopForm.title}"). Customers can place multi-item orders. EVERY candidate's intent nodes should include order-related intents: menu_lookup, add_to_cart, modify_cart, confirm_order, delivery_info, payment_method, order_status. The "Quick Order First" / "Self-Serve Menu" / "Concierge Sales" archetypes fit this profile best.`,
+    );
+  }
+  if (data.bookingForm?.enabled) {
+    enabledFlows.push(
+      `- BOOKING flow is enabled (title: "${data.bookingForm.title}"). EVERY candidate's intent nodes should include booking-related intents: book_appointment, ask_availability, reschedule, cancel_booking. "Hospitality Concierge" / "Support-First" archetypes fit best.`,
+    );
+  }
+  if (enabledFlows.length === 0) {
+    enabledFlows.push(
+      `- Neither shop nor booking is enabled. Focus on FAQ-style intents: greeting, product_info, hours, location, contact, escalation.`,
+    );
+  }
+  const flowsContext = `\n\nACTIVE OPERATOR FLOWS:\n${enabledFlows.join('\n')}`;
+
   const sys =
-    'You are a senior conversation designer. Look at the business and produce 3–5 DIFFERENT conversation-flow CANDIDATES the operator can pick from. Each candidate represents a strategically different way of talking to customers (e.g. "Quick Order First", "Hospitality Concierge", "Support-First", "Concierge Sales", "Self-Serve Menu"). For EACH candidate, also produce 6–10 intent nodes — each intent has a slug like "menu_lookup", a human label, and a SHORT response template (1–3 sentences, in English, that the LLM-driven bot would adapt at runtime). Mark exactly ONE candidate as "isRecommended" with a one-sentence "recommendReason" explaining why it fits this business best. Return STRICT JSON only: {"candidates": [{"name": "...", "description": "...", "isRecommended": true|false, "recommendReason": "..." | null, "nodes": [{"intent": "...", "label": "...", "response": "..."}]}]}. No prose, no markdown.';
-  const user = `${bizContext}\n\nProducts: ${productNames || '(none)'}\nServices: ${serviceNames || '(none)'}\n\nKnowledge base highlights:\n${kbSnippets || '(empty)'}\n\nPolicies:\n${policiesContext || '(none)'}`;
+    'You are a senior conversation designer. Look at the business and produce 3–5 DIFFERENT conversation-flow CANDIDATES the operator can pick from. Each candidate represents a strategically different way of talking to customers (e.g. "Quick Order First", "Hospitality Concierge", "Support-First", "Concierge Sales", "Self-Serve Menu"). For EACH candidate, also produce 6–10 intent nodes — each intent has a slug like "menu_lookup", a human label, and a SHORT response template (1–3 sentences, in English, that the LLM-driven bot would adapt at runtime). The intent SET for every candidate MUST include the intents listed under ACTIVE OPERATOR FLOWS (operator has enabled these and the bot must support them). Mark exactly ONE candidate as "isRecommended" with a one-sentence "recommendReason" explaining why it fits this business best — bias toward an archetype that matches the active flow. Return STRICT JSON only: {"candidates": [{"name": "...", "description": "...", "isRecommended": true|false, "recommendReason": "..." | null, "nodes": [{"intent": "...", "label": "...", "response": "..."}]}]}. No prose, no markdown.';
+  const user = `${bizContext}\n\nProducts: ${productNames || '(none)'}\nServices: ${serviceNames || '(none)'}\n\nKnowledge base highlights:\n${kbSnippets || '(empty)'}\n\nPolicies:\n${policiesContext || '(none)'}${flowsContext}`;
 
   try {
     const out = await complete({

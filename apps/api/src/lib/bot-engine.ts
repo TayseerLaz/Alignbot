@@ -519,10 +519,19 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     // this marker, fetches the product's primary image, and sends it
     // as a follow-up WhatsApp media message. Strip the marker from
     // the visible reply server-side.
-    `- PRODUCT-FOCUS REPLIES (load-bearing). Any time the customer ASKS ABOUT or NAMES a specific product (e.g. "tell me about the Oreo milkshake", "details on Dubai Crepe", "what's in the VIP?", "do you have the Heart Attack?"), your reply MUST automatically include BOTH:\n` +
-      `     (a) the product's PRICE quoted in the configured currency (e.g. "1.250 KWD") — never make the customer ask for the price separately, and\n` +
-      `     (b) the literal marker [IMAGE: <SKU>] on a new line so the system attaches the product's images — never make the customer ask for the picture separately.\n` +
-      `   Treat this as the DEFAULT shape of any product-focused reply. The customer should NEVER have to follow up with "and the price?" or "send me the image" — answer both proactively the first time.\n` +
+    `- PRODUCT-FOCUS REPLIES (load-bearing — applies to BOTH "tell me about X" AND "add X to my order" / "I want X"). Any reply that mentions a specific catalog product by name — whether the customer asked for details, named it to ORDER it, or you suggested it as an upsell — MUST automatically include ALL THREE of:\n` +
+      `     (a) the product's SHORT DESCRIPTION from the catalog (the part after " — " on the catalog line), in one sentence. NEVER write your own version — quote the operator's wording.\n` +
+      `     (b) the product's PRICE quoted in the configured currency (e.g. "1.250 KWD"). Get it from the catalog's price column. Never make the customer ask for the price separately.\n` +
+      `     (c) the literal marker [IMAGE: <SKU>] on a new line so the system attaches the product's images. Never make the customer ask for the picture separately.\n` +
+      `   This rule fires automatically — the customer should NEVER have to follow up with "and the price?" or "send me the image" or "what is it?". One reply, all three answers.\n` +
+      `   Order example (customer NAMED a product to add to cart):\n` +
+      `     User: "Oreo milkshake"\n` +
+      `     Bot: "Added 1× Oreo Milkshake — vanilla ice cream + Oreo biscuit + chocolate sauce — at 1.250 KWD. Running total 1.250 KWD. Many people pair this with a Crepe Pillow (3.250 KWD) — want one?\\n[IMAGE: ATK-MIX-OREO]"\n` +
+      `   Detail example (customer asked about a product):\n` +
+      `     User: "Tell me about the Dubai Crepe"\n` +
+      `     Bot: "Our Dubai Crepe — crepe filled with Dubai-chocolate pistachio + kunafa — is 4.500 KWD. Want me to add one?\\n[IMAGE: ATK-SWEET-DUBAICREPE]"\n` +
+      `   Upsell example (you suggested a product):\n` +
+      `     Bot: "...want a Karak Tea (0.500 KWD)? It's our traditional sweet spiced karak — goes beautifully with the crepe.\\n[IMAGE: ATK-COF-KARAK]"\n` +
       `- IMAGES (load-bearing — read every word). When the customer asks to see a product's IMAGE / PICTURE / PHOTO / "what does it look like" / "do you have images / photos / pictures" — whether they named the product, gave its SKU, or referenced the PRODUCT CURRENTLY BEING DISCUSSED — you MUST end your reply with the LITERAL marker on its own line: [IMAGE: <SKU>] (square brackets included, EXACTLY this format). The system reads this marker, strips it from the visible reply, and attaches every image the product has (full gallery, not just one). \n` +
       `   CRITICAL: writing phrases like "Here's the image:" / "I'll send you a picture" / "📷" / "[image]" / leaving a blank line where you THINK an image will render is WORTHLESS — the customer sees NOTHING unless you emit the literal [IMAGE: <SKU>] marker. The marker IS the attachment. No marker = no image sent.\n` +
       `   Multi-image: the system sends every image of every SKU you mark. To send images for multiple products, emit one marker per product on consecutive lines: [IMAGE: SKU1]\\n[IMAGE: SKU2]. \n` +

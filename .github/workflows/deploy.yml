@@ -179,6 +179,18 @@ jobs:
             git fetch --all --quiet
             git reset --hard origin/main
 
+            echo "=== ensure ffmpeg is installed (TTS voice-note transcode) ==="
+            # The bot uses ffmpeg to remux ElevenLabs / Google TTS output
+            # into OGG/Opus for WhatsApp's voice-note validator. The npm
+            # ffmpeg-static binary segfaults silently on this host's
+            # libc setup, so we install system ffmpeg via apt. Idempotent.
+            if ! command -v ffmpeg >/dev/null 2>&1; then
+              echo "[ffmpeg] not found — installing via apt"
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq ffmpeg
+            fi
+            ffmpeg -version 2>&1 | head -1 || echo "[ffmpeg] install failed — voice replies will fall back to text"
+
             echo "=== pnpm install ==="
             # Clear node_modules first so pnpm doesn't hit its
             # "modules directories will be removed and reinstalled — Proceed?"

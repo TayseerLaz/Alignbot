@@ -2617,7 +2617,15 @@ async function maybeReplyAsBot(args: {
     // or forward it. Spoken-only confirmations are too easy to miss the
     // details of (item name, quantity, total). Applies in voice +
     // match_customer modes alike. Bookings get the same treatment.
-    const isOrderConfirmation = !!cartMarkerPayload || !!bookingMatch;
+    //
+    // Triggers: explicit [CART:] / [BOOKING:] markers OR any reply that
+    // contains an order-summary keyword (total / subtotal / إجمالي /
+    // المجموع). The keyword check catches the "running cart" replies
+    // the bot sends while collecting required fields (name, etc.) —
+    // those still describe the order and need to be readable.
+    const ORDER_SUMMARY_RE = /\b(?:total|subtotal|order total|grand total)\b|إجمالي|المجموع/i;
+    const isOrderConfirmation =
+      !!cartMarkerPayload || !!bookingMatch || ORDER_SUMMARY_RE.test(reply);
     const baseWantsVoice =
       ctx.replyMode === 'voice' ||
       (ctx.replyMode === 'match_customer' && customerSpokeAudio);

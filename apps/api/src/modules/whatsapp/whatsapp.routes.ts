@@ -2699,21 +2699,26 @@ async function maybeReplyAsBot(args: {
     const GREETING_REPLY_RE =
       /^(\s*[👋🙏✨🌟😊]?\s*)?(hi|hello|hey|welcome|good\s+(morning|afternoon|evening)|greetings|أهل[اًاً]?|مرحب[اًا]|سلام|bonjour|salut|hola|buen(os|as)\s+(d[ií]as|tardes|noches))[\s,!.:؛،]/iu;
     if (greetingImageKey && reply && GREETING_REPLY_RE.test(reply.trim())) {
-      const sentRecently = await withRlsBypass(async (tx) => {
+      // Short 2-minute dedup so a customer who fires "hi", "hello",
+      // "you there?" back-to-back doesn't get the banner three times in
+      // a row — but a fresh greeting later in the day (or in a new
+      // visit) DOES get the welcome image again. Operators asked for
+      // every greeting to feel welcoming, not "once-per-day banner".
+      const sentVeryRecently = await withRlsBypass(async (tx) => {
         const row = await tx.whatsAppMessage.findFirst({
           where: {
             threadId: ctx.threadId,
             organizationId: args.organizationId,
             direction: 'outbound',
             messageType: 'image',
-            receivedAt: { gt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+            receivedAt: { gt: new Date(Date.now() - 2 * 60 * 1000) },
             rawPayload: { path: ['kind'], equals: 'greeting' },
           },
           select: { id: true },
         });
         return !!row;
       });
-      if (!sentRecently) {
+      if (!sentVeryRecently) {
         // Prepend so the greeting image sends before any product images
         // in the same reply.
         dedupedImageSends.unshift({
@@ -2725,6 +2730,11 @@ async function maybeReplyAsBot(args: {
         args.log.info(
           { threadId: ctx.threadId },
           '[whatsapp] greeting image queued',
+        );
+      } else {
+        args.log.info(
+          { threadId: ctx.threadId },
+          '[whatsapp] greeting image suppressed (sent within last 2 min)',
         );
       }
     }

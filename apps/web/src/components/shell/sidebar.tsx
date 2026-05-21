@@ -18,6 +18,7 @@ import {
   Package,
   Settings,
   ShieldCheck,
+  ShoppingCart,
   TrendingUp,
   Upload,
   Users,
@@ -91,6 +92,7 @@ const groups: NavGroup[] = [
       // so old bookmarks + intra-app links keep working.
       { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone },
       { href: '/bookings', label: 'Bookings', icon: CalendarCheck },
+      { href: '/cart', label: 'Cart', icon: ShoppingCart },
     ],
   },
   {

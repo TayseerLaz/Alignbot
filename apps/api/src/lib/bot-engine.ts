@@ -86,6 +86,22 @@ export interface BotData {
     intentKeywords: string[];
     fields: { key: string; label: string; type: string; required: boolean }[];
   } | null;
+  // Operator-defined shop form (BusinessInfo.shopForm). Same shape as
+  // bookingForm, plus delivery + minimum-order fees + a confirmation
+  // template. When enabled, the bot helps the customer build a multi-item
+  // cart and emits a [CART: {...}] marker on confirmation so the caller
+  // can persist a Cart + CartItem rows.
+  shopForm: {
+    enabled: boolean;
+    title: string;
+    intentKeywords: string[];
+    fields: { key: string; label: string; type: string; required: boolean; options?: string[] }[];
+    minOrderMinor: number | null;
+    deliveryFeeMinor: number | null;
+    freeDeliveryAboveMinor: number | null;
+    confirmationMessage: string;
+    currency: string;
+  } | null;
 }
 
 // Pull the operator-authored intents out of BotConfig.conversationFlow
@@ -272,7 +288,77 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
     }
   }
 
-  return { config, kb, products: flatProducts, services, biz, faqs, policies, bookingForm };
+  // BusinessInfo.shopForm — same pattern as bookingForm. Catalog products
+  // travel separately as `products[]`; shopForm just describes the order
+  // form fields + fees + confirmation copy.
+  const rawShop = (biz as { shopForm?: unknown } | null)?.shopForm;
+  let shopForm: BotData['shopForm'] = null;
+  if (rawShop && typeof rawShop === 'object') {
+    const s = rawShop as {
+      enabled?: unknown;
+      title?: unknown;
+      intentKeywords?: unknown;
+      fields?: unknown;
+      minOrderMinor?: unknown;
+      deliveryFeeMinor?: unknown;
+      freeDeliveryAboveMinor?: unknown;
+      confirmationMessage?: unknown;
+    };
+    const fields = Array.isArray(s.fields)
+      ? (s.fields
+          .filter(
+            (f): f is {
+              key: string;
+              label: string;
+              type?: string;
+              required?: boolean;
+              options?: string[];
+            } =>
+              !!f &&
+              typeof f === 'object' &&
+              typeof (f as { key: unknown }).key === 'string' &&
+              typeof (f as { label: unknown }).label === 'string',
+          )
+          .map((f) => ({
+            key: f.key,
+            label: f.label,
+            type: typeof f.type === 'string' ? f.type : 'text',
+            required: f.required !== false,
+            options: Array.isArray((f as { options?: unknown }).options)
+              ? ((f as { options?: unknown[] }).options as unknown[]).filter(
+                  (o): o is string => typeof o === 'string',
+                )
+              : undefined,
+          })))
+      : [];
+    if (s.enabled === true && (fields.length > 0 || (flatProducts && flatProducts.length > 0))) {
+      shopForm = {
+        enabled: true,
+        title: typeof s.title === 'string' && s.title.trim() ? s.title : 'Shop',
+        intentKeywords: Array.isArray(s.intentKeywords)
+          ? (s.intentKeywords as unknown[]).filter((x): x is string => typeof x === 'string')
+          : [],
+        fields,
+        minOrderMinor:
+          typeof s.minOrderMinor === 'number' && Number.isFinite(s.minOrderMinor) ? s.minOrderMinor : null,
+        deliveryFeeMinor:
+          typeof s.deliveryFeeMinor === 'number' && Number.isFinite(s.deliveryFeeMinor) ? s.deliveryFeeMinor : null,
+        freeDeliveryAboveMinor:
+          typeof s.freeDeliveryAboveMinor === 'number' && Number.isFinite(s.freeDeliveryAboveMinor)
+            ? s.freeDeliveryAboveMinor
+            : null,
+        confirmationMessage:
+          typeof s.confirmationMessage === 'string' && s.confirmationMessage.trim()
+            ? s.confirmationMessage
+            : "Got it! Your order is in 🙏 We'll be in touch shortly.",
+        currency: (biz as { currency?: unknown })?.currency
+          ? String((biz as { currency: string }).currency)
+          : 'USD',
+      };
+    }
+  }
+
+  return { config, kb, products: flatProducts, services, biz, faqs, policies, bookingForm, shopForm };
 }
 
 interface BotResponseArgs {
@@ -388,7 +474,13 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     `Tone preset: ${personalityKey}. ${personalityHint}`,
     greeting ? `Default greeting: "${greeting}"` : '',
     shouldGreetByName
-      ? `Customer's WhatsApp name: "${customerFirstName}". This is your FIRST reply in this thread — open by addressing them by this name ONCE (e.g. "Hi ${customerFirstName}," in English, or the natural equivalent in their language). Do NOT repeat their name in subsequent replies.`
+      ? `# 🔴 CRITICAL — FIRST REPLY ADDRESSING\n` +
+        `The customer's name on WhatsApp is "${customerFirstName}". This is your FIRST reply to them. ` +
+        `You MUST open the reply by addressing them by name. Examples:\n` +
+        `  • English: "Hi ${customerFirstName}, " followed by the rest.\n` +
+        `  • Arabic:  "أهلاً ${customerFirstName}، " ثم بقية الرد.\n` +
+        `  • French:  "Bonjour ${customerFirstName}, " puis la suite.\n` +
+        `This applies even if you would otherwise reproduce the Default greeting above — prepend the name to it. Do NOT repeat their name in subsequent replies; this rule fires once per thread.`
       : '',
     ``,
     `# Rules`,
@@ -446,6 +538,35 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
         `    Bot: "I have: Jane Doe, jane@x.com, tomorrow at 5, IT strategy. Shall I book it?"\n` +
         `    User: "Yes confirm"\n` +
         `    Bot: "All set, Jane — booking confirmed for tomorrow at 5. We'll be in touch.\\n[BOOKING: {\\"name\\":\\"Jane Doe\\",\\"email\\":\\"jane@x.com\\",\\"date\\":\\"tomorrow at 5\\",\\"notes\\":\\"IT strategy\\"}]"`
+      : '',
+    // Cart / shop protocol — when the operator has enabled the shop form
+    // and the customer wants to order. The bot walks them through
+    // selecting products, asks for the shop-form fields, summarises,
+    // confirms, then emits [CART: {...}] with items + field answers.
+    // The receiver creates the Cart + CartItem rows; without the marker
+    // the order is LOST.
+    shopForm
+      ? `- CART FLOW (load-bearing). If the customer wants to ORDER / BUY / DELIVER (or matches one of: ${shopForm.intentKeywords.join(', ') || '"order", "buy", "delivery", "menu"'}):\n` +
+        `  Step 1: help them pick products from the CATALOG section below. Confirm quantities + variants. Use the EXACT product NAMES + SKUs as shown. NEVER invent products.\n` +
+        `  Step 2: when the cart looks settled, ask for the shop form fields listed in the SHOP FORM section below (ONE OR TWO at a time, exact LABELS).\n` +
+        `  Step 3: summarise items, totals, delivery (if any), and the answers, then ask the customer to confirm.\n` +
+        `  Step 4: as SOON AS they affirm (yes / confirm / go ahead / ok / etc.), emit on a NEW LINE the CART marker:\n` +
+        `    [CART: {"items":[{"sku":"<EXACT_SKU>","name":"<EXACT_NAME>","quantity":<N>,"unitPriceMinor":<INT>,"notes":""}],"fields":${JSON.stringify(
+          Object.fromEntries(shopForm.fields.map((f) => [f.key, `<${f.label}>`])),
+        )}}]\n` +
+        `  All money values are INTEGERS in minor units (no decimals). Get unitPriceMinor from the CATALOG's price (multiply major-unit prices by 100 for USD/EUR, by 1000 for KWD/BHD/OMR — currency: ${shopForm.currency}). Keys EXACTLY as written. Optional missing fields = "". Use ONLY products that appear in the CATALOG list — no invented items.\n` +
+        `  ${shopForm.minOrderMinor != null ? `Minimum order: ${shopForm.minOrderMinor} minor units (${shopForm.currency}). If the subtotal is below this, politely tell the customer and ask them to add more before confirming. Do NOT emit the marker.\n  ` : ''}` +
+        `${shopForm.deliveryFeeMinor != null ? `Delivery fee: ${shopForm.deliveryFeeMinor} minor units${shopForm.freeDeliveryAboveMinor != null ? ` (waived above ${shopForm.freeDeliveryAboveMinor} minor units)` : ''}. Mention it explicitly in the summary.\n  ` : ''}` +
+        `After the marker, write a brief confirmation in the customer's language. The receiver replaces it with: "${shopForm.confirmationMessage}".\n` +
+        `  Example (KWD juice bar, currency KWD = 1000 minor units / KD):\n` +
+        `    User: "I want 2 cappuccinos and a Dubai crepe to Salmiya"\n` +
+        `    Bot: "Sure! 2× Cappuccino (1.250 KD each) and 1× Dubai Crepe (4.500 KD). What's the delivery address?"\n` +
+        `    User: "Salmiya, Block 4 House 12"\n` +
+        `    Bot: "Got it. Payment — Cash, KNET, or card?"\n` +
+        `    User: "KNET"\n` +
+        `    Bot: "To confirm: 2× Cappuccino + 1× Dubai Crepe, deliver to Salmiya Block 4 House 12, KNET. Subtotal 7.000 KD + 0.750 KD delivery = 7.750 KD total. Confirm?"\n` +
+        `    User: "Yes"\n` +
+        `    Bot: "Done! Your order is in 🙏\\n[CART: {\\"items\\":[{\\"sku\\":\\"ATK-COF-CAPPUCCINO\\",\\"name\\":\\"Cappuccino\\",\\"quantity\\":2,\\"unitPriceMinor\\":1250,\\"notes\\":\\"\\"},{\\"sku\\":\\"ATK-SWEET-DUBAICREPE\\",\\"name\\":\\"Dubai Crepe\\",\\"quantity\\":1,\\"unitPriceMinor\\":4500,\\"notes\\":\\"\\"}],\\"fields\\":{\\"delivery_address\\":\\"Salmiya Block 4 House 12\\",\\"payment_method\\":\\"KNET\\",\\"delivery_time\\":\\"\\",\\"notes\\":\\"\\"}}]"`
       : '',
     `- Hours: when a customer asks about opening times, quote directly from the OPENING HOURS section below. Don't paraphrase — read it back day-by-day, and call out the days that show "Closed" so the customer knows when not to expect a reply.`,
     // Language rule: reply in the customer's language IF it's one we
@@ -513,6 +634,26 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
           )
           .join('\n')}`
       : '',
+    shopForm
+      ? `# Shop form (${shopForm.title})\nCurrency: ${shopForm.currency}. Fields to collect AFTER the cart is settled, in this order:\n${shopForm.fields
+          .map(
+            (f, i) =>
+              `${i + 1}. key="${f.key}" — ask the customer for "${f.label}" (type: ${f.type}${f.required ? ', required' : ', optional'}${
+                f.options && f.options.length > 0
+                  ? `, choices: ${f.options.join(' / ')}`
+                  : ''
+              }).`,
+          )
+          .join('\n')}${
+          shopForm.minOrderMinor != null
+            ? `\nMinimum order: ${shopForm.minOrderMinor} minor units of ${shopForm.currency}.`
+            : ''
+        }${
+          shopForm.deliveryFeeMinor != null
+            ? `\nDelivery fee: ${shopForm.deliveryFeeMinor} minor units${shopForm.freeDeliveryAboveMinor != null ? ` (waived if subtotal ≥ ${shopForm.freeDeliveryAboveMinor} minor units)` : ''}.`
+            : ''
+        }`
+      : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -530,7 +671,27 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     temperature: 0.4,
   });
 
-  return { text: result.text, usedKbCount: kb.length };
+  // Greet-by-name fallback: if greetByName is on AND it's the first reply,
+  // but the LLM ignored the directive and didn't mention the customer's
+  // first name, prepend it deterministically so the operator's setting
+  // is actually honoured. Skip if the reply already includes the name
+  // (LLM obeyed) or the name appears as a prefix in any form (case-
+  // insensitive substring is good enough — false positives would
+  // double-greet at worst, which we then trim).
+  let text = result.text;
+  if (shouldGreetByName && text) {
+    const hasName = text.toLowerCase().includes(customerFirstName.toLowerCase());
+    if (!hasName) {
+      // Detect Arabic / Hebrew / similar RTL alphabets in the reply.
+      // For Arabic, the natural form is "أهلاً <name>،" — keep the
+      // existing reply intact and prepend a culturally-correct greeting.
+      const isArabic = /[؀-ۿ]/.test(text);
+      const prefix = isArabic ? `أهلاً ${customerFirstName}، ` : `Hi ${customerFirstName}, `;
+      text = prefix + text;
+    }
+  }
+
+  return { text, usedKbCount: kb.length };
 }
 
 // Fallback booking extractor. The main bot reply path asks the LLM to
@@ -588,3 +749,129 @@ export async function extractBooking(args: {
   }
 }
 
+// Cart fallback extractor — mirrors extractBooking. Re-reads the recent
+// conversation in JSON mode and asks the model to either (a) return the
+// full cart (items[] + field answers) if the customer just confirmed an
+// order, or (b) report not-yet-complete. Used as a safety net when the
+// primary reply doesn't include a clean [CART: {...}] marker.
+export interface CartExtractionItem {
+  sku: string;
+  name: string;
+  quantity: number;
+  unitPriceMinor: number;
+  notes?: string;
+}
+export interface CartExtraction {
+  complete: boolean;
+  items: CartExtractionItem[];
+  values: Record<string, string>;
+}
+
+export async function extractCart(args: {
+  organizationId: string;
+  shopForm: NonNullable<BotData['shopForm']>;
+  catalog: { sku: string; name: string; priceMinor: number | null }[];
+  history: { role: 'user' | 'assistant'; content: string }[];
+  latestUserMessage: string;
+}): Promise<CartExtraction> {
+  const { shopForm } = args;
+  const catalogList = args.catalog
+    .slice(0, 60)
+    .map((p) => `- sku=${p.sku} | name="${p.name}" | priceMinor=${p.priceMinor ?? 'unset'}`)
+    .join('\n');
+  const sys = [
+    'You are a structured-data extractor for a chatbot CART flow.',
+    `The operator's order form is titled "${shopForm.title}". Currency: ${shopForm.currency}.`,
+    'CATALOG (use these SKUs exactly; never invent items):',
+    catalogList || '(none)',
+    'Fields the form asks for (key — label — required):',
+    ...shopForm.fields.map(
+      (f) => `- ${f.key} — ${f.label} — ${f.required ? 'required' : 'optional'} (type: ${f.type})`,
+    ),
+    '',
+    'Read the conversation. Decide if the order is COMPLETE — i.e. (a) at least one item has been chosen, (b) every required field has a customer-provided value, AND (c) the customer just confirmed in their LAST message.',
+    'Output STRICT JSON with exactly three keys:',
+    '  - "complete": boolean (true ONLY if all three conditions above are met).',
+    '  - "items": array of { "sku": string from the CATALOG, "name": string, "quantity": int >= 1, "unitPriceMinor": int >= 0, "notes": string (optional) }.',
+    '  - "values": object mapping each form key to the captured string. Missing optional = "".',
+    'Do NOT add commentary or invent keys. Do NOT include items not in the CATALOG.',
+  ].join('\n');
+
+  const convo = args.history
+    .slice(-12)
+    .map((h) => `${h.role.toUpperCase()}: ${h.content}`)
+    .join('\n');
+  const userPrompt = `CONVERSATION (oldest → newest):\n${convo}\nUSER (just now): ${args.latestUserMessage}\n\nReturn the JSON object.`;
+
+  try {
+    return await completeJson<CartExtraction>({
+      organizationId: args.organizationId,
+      systemPrompt: sys,
+      messages: [{ role: 'user', content: userPrompt }],
+      maxTokens: 500,
+      temperature: 0,
+    });
+  } catch {
+    return { complete: false, items: [], values: {} };
+  }
+}
+
+// Lightweight parser for the inline [CART: { ... }] marker. Walks the bot
+// reply for the literal "[CART:" prefix, locates the matching closing "]",
+// and JSON-parses the payload. Returns null on any failure.
+export interface CartMarkerPayload {
+  items: { sku?: string; name?: string; quantity?: number; unitPriceMinor?: number; notes?: string }[];
+  fields: Record<string, string | number | boolean | null>;
+}
+export function parseCartMarker(text: string): CartMarkerPayload | null {
+  const idx = text.indexOf('[CART:');
+  if (idx < 0) return null;
+  // Find the matching `]` by walking with brace depth — JSON inside the
+  // marker has nested braces, so a naive lastIndexOf(']') is wrong when
+  // the marker is followed by trailing text.
+  let depth = 0;
+  let end = -1;
+  for (let i = idx; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === '[') depth++;
+    else if (ch === ']') {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  if (end < 0) return null;
+  const inner = text.slice(idx + '[CART:'.length, end).trim();
+  try {
+    const parsed = JSON.parse(inner) as CartMarkerPayload;
+    if (!parsed || !Array.isArray(parsed.items) || typeof parsed.fields !== 'object') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+// Strip the [CART: {...}] segment from a reply (used after the receiver
+// has persisted the cart, so the customer-facing reply doesn't contain
+// raw JSON).
+export function stripCartMarker(text: string): string {
+  const idx = text.indexOf('[CART:');
+  if (idx < 0) return text;
+  let depth = 0;
+  let end = -1;
+  for (let i = idx; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === '[') depth++;
+    else if (ch === ']') {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  if (end < 0) return text;
+  return (text.slice(0, idx) + text.slice(end + 1)).replace(/\n{3,}/g, '\n\n').trim();
+}

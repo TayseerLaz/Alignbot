@@ -23,7 +23,11 @@ import { cn } from '@/lib/utils';
 
 // Status flow (v1): new → confirmed → completed; cancelled is a terminal
 // escape hatch. Match the backend exactly so the dropdown maps 1:1.
-const STATUSES = ['new', 'confirmed', 'completed', 'cancelled'] as const;
+// `draft` carts are in-progress orders the bot is still building. Filter
+// is opt-in (the API hides drafts by default) so operators only see them
+// when they explicitly switch the filter — useful for abandoned-cart
+// recovery, ignored on the day-to-day Orders view.
+const STATUSES = ['draft', 'new', 'confirmed', 'completed', 'cancelled'] as const;
 type Status = (typeof STATUSES)[number];
 
 interface CartFieldAnswer {
@@ -68,6 +72,10 @@ interface Cart {
 }
 
 const STATUS_BADGE: Record<Status, 'default' | 'muted' | 'success' | 'danger'> = {
+  // 'draft' = bot is still building the cart with the customer. Shown
+  // in muted yellow-ish "muted" tone so it's visually distinct from
+  // confirmed orders without being alarming.
+  draft: 'muted',
   new: 'default',
   confirmed: 'success',
   completed: 'muted',

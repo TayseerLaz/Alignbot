@@ -101,7 +101,12 @@ export default async function cartsRoutes(app: FastifyInstance) {
       const q = req.query;
       return app.tenant(req, async (tx) => {
         const where: Prisma.CartWhereInput = {
-          ...(q.status ? { status: q.status } : {}),
+          // Default list excludes 'draft' rows — those are in-progress
+          // carts the bot is still building. Operators opt in via
+          // ?status=draft to see them (used for abandoned-cart recovery).
+          ...(q.status
+            ? { status: q.status }
+            : { status: { not: 'draft' } }),
           ...(q.q
             ? {
                 OR: [

@@ -5,7 +5,11 @@ import { uuidSchema } from './common.js';
 
 // Cart status flow (Phase 1, simple): new → confirmed → completed,
 // with `cancelled` as a terminal escape hatch from any earlier state.
-export const CART_STATUSES = ['new', 'confirmed', 'completed', 'cancelled'] as const;
+// `draft` is the in-progress state the bot maintains as the customer
+// adds items via WhatsApp. Promoted to `new` when the customer
+// confirms (the [CART:] marker fires). Drafts are filtered out of the
+// default Orders list — operators opt in via `?status=draft`.
+export const CART_STATUSES = ['draft', 'new', 'confirmed', 'completed', 'cancelled'] as const;
 export type CartStatus = (typeof CART_STATUSES)[number];
 
 // One CartItem row. Snapshot of name / sku / variantLabel travels with

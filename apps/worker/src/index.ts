@@ -6,6 +6,7 @@ import { collectDefaultMetrics, Counter, Gauge, Registry } from 'prom-client';
 
 import { env } from './lib/env.js';
 import { startBookingReminderTick } from './jobs/booking-reminder-tick.js';
+import { startDraftCartTtlTick } from './jobs/draft-cart-ttl.js';
 import { startBroadcastFanoutWorker } from './jobs/broadcast-fanout.js';
 import { startBroadcastSendWorker } from './jobs/broadcast-send.js';
 import { startCrawlWorker } from './jobs/crawl.js';
@@ -94,6 +95,10 @@ async function main() {
   // template 2 hours before each confirmed booking's appointmentAt.
   const bookingReminderTick = startBookingReminderTick();
   log.info({ name: bookingReminderTick.name }, 'tick started');
+  // Draft-cart sweeper: hourly tick that cancels draft carts older
+  // than 14 days so abandoned in-progress orders don't accumulate.
+  const draftCartTtlTick = startDraftCartTtlTick();
+  log.info({ name: draftCartTtlTick.name }, 'tick started');
 
   const workers = [
     startImportWorker(),

@@ -2304,6 +2304,64 @@ async function maybeReplyAsBot(args: {
     // the LLM's delivery-mode banner (match_customer) and the eventual
     // wantsVoice decision below — compute once, reuse both places.
     const customerSpokeAudio = m.type === 'audio' || m.type === 'voice';
+
+    // Stateful cart bookkeeping — runs BEFORE the LLM call so the bot's
+    // reply can be informed by the latest draft state when needed.
+    // Three things happen here:
+    //   1. If the customer message clearly says "cancel" / "start over",
+    //      delete the active draft cart (if any).
+    //   2. If the previous outbound is older than the session-boundary
+    //      window (4h), cancel any active draft — "new conversation =
+    //      new draft" so a returning customer doesn't accidentally
+    //      continue an order from days ago.
+    //   3. Otherwise the existing draft just persists; the post-LLM
+    //      parser will append / update items on it.
+    const SESSION_GAP_MS = 4 * 60 * 60 * 1000;
+    try {
+      const { detectCancelIntent } = await import('../../lib/cart-parser.js');
+      const wantsCancel = detectCancelIntent(m.bodyText ?? '');
+      const lastOutbound = [...ctx.history]
+        .reverse()
+        .find((h) => h.direction === 'outbound');
+      // WhatsAppMessage has `receivedAt` (DateTime) — outbound rows
+      // record the moment the API sent the message, inbound rows record
+      // when Meta delivered it. Use it as a single timeline clock.
+      const lastOutboundAge = lastOutbound
+        ? Date.now() - new Date(lastOutbound.receivedAt).getTime()
+        : null;
+      const sessionStale =
+        lastOutboundAge !== null && lastOutboundAge > SESSION_GAP_MS;
+      if (wantsCancel || sessionStale) {
+        await withRlsBypass(async (tx) => {
+          await tx.cart.updateMany({
+            where: {
+              organizationId: args.organizationId,
+              threadId: ctx.threadId,
+              status: 'draft',
+            },
+            data: { status: 'cancelled' },
+          });
+        });
+        if (wantsCancel) {
+          args.log.info(
+            { orgId: args.organizationId, threadId: ctx.threadId },
+            '[whatsapp] draft cart cancelled: customer requested',
+          );
+        } else if (sessionStale) {
+          args.log.info(
+            {
+              orgId: args.organizationId,
+              threadId: ctx.threadId,
+              lastOutboundAgeMs: lastOutboundAge,
+            },
+            '[whatsapp] draft cart cancelled: session-boundary gap',
+          );
+        }
+      }
+    } catch (err) {
+      args.log.warn({ err }, '[whatsapp] cart pre-LLM bookkeeping failed');
+    }
+
     // Diagnostic log emitted on EVERY bot reply so we can audit voice
     // mode + greet-by-name decisions in one place. Cheap (one line per
     // reply) and removes guesswork when behaviour looks wrong.
@@ -2341,9 +2399,135 @@ async function maybeReplyAsBot(args: {
       args.log.warn({ err }, '[whatsapp] bot-engine failed');
       return null;
     });
-    const rawReply = result?.text ?? null;
+    let rawReply = result?.text ?? null;
     const channel = ctx.channel;
     if (!rawReply) continue;
+
+    // Stateful cart — parse "added N× <product>" lines out of the bot's
+    // reply and upsert each one into a draft Cart row for this thread.
+    // The downstream [CART:] marker handler will read items from THIS
+    // draft instead of trusting the LLM's marker payload (which often
+    // drops items on long carts). Also injects [IMAGE: <sku>] markers
+    // into the reply for any added item the LLM forgot to attach.
+    if (ctx.data.shopForm?.enabled && rawReply) {
+      try {
+        const { parseAddedItems, augmentReplyWithImageMarkers } = await import(
+          '../../lib/cart-parser.js'
+        );
+        const parsed = parseAddedItems(
+          rawReply,
+          ctx.data.products.map((p) => ({
+            id: p.id,
+            sku: p.sku,
+            name: p.name,
+            priceMinor: p.priceMinor,
+          })),
+        );
+        if (parsed.length > 0) {
+          // Inject missing [IMAGE: <sku>] markers BEFORE the downstream
+          // regex picks them up. Doing it here means the existing
+          // multi-image pipeline handles the actual send.
+          rawReply = augmentReplyWithImageMarkers(rawReply, parsed);
+
+          // Upsert items into the draft cart. One draft per thread; if
+          // none exists, create it. Each parsed line REPLACES the item
+          // qty for that SKU rather than accumulating, because the bot's
+          // running-total semantics treat each "added N× X" as a fresh
+          // statement of the line. Cart totals recompute server-side.
+          await withRlsBypass(async (tx) => {
+            const currency = ctx.data.shopForm?.currency ?? 'USD';
+            let draft = await tx.cart.findFirst({
+              where: {
+                organizationId: args.organizationId,
+                threadId: ctx.threadId,
+                status: 'draft',
+              },
+              include: { items: true },
+            });
+            if (!draft) {
+              const created = await tx.cart.create({
+                data: {
+                  organizationId: args.organizationId,
+                  threadId: ctx.threadId,
+                  customerPhone: m.from!,
+                  customerName:
+                    (ctx as { customerName?: string | null }).customerName ?? null,
+                  status: 'draft',
+                  currency,
+                  fields: [] as never,
+                },
+                include: { items: true },
+              });
+              draft = created;
+            }
+            // Replace-or-append by SKU. Existing rows for a parsed SKU
+            // get their quantity updated; new SKUs get a fresh row.
+            for (const p of parsed) {
+              const existing = draft.items.find((it) => it.sku === p.sku);
+              if (existing) {
+                await tx.cartItem.update({
+                  where: { id: existing.id },
+                  data: {
+                    quantity: p.quantity,
+                    unitPriceMinor: p.unitPriceMinor,
+                    lineTotalMinor: p.quantity * p.unitPriceMinor,
+                  },
+                });
+              } else {
+                await tx.cartItem.create({
+                  data: {
+                    organizationId: args.organizationId,
+                    cartId: draft.id,
+                    productId: p.productId,
+                    sku: p.sku,
+                    name: p.name,
+                    quantity: p.quantity,
+                    unitPriceMinor: p.unitPriceMinor,
+                    lineTotalMinor: p.quantity * p.unitPriceMinor,
+                  },
+                });
+              }
+            }
+            // Recompute cart totals from the canonical items rows so
+            // /cart UI reflects the latest state immediately.
+            const refreshed = await tx.cartItem.findMany({
+              where: { cartId: draft.id },
+            });
+            const subtotalMinor = refreshed.reduce(
+              (s, it) => s + it.lineTotalMinor,
+              0,
+            );
+            const shopForm = ctx.data.shopForm!;
+            const baseDelivery = shopForm.deliveryFeeMinor ?? 0;
+            const deliveryMinor =
+              shopForm.freeDeliveryAboveMinor != null &&
+              subtotalMinor >= shopForm.freeDeliveryAboveMinor
+                ? 0
+                : baseDelivery;
+            await tx.cart.update({
+              where: { id: draft.id },
+              data: {
+                subtotalMinor,
+                deliveryMinor,
+                totalMinor: subtotalMinor + deliveryMinor,
+                itemsCount: refreshed.reduce((s, it) => s + it.quantity, 0),
+              },
+            });
+          });
+          args.log.info(
+            {
+              orgId: args.organizationId,
+              threadId: ctx.threadId,
+              addedCount: parsed.length,
+              skus: parsed.map((p) => p.sku),
+            },
+            '[whatsapp] draft cart updated from parsed reply',
+          );
+        }
+      } catch (err) {
+        args.log.warn({ err }, '[whatsapp] stateful cart parse failed');
+      }
+    }
 
     // Image protocol: the LLM emits [IMAGE: <SKU>] when the customer
     // asks for a product's images. The bot can emit MULTIPLE markers
@@ -2928,25 +3112,36 @@ async function maybeReplyAsBot(args: {
           });
         }
 
-        // Cart marker → persist a Cart + CartItem rows. Same shape as the
-        // booking persistence above, except items[] becomes line rows and
-        // we recompute totals server-side from the operator's shopForm
-        // fees. Items whose sku doesn't match a real Product are kept
-        // anyway (the bot might quote a service or one-off line) — we
-        // just don't link productId in that case.
+        // Cart marker → PROMOTE the existing draft cart to status='new'.
+        // We deliberately IGNORE cartMarkerPayload.items because the LLM
+        // routinely drops items from the marker on long carts. The draft
+        // cart that was being upserted in real time as the bot said
+        // "added N× X" is the source of truth. We only read marker.fields
+        // (the form answers — name / address / payment).
         if (cartMarkerPayload && ctx.data.shopForm) {
-          // Dedupe: skip if the same thread already created a cart in the
-          // last 30 minutes (mirrors the booking dedupe logic).
+          // Dedupe: skip if a non-draft cart already exists for this
+          // thread in the last 30 minutes (mirrors booking dedupe).
           const recentCart = await tx.cart.findFirst({
             where: {
               organizationId: args.organizationId,
               threadId: thread.id,
+              status: { not: 'draft' },
               createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
             },
             select: { id: true },
           });
-          // Resolve incoming items against the in-memory catalog so we
-          // can attach productId where possible + drop invented items.
+          // Find the draft + its items. If none exists, fall back to the
+          // marker payload (covers edge case where parser missed every
+          // add — better to capture something than nothing).
+          const draft = await tx.cart.findFirst({
+            where: {
+              organizationId: args.organizationId,
+              threadId: thread.id,
+              status: 'draft',
+            },
+            include: { items: true },
+          });
+          // Build lineItems from the draft if present, else from marker.
           const productsBySku = new Map(
             ctx.data.products.map((p) => [p.sku.toLowerCase(), p]),
           );
@@ -2958,27 +3153,58 @@ async function maybeReplyAsBot(args: {
             unitPriceMinor: number;
             notes: string | null;
           }[] = [];
-          for (const it of cartMarkerPayload.items ?? []) {
-            const sku = (it.sku ?? '').toString().trim();
-            const matched = sku ? productsBySku.get(sku.toLowerCase()) : null;
-            const name = (it.name ?? matched?.name ?? '').toString().trim();
-            if (!name) continue;
-            const qty = Math.max(1, Math.floor(Number(it.quantity ?? 1)));
-            const unitPriceMinor = Math.max(
-              0,
-              Math.floor(Number(it.unitPriceMinor ?? matched?.priceMinor ?? 0)),
+          if (draft && draft.items.length > 0) {
+            for (const it of draft.items) {
+              lineItems.push({
+                productId: it.productId,
+                sku: it.sku,
+                name: it.name,
+                quantity: it.quantity,
+                unitPriceMinor: it.unitPriceMinor,
+                notes: it.notes ?? null,
+              });
+            }
+            args.log.info(
+              {
+                orgId: args.organizationId,
+                threadId: thread.id,
+                draftId: draft.id,
+                draftItemCount: draft.items.length,
+                markerItemCount: (cartMarkerPayload.items ?? []).length,
+              },
+              '[whatsapp] cart marker: promoting draft, ignoring marker items',
             );
-            lineItems.push({
-              productId: matched?.id ?? null,
-              sku: matched?.sku ?? (sku || null),
-              name,
-              quantity: qty,
-              unitPriceMinor,
-              notes:
-                typeof it.notes === 'string' && it.notes.trim()
-                  ? it.notes.trim().slice(0, 500)
-                  : null,
-            });
+          } else {
+            for (const it of cartMarkerPayload.items ?? []) {
+              const sku = (it.sku ?? '').toString().trim();
+              const matched = sku ? productsBySku.get(sku.toLowerCase()) : null;
+              const name = (it.name ?? matched?.name ?? '').toString().trim();
+              if (!name) continue;
+              const qty = Math.max(1, Math.floor(Number(it.quantity ?? 1)));
+              const unitPriceMinor = Math.max(
+                0,
+                Math.floor(Number(it.unitPriceMinor ?? matched?.priceMinor ?? 0)),
+              );
+              lineItems.push({
+                productId: matched?.id ?? null,
+                sku: matched?.sku ?? (sku || null),
+                name,
+                quantity: qty,
+                unitPriceMinor,
+                notes:
+                  typeof it.notes === 'string' && it.notes.trim()
+                    ? it.notes.trim().slice(0, 500)
+                    : null,
+              });
+            }
+            args.log.warn(
+              {
+                orgId: args.organizationId,
+                threadId: thread.id,
+                markerItemCount: lineItems.length,
+              },
+              '[whatsapp] cart marker: no draft, falling back to marker items',
+            );
           }
 
           if (!recentCart && lineItems.length > 0) {
@@ -3004,35 +3230,76 @@ async function maybeReplyAsBot(args: {
               value: (cartMarkerPayload.fields ?? {})[f.key] ?? null,
             }));
 
-            const cart = await tx.cart.create({
-              data: {
-                organizationId: args.organizationId,
-                threadId: thread.id,
-                customerPhone: m.from,
-                customerName: thread.customerName ?? thread.customerWhatsappName ?? null,
-                fields: fieldRows as never,
-                subtotalMinor,
-                deliveryMinor,
-                totalMinor,
-                itemsCount,
-                currency: shopForm.currency,
-                status: 'new',
-                items: {
-                  createMany: {
-                    data: lineItems.map((it) => ({
-                      organizationId: args.organizationId,
-                      productId: it.productId,
-                      sku: it.sku,
-                      name: it.name,
-                      quantity: it.quantity,
-                      unitPriceMinor: it.unitPriceMinor,
-                      lineTotalMinor: it.quantity * it.unitPriceMinor,
-                      notes: it.notes,
-                    })),
+            // If a draft exists for this thread, promote it in place
+            // instead of creating a new row — keeps the same cart id
+            // through draft → new and avoids leaking abandoned draft
+            // rows when the customer eventually confirms.
+            let cart: { id: string };
+            if (draft) {
+              cart = await tx.cart.update({
+                where: { id: draft.id },
+                data: {
+                  status: 'new',
+                  customerName:
+                    thread.customerName ?? thread.customerWhatsappName ?? null,
+                  fields: fieldRows as never,
+                  subtotalMinor,
+                  deliveryMinor,
+                  totalMinor,
+                  itemsCount,
+                  currency: shopForm.currency,
+                },
+                select: { id: true },
+              });
+              // Sanity: make sure CartItem rows match lineItems exactly
+              // (the draft.items list should already match, since both
+              // come from the same parser, but defensively re-sync).
+              const existingItems = await tx.cartItem.findMany({
+                where: { cartId: draft.id },
+                select: { id: true, sku: true },
+              });
+              const targetSkus = new Set(
+                lineItems.map((i) => i.sku).filter((s): s is string => !!s),
+              );
+              const toDelete = existingItems
+                .filter((i) => i.sku && !targetSkus.has(i.sku))
+                .map((i) => i.id);
+              if (toDelete.length > 0) {
+                await tx.cartItem.deleteMany({ where: { id: { in: toDelete } } });
+              }
+            } else {
+              cart = await tx.cart.create({
+                data: {
+                  organizationId: args.organizationId,
+                  threadId: thread.id,
+                  customerPhone: m.from,
+                  customerName:
+                    thread.customerName ?? thread.customerWhatsappName ?? null,
+                  fields: fieldRows as never,
+                  subtotalMinor,
+                  deliveryMinor,
+                  totalMinor,
+                  itemsCount,
+                  currency: shopForm.currency,
+                  status: 'new',
+                  items: {
+                    createMany: {
+                      data: lineItems.map((it) => ({
+                        organizationId: args.organizationId,
+                        productId: it.productId,
+                        sku: it.sku,
+                        name: it.name,
+                        quantity: it.quantity,
+                        unitPriceMinor: it.unitPriceMinor,
+                        lineTotalMinor: it.quantity * it.unitPriceMinor,
+                        notes: it.notes,
+                      })),
+                    },
                   },
                 },
-              },
-            });
+                select: { id: true },
+              });
+            }
             await tx.whatsAppNote.create({
               data: {
                 threadId: thread.id,

@@ -54,10 +54,11 @@ export interface BotData {
     priceMinor: number | null;
     currency: string | null;
     shortDescription: string | null;
-    // Storage key of the product's primary image (or first image when
-    // no primary is flagged). Used by maybeReplyAsBot to fetch +
-    // send the image when the LLM emits an [IMAGE: <sku>] marker.
-    primaryImageStorageKey: string | null;
+    // Storage keys of EVERY image attached to this product, primary
+    // first. Used by maybeReplyAsBot to attach images when the LLM
+    // emits an [IMAGE: <sku>] marker — when there is more than one,
+    // we send them all as a gallery.
+    imageStorageKeys: string[];
   }[];
   services: {
     name: string;
@@ -179,6 +180,18 @@ function formatOperatingHours(raw: unknown): string {
     .join('\n');
 }
 
+// Currency-aware money formatter. KWD / BHD / OMR use 3 decimals
+// (1 unit = 1000 minor); USD / EUR / etc. use 2 (1 unit = 100 minor).
+// Returns e.g. "1.250 KWD" or "$4.50" depending on the currency.
+function formatMoney(minor: number | null, currency: string | null): string {
+  if (minor == null) return '';
+  const code = (currency ?? 'USD').toUpperCase();
+  const minorPerMajor = code === 'KWD' || code === 'BHD' || code === 'OMR' ? 1000 : 100;
+  const decimals = code === 'KWD' || code === 'BHD' || code === 'OMR' ? 3 : 2;
+  const major = (minor / minorPerMajor).toFixed(decimals);
+  return `${major} ${code}`;
+}
+
 // Pulls every prompt-relevant row for one org. MUST run inside whatever
 // tenant/RLS-bypass transaction the caller is using; this function does
 // only DB reads and returns immediately so the caller can release the tx
@@ -195,9 +208,9 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
       orderBy: { updatedAt: 'desc' },
       take: 60,
     }),
-    // Include the product's primary image (or first image as a
-    // fallback) so the bot reply path can attach it when the LLM
-    // asks for it via the [IMAGE: <sku>] marker.
+    // Include up to 5 images per product, primary first. The bot reply
+    // path attaches them when the LLM emits an [IMAGE: <sku>] marker
+    // (multiple images → gallery send).
     tx.product.findMany({
       where: { deletedAt: null, isAvailable: true },
       select: {
@@ -209,7 +222,7 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
         shortDescription: true,
         images: {
           orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
-          take: 1,
+          take: 5,
           select: { asset: { select: { storageKey: true } } },
         },
       },
@@ -235,7 +248,7 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
     BotData['config'],
     BotData['kb'],
     // Prisma return type has nested images[]; we'll flatten next.
-    (Omit<BotData['products'][number], 'primaryImageStorageKey'> & {
+    (Omit<BotData['products'][number], 'imageStorageKeys'> & {
       images: { asset: { storageKey: string } }[];
     })[],
     BotData['services'],
@@ -251,7 +264,9 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
     priceMinor: p.priceMinor,
     currency: p.currency,
     shortDescription: p.shortDescription,
-    primaryImageStorageKey: p.images[0]?.asset?.storageKey ?? null,
+    imageStorageKeys: (p.images ?? [])
+      .map((im) => im.asset?.storageKey)
+      .filter((s): s is string => typeof s === 'string' && s.length > 0),
   }));
 
   // BusinessInfo.bookingForm — only surface when enabled AND there is at
@@ -504,7 +519,7 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     // this marker, fetches the product's primary image, and sends it
     // as a follow-up WhatsApp media message. Strip the marker from
     // the visible reply server-side.
-    `- When a customer asks about a specific product BY NAME or BY SKU and that product appears in the CATALOG with an image, end your reply with a marker on its own line: [IMAGE: <SKU>] — the system will attach the product's image automatically. Use the SKU exactly as written in the catalog (case-sensitive). Only include the marker for products that you can SEE in the catalog list below; never invent one.`,
+    `- Images: when the customer explicitly asks to see a product's image / picture / photo / "what does it look like" / "do you have images / photos / pictures" — whether referring to a product by NAME, by SKU, or BY THE PRODUCT CURRENTLY BEING DISCUSSED in the conversation — emit a marker on a new line: [IMAGE: <SKU>]. The system attaches every image the product has (a gallery, not just one). NEVER answer "I don't have an image" or "no image available" — if the catalog shows [has image] or [has N images] for the relevant product, you HAVE images. Use the SKU EXACTLY as written in the catalog (case-sensitive). If the customer asks for images of multiple products, emit one marker per product on consecutive lines. Don't invent SKUs that aren't in the catalog.`,
     // Customer-service handoff protocol — when a customer explicitly asks
     // for human support / customer service / a real agent / to stop
     // talking to a bot, acknowledge briefly, tell them a teammate will
@@ -552,10 +567,12 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     // the order is LOST.
     shopForm
       ? `- CART FLOW (load-bearing). If the customer wants to ORDER / BUY / DELIVER (or matches one of: ${shopForm.intentKeywords.join(', ') || '"order", "buy", "delivery", "menu"'}):\n` +
-        `  Step 1: help them pick products from the CATALOG section below. Confirm quantities + variants. Use the EXACT product NAMES + SKUs as shown. NEVER invent products.\n` +
-        `  Step 2: when the cart looks settled, ask for the shop form fields listed in the SHOP FORM section below (ONE OR TWO at a time, exact LABELS).\n` +
-        `  Step 3: summarise items, totals, delivery (if any), and the answers, then ask the customer to confirm.\n` +
-        `  Step 4: as SOON AS they affirm (yes / confirm / go ahead / ok / etc.), emit on a NEW LINE the CART marker:\n` +
+        `  ALWAYS QUOTE PRICES. Every time you add an item to the running cart, state its unit price ("Got it — 3× Oreo Milkshake at 1.250 KWD each, that's 3.750 KWD so far"). When the customer asks "what's the total?", compute it from items × unit prices + delivery fee + show the breakdown. Currency: ${shopForm.currency}. Format as <amount with correct decimals> ${shopForm.currency} — KWD/BHD/OMR use 3 decimals (1.250), USD/EUR use 2 (1.25). NEVER reply "I can't provide the total" — you have the catalog prices, compute it.\n` +
+        `  Step 1: help them pick products from the CATALOG section below. Use EXACT product NAMES + SKUs as shown — NEVER invent products. Confirm quantity + variant.\n` +
+        `  Step 2 (UPSELL — DO NOT SKIP): after each item is added, ALWAYS ask "Would you like anything else?" OR suggest a complementary item from the catalog (a drink to go with a dessert, a side to go with a main, etc.). Wait for the customer to say they're done before moving on. NEVER jump straight from "added X" to "what's your name?" — that loses revenue.\n` +
+        `  Step 3: when the customer says "that's all" / "no thanks" / "I'm good" / similar, summarise the cart so far WITH RUNNING SUBTOTAL, then ask for the shop form fields listed in the SHOP FORM section below (one or two at a time, exact LABELS).\n` +
+        `  Step 4: final summary — items + delivery fee (if any) + GRAND TOTAL + form answers — then ask the customer to confirm.\n` +
+        `  Step 5: as SOON AS they affirm (yes / confirm / go ahead / ok / etc.), emit on a NEW LINE the CART marker:\n` +
         `    [CART: {"items":[{"sku":"<EXACT_SKU>","name":"<EXACT_NAME>","quantity":<N>,"unitPriceMinor":<INT>,"notes":""}],"fields":${JSON.stringify(
           Object.fromEntries(shopForm.fields.map((f) => [f.key, `<${f.label}>`])),
         )}}]\n` +
@@ -563,13 +580,17 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
         `  ${shopForm.minOrderMinor != null ? `Minimum order: ${shopForm.minOrderMinor} minor units (${shopForm.currency}). If the subtotal is below this, politely tell the customer and ask them to add more before confirming. Do NOT emit the marker.\n  ` : ''}` +
         `${shopForm.deliveryFeeMinor != null ? `Delivery fee: ${shopForm.deliveryFeeMinor} minor units${shopForm.freeDeliveryAboveMinor != null ? ` (waived above ${shopForm.freeDeliveryAboveMinor} minor units)` : ''}. Mention it explicitly in the summary.\n  ` : ''}` +
         `After the marker, write a brief confirmation in the customer's language. The receiver replaces it with: "${shopForm.confirmationMessage}".\n` +
-        `  Example (KWD juice bar, currency KWD = 1000 minor units / KD):\n` +
-        `    User: "I want 2 cappuccinos and a Dubai crepe to Salmiya"\n` +
-        `    Bot: "Sure! 2× Cappuccino (1.250 KD each) and 1× Dubai Crepe (4.500 KD). What's the delivery address?"\n` +
+        `  Example (KWD juice bar — note the price quote + upsell after the first item):\n` +
+        `    User: "I want 2 cappuccinos"\n` +
+        `    Bot: "Lovely choice! 2× Cappuccino at 1.250 KWD each — that's 2.500 KWD so far. Would you like a sweet treat with that? Our Dubai Crepe (4.500 KWD) is a hit ☺️"\n` +
+        `    User: "yeah add one"\n` +
+        `    Bot: "Added 1× Dubai Crepe (4.500 KWD). Running total 7.000 KWD. Anything else?"\n` +
+        `    User: "no that's all"\n` +
+        `    Bot: "Great! Subtotal 7.000 KWD. What's the delivery address?"\n` +
         `    User: "Salmiya, Block 4 House 12"\n` +
         `    Bot: "Got it. Payment — Cash, KNET, or card?"\n` +
         `    User: "KNET"\n` +
-        `    Bot: "To confirm: 2× Cappuccino + 1× Dubai Crepe, deliver to Salmiya Block 4 House 12, KNET. Subtotal 7.000 KD + 0.750 KD delivery = 7.750 KD total. Confirm?"\n` +
+        `    Bot: "To confirm: 2× Cappuccino + 1× Dubai Crepe = 7.000 KWD + 0.750 KWD delivery = 7.750 KWD total. Deliver to Salmiya Block 4 House 12. Confirm?"\n` +
         `    User: "Yes"\n` +
         `    Bot: "Done! Your order is in 🙏\\n[CART: {\\"items\\":[{\\"sku\\":\\"ATK-COF-CAPPUCCINO\\",\\"name\\":\\"Cappuccino\\",\\"quantity\\":2,\\"unitPriceMinor\\":1250,\\"notes\\":\\"\\"},{\\"sku\\":\\"ATK-SWEET-DUBAICREPE\\",\\"name\\":\\"Dubai Crepe\\",\\"quantity\\":1,\\"unitPriceMinor\\":4500,\\"notes\\":\\"\\"}],\\"fields\\":{\\"delivery_address\\":\\"Salmiya Block 4 House 12\\",\\"payment_method\\":\\"KNET\\",\\"delivery_time\\":\\"\\",\\"notes\\":\\"\\"}}]"`
       : '',
@@ -614,15 +635,21 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     `# Catalog`,
     products.length > 0
       ? `Products:\n${products
-          .map(
-            (p) =>
-              `- ${p.name} (${p.sku})${p.primaryImageStorageKey ? ' [has image]' : ''}${p.priceMinor ? ` · ${(p.priceMinor / 100).toFixed(2)} ${p.currency ?? ''}` : ''}${p.shortDescription ? ` — ${p.shortDescription.slice(0, 120)}` : ''}`,
-          )
+          .map((p) => {
+            const imgs = p.imageStorageKeys?.length ?? 0;
+            const imgTag =
+              imgs > 1 ? ` [has ${imgs} images]` : imgs === 1 ? ' [has image]' : '';
+            const priceTag = p.priceMinor != null
+              ? ` · ${formatMoney(p.priceMinor, p.currency)}`
+              : '';
+            const desc = p.shortDescription ? ` — ${p.shortDescription.slice(0, 120)}` : '';
+            return `- ${p.name} (${p.sku})${imgTag}${priceTag}${desc}`;
+          })
           .join('\n')}`
       : '(no products listed)',
     services.length > 0
       ? `Services:\n${services
-          .map((s) => `- ${s.name}${s.basePriceMinor ? ` · ${(s.basePriceMinor / 100).toFixed(2)} ${s.currency ?? ''}` : ''}${s.durationMinutes ? ` · ${s.durationMinutes}min` : ''}${s.shortDescription ? ` — ${s.shortDescription.slice(0, 120)}` : ''}`)
+          .map((s) => `- ${s.name}${s.basePriceMinor != null ? ` · ${formatMoney(s.basePriceMinor, s.currency)}` : ''}${s.durationMinutes ? ` · ${s.durationMinutes}min` : ''}${s.shortDescription ? ` — ${s.shortDescription.slice(0, 120)}` : ''}`)
           .join('\n')}`
       : '',
     faqs.length > 0

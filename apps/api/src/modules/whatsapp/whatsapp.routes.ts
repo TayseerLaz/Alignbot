@@ -2345,13 +2345,14 @@ async function maybeReplyAsBot(args: {
     const channel = ctx.channel;
     if (!rawReply) continue;
 
-    // Image protocol: the LLM ends its reply with [IMAGE: <SKU>] when
-    // a customer asks about a specific product that has an image in
-    // the catalog. Parse + strip the marker, then look up the SKU in
-    // the gathered data to find the storage key. We send the image
-    // as a SEPARATE WhatsApp message AFTER the text reply.
-    const imageMarkerRe = /\[IMAGE:\s*([^\]\s]+)\s*\]/i;
-    const imageMatch = imageMarkerRe.exec(rawReply);
+    // Image protocol: the LLM emits [IMAGE: <SKU>] when the customer
+    // asks for a product's images. The bot can emit MULTIPLE markers
+    // in one reply (one per product). For each matched product we send
+    // EVERY image attached to it as a separate WhatsApp media message,
+    // so a customer's "do you have pictures?" gets back the full
+    // gallery, not just the primary.
+    const imageMarkerRe = /\[IMAGE:\s*([^\]\s]+)\s*\]/gi;
+    const imageSkus = Array.from(rawReply.matchAll(imageMarkerRe)).map((m) => m[1]!.trim());
 
     // Handoff protocol: bare [HANDOFF] marker means the customer asked
     // for a human teammate. Strip it, flip the thread to "escalated"
@@ -2380,15 +2381,29 @@ async function maybeReplyAsBot(args: {
         .replace(handoffMarkerRe, '')
         .replace(bookingMarkerRe, ''),
     ).trim();
-    const imageProduct = imageMatch
-      ? ctx.data.products.find(
-          (p) => p.sku.toLowerCase() === imageMatch[1]!.toLowerCase(),
-        )
+    // Resolve every emitted SKU against the catalog. Dedupe by product
+    // id so multiple markers for the same SKU collapse to one send.
+    const imageSends: { sku: string; name: string; storageKey: string }[] = [];
+    const seenProductIds = new Set<string>();
+    for (const sku of imageSkus) {
+      const product = ctx.data.products.find(
+        (p) => p.sku.toLowerCase() === sku.toLowerCase(),
+      );
+      if (!product || seenProductIds.has(product.id)) continue;
+      seenProductIds.add(product.id);
+      for (const key of product.imageStorageKeys ?? []) {
+        if (key && key.length > 0) {
+          imageSends.push({ sku: product.sku, name: product.name, storageKey: key });
+        }
+      }
+    }
+    // Back-compat shims for code paths further down that referenced the
+    // old single-image variables. They now point at the first send (or
+    // null) — the loop further down does the multi-send.
+    const imageProduct = imageSends.length > 0
+      ? ctx.data.products.find((p) => p.sku === imageSends[0]!.sku) ?? null
       : null;
-    const imageStorageKey =
-      imageProduct?.primaryImageStorageKey && imageProduct.primaryImageStorageKey.length > 0
-        ? imageProduct.primaryImageStorageKey
-        : null;
+    const imageStorageKey = imageSends[0]?.storageKey ?? null;
     // If the LLM emitted ONLY markers (no visible text), fall back to a
     // short acknowledgement so the customer sees something — and so the
     // handoff / booking side effects still run.
@@ -2405,7 +2420,7 @@ async function maybeReplyAsBot(args: {
         reply = 'All set — your request has been captured. A teammate will follow up shortly.';
       }
     }
-    if (!reply && !imageStorageKey) continue;
+    if (!reply && imageSends.length === 0) continue;
 
     // Phase 6 — decide text vs voice. `voice` always sends TTS. `match_customer`
     // only sends TTS when the customer's last inbound was itself a voice
@@ -2602,26 +2617,32 @@ async function maybeReplyAsBot(args: {
     // and continues with image-followup, audit, etc. We keep that flow.
     try {
 
-      // Follow-up: send the product's primary image as a separate
-      // media message. Two-step: PUT bytes from Wasabi → POST to
-      // Meta /media → POST /messages of type image with the
-      // returned media_id. Failures here log but DON'T cause the
-      // whole reply path to error — the text reply already landed.
-      if (imageStorageKey && imageProduct) {
-        try {
-          const { presignGetUrl, publicUrlFor } = await import('../../lib/storage.js');
-          const fileUrl =
-            publicUrlFor(imageStorageKey) ?? (await presignGetUrl(imageStorageKey));
-          const fr = await fetch(fileUrl, { signal: AbortSignal.timeout(15_000) });
-          if (fr.ok) {
-            const ab = await fr.arrayBuffer();
-            const fileBytes = Buffer.from(ab);
+      // Follow-up: send EVERY image emitted by the LLM as separate
+      // WhatsApp media messages. Caption only the first image of each
+      // product (subsequent images are implicitly part of the same
+      // gallery). Failures here log but DON'T fail the whole reply
+      // path — the text reply already landed.
+      if (imageSends.length > 0) {
+        const { presignGetUrl, publicUrlFor } = await import('../../lib/storage.js');
+        let prevSkuForGroup: string | null = null;
+        for (const send of imageSends) {
+          try {
+            const fileUrl = publicUrlFor(send.storageKey) ?? (await presignGetUrl(send.storageKey));
+            const fr = await fetch(fileUrl, { signal: AbortSignal.timeout(15_000) });
+            if (!fr.ok) {
+              args.log.warn(
+                { status: fr.status, key: send.storageKey },
+                '[whatsapp] bot image fetch from Wasabi failed',
+              );
+              continue;
+            }
+            const fileBytes = Buffer.from(await fr.arrayBuffer());
             const fd = new FormData();
             fd.append('messaging_product', 'whatsapp');
             fd.append(
               'file',
               new Blob([new Uint8Array(fileBytes)], { type: 'image/jpeg' }),
-              `${imageProduct.sku}.jpg`,
+              `${send.sku}.jpg`,
             );
             const mediaRes = await fetch(
               `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/media`,
@@ -2633,75 +2654,75 @@ async function maybeReplyAsBot(args: {
               },
             );
             const mediaJson = (await mediaRes.json().catch(() => ({}))) as { id?: string };
-            if (mediaRes.ok && mediaJson.id) {
-              const imgPayload = {
-                messaging_product: 'whatsapp',
-                recipient_type: 'individual',
-                to: m.from,
-                type: 'image',
-                image: {
-                  id: mediaJson.id,
-                  caption: imageProduct.name.slice(0, 1024),
-                },
-              };
-              const imgRes = await fetch(
-                `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/messages`,
-                {
-                  method: 'POST',
-                  headers: {
-                    Authorization: `Bearer ${channel.accessToken!}`,
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify(imgPayload),
-                  signal: AbortSignal.timeout(10_000),
-                },
-              );
-              if (imgRes.ok) {
-                const imgJson = (await imgRes.json().catch(() => ({}))) as {
-                  messages?: { id?: string }[];
-                };
-                await withRlsBypass(async (tx) => {
-                  await tx.whatsAppMessage.create({
-                    data: {
-                      threadId: ctx.threadId,
-                      organizationId: args.organizationId,
-                      direction: 'outbound',
-                      metaMessageId: imgJson.messages?.[0]?.id ?? null,
-                      toNumber: m.from,
-                      messageType: 'image',
-                      body: `[image] ${imageProduct.name}`,
-                      rawPayload: { sentBy: 'bot', sku: imageProduct.sku } as never,
-                    },
-                  });
-                  await tx.whatsAppThread.update({
-                    where: { id: ctx.threadId },
-                    data: {
-                      lastMessageAt: new Date(),
-                      lastMessagePreview: `[image] ${imageProduct.name}`.slice(0, 200),
-                      outboundCount: { increment: 1 },
-                    },
-                  });
-                });
-              } else {
-                args.log.warn(
-                  { status: imgRes.status },
-                  '[whatsapp] bot image send (final) failed',
-                );
-              }
-            } else {
+            if (!mediaRes.ok || !mediaJson.id) {
               args.log.warn(
                 { status: mediaRes.status, mediaJson },
                 '[whatsapp] bot image upload to Meta failed',
               );
+              continue;
             }
-          } else {
-            args.log.warn(
-              { status: fr.status, key: imageStorageKey },
-              '[whatsapp] bot image fetch from Wasabi failed',
+            // Only caption the first image of each product. WhatsApp
+            // shows a long caption under every media message which
+            // looks repetitive when there's a gallery of 3-5 images.
+            const isFirstOfGroup = prevSkuForGroup !== send.sku;
+            prevSkuForGroup = send.sku;
+            const imgPayload = {
+              messaging_product: 'whatsapp',
+              recipient_type: 'individual',
+              to: m.from,
+              type: 'image',
+              image: {
+                id: mediaJson.id,
+                ...(isFirstOfGroup ? { caption: send.name.slice(0, 1024) } : {}),
+              },
+            };
+            const imgRes = await fetch(
+              `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/messages`,
+              {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${channel.accessToken!}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(imgPayload),
+                signal: AbortSignal.timeout(10_000),
+              },
             );
+            if (!imgRes.ok) {
+              args.log.warn(
+                { status: imgRes.status, sku: send.sku },
+                '[whatsapp] bot image send failed',
+              );
+              continue;
+            }
+            const imgJson = (await imgRes.json().catch(() => ({}))) as {
+              messages?: { id?: string }[];
+            };
+            await withRlsBypass(async (tx) => {
+              await tx.whatsAppMessage.create({
+                data: {
+                  threadId: ctx.threadId,
+                  organizationId: args.organizationId,
+                  direction: 'outbound',
+                  metaMessageId: imgJson.messages?.[0]?.id ?? null,
+                  toNumber: m.from,
+                  messageType: 'image',
+                  body: `[image] ${send.name}`,
+                  rawPayload: { sentBy: 'bot', sku: send.sku } as never,
+                },
+              });
+              await tx.whatsAppThread.update({
+                where: { id: ctx.threadId },
+                data: {
+                  lastMessageAt: new Date(),
+                  lastMessagePreview: `[image] ${send.name}`.slice(0, 200),
+                  outboundCount: { increment: 1 },
+                },
+              });
+            });
+          } catch (err) {
+            args.log.warn({ err, sku: send.sku }, '[whatsapp] bot image attach failed');
           }
-        } catch (err) {
-          args.log.warn({ err }, '[whatsapp] bot image attach failed');
         }
       }
       // Persist outbound + bump thread.

@@ -19,5 +19,6 @@ export * from './schemas/whatsapp.js';
 export * from './schemas/broadcast.js';
 export * from './schemas/sequence.js';
 export * from './schemas/booking.js';
+export * from './schemas/cart.js';
 export * from './types/api-error.js';
 export * from './util-url-guard.js';

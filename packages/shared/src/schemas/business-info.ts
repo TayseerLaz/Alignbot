@@ -49,6 +49,59 @@ export const bookingFormSchema = z
 export type BookingFormDto = z.infer<typeof bookingFormSchema>;
 export type BookingFormField = z.infer<typeof bookingFormFieldSchema>;
 
+// ---- Shop form -----------------------------------------------------------
+// Mirrors bookingForm in shape. Drives the AI bot's cart-building flow:
+// the bot detects intent via intentKeywords, asks for each `fields[]`
+// entry once the cart is settled, applies the configured fees, and emits
+// a [CART: {...}] marker on confirmation.
+export const SHOP_FIELD_TYPES = [
+  'text',
+  'email',
+  'phone',
+  'date',
+  'time',
+  'datetime',
+  'number',
+  'long_text',
+  'select',
+] as const;
+export type ShopFieldType = (typeof SHOP_FIELD_TYPES)[number];
+
+export const shopFormFieldSchema = z.object({
+  key: z.string().trim().min(1).max(60).regex(/^[a-z][a-z0-9_]*$/i, 'lowercase letters + digits + _'),
+  label: z.string().trim().min(1).max(120),
+  type: z.enum(SHOP_FIELD_TYPES).default('text'),
+  required: z.boolean().default(true),
+  // Optional select-only choices. Ignored for other types.
+  options: z.array(z.string().trim().min(1).max(80)).max(40).optional(),
+});
+
+export const shopFormSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    title: z.string().trim().min(1).max(200).default('Place an order'),
+    intentKeywords: z
+      .array(z.string().trim().min(1).max(60))
+      .max(40)
+      .default(['order', 'buy', 'delivery', 'menu', 'want', 'get']),
+    fields: z.array(shopFormFieldSchema).max(40).default([]),
+    // Money fields in minor units (e.g. fils for KWD, cents for USD).
+    // null = no constraint (default for new orgs).
+    minOrderMinor: z.number().int().nonnegative().nullable().default(null),
+    deliveryFeeMinor: z.number().int().nonnegative().nullable().default(null),
+    freeDeliveryAboveMinor: z.number().int().nonnegative().nullable().default(null),
+    // Confirmation text the bot sends when the cart is placed. Supports
+    // {{cart_id_short}} and {{total}} placeholders.
+    confirmationMessage: z
+      .string()
+      .trim()
+      .max(800)
+      .default("Got it! Your order is in 🙏 We'll be in touch shortly."),
+  })
+  .strict();
+export type ShopFormDto = z.infer<typeof shopFormSchema>;
+export type ShopFormField = z.infer<typeof shopFormFieldSchema>;
+
 export const businessInfoSchema = z.object({
   id: uuidSchema,
   legalName: z.string().nullable(),
@@ -61,6 +114,7 @@ export const businessInfoSchema = z.object({
   currency: currency3,
   metadata: z.record(z.string(), z.unknown()).nullable(),
   bookingForm: bookingFormSchema.nullable(),
+  shopForm: shopFormSchema.nullable(),
   updatedAt: z.string().datetime(),
 });
 export type BusinessInfoDto = z.infer<typeof businessInfoSchema>;
@@ -76,6 +130,7 @@ export const upsertBusinessInfoBodySchema = z.object({
   currency: currency3.optional(),
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
   bookingForm: bookingFormSchema.nullable().optional(),
+  shopForm: shopFormSchema.nullable().optional(),
 });
 export type UpsertBusinessInfoBody = z.infer<typeof upsertBusinessInfoBodySchema>;
 

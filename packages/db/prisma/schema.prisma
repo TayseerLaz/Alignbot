@@ -331,6 +331,8 @@ model Organization {
   sequenceEnrollments SequenceEnrollment[]
   // Bookings — customer intakes captured by the AI bot
   bookings            Booking[]
+  // Carts — customer orders captured by the AI bot or entered manually
+  carts               Cart[]
 
   @@index([status])
   @@map("organizations")
@@ -744,6 +746,13 @@ model BusinessInfo {
   // Operator-defined fields the AI bot asks the customer to fill in
   // when they ask to book a meeting / consultation / appointment.
   bookingForm     Json?    @map("booking_form")
+  // Shop / cart form definition: { enabled, title, intentKeywords[],
+  // fields[], minOrderMinor, deliveryFeeMinor, freeDeliveryAboveMinor,
+  // confirmationMessage }. Mirrors bookingForm in spirit — the AI bot
+  // asks the customer for these fields once they've finished building
+  // their cart, then emits a [CART: {...}] marker. Independent of
+  // bookings: a business can enable both, either, or neither.
+  shopForm        Json?    @map("shop_form")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
@@ -1217,6 +1226,7 @@ model WhatsAppThread {
   tags         WhatsAppThreadTag[]
   notes        WhatsAppNote[]
   bookings     Booking[]
+  carts        Cart[]
 
   @@unique([organizationId, customerPhone])
   @@index([organizationId, lastMessageAt(sort: Desc)])
@@ -1266,6 +1276,73 @@ model Booking {
   // cheapest way to make the tick scan tiny.
   @@index([status, reminderSentAt, appointmentAt], map: "bookings_reminder_due_idx")
   @@map("bookings")
+}
+
+// ----------------------------------------------------------------------------
+// Cart / Shop — sibling to Booking. One row per customer order. The AI bot
+// collects items + the BusinessInfo.shopForm.fields[] answers from the
+// customer in WhatsApp, then emits a [CART: {...}] marker that the inbound
+// receiver translates into one Cart row + N CartItem rows.
+//
+// Status flow (Phase 1, simple): new → confirmed → completed (+ cancelled).
+// All non-`new` transitions are operator-driven from the dashboard.
+// ----------------------------------------------------------------------------
+model Cart {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  threadId        String?  @map("thread_id") @db.Uuid
+  customerPhone   String   @map("customer_phone")
+  customerName    String?  @map("customer_name")
+  // Frozen snapshot of the shopForm's `fields[]` answers — same shape
+  // as Booking.fields. [{ key, label, type, required, value }].
+  fields          Json     @default("[]")
+  // Cart-level money. All in `currency`. subtotalMinor = sum of
+  // CartItem.lineTotalMinor; totalMinor = subtotal + delivery.
+  subtotalMinor   Int      @default(0) @map("subtotal_minor")
+  deliveryMinor   Int      @default(0) @map("delivery_minor")
+  totalMinor      Int      @default(0) @map("total_minor")
+  currency        String   @default("USD") @db.Char(3)
+  // 'new' | 'confirmed' | 'completed' | 'cancelled'
+  status          String   @default("new")
+  notes           String?
+  // Denormalized count for fast list rendering — kept in sync by the
+  // route layer (no Prisma middleware to do it implicitly).
+  itemsCount      Int      @default(0) @map("items_count")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  thread       WhatsAppThread? @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  items        CartItem[]
+
+  @@index([organizationId, status, createdAt(sort: Desc)])
+  @@index([organizationId, customerPhone])
+  @@map("carts")
+}
+
+model CartItem {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  cartId          String   @map("cart_id") @db.Uuid
+  // FK snapshots — products / services may change or get soft-deleted
+  // after the cart is placed. We keep `name`, `sku`, `variantLabel` as
+  // frozen text so historical orders render correctly.
+  productId       String?  @map("product_id") @db.Uuid
+  serviceId       String?  @map("service_id") @db.Uuid
+  variantId       String?  @map("variant_id") @db.Uuid
+  sku             String?
+  name            String
+  variantLabel    String?  @map("variant_label")
+  quantity        Int      @default(1)
+  unitPriceMinor  Int      @map("unit_price_minor")
+  lineTotalMinor  Int      @map("line_total_minor")
+  notes           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  cart Cart @relation(fields: [cartId], references: [id], onDelete: Cascade)
+
+  @@index([cartId])
+  @@map("cart_items")
 }
 
 model WhatsAppThreadTag {
@@ -1368,6 +1445,12 @@ model BotConfig {
   detectedTone      String?   @map("detected_tone")
   // The greeting text the bot opens with.
   greeting          String?
+  // If true, the bot's FIRST reply in a thread addresses the customer
+  // by their WhatsApp profile name (Meta's contacts[].profile.name,
+  // stored on WhatsAppThread.customerWhatsappName). Subsequent replies
+  // are unaffected. Defaults off so existing tenants don't see new
+  // behaviour without opting in.
+  greetByName       Boolean   @default(false) @map("greet_by_name")
   // Comma-separated language codes the bot replies in. Default 'en'.
   languages         String    @default("en")
   // Escalation rules — what triggers a handoff to a human, business hours, etc.

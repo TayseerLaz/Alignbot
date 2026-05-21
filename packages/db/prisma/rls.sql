@@ -136,6 +136,9 @@ SELECT _aligned_apply_tenant_rls('broadcast_events');
 SELECT _aligned_apply_tenant_rls('sequences');
 SELECT _aligned_apply_tenant_rls('sequence_steps');
 SELECT _aligned_apply_tenant_rls('sequence_enrollments');
+-- Cart / Shop feature
+SELECT _aligned_apply_tenant_rls('carts');
+SELECT _aligned_apply_tenant_rls('cart_items');
 -- plans is GLOBAL (no organization_id) — no RLS needed; access via API only.
 
 -- ---------- pg_trgm GIN indexes for fast search (Prisma can't express) ------

@@ -96,6 +96,10 @@ export const WebhookEventKind = {
   booking_created: 'booking_created',
   booking_status_changed: 'booking_status_changed',
   booking_reminder_sent: 'booking_reminder_sent',
+  // Carts
+  cart_created: 'cart_created',
+  cart_status_changed: 'cart_status_changed',
+  cart_item_added: 'cart_item_added',
 } as const;
 export type WebhookEventKind = (typeof WebhookEventKind)[keyof typeof WebhookEventKind];
 

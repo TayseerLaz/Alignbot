@@ -72,3 +72,8 @@ CREATE POLICY tenant_isolation ON cart_items
 ALTER TYPE "WebhookEventKind" ADD VALUE IF NOT EXISTS 'cart_created';
 ALTER TYPE "WebhookEventKind" ADD VALUE IF NOT EXISTS 'cart_status_changed';
 ALTER TYPE "WebhookEventKind" ADD VALUE IF NOT EXISTS 'cart_item_added';
+
+-- Audit-action enum values for the new cart routes.
+ALTER TYPE "AuditAction" ADD VALUE IF NOT EXISTS 'cart_created';
+ALTER TYPE "AuditAction" ADD VALUE IF NOT EXISTS 'cart_updated';
+ALTER TYPE "AuditAction" ADD VALUE IF NOT EXISTS 'cart_deleted';

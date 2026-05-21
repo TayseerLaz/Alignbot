@@ -120,6 +120,10 @@ enum AuditAction {
   booking_created
   booking_updated
   booking_deleted
+  // Carts
+  cart_created
+  cart_updated
+  cart_deleted
 }
 
 enum RevisionEntityType {
@@ -237,6 +241,10 @@ enum WebhookEventKind {
   booking_created
   booking_status_changed
   booking_reminder_sent
+  // Carts
+  cart_created
+  cart_status_changed
+  cart_item_added
 }
 
 enum AssetKind {

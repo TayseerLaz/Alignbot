@@ -2136,23 +2136,47 @@ async function maybeReplyAsBot(args: {
       const config = await tx.botConfig.findUnique({
         where: { organizationId: args.organizationId },
       });
-      if (!config?.deployedAt) return null;
+      if (!config?.deployedAt) {
+        args.log.info({ orgId: args.organizationId, from: m.from }, '[whatsapp] bot skip: not deployed');
+        return null;
+      }
 
       const thread = await tx.whatsAppThread.findFirst({
         where: { organizationId: args.organizationId, customerPhone: m.from },
       });
-      if (!thread) return null;
+      if (!thread) {
+        args.log.info({ orgId: args.organizationId, from: m.from }, '[whatsapp] bot skip: thread not found');
+        return null;
+      }
       // Don't reply if a human owns it.
-      if (thread.assignedToUserId) return null;
+      if (thread.assignedToUserId) {
+        args.log.info(
+          { orgId: args.organizationId, threadId: thread.id, assignedToUserId: thread.assignedToUserId },
+          '[whatsapp] bot skip: thread assigned to human',
+        );
+        return null;
+      }
       // Don't reply once the bot has escalated to a human — the thread
       // is waiting for an operator to step in. They'll un-escalate by
       // resolving or re-opening the chat from the inbox.
-      if (thread.status === 'escalated') return null;
+      if (thread.status === 'escalated') {
+        args.log.info(
+          { orgId: args.organizationId, threadId: thread.id },
+          '[whatsapp] bot skip: thread escalated',
+        );
+        return null;
+      }
 
       const ch = await tx.whatsAppChannel.findFirst({
         where: { organizationId: args.organizationId, isPrimary: true },
       });
-      if (!ch || !ch.accessToken || !ch.phoneNumberId || !ch.isActive) return null;
+      if (!ch || !ch.accessToken || !ch.phoneNumberId || !ch.isActive) {
+        args.log.info(
+          { orgId: args.organizationId, threadId: thread.id, channelExists: Boolean(ch), isActive: ch?.isActive },
+          '[whatsapp] bot skip: channel missing or inactive',
+        );
+        return null;
+      }
 
       // Pull recent thread history (last 10 msgs) for short-term memory.
       const history = await tx.whatsAppMessage.findMany({

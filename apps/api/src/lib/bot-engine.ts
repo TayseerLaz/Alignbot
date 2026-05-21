@@ -105,6 +105,10 @@ export interface BotData {
     freeDeliveryAboveMinor: number | null;
     confirmationMessage: string;
     currency: string;
+    // Public menu / catalog URL. Sent verbatim when the customer asks
+    // about the menu. Null = no menu link configured; the rule below
+    // is silently skipped.
+    menuUrl: string | null;
   } | null;
 }
 
@@ -373,6 +377,11 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
           biz && typeof (biz as { currency?: unknown }).currency === 'string'
             ? ((biz as { currency: string }).currency)
             : 'USD',
+        menuUrl:
+          typeof (s as { menuUrl?: unknown }).menuUrl === 'string' &&
+          (s as { menuUrl: string }).menuUrl.trim().length > 0
+            ? (s as { menuUrl: string }).menuUrl.trim()
+            : null,
       };
     }
   }
@@ -585,6 +594,14 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
         `    User: "Yes confirm"\n` +
         `    Bot: "All set, Jane — booking confirmed for tomorrow at 5. We'll be in touch.\\n[BOOKING: {\\"name\\":\\"Jane Doe\\",\\"email\\":\\"jane@x.com\\",\\"date\\":\\"tomorrow at 5\\",\\"notes\\":\\"IT strategy\\"}]"`
       : '',
+    // Menu-link rule — when the operator has set a public menu URL on
+    // the shop form, the bot shares it whenever the customer asks about
+    // the menu / what's available. Placed BEFORE the cart flow so the
+    // LLM doesn't accidentally start a cart when the customer only
+    // wants to see what's on offer.
+    shopForm?.menuUrl
+      ? `- MENU LINK. If the customer asks for the menu, asks to "see the menu", asks "what do you have", "show me your menu", "send me the menu", "menu link", "menu", or any equivalent in their language (Arabic: "بدي شوف القائمة" / "ابعتلي المنيو" / "شو عندكم", French: "le menu s'il vous plaît", etc.) — reply with the menu link below. Open with one short friendly line in the customer's language, then put the URL on its own line. Example: "Here's our menu: ${shopForm.menuUrl}". Do NOT trigger the CART flow on a bare menu request — share the link first; the customer can come back to order after browsing.\n  MENU URL (send verbatim): ${shopForm.menuUrl}`
+      : '',
     // Cart / shop protocol — when the operator has enabled the shop form
     // and the customer wants to order. The bot walks them through
     // selecting products, asks for the shop-form fields, summarises,
@@ -595,6 +612,11 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
       ? `- CART FLOW (load-bearing). If the customer wants to ORDER / BUY / DELIVER (or matches one of: ${shopForm.intentKeywords.join(', ') || '"order", "buy", "delivery", "menu"'}):\n` +
         `  ALWAYS QUOTE PRICES. Every time you add an item to the running cart, state its unit price ("Got it — 3× Oreo Milkshake at 1.250 KWD each, that's 3.750 KWD so far"). When the customer asks "what's the total?", compute it from items × unit prices + delivery fee + show the breakdown. Currency: ${shopForm.currency}. Format as <amount with correct decimals> ${shopForm.currency} — KWD/BHD/OMR use 3 decimals (1.250), USD/EUR use 2 (1.25). NEVER reply "I can't provide the total" — you have the catalog prices, compute it.\n` +
         `  Step 1: help them pick products from the CATALOG section below. Use EXACT product NAMES + SKUs as shown — NEVER invent products. Confirm quantity + variant.\n` +
+        `  Step 1b (MANDATORY — applies to EVERY item-add reply in the cart flow). When you confirm an item was added, the reply MUST include ALL of:\n` +
+        `       i.  the product's short description (the part after " — " in the catalog line);\n` +
+        `       ii. unit price + running subtotal;\n` +
+        `       iii. on its own NEW LINE: [IMAGE: <SKU>] for the product just added. This is non-optional. If you forget the marker, the customer doesn't see the picture and we lose the sale. EVERY add = one marker.\n` +
+        `   The next step (upsell) can mention a second product in TEXT only — do NOT emit [IMAGE: ...] for the upsell unless the customer accepts it. One image marker per add, never zero.\n` +
         `  Step 2 (UPSELL — DO NOT SKIP, DO NOT JUST ASK "anything else"). After each item is added, you MUST suggest a SPECIFIC complementary catalog item by NAME + PRICE — never just say "anything else?" alone. Pick a real pairing from the CATALOG: a drink to go with a dessert, a sweet to finish a coffee, a sharing item if the cart is for one. Phrase as a warm suggestion, not a hard sell. Examples:\n` +
         `    Coffee + sweet: "Lovely choice — would you like a Dubai Crepe (4.500 KWD) to go with your coffee? It's our signature."\n` +
         `    Milkshake + crepe: "Many people pair this with a Crepe Pillow (3.250 KWD) — want one?"\n` +

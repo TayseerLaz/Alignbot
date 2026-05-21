@@ -197,6 +197,16 @@ jobs:
             # prompt (which hangs the SSH action because there's no TTY to
             # answer it). Cheap on a 4-vCPU box; takes ~30 s extra.
             rm -rf node_modules apps/*/node_modules packages/*/node_modules
+            # Verify the pnpm content-addressable store still has Next's
+            # build polyfills — that file went missing once, breaking
+            # next build with ENOENT after a "reused N, downloaded 0"
+            # install. If missing, prune the store so the next install
+            # re-fetches every package fresh. Idempotent / cheap.
+            NEXT_POLYFILL=$(find ~/.local/share/pnpm/store ~/.pnpm-store -path '*next*/dist/build/polyfills/polyfill-nomodule.js' 2>/dev/null | head -1 || true)
+            if [ -z "$NEXT_POLYFILL" ]; then
+              echo "[pnpm-store] Next.js polyfill missing — pruning store"
+              pnpm store prune 2>&1 | tail -3 || true
+            fi
             # NODE_ENV=production was sourced from .env.production above,
             # which makes pnpm skip devDependencies (incl. prisma CLI,
             # tsx, typescript, tiptap). Force include them for the install

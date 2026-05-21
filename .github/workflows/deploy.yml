@@ -226,6 +226,24 @@ jobs:
             INITIAL_ADMIN_PASSWORD='${{ secrets.INITIAL_ADMIN_PASSWORD }}' \
             pnpm --filter @aligned/db exec tsx ./seed/super-admin.ts
 
+            echo "=== voice inbound audit (which message types are actually reaching us) ==="
+            # Counts of every inbound message_type the ALIGNED org has
+            # ever received. If audio/voice = 0, Meta isn't routing
+            # voice notes to our webhook — most likely Meta-side
+            # webhook subscription doesn't include media events.
+            PGPASSWORD="$POSTGRES_PASSWORD" psql -h localhost -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=0 -At -c "
+              SELECT message_type, COUNT(*) AS total,
+                     COUNT(*) FILTER (WHERE received_at > now() - interval '24 hours') AS last_24h,
+                     COUNT(*) FILTER (WHERE received_at > now() - interval '1 hour') AS last_1h,
+                     MAX(received_at) AS most_recent
+              FROM whatsapp_messages m
+              JOIN organizations o ON o.id = m.organization_id
+              WHERE m.direction = 'inbound' AND lower(o.name) = 'aligned'
+              GROUP BY message_type
+              ORDER BY total DESC;
+            " || echo "[voice-inbound-audit] query failed (non-fatal)"
+            echo ""
+
             echo "=== voice / TTS configuration audit ==="
             # Print which TTS providers are configured in .env.production
             # so we can diagnose voice-mode failures without server access.

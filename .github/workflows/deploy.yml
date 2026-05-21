@@ -226,6 +226,20 @@ jobs:
             # step only — runtime envs aren't affected by this override.
             NODE_ENV=development pnpm install --frozen-lockfile
 
+            # Post-install integrity check. The pre-install probe above
+            # only inspects the pnpm store. The store can hold the right
+            # file while the installed symlink-chain into apps/web/
+            # ends up broken (we've hit this multiple times — webpack
+            # blows up on a missing next polyfill). If the resolved file
+            # isn't readable, force a fresh fetch + reinstall.
+            POLYFILL_PATH=$(node -e "try{console.log(require.resolve('next/dist/build/polyfills/polyfill-nomodule.js',{paths:['apps/web']}))}catch(e){}" 2>/dev/null || true)
+            if [ -z "$POLYFILL_PATH" ] || [ ! -f "$POLYFILL_PATH" ]; then
+              echo "[pnpm-post-install] Next.js polyfill unreachable after install — force-reinstalling"
+              pnpm store prune 2>&1 | tail -3 || true
+              rm -rf node_modules apps/*/node_modules packages/*/node_modules
+              NODE_ENV=development pnpm install --frozen-lockfile --force
+            fi
+
             echo "=== clear stale tsbuildinfo + dists (prevents incremental ghost builds) ==="
             find . -name "*.tsbuildinfo" -not -path "*/node_modules/*" -delete || true
             rm -rf packages/shared/dist packages/db/dist apps/api/dist apps/worker/dist

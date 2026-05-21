@@ -170,6 +170,16 @@ export default function ProductEditPage() {
 // ---------- Details (auto-save) -------------------------------------------
 function DetailsCard({ product, categories }: { product: Product; categories: Category[] }) {
   const queryClient = useQueryClient();
+  // Org-level currency drives the price label everywhere. Read it once
+  // and pass it down; the per-product currency field is no longer
+  // editable (locked to the org default server-side).
+  const businessInfoQ = useQuery({
+    queryKey: ['business-info'],
+    queryFn: () =>
+      api.get<{ data: { currency?: string } | null }>('/api/v1/business-info'),
+    staleTime: 60_000,
+  });
+  const orgCurrency = businessInfoQ.data?.data?.currency ?? product.currency;
   const [draft, setDraft] = useState({
     name: product.name,
     sku: product.sku,
@@ -177,7 +187,6 @@ function DetailsCard({ product, categories }: { product: Product; categories: Ca
     description: product.description ?? '',
     priceMajor: minorToMajorString(product.priceMinor),
     compareAtMajor: minorToMajorString(product.compareAtMinor),
-    currency: product.currency,
     categoryId: product.categoryId ?? NO_CATEGORY,
   });
   const [savedAt, setSavedAt] = useState<Date | null>(null);
@@ -194,7 +203,6 @@ function DetailsCard({ product, categories }: { product: Product; categories: Ca
       description: product.description ?? '',
       priceMajor: minorToMajorString(product.priceMinor),
       compareAtMajor: minorToMajorString(product.compareAtMinor),
-      currency: product.currency,
       categoryId: product.categoryId ?? NO_CATEGORY,
     });
     skipNext.current = true;
@@ -217,7 +225,8 @@ function DetailsCard({ product, categories }: { product: Product; categories: Ca
           description: draft.description || null,
           priceMinor: parseMoneyMajor(draft.priceMajor),
           compareAtMinor: parseMoneyMajor(draft.compareAtMajor),
-          currency: draft.currency,
+          // Currency is locked to BusinessInfo.currency server-side; no
+          // longer part of the per-product payload.
           categoryId: draft.categoryId === NO_CATEGORY ? null : draft.categoryId,
         });
         setSavedAt(new Date());
@@ -267,7 +276,7 @@ function DetailsCard({ product, categories }: { product: Product; categories: Ca
           </Select>
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="price">Price ({draft.currency})</Label>
+          <Label htmlFor="price">Price ({orgCurrency})</Label>
           <Input
             id="price"
             inputMode="decimal"

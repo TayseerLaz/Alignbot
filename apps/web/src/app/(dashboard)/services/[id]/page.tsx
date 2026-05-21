@@ -118,13 +118,21 @@ export default function ServiceEditPage() {
 
 function DetailsCard({ service, categories }: { service: Service; categories: Category[] }) {
   const queryClient = useQueryClient();
+  // Org-level currency is the single source of truth — same pattern as
+  // /products/[id]. Per-service currency is locked server-side.
+  const businessInfoQ = useQuery({
+    queryKey: ['business-info'],
+    queryFn: () =>
+      api.get<{ data: { currency?: string } | null }>('/api/v1/business-info'),
+    staleTime: 60_000,
+  });
+  const orgCurrency = businessInfoQ.data?.data?.currency ?? service.currency;
   const [draft, setDraft] = useState({
     name: service.name,
     shortDescription: service.shortDescription ?? '',
     description: service.description ?? '',
     durationMinutes: service.durationMinutes ?? 0,
     basePriceMajor: minorToMajorString(service.basePriceMinor),
-    currency: service.currency,
     priceUnit: service.priceUnit,
     isAvailable: service.isAvailable,
     categoryId: service.categoryId ?? NO_CATEGORY,
@@ -141,7 +149,6 @@ function DetailsCard({ service, categories }: { service: Service; categories: Ca
       description: service.description ?? '',
       durationMinutes: service.durationMinutes ?? 0,
       basePriceMajor: minorToMajorString(service.basePriceMinor),
-      currency: service.currency,
       priceUnit: service.priceUnit,
       isAvailable: service.isAvailable,
       categoryId: service.categoryId ?? NO_CATEGORY,
@@ -164,7 +171,7 @@ function DetailsCard({ service, categories }: { service: Service; categories: Ca
           description: draft.description || null,
           durationMinutes: draft.durationMinutes || null,
           basePriceMinor: parseMoneyMajor(draft.basePriceMajor),
-          currency: draft.currency,
+          // Currency is locked to BusinessInfo.currency server-side.
           priceUnit: draft.priceUnit,
           isAvailable: draft.isAvailable,
           categoryId: draft.categoryId === NO_CATEGORY ? null : draft.categoryId,
@@ -222,7 +229,7 @@ function DetailsCard({ service, categories }: { service: Service; categories: Ca
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="basePrice">Base price ({draft.currency})</Label>
+          <Label htmlFor="basePrice">Base price ({orgCurrency})</Label>
           <Input
             id="basePrice"
             inputMode="decimal"

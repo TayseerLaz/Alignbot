@@ -38,24 +38,39 @@ export default function ServicesPage() {
   const [availability, setAvailability] = useState<string>(ALL_AVAILABILITY);
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Pagination — 20 services/page, cursor stack drives prev/next.
+  const PAGE_LIMIT = 20;
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [cursorHistory, setCursorHistory] = useState<(string | null)[]>([]);
 
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(searchInput.trim()), 300);
     return () => clearTimeout(id);
   }, [searchInput]);
 
+  // Reset to page 1 whenever filters change.
+  useEffect(() => {
+    setCursor(null);
+    setCursorHistory([]);
+  }, [debouncedSearch, categoryId, availability]);
+
   const params = useMemo(() => {
     const p = new URLSearchParams();
     if (debouncedSearch) p.set('q', debouncedSearch);
     if (categoryId !== ALL_CATEGORIES) p.set('categoryId', categoryId);
     if (availability !== ALL_AVAILABILITY) p.set('isAvailable', availability);
-    p.set('limit', '50');
+    p.set('limit', String(PAGE_LIMIT));
+    if (cursor) p.set('cursor', cursor);
     return p.toString();
-  }, [debouncedSearch, categoryId, availability]);
+  }, [debouncedSearch, categoryId, availability, cursor]);
 
   const servicesQuery = useQuery({
     queryKey: ['services', params],
-    queryFn: () => api.get<{ data: ServiceListItem[] }>(`/api/v1/services?${params}`),
+    queryFn: () =>
+      api.get<{ data: ServiceListItem[]; nextCursor: string | null; total?: number }>(
+        `/api/v1/services?${params}`,
+      ),
+    placeholderData: (prev) => prev,
   });
   const categoriesQuery = useQuery({
     queryKey: ['categories'],
@@ -101,6 +116,22 @@ export default function ServicesPage() {
   };
 
   const services = servicesQuery.data?.data ?? [];
+  const nextCursor = servicesQuery.data?.nextCursor ?? null;
+  const total = servicesQuery.data?.total ?? null;
+  const pageIndex = cursorHistory.length;
+  const showingFrom = total === 0 ? 0 : pageIndex * PAGE_LIMIT + 1;
+  const showingTo = pageIndex * PAGE_LIMIT + services.length;
+  const goNext = () => {
+    if (!nextCursor) return;
+    setCursorHistory((h) => [...h, cursor]);
+    setCursor(nextCursor);
+  };
+  const goPrev = () => {
+    if (cursorHistory.length === 0) return;
+    const prevCursor = cursorHistory[cursorHistory.length - 1] ?? null;
+    setCursorHistory((h) => h.slice(0, -1));
+    setCursor(prevCursor);
+  };
   const allSelected = services.length > 0 && services.every((s) => selected.has(s.id));
   const someSelected = selected.size > 0;
   const toggleAll = () => {
@@ -340,6 +371,33 @@ export default function ServicesPage() {
               </table>
             </div>
           )}
+          {/* Pagination + total count, same shape as /products. */}
+          {total !== null && services.length > 0 ? (
+            <div className="flex flex-col items-center justify-between gap-2 border-t border-border px-4 py-3 text-xs text-foreground-muted sm:flex-row">
+              <span>
+                Showing <strong>{showingFrom}</strong>–<strong>{showingTo}</strong> of{' '}
+                <strong>{total}</strong> service{total === 1 ? '' : 's'} · {PAGE_LIMIT} per page
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={cursorHistory.length === 0}
+                  onClick={goPrev}
+                >
+                  ← Previous
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={!nextCursor}
+                  onClick={goNext}
+                >
+                  Next →
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </>

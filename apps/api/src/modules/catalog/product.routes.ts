@@ -77,17 +77,22 @@ export default async function productRoutes(app: FastifyInstance) {
             : {}),
         };
         const cursor = decodeCursor<{ id: string }>(q.cursor);
-        const products = await tx.product.findMany({
-          where,
-          orderBy: SORT_ORDERS[q.sort],
-          include: {
-            category: { select: { id: true, name: true } },
-            images: { orderBy: { sortOrder: 'asc' }, take: 1, include: { asset: true } },
-            _count: { select: { variants: true } },
-          },
-          take: q.limit + 1,
-          ...(cursor ? { cursor: { id: cursor.id }, skip: 1 } : {}),
-        });
+        // Fetch a page + the total count in parallel so the UI can render
+        // "N products" / "Showing X of N" without an extra round trip.
+        const [products, total] = await Promise.all([
+          tx.product.findMany({
+            where,
+            orderBy: SORT_ORDERS[q.sort],
+            include: {
+              category: { select: { id: true, name: true } },
+              images: { orderBy: { sortOrder: 'asc' }, take: 1, include: { asset: true } },
+              _count: { select: { variants: true } },
+            },
+            take: q.limit + 1,
+            ...(cursor ? { cursor: { id: cursor.id }, skip: 1 } : {}),
+          }),
+          tx.product.count({ where }),
+        ]);
         const hasMore = products.length > q.limit;
         const page = hasMore ? products.slice(0, q.limit) : products;
         const data = await Promise.all(
@@ -112,6 +117,7 @@ export default async function productRoutes(app: FastifyInstance) {
         return {
           data,
           nextCursor: hasMore ? encodeCursor({ id: page[page.length - 1]!.id }) : null,
+          total,
         };
       });
     },
@@ -141,6 +147,16 @@ export default async function productRoutes(app: FastifyInstance) {
         });
         if (dupes) throw conflict('A product with that SKU or slug already exists.');
 
+        // Currency is now a single source of truth at the org level — read
+        // it off BusinessInfo and ignore any client-supplied currency. This
+        // prevents operators from accidentally mixing USD products into a
+        // KWD-default catalog and breaking the cart math.
+        const orgInfo = await tx.businessInfo.findUnique({
+          where: { organizationId: orgId },
+          select: { currency: true },
+        });
+        const orgCurrency = orgInfo?.currency || 'USD';
+
         const created = await tx.product.create({
           data: {
             organizationId: orgId,
@@ -151,7 +167,7 @@ export default async function productRoutes(app: FastifyInstance) {
             shortDescription: req.body.shortDescription ?? null,
             priceMinor: req.body.priceMinor ?? null,
             compareAtMinor: req.body.compareAtMinor ?? null,
-            currency: req.body.currency ?? 'USD',
+            currency: orgCurrency,
             isAvailable: req.body.isAvailable ?? true,
             stockQuantity: req.body.stockQuantity ?? null,
             trackInventory: req.body.trackInventory ?? false,
@@ -237,7 +253,9 @@ export default async function productRoutes(app: FastifyInstance) {
           shortDescription: req.body.shortDescription === undefined ? undefined : req.body.shortDescription,
           priceMinor: req.body.priceMinor === undefined ? undefined : req.body.priceMinor,
           compareAtMinor: req.body.compareAtMinor === undefined ? undefined : req.body.compareAtMinor,
-          currency: req.body.currency ?? undefined,
+          // Currency is locked to the org-level BusinessInfo.currency.
+          // Ignore any client-supplied currency on PATCH — operators
+          // change currency on /business-info, never per-product.
           isAvailable: req.body.isAvailable ?? undefined,
           stockQuantity: req.body.stockQuantity === undefined ? undefined : req.body.stockQuantity,
           trackInventory: req.body.trackInventory ?? undefined,

@@ -40,24 +40,42 @@ export default function ProductsPage() {
   const [availability, setAvailability] = useState<string>(ALL_AVAILABILITY);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
+  // Pagination — 20 items per page (fixed), cursor stack drives prev/next.
+  // We push the previous page's nextCursor on advance + pop on Back so we
+  // can walk backwards without re-running every previous query.
+  const PAGE_LIMIT = 20;
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [cursorHistory, setCursorHistory] = useState<(string | null)[]>([]);
 
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(searchInput.trim()), 300);
     return () => clearTimeout(id);
   }, [searchInput]);
 
+  // Reset pagination whenever filters change so we don't end up on a
+  // cursor that no longer matches.
+  useEffect(() => {
+    setCursor(null);
+    setCursorHistory([]);
+  }, [debouncedSearch, categoryId, availability]);
+
   const params = useMemo(() => {
     const p = new URLSearchParams();
     if (debouncedSearch) p.set('q', debouncedSearch);
     if (categoryId !== ALL_CATEGORIES) p.set('categoryId', categoryId);
     if (availability !== ALL_AVAILABILITY) p.set('isAvailable', availability);
-    p.set('limit', '50');
+    p.set('limit', String(PAGE_LIMIT));
+    if (cursor) p.set('cursor', cursor);
     return p.toString();
-  }, [debouncedSearch, categoryId, availability]);
+  }, [debouncedSearch, categoryId, availability, cursor]);
 
   const productsQuery = useQuery({
     queryKey: ['products', params],
-    queryFn: () => api.get<{ data: ProductListItem[]; nextCursor: string | null }>(`/api/v1/products?${params}`),
+    queryFn: () =>
+      api.get<{ data: ProductListItem[]; nextCursor: string | null; total?: number }>(
+        `/api/v1/products?${params}`,
+      ),
+    placeholderData: (prev) => prev,
   });
 
   const categoriesQuery = useQuery({
@@ -117,8 +135,26 @@ export default function ProductsPage() {
   };
 
   const products = productsQuery.data?.data ?? [];
+  const nextCursor = productsQuery.data?.nextCursor ?? null;
+  const total = productsQuery.data?.total ?? null;
+  // Page index = depth of the cursor history. 0 on first page.
+  const pageIndex = cursorHistory.length;
+  const showingFrom = total === 0 ? 0 : pageIndex * PAGE_LIMIT + 1;
+  const showingTo = pageIndex * PAGE_LIMIT + products.length;
   const allSelected = products.length > 0 && products.every((p) => selected.has(p.id));
   const someSelected = selected.size > 0;
+
+  const goNext = () => {
+    if (!nextCursor) return;
+    setCursorHistory((h) => [...h, cursor]);
+    setCursor(nextCursor);
+  };
+  const goPrev = () => {
+    if (cursorHistory.length === 0) return;
+    const prevCursor = cursorHistory[cursorHistory.length - 1] ?? null;
+    setCursorHistory((h) => h.slice(0, -1));
+    setCursor(prevCursor);
+  };
 
   const toggleAll = () => {
     if (allSelected) setSelected(new Set());
@@ -394,6 +430,36 @@ export default function ProductsPage() {
               </table>
             </div>
           )}
+          {/* Pagination + total. Always rendered when we have any data so
+              operators see exactly where they are in the catalog. Hidden
+              while loading the very first page to avoid a "Showing 0 of
+              0" flash. */}
+          {total !== null && products.length > 0 ? (
+            <div className="flex flex-col items-center justify-between gap-2 border-t border-border px-4 py-3 text-xs text-foreground-muted sm:flex-row">
+              <span>
+                Showing <strong>{showingFrom}</strong>–<strong>{showingTo}</strong> of{' '}
+                <strong>{total}</strong> product{total === 1 ? '' : 's'} · {PAGE_LIMIT} per page
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={cursorHistory.length === 0}
+                  onClick={goPrev}
+                >
+                  ← Previous
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={!nextCursor}
+                  onClick={goNext}
+                >
+                  Next →
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </>

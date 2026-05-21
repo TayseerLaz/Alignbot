@@ -63,16 +63,21 @@ export default async function serviceRoutes(app: FastifyInstance) {
             : {}),
         };
         const cursor = decodeCursor<{ id: string }>(q.cursor);
-        const services = await tx.service.findMany({
-          where,
-          orderBy: SORT_ORDERS[q.sort],
-          include: {
-            category: { select: { id: true, name: true } },
-            _count: { select: { pricingTiers: true } },
-          },
-          take: q.limit + 1,
-          ...(cursor ? { cursor: { id: cursor.id }, skip: 1 } : {}),
-        });
+        // Page + total count in parallel so the UI can render "N services"
+        // + "Showing X of N" without a second round trip.
+        const [services, total] = await Promise.all([
+          tx.service.findMany({
+            where,
+            orderBy: SORT_ORDERS[q.sort],
+            include: {
+              category: { select: { id: true, name: true } },
+              _count: { select: { pricingTiers: true } },
+            },
+            take: q.limit + 1,
+            ...(cursor ? { cursor: { id: cursor.id }, skip: 1 } : {}),
+          }),
+          tx.service.count({ where }),
+        ]);
         const hasMore = services.length > q.limit;
         const page = hasMore ? services.slice(0, q.limit) : services;
         return {
@@ -92,6 +97,7 @@ export default async function serviceRoutes(app: FastifyInstance) {
             updatedAt: s.updatedAt.toISOString(),
           })),
           nextCursor: hasMore ? encodeCursor({ id: page[page.length - 1]!.id }) : null,
+          total,
         };
       });
     },
@@ -116,6 +122,14 @@ export default async function serviceRoutes(app: FastifyInstance) {
         const dupe = await tx.service.findFirst({ where: { slug, deletedAt: null } });
         if (dupe) throw conflict('A service with that slug already exists.');
 
+        // Lock service currency to the org-level BusinessInfo.currency.
+        // Same rule as products — no per-service currency override.
+        const orgInfo = await tx.businessInfo.findUnique({
+          where: { organizationId: orgId },
+          select: { currency: true },
+        });
+        const orgCurrency = orgInfo?.currency || 'USD';
+
         const created = await tx.service.create({
           data: {
             organizationId: orgId,
@@ -125,7 +139,7 @@ export default async function serviceRoutes(app: FastifyInstance) {
             shortDescription: req.body.shortDescription ?? null,
             durationMinutes: req.body.durationMinutes ?? null,
             basePriceMinor: req.body.basePriceMinor ?? null,
-            currency: req.body.currency ?? 'USD',
+            currency: orgCurrency,
             priceUnit: req.body.priceUnit ?? 'flat',
             isAvailable: req.body.isAvailable ?? true,
             bookingRules: (req.body.bookingRules ?? undefined) as Prisma.InputJsonValue | undefined,
@@ -206,7 +220,8 @@ export default async function serviceRoutes(app: FastifyInstance) {
             durationMinutes:
               req.body.durationMinutes === undefined ? undefined : req.body.durationMinutes,
             basePriceMinor: req.body.basePriceMinor === undefined ? undefined : req.body.basePriceMinor,
-            currency: req.body.currency ?? undefined,
+            // Currency is locked to the org-level BusinessInfo.currency.
+            // Ignore any client-supplied currency on PATCH.
             priceUnit: req.body.priceUnit ?? undefined,
             isAvailable: req.body.isAvailable ?? undefined,
             bookingRules:

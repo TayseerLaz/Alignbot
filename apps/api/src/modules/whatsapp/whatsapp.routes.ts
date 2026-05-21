@@ -2179,6 +2179,12 @@ async function maybeReplyAsBot(args: {
         ttsProvider:
           ((config as { ttsProvider?: string | null }).ttsProvider as string | null) ?? 'google',
         ttsVoiceName: (config.ttsVoiceName as string | null | undefined) ?? null,
+        // Customer's WhatsApp profile name (Meta-provided). Falls back
+        // to the operator-set nickname if Meta didn't send one. Empty
+        // string when neither is available — bot-engine treats that
+        // the same as null + silently skips the by-name greeting.
+        customerName:
+          thread.customerWhatsappName ?? thread.customerName ?? null,
       };
     });
     if (!ctx) continue;
@@ -2298,6 +2304,7 @@ async function maybeReplyAsBot(args: {
       data: ctx.data,
       replyMode: ctx.replyMode as 'text' | 'voice' | 'match_customer',
       customerSpokeAudio,
+      customerName: (ctx as { customerName?: string | null }).customerName ?? null,
     }).catch((err) => {
       args.log.warn({ err }, '[whatsapp] bot-engine failed');
       return null;

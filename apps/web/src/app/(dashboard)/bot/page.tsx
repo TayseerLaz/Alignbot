@@ -39,6 +39,7 @@ interface BotConfig {
   customPersonality: string | null;
   detectedTone: string | null;
   greeting: string | null;
+  greetByName: boolean;
   languages: string;
   escalationRules: Record<string, unknown> | null;
   conversationFlow: Record<string, unknown> | null;
@@ -670,6 +671,7 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
   const qc = useQueryClient();
   const [personality, setPersonality] = useState<string>(config?.personality ?? 'friendly');
   const [greeting, setGreeting] = useState<string>(config?.greeting ?? '');
+  const [greetByName, setGreetByName] = useState<boolean>(config?.greetByName ?? false);
   const [languages, setLanguages] = useState<string>(config?.languages ?? 'en');
   const [fallback, setFallback] = useState<string>(
     (config?.escalationRules as Record<string, string> | null)?.fallback ?? '',
@@ -679,6 +681,7 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
     if (!config) return;
     setPersonality(config.personality ?? config.detectedTone ?? 'friendly');
     setGreeting(config.greeting ?? '');
+    setGreetByName(config.greetByName ?? false);
     setLanguages(config.languages ?? 'en');
     setFallback((config.escalationRules as Record<string, string> | null)?.fallback ?? '');
   }, [config]);
@@ -688,6 +691,7 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
       api.put('/api/v1/bot/config', {
         personality,
         greeting,
+        greetByName,
         languages,
         escalationRules: fallback ? { fallback } : null,
       }),
@@ -739,6 +743,28 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
             value={greeting}
             onChange={(e) => setGreeting(e.target.value)}
           />
+          {/* Toggle controls whether the bot's FIRST reply in a thread
+              opens with the customer's WhatsApp profile name. Picks up
+              from Meta's contacts[].profile.name automatically — the
+              operator never types anyone's name. Subsequent replies
+              are unaffected. */}
+          <label className="flex items-start gap-2 pt-1 text-sm">
+            <input
+              type="checkbox"
+              checked={greetByName}
+              onChange={(e) => setGreetByName(e.target.checked)}
+              className="mt-1 size-4 cursor-pointer accent-brand-600"
+            />
+            <span>
+              <span className="font-medium">Greet customer by name on the first reply</span>
+              <span className="block text-[11px] text-foreground-muted">
+                Picks up the customer&apos;s WhatsApp profile name automatically. The bot opens
+                with it once, then doesn&apos;t repeat it in later replies. If WhatsApp
+                didn&apos;t share a name, the bot just uses your greeting as-is — no awkward
+                empty placeholder.
+              </span>
+            </span>
+          </label>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr]">
           <div className="space-y-1.5">

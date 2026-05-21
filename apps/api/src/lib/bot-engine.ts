@@ -288,6 +288,12 @@ interface BotResponseArgs {
   // Whether the customer's current inbound was an audio/voice note —
   // used to give the model a clean signal for match_customer mode.
   customerSpokeAudio?: boolean;
+  // Customer's WhatsApp profile name (Meta's contacts[].profile.name,
+  // mirrored on WhatsAppThread.customerWhatsappName). When set AND the
+  // tenant's BotConfig.greetByName is true AND this is the first reply
+  // in the thread, the system prompt asks the model to open with the
+  // customer's name once. Null / empty silently skips the directive.
+  customerName?: string | null;
 }
 
 // Composes the system prompt from gathered data + asks the LLM. NO Prisma
@@ -362,6 +368,17 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
         ]
       : [];
 
+  // Phase 7 — "Greet by name on first reply" directive. Only fires when:
+  //   - BotConfig.greetByName is true
+  //   - we have a customer name to use
+  //   - this IS the first reply (no prior assistant turns in history)
+  // We use the customer's *first* token of their WhatsApp profile name
+  // to avoid the bot saying their full surname like a form letter.
+  const greetByName = ((config as { greetByName?: boolean | null } | null)?.greetByName) === true;
+  const isFirstReply = !(args.history ?? []).some((m) => m.role === 'assistant');
+  const customerFirstName = (args.customerName ?? '').trim().split(/\s+/)[0] ?? '';
+  const shouldGreetByName = greetByName && isFirstReply && customerFirstName.length > 0;
+
   // Compose the system prompt — long but cache-friendly.
   const sys = [
     ...deliveryBanner,
@@ -370,6 +387,9 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     `# Personality`,
     `Tone preset: ${personalityKey}. ${personalityHint}`,
     greeting ? `Default greeting: "${greeting}"` : '',
+    shouldGreetByName
+      ? `Customer's WhatsApp name: "${customerFirstName}". This is your FIRST reply in this thread — open by addressing them by this name ONCE (e.g. "Hi ${customerFirstName}," in English, or the natural equivalent in their language). Do NOT repeat their name in subsequent replies.`
+      : '',
     ``,
     `# Rules`,
     `- Only answer using the BUSINESS INFO + KB ENTRIES + CATALOG below. Do NOT make up prices, hours, or policies.`,

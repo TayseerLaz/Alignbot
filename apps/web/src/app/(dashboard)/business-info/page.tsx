@@ -1215,6 +1215,32 @@ function ShopFormPanel() {
   const [draft, setDraft] = useState<ShopFormDraft>(defaultShopForm());
   const [keywordsInput, setKeywordsInput] = useState('');
   const [loaded, setLoaded] = useState(false);
+  const [dismissedSuggestion, setDismissedSuggestion] = useState(false);
+
+  // Heuristic: if the org has visible products AND most of them are
+  // priced, suggest enabling the shop form. Quiet for orgs that look
+  // service-only or that have already enabled / dismissed it.
+  const productsHeuristicQ = useQuery({
+    queryKey: ['business-info', 'products-heuristic'],
+    queryFn: async () => {
+      const res = await api.get<{
+        data: { id: string; priceMinor: number | null }[];
+      }>(`/api/v1/products?limit=20`);
+      const rows = res.data ?? [];
+      const priced = rows.filter((p) => p.priceMinor != null && p.priceMinor > 0);
+      return {
+        productsCount: rows.length,
+        pricedShare: rows.length > 0 ? priced.length / rows.length : 0,
+      };
+    },
+    // Cheap — runs once per session for this org.
+    staleTime: 1000 * 60 * 10,
+  });
+  const heuristicSuggests =
+    !draft.enabled &&
+    !dismissedSuggestion &&
+    (productsHeuristicQ.data?.productsCount ?? 0) >= 3 &&
+    (productsHeuristicQ.data?.pricedShare ?? 0) >= 0.5;
 
   useEffect(() => {
     if (!infoQuery.data || loaded) return;
@@ -1331,6 +1357,33 @@ function ShopFormPanel() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {heuristicSuggests ? (
+            <div className="flex items-start gap-3 rounded-md border border-brand-200 bg-brand-50/60 p-3 text-sm">
+              <ShoppingCart className="mt-0.5 size-4 text-brand-600" />
+              <div className="flex-1">
+                <p className="font-medium text-brand-700">Looks like you sell products.</p>
+                <p className="mt-0.5 text-xs text-brand-700/80">
+                  Your catalog has {productsHeuristicQ.data?.productsCount} priced products. Turn on
+                  the shop flow and the bot will help customers build a cart from your menu.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setDraft((d) => ({ ...d, enabled: true }))}
+              >
+                Enable
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setDismissedSuggestion(true)}
+                aria-label="Dismiss suggestion"
+              >
+                Dismiss
+              </Button>
+            </div>
+          ) : null}
           <label className="flex items-start gap-3">
             <input
               type="checkbox"

@@ -28,6 +28,8 @@ export const NotificationKind = {
   // value so the API DTO can serialise notifications emitted by the
   // hourly dunning tick.
   org_suspended_for_billing: 'org_suspended_for_billing',
+  // Cart flow — bot or operator creates a cart → bell ping for admins.
+  cart_received: 'cart_received',
 } as const;
 export type NotificationKind = (typeof NotificationKind)[keyof typeof NotificationKind];
 

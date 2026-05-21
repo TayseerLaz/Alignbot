@@ -152,6 +152,9 @@ enum NotificationKind {
   generic
   // Phase 5.9 — billing dunning auto-suspend.
   org_suspended_for_billing
+  // Cart flow — pings admins when a new cart lands so the inbox stays
+  // out of the kitchen's way.
+  cart_received
 }
 
 enum NotificationSeverity {

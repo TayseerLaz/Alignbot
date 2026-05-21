@@ -77,3 +77,6 @@ ALTER TYPE "WebhookEventKind" ADD VALUE IF NOT EXISTS 'cart_item_added';
 ALTER TYPE "AuditAction" ADD VALUE IF NOT EXISTS 'cart_created';
 ALTER TYPE "AuditAction" ADD VALUE IF NOT EXISTS 'cart_updated';
 ALTER TYPE "AuditAction" ADD VALUE IF NOT EXISTS 'cart_deleted';
+
+-- Notification kind for in-app cart pings.
+ALTER TYPE "NotificationKind" ADD VALUE IF NOT EXISTS 'cart_received';

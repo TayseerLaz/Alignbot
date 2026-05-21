@@ -3019,6 +3019,18 @@ async function maybeReplyAsBot(args: {
                 currency: shopForm.currency,
               },
             });
+            // In-app ping — admins see the new cart in the notifications
+            // bell + can click straight through to /cart.
+            void (await import('../../lib/notifications.js')).createNotification({
+              organizationId: args.organizationId,
+              kind: 'cart_received',
+              severity: 'info',
+              title: `New cart · ${itemsCount} item${itemsCount === 1 ? '' : 's'}`,
+              body: `${thread.customerName ?? thread.customerWhatsappName ?? m.from} · ${totalMinor / (shopForm.currency === 'KWD' || shopForm.currency === 'BHD' || shopForm.currency === 'OMR' ? 1000 : 100)} ${shopForm.currency}`,
+              link: `/cart`,
+              entityType: 'cart',
+              entityId: cart.id,
+            });
           }
         }
       });

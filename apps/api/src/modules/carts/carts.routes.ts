@@ -20,6 +20,7 @@ import { recordAudit } from '../../lib/audit.js';
 import type { Prisma } from '../../lib/db.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 import { ApiErrorCode } from '@aligned/shared';
+import { createNotification } from '../../lib/notifications.js';
 import { emitWebhookEvent } from '../../lib/webhooks.js';
 import { decodeCursor, encodeCursor } from '../catalog/shared.js';
 
@@ -273,6 +274,16 @@ export default async function cartsRoutes(app: FastifyInstance) {
           currency: result.cart.currency,
           itemsCount: result.cart.itemsCount,
         },
+      });
+      void createNotification({
+        organizationId: orgId,
+        kind: 'cart_received',
+        severity: 'info',
+        title: `New cart · ${result.cart.itemsCount} item${result.cart.itemsCount === 1 ? '' : 's'}`,
+        body: `${result.cart.customerName ?? result.cart.customerPhone} · ${result.cart.totalMinor / (result.cart.currency === 'KWD' || result.cart.currency === 'BHD' || result.cart.currency === 'OMR' ? 1000 : 100)} ${result.cart.currency}`,
+        link: `/cart`,
+        entityType: 'cart',
+        entityId: result.cart.id,
       });
       reply.code(201);
       return { data: serializeCart(result.cart, result.items) };

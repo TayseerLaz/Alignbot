@@ -2430,6 +2430,26 @@ async function maybeReplyAsBot(args: {
     const wantsVoice =
       ctx.replyMode === 'voice' ||
       (ctx.replyMode === 'match_customer' && customerSpokeAudio);
+    // Voice-mode visibility: log the decision explicitly so we can tell
+    // why a voice reply did/didn't happen without grep-spelunking. The
+    // generic "config resolution" line above shows the inputs; this
+    // line shows the resulting decision + (later in the voice block)
+    // each fallback reason.
+    args.log.info(
+      {
+        orgId: args.organizationId,
+        threadId: ctx.threadId,
+        replyMode: ctx.replyMode,
+        customerSpokeAudio,
+        inboundType: m.type,
+        wantsVoice,
+        ttsProvider: ctx.ttsProvider,
+        hasTtsVoice: !!ctx.ttsVoiceName,
+      },
+      wantsVoice
+        ? '[whatsapp] wantsVoice=true — attempting TTS reply'
+        : '[whatsapp] wantsVoice=false — sending text reply',
+    );
 
     let metaMessageId: string | null = null;
     let sendOk = false;

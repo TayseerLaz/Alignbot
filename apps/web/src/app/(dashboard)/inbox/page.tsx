@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  FileText,
   Inbox,
   MessageCircle,
   Paperclip,
@@ -26,8 +27,17 @@ import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError, getAccessToken } from '@/lib/api';
@@ -997,6 +1007,13 @@ function ReplyBox({
   const [body, setBody] = useState('');
   const [mode, setMode] = useState<'reply' | 'note'>('reply');
   const [showCanned, setShowCanned] = useState(false);
+  // Template-send dialog state. The Template button next to Canned opens
+  // a picker that lists approved WhatsApp templates + lets the operator
+  // fill any {{1}}, {{2}}… body variables before sending. Reuses the
+  // existing /whatsapp/test-send endpoint that the channel-config page
+  // uses for test sends — it already persists the rendered template to
+  // the thread + bumps the inbox counters.
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [attaching, setAttaching] = useState(false);
   // Pending attachment — uploaded to Wasabi but NOT yet sent to Meta.
   // Operator picks file → it uploads in the background → we keep the
@@ -1484,6 +1501,22 @@ function ReplyBox({
           >
             <Clock className="size-3.5" /> Canned <ChevronDown className="size-3" />
           </Button>
+          {/* Template-send. Always enabled — templates are the ONE thing
+              Meta lets us send outside the 24-hour customer-session
+              window, so the button must be reachable even when the
+              free-form reply Send is disabled. Internal notes mode
+              hides it (templates only go outbound to WhatsApp). */}
+          {mode === 'reply' ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setTemplateDialogOpen(true)}
+              aria-haspopup="dialog"
+              title="Send an approved WhatsApp template"
+            >
+              <FileText className="size-3.5" /> Template
+            </Button>
+          ) : null}
           {showCanned ? (
             <div className="absolute right-0 z-10 mt-1 w-64 rounded-md border border-border bg-surface shadow-lg">
               {cannedResponses.length === 0 ? (
@@ -1591,7 +1624,205 @@ function ReplyBox({
           </Button>
         </div>
       </div>
+      {/* Template-send dialog. Mounted inside ReplyBox so it has the
+          right `to` in scope. Closes itself on a successful send + the
+          thread refresh happens via React Query invalidation inside the
+          dialog. */}
+      <TemplateSendDialog
+        open={templateDialogOpen}
+        onOpenChange={setTemplateDialogOpen}
+        to={to}
+      />
     </div>
+  );
+}
+
+interface TemplateOption {
+  id: string;
+  name: string;
+  language: string;
+  status: string;
+  bodyText?: string | null;
+  components?: Record<string, unknown>[] | null;
+}
+
+// Parse the `{{n}}` placeholders out of a template's body text and
+// return them as a sorted unique list. Used to render exactly the
+// right number of variable inputs in the dialog.
+function placeholdersIn(body: string | null | undefined): number[] {
+  if (!body) return [];
+  const set = new Set<number>();
+  const re = /\{\{\s*(\d+)\s*\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > 0) set.add(n);
+  }
+  return Array.from(set).sort((a, b) => a - b);
+}
+
+function TemplateSendDialog({
+  open,
+  onOpenChange,
+  to,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  to: string;
+}) {
+  const qc = useQueryClient();
+  const templatesQ = useQuery({
+    queryKey: ['whatsapp-templates'],
+    queryFn: () => api.get<{ data: TemplateOption[] }>('/api/v1/whatsapp/templates'),
+    // Don't refetch while the dialog is open — gives the operator a
+    // stable list to pick from. They can reload by reopening.
+    enabled: open,
+    staleTime: 60_000,
+  });
+  const [selectedId, setSelectedId] = useState<string>('');
+  const [vars, setVars] = useState<string[]>([]);
+
+  // Approved-only templates surface in the picker. Anything else (pending,
+  // rejected, disabled) won't actually deliver via Meta, so we hide them
+  // rather than letting the operator pick + then fail at send time.
+  const templates = (templatesQ.data?.data ?? []).filter((t) => t.status === 'approved');
+  const selected = templates.find((t) => t.id === selectedId) ?? null;
+  const placeholders = useMemo(() => placeholdersIn(selected?.bodyText), [selected]);
+
+  // Reset state when the dialog opens / the picked template changes.
+  useEffect(() => {
+    if (!open) return;
+    setSelectedId('');
+    setVars([]);
+  }, [open]);
+  useEffect(() => {
+    setVars(new Array(placeholders.length).fill(''));
+  }, [selectedId, placeholders.length]);
+
+  const send = useMutation({
+    mutationFn: () => {
+      if (!selected) return Promise.reject(new Error('Pick a template first'));
+      return api.post<{ data: { ok: boolean; metaMessageId: string | null; errorMessage: string | null } }>(
+        '/api/v1/whatsapp/test-send',
+        {
+          to,
+          templateName: selected.name,
+          templateLanguage: selected.language,
+          parameters: vars.map((v) => v.trim()),
+        },
+      );
+    },
+    onSuccess: (res) => {
+      if (res.data.ok) {
+        toast.success('Template sent');
+        qc.invalidateQueries({ queryKey: ['inbox-thread'] });
+        qc.invalidateQueries({ queryKey: ['inbox-threads'] });
+        onOpenChange(false);
+      } else {
+        toast.error(res.data.errorMessage ?? 'Send failed — Meta rejected the template.');
+      }
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Send failed'),
+  });
+
+  // Preview the body with the operator's filled values substituted in.
+  // Shown beneath the form so they can see exactly what the customer
+  // will receive before clicking Send.
+  const preview = useMemo(() => {
+    if (!selected?.bodyText) return '';
+    return selected.bodyText.replace(/\{\{\s*(\d+)\s*\}\}/g, (_full, idx: string) => {
+      const i = Number(idx) - 1;
+      return vars[i]?.trim() ? vars[i].trim() : `{{${idx}}}`;
+    });
+  }, [selected, vars]);
+
+  const canSend = Boolean(selected) && vars.every((v) => v.trim().length > 0);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Send a template</DialogTitle>
+          <DialogDescription>
+            Approved WhatsApp template message. Sends to {to} immediately; works inside or
+            outside Meta&apos;s 24-hour session window.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="tpl-pick">Template</Label>
+            {templatesQ.isLoading ? (
+              <p className="text-xs text-foreground-muted">Loading…</p>
+            ) : templates.length === 0 ? (
+              <p className="text-xs text-foreground-muted">
+                No approved templates yet. Create + submit one on{' '}
+                <a href="/whatsapp/templates" className="underline">
+                  /whatsapp/templates
+                </a>{' '}
+                — Meta&apos;s approval usually takes a few minutes.
+              </p>
+            ) : (
+              <Select value={selectedId} onValueChange={setSelectedId}>
+                <SelectTrigger id="tpl-pick">
+                  <SelectValue placeholder="Pick an approved template…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {templates.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.name} ({t.language})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+
+          {placeholders.length > 0 ? (
+            <div className="space-y-2">
+              <Label className="text-xs uppercase tracking-wider text-foreground-subtle">
+                Variables
+              </Label>
+              {placeholders.map((n, i) => (
+                <div key={n} className="space-y-1">
+                  <Label htmlFor={`tpl-var-${n}`} className="text-xs">
+                    {`{{${n}}}`}
+                  </Label>
+                  <Input
+                    id={`tpl-var-${n}`}
+                    value={vars[i] ?? ''}
+                    onChange={(e) => {
+                      const next = [...vars];
+                      next[i] = e.target.value;
+                      setVars(next);
+                    }}
+                    placeholder={`Value for {{${n}}}`}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {selected ? (
+            <div className="rounded-md border border-border bg-surface-muted/60 p-3 text-xs">
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle">
+                Preview
+              </p>
+              <p className="whitespace-pre-wrap text-sm">{preview || '(no body)'}</p>
+            </div>
+          ) : null}
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={() => send.mutate()} disabled={!canSend} loading={send.isPending}>
+            <Send className="size-3.5" /> Send template
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

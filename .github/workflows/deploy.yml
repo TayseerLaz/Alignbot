@@ -243,6 +243,24 @@ jobs:
               ORDER BY total DESC;
             " || echo "[voice-inbound-audit] query failed (non-fatal)"
             echo ""
+            echo "--- last 5 inbound audio rows on ALIGNED (id, when, body-preview, body-bytes) ---"
+            PGPASSWORD="$POSTGRES_PASSWORD" psql -h localhost -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=0 -At -c "
+              SELECT
+                LEFT(m.id::text, 8),
+                to_char(m.received_at AT TIME ZONE 'UTC', 'HH24:MI:SS'),
+                COALESCE(LEFT(m.body, 80), '(null)'),
+                COALESCE(LENGTH(m.body), 0) AS body_len,
+                COALESCE(m.from_number, '(null)') AS from_number,
+                COALESCE(LEFT(m.meta_message_id, 20), '(null)') AS wamid
+              FROM whatsapp_messages m
+              JOIN organizations o ON o.id = m.organization_id
+              WHERE m.direction = 'inbound'
+                AND m.message_type IN ('audio','voice')
+                AND lower(o.name) = 'aligned'
+              ORDER BY m.received_at DESC
+              LIMIT 5;
+            " || echo "[voice-inbound-audit] follow-up query failed (non-fatal)"
+            echo ""
 
             echo "=== voice / TTS configuration audit ==="
             # Print which TTS providers are configured in .env.production

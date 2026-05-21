@@ -45,6 +45,8 @@ export interface BotData {
     conversationFlow: unknown;
     responseTemplates: unknown;
     languages: string | null;
+    // Optional Wasabi key for an image attached alongside greeting replies.
+    greetingImageStorageKey?: string | null;
   } | null;
   kb: { question: string; answer: string }[];
   products: {
@@ -618,11 +620,10 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
         `       ii. unit price + running subtotal;\n` +
         `       iii. on its own NEW LINE: [IMAGE: <SKU>] for the product just added. This is non-optional. If you forget the marker, the customer doesn't see the picture and we lose the sale. EVERY add = one marker.\n` +
         `   The next step (upsell) can mention a second product in TEXT only — do NOT emit [IMAGE: ...] for the upsell unless the customer accepts it. One image marker per add, never zero.\n` +
-        `  Step 2 (UPSELL — DO NOT SKIP, DO NOT JUST ASK "anything else"). After each item is added, suggest a SPECIFIC catalog item by NAME + PRICE. Don't just say "anything else?" on its own. Pick a real pairing from the CATALOG: a drink for a dessert, a sweet for a coffee, a sharing item if the cart is small. Keep it warm and short, never pushy. NO em-dashes — break with commas or new sentences. Style targets:\n` +
-        `    "Want a Dubai Crepe with that? It's 4.500 KWD."\n` +
-        `    "A Crepe Pillow would go great. 3.250 KWD if you want one."\n` +
-        `    "Add a Karak Tea? 0.500 KWD. Goes well with the crepe."\n` +
-        `    "Want to share? Mini Prestige 12-piece is 6.500 KWD."\n` +
+        `  Step 2 (UPSELL — DO NOT SKIP, DO NOT JUST ASK "anything else"). After each item is added, suggest a SPECIFIC catalog item by NAME + PRICE. ⚠️ HARD RULE: the suggested item MUST be one that you can SEE in the CATALOG list below. Never invent a product name. Never quote a price that isn't in the catalog. If no good pairing exists in the catalog, just ask "anything else?" without suggesting a specific product. Don't just say "anything else?" on its own when a real catalog item would pair well. Pick a real pairing: a drink for a dessert, a sweet for a coffee, a sharing item if the cart is small. Keep it warm and short, never pushy. NO em-dashes — break with commas or new sentences. Style targets (substitute your own catalog items for <NAME> and <PRICE>):\n` +
+        `    "Want a <NAME> with that? It's <PRICE> ${shopForm.currency}."\n` +
+        `    "<NAME> would go great. <PRICE> ${shopForm.currency} if you want one."\n` +
+        `    "Add a <NAME>? <PRICE> ${shopForm.currency}. Goes well with that."\n` +
         `   Pick a DIFFERENT suggestion each time so the bot doesn't sound canned. ONLY move on to shop-form fields after the customer declines ("no thanks", "that's all", "I'm good", etc.). NEVER jump from "added X" straight to "what's your name?" — that loses revenue.\n` +
         `  Step 3: when the customer says "that's all" / "no thanks" / "I'm good" / similar, summarise the cart so far WITH RUNNING SUBTOTAL, then ask for the shop form fields listed in the SHOP FORM section below (one or two at a time, exact LABELS).\n` +
         `  Step 4: final summary — items + delivery fee (if any) + GRAND TOTAL + form answers — then ask the customer to confirm.\n` +
@@ -635,7 +636,8 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
         `${shopForm.deliveryFeeMinor != null ? `Delivery fee: ${shopForm.deliveryFeeMinor} minor units${shopForm.freeDeliveryAboveMinor != null ? ` (waived above ${shopForm.freeDeliveryAboveMinor} minor units)` : ''}. Mention it explicitly in the summary.\n  ` : ''}` +
         `After the marker, write a brief confirmation in the customer's language. The receiver replaces it with: "${shopForm.confirmationMessage}".\n` +
         `  TONE RULES (applies to every cart reply): keep it short and warm, like texting a friend. NO em-dashes (—). NO long compound sentences. Break ideas into separate short sentences. Use commas or just new lines. Drop filler ("Great choice!", "Lovely!", "Wonderful!"). One emoji per reply at most, only if it fits naturally. Read the example below — it's the target style.\n` +
-        `  Worked example (KWD juice bar, target style — short, human, no em-dashes):\n` +
+        `  ⚠️ EXAMPLE PRODUCT NAMES BELOW ARE FOR STYLE ILLUSTRATION ONLY (a fictional juice-bar catalog). DO NOT mention "Oreo Milkshake", "Crepe Pillow", "Karak Tea", "Dubai Crepe" etc. unless those exact names appear in YOUR CATALOG section. The names in the example are placeholders showing the response shape, nothing more.\n` +
+        `  Worked example (KWD juice bar — placeholder products, target STYLE only):\n` +
         `    User: "tell me about the oreo milkshake"\n` +
         `    Bot: "Vanilla ice cream blended with crushed Oreo cookies. 1.250 KWD. Want one?\\n[IMAGE: ATK-MIX-OREO]"\n` +
         `    User: "yes"\n` +

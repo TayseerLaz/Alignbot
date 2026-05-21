@@ -2423,6 +2423,37 @@ async function maybeReplyAsBot(args: {
             priceMinor: p.priceMinor,
           })),
         );
+        // Hallucination guard: scan the reply for any "added/removed X" line
+        // whose product fragment fails to match the catalog. Log it so we
+        // can audit prompts that are teaching the LLM to invent products.
+        try {
+          const addedFragments = Array.from(
+            rawReply.matchAll(
+              /(?:added|i(?:'ve)?\s+added|removed)\s+(?:one|two|three|four|five|\d+)\s*(?:×|x)?\s+([A-Z][^\n.;,]{2,60})/gi,
+            ),
+          ).map((m) => (m[1] ?? '').trim());
+          const parsedNames = new Set(parsed.map((p) => p.name.toLowerCase()));
+          const phantom = addedFragments.filter(
+            (frag) =>
+              frag.length > 0 &&
+              !Array.from(parsedNames).some((n) =>
+                frag.toLowerCase().includes(n) || n.includes(frag.toLowerCase()),
+              ),
+          );
+          if (phantom.length > 0) {
+            args.log.warn(
+              {
+                orgId: args.organizationId,
+                threadId: ctx.threadId,
+                phantom: phantom.slice(0, 5),
+                catalogSize: ctx.data.products.length,
+              },
+              '[whatsapp] bot quoted product names not found in catalog (possible hallucination)',
+            );
+          }
+        } catch {
+          /* diagnostic only — never fail the reply on this */
+        }
         if (parsed.length > 0) {
           // Inject missing [IMAGE: <sku>] markers BEFORE the downstream
           // regex picks them up. Doing it here means the existing
@@ -2567,7 +2598,7 @@ async function maybeReplyAsBot(args: {
     ).trim();
     // Resolve every emitted SKU against the catalog. Dedupe by product
     // id so multiple markers for the same SKU collapse to one send.
-    const imageSends: { sku: string; name: string; storageKey: string }[] = [];
+    const imageSends: { sku: string; name: string; storageKey: string; kind?: 'product' | 'greeting' }[] = [];
     const seenProductIds = new Set<string>();
     for (const sku of imageSkus) {
       const product = ctx.data.products.find(
@@ -2633,6 +2664,47 @@ async function maybeReplyAsBot(args: {
         );
       }
     }
+    // Greeting image: if the operator configured one and this reply
+    // opens with a greeting word, prepend it to the send queue so the
+    // welcome graphic lands alongside the bot's "Hi there!". Dedup per
+    // thread for 24h so a customer who pings the bot four times in an
+    // hour doesn't get the banner each time.
+    const greetingImageKey =
+      (ctx.data.config as { greetingImageStorageKey?: string | null } | null)
+        ?.greetingImageStorageKey ?? null;
+    const GREETING_REPLY_RE =
+      /^(\s*[👋🙏✨🌟😊]?\s*)?(hi|hello|hey|welcome|good\s+(morning|afternoon|evening)|greetings|أهل[اًاً]?|مرحب[اًا]|سلام|bonjour|salut|hola|buen(os|as)\s+(d[ií]as|tardes|noches))[\s,!.:؛،]/i;
+    if (greetingImageKey && reply && GREETING_REPLY_RE.test(reply.trim())) {
+      const sentRecently = await withRlsBypass(async (tx) => {
+        const row = await tx.whatsAppMessage.findFirst({
+          where: {
+            threadId: ctx.threadId,
+            organizationId: args.organizationId,
+            direction: 'outbound',
+            messageType: 'image',
+            receivedAt: { gt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+            rawPayload: { path: ['kind'], equals: 'greeting' },
+          },
+          select: { id: true },
+        });
+        return !!row;
+      });
+      if (!sentRecently) {
+        // Prepend so the greeting image sends before any product images
+        // in the same reply.
+        dedupedImageSends.unshift({
+          sku: '__greeting__',
+          name: '',
+          storageKey: greetingImageKey,
+          kind: 'greeting',
+        });
+        args.log.info(
+          { threadId: ctx.threadId },
+          '[whatsapp] greeting image queued',
+        );
+      }
+    }
+
     // Back-compat shims for code paths further down that referenced the
     // old single-image variables. They now point at the first send (or
     // null) — the loop further down does the multi-send.
@@ -2943,11 +3015,14 @@ async function maybeReplyAsBot(args: {
               );
               continue;
             }
-            // Only caption the first image of each product. WhatsApp
-            // shows a long caption under every media message which
-            // looks repetitive when there's a gallery of 3-5 images.
+            // Greeting images are captionless (the bot's greeting text
+            // is the caption). For product images, only caption the
+            // first image of each group — subsequent gallery shots
+            // shouldn't repeat the product name.
             const isFirstOfGroup = prevSkuForGroup !== send.sku;
             prevSkuForGroup = send.sku;
+            const shouldCaption =
+              send.kind !== 'greeting' && isFirstOfGroup && send.name.length > 0;
             const imgPayload = {
               messaging_product: 'whatsapp',
               recipient_type: 'individual',
@@ -2955,7 +3030,7 @@ async function maybeReplyAsBot(args: {
               type: 'image',
               image: {
                 id: mediaJson.id,
-                ...(isFirstOfGroup ? { caption: send.name.slice(0, 1024) } : {}),
+                ...(shouldCaption ? { caption: send.name.slice(0, 1024) } : {}),
               },
             };
             const imgRes = await fetch(
@@ -2980,6 +3055,8 @@ async function maybeReplyAsBot(args: {
             const imgJson = (await imgRes.json().catch(() => ({}))) as {
               messages?: { id?: string }[];
             };
+            const isGreeting = send.kind === 'greeting';
+            const previewName = isGreeting ? 'Welcome' : send.name;
             await withRlsBypass(async (tx) => {
               await tx.whatsAppMessage.create({
                 data: {
@@ -2989,15 +3066,17 @@ async function maybeReplyAsBot(args: {
                   metaMessageId: imgJson.messages?.[0]?.id ?? null,
                   toNumber: m.from,
                   messageType: 'image',
-                  body: `[image] ${send.name}`,
-                  rawPayload: { sentBy: 'bot', sku: send.sku } as never,
+                  body: `[image] ${previewName}`,
+                  rawPayload: isGreeting
+                    ? ({ sentBy: 'bot', kind: 'greeting' } as never)
+                    : ({ sentBy: 'bot', sku: send.sku } as never),
                 },
               });
               await tx.whatsAppThread.update({
                 where: { id: ctx.threadId },
                 data: {
                   lastMessageAt: new Date(),
-                  lastMessagePreview: `[image] ${send.name}`.slice(0, 200),
+                  lastMessagePreview: `[image] ${previewName}`.slice(0, 200),
                   outboundCount: { increment: 1 },
                 },
               });

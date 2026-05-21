@@ -1194,6 +1194,9 @@ interface ShopFormDraft {
   deliveryFeeMajor: string;
   freeDeliveryAboveMajor: string;
   confirmationMessage: string;
+  // Public menu URL — the bot sends this when the customer asks about
+  // the menu. Empty string = no link configured.
+  menuUrl: string;
 }
 
 function defaultShopForm(): ShopFormDraft {
@@ -1218,6 +1221,7 @@ function defaultShopForm(): ShopFormDraft {
     freeDeliveryAboveMajor: '',
     confirmationMessage:
       "Got it! Order #{{cart_id_short}} is confirmed. Total {{total}}. We'll be in touch shortly. 🙏",
+    menuUrl: '',
   };
 }
 
@@ -1288,6 +1292,7 @@ function ShopFormPanel() {
           deliveryFeeMinor?: number | null;
           freeDeliveryAboveMinor?: number | null;
           confirmationMessage?: string;
+          menuUrl?: string | null;
         };
       } | null
     )?.shopForm;
@@ -1310,6 +1315,7 @@ function ShopFormPanel() {
         freeDeliveryAboveMajor: minorToMajor(incoming.freeDeliveryAboveMinor, orgCurrency),
         confirmationMessage:
           incoming.confirmationMessage ?? defaultShopForm().confirmationMessage,
+        menuUrl: incoming.menuUrl ?? '',
       });
       setKeywordsInput((incoming.intentKeywords ?? []).join(', '));
     } else {
@@ -1344,6 +1350,9 @@ function ShopFormPanel() {
           deliveryFeeMinor: majorToMinor(draft.deliveryFeeMajor, orgCurrency),
           freeDeliveryAboveMinor: majorToMinor(draft.freeDeliveryAboveMajor, orgCurrency),
           confirmationMessage: draft.confirmationMessage.trim(),
+          // Send null when blank so the engine treats the field as
+          // explicitly unset instead of as an empty string.
+          menuUrl: draft.menuUrl.trim() || null,
         },
       }),
     onSuccess: () => {
@@ -1526,6 +1535,23 @@ function ShopFormPanel() {
               and{' '}
               <code className="rounded bg-surface-muted px-1 text-[11px]">{`{{total}}`}</code>{' '}
               placeholders.
+            </p>
+          </div>
+
+          <div>
+            <Label htmlFor="shop-menu-url">Menu link (optional)</Label>
+            <Input
+              id="shop-menu-url"
+              type="url"
+              inputMode="url"
+              value={draft.menuUrl}
+              onChange={(e) => setDraft((d) => ({ ...d, menuUrl: e.target.value }))}
+              placeholder="https://your-business.com/menu"
+            />
+            <p className="mt-1 text-xs text-foreground-muted">
+              Public URL to your online menu / catalog. When set, the bot sends this link
+              whenever the customer asks about the menu (e.g. &quot;menu link&quot;, &quot;what do you
+              have&quot;, &quot;show me your menu&quot;). Leave blank to skip the rule.
             </p>
           </div>
 

@@ -97,6 +97,12 @@ export const shopFormSchema = z
       .trim()
       .max(800)
       .default("Got it! Your order is in 🙏 We'll be in touch shortly."),
+    // Public menu URL — the operator's online menu / catalog page.
+    // When set, the bot sends this link whenever the customer asks
+    // about the menu / what's available / "show me your menu". Stored
+    // as a string (not URL-typed) so the operator can paste anything;
+    // empty/null means "no menu link configured — skip the rule".
+    menuUrl: z.string().trim().max(500).nullable().default(null),
   })
   .strict();
 export type ShopFormDto = z.infer<typeof shopFormSchema>;

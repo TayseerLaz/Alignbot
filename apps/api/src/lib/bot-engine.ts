@@ -787,6 +787,24 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     }
   }
 
+  // Menu-link fallback: if the operator set a public menu URL AND the
+  // customer's last message was clearly a menu request, append the URL
+  // so the bot never drops it (the LLM sometimes paraphrases — "I can
+  // share our menu" — without actually pasting the link). Skip if the
+  // URL is already in the reply.
+  const menuUrl = shopForm?.menuUrl ?? null;
+  if (menuUrl && text && !text.includes(menuUrl)) {
+    const userMsgLower = args.userMessage.toLowerCase();
+    // Match English, Arabic, French menu-request phrasings. Anchored on
+    // "menu" / "قائمة" / "منيو" / "carte" tokens; broad enough to catch
+    // "send me the menu", "what's on the menu", "show menu", "menu link".
+    const menuRe =
+      /\b(menu|menulink|menu\s*link|carte|قائمة|المنيو|منيو|قائمتكم|عندكم.*شي|شو\s*عندكم|بدي\s*شوف.*القائمة)\b/i;
+    if (menuRe.test(userMsgLower) || /قائمة|منيو/.test(args.userMessage)) {
+      text = `${text.trimEnd()}\n\n${menuUrl}`;
+    }
+  }
+
   return { text, usedKbCount: kb.length };
 }
 

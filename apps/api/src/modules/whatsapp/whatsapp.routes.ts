@@ -2692,8 +2692,12 @@ async function maybeReplyAsBot(args: {
     const greetingImageKey =
       (ctx.data.config as { greetingImageStorageKey?: string | null } | null)
         ?.greetingImageStorageKey ?? null;
+    // /u flag is REQUIRED — the emoji char class contains surrogate-pair
+    // characters (👋 etc.) and without Unicode mode they don't match,
+    // so "👋 Welcome to ..." silently fell through and the greeting
+    // image never sent.
     const GREETING_REPLY_RE =
-      /^(\s*[👋🙏✨🌟😊]?\s*)?(hi|hello|hey|welcome|good\s+(morning|afternoon|evening)|greetings|أهل[اًاً]?|مرحب[اًا]|سلام|bonjour|salut|hola|buen(os|as)\s+(d[ií]as|tardes|noches))[\s,!.:؛،]/i;
+      /^(\s*[👋🙏✨🌟😊]?\s*)?(hi|hello|hey|welcome|good\s+(morning|afternoon|evening)|greetings|أهل[اًاً]?|مرحب[اًا]|سلام|bonjour|salut|hola|buen(os|as)\s+(d[ií]as|tardes|noches))[\s,!.:؛،]/iu;
     if (greetingImageKey && reply && GREETING_REPLY_RE.test(reply.trim())) {
       const sentRecently = await withRlsBypass(async (tx) => {
         const row = await tx.whatsAppMessage.findFirst({

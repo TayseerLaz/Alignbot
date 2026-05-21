@@ -782,8 +782,12 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     // the reply. Anchored to the first ~50 chars so we don't catch
     // "hi" mid-sentence later in the reply.
     const opening = text.slice(0, 80).toLowerCase();
+    // /u flag is REQUIRED for the emoji char class — without it the
+    // surrogate-pair emojis silently don't match (so "👋 Welcome ..."
+    // fell through). Same fix as the greeting-image dedup regex in
+    // whatsapp.routes.ts.
     const greetingRe =
-      /^(\s*[👋🙏✨🌟😊]?\s*)?(hi|hello|hey|welcome|good\s+(morning|afternoon|evening)|greetings|أهل[اًاً]?|مرحب[اًا]|سلام|bonjour|salut|hola|buen(os|as)\s+(d[ií]as|tardes|noches))[\s,!.:؛،]/i;
+      /^(\s*[👋🙏✨🌟😊]?\s*)?(hi|hello|hey|welcome|good\s+(morning|afternoon|evening)|greetings|أهل[اًاً]?|مرحب[اًا]|سلام|bonjour|salut|hola|buen(os|as)\s+(d[ií]as|tardes|noches))[\s,!.:؛،]/iu;
     const startsWithConfiguredGreeting =
       greeting && greeting.length > 4 && text.startsWith(greeting.slice(0, Math.min(greeting.length, 30)));
     const looksLikeGreeting = greetingRe.test(opening) || startsWithConfiguredGreeting;

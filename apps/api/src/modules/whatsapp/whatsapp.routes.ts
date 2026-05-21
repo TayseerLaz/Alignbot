@@ -2343,11 +2343,19 @@ async function maybeReplyAsBot(args: {
     const bookingMarkerRe = /\[BOOKING:\s*(\{[\s\S]*?\})\s*\]/i;
     const bookingMatch = bookingMarkerRe.exec(rawReply);
 
-    let reply = rawReply
-      .replace(imageMarkerRe, '')
-      .replace(handoffMarkerRe, '')
-      .replace(bookingMarkerRe, '')
-      .trim();
+    // Cart protocol: [CART: { items[...], fields{...} }] mirrors booking.
+    // Uses the brace-balanced parser from bot-engine because the cart
+    // marker's JSON payload contains nested objects + arrays that the
+    // booking regex's non-greedy match would truncate.
+    const { parseCartMarker, stripCartMarker } = await import('../../lib/bot-engine.js');
+    const cartMarkerPayload = parseCartMarker(rawReply);
+
+    let reply = stripCartMarker(
+      rawReply
+        .replace(imageMarkerRe, '')
+        .replace(handoffMarkerRe, '')
+        .replace(bookingMarkerRe, ''),
+    ).trim();
     const imageProduct = imageMatch
       ? ctx.data.products.find(
           (p) => p.sku.toLowerCase() === imageMatch[1]!.toLowerCase(),
@@ -2363,6 +2371,12 @@ async function maybeReplyAsBot(args: {
     if (!reply) {
       if (wantsHandoff) {
         reply = "Sure — connecting you with a teammate now. They'll pick up here shortly.";
+      } else if (cartMarkerPayload) {
+        // Substitute the operator-configured confirmation message if there is one.
+        const tmpl = ctx.data.shopForm?.confirmationMessage;
+        reply = tmpl && tmpl.trim()
+          ? tmpl
+          : "Got it! Your order is in 🙏 We'll be in touch shortly.";
       } else if (bookingMatch) {
         reply = 'All set — your request has been captured. A teammate will follow up shortly.';
       }
@@ -2847,6 +2861,141 @@ async function maybeReplyAsBot(args: {
             eventKind: 'booking_created',
             payload: { id: booking.id, customerPhone: m.from, fields },
           });
+        }
+
+        // Cart marker → persist a Cart + CartItem rows. Same shape as the
+        // booking persistence above, except items[] becomes line rows and
+        // we recompute totals server-side from the operator's shopForm
+        // fees. Items whose sku doesn't match a real Product are kept
+        // anyway (the bot might quote a service or one-off line) — we
+        // just don't link productId in that case.
+        if (cartMarkerPayload && ctx.data.shopForm) {
+          // Dedupe: skip if the same thread already created a cart in the
+          // last 30 minutes (mirrors the booking dedupe logic).
+          const recentCart = await tx.cart.findFirst({
+            where: {
+              organizationId: args.organizationId,
+              threadId: thread.id,
+              createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
+            },
+            select: { id: true },
+          });
+          // Resolve incoming items against the in-memory catalog so we
+          // can attach productId where possible + drop invented items.
+          const productsBySku = new Map(
+            ctx.data.products.map((p) => [p.sku.toLowerCase(), p]),
+          );
+          const lineItems: {
+            productId: string | null;
+            sku: string | null;
+            name: string;
+            quantity: number;
+            unitPriceMinor: number;
+            notes: string | null;
+          }[] = [];
+          for (const it of cartMarkerPayload.items ?? []) {
+            const sku = (it.sku ?? '').toString().trim();
+            const matched = sku ? productsBySku.get(sku.toLowerCase()) : null;
+            const name = (it.name ?? matched?.name ?? '').toString().trim();
+            if (!name) continue;
+            const qty = Math.max(1, Math.floor(Number(it.quantity ?? 1)));
+            const unitPriceMinor = Math.max(
+              0,
+              Math.floor(Number(it.unitPriceMinor ?? matched?.priceMinor ?? 0)),
+            );
+            lineItems.push({
+              productId: matched?.id ?? null,
+              sku: matched?.sku ?? (sku || null),
+              name,
+              quantity: qty,
+              unitPriceMinor,
+              notes:
+                typeof it.notes === 'string' && it.notes.trim()
+                  ? it.notes.trim().slice(0, 500)
+                  : null,
+            });
+          }
+
+          if (!recentCart && lineItems.length > 0) {
+            const subtotalMinor = lineItems.reduce(
+              (s, it) => s + it.quantity * it.unitPriceMinor,
+              0,
+            );
+            const shopForm = ctx.data.shopForm;
+            const baseDelivery = shopForm.deliveryFeeMinor ?? 0;
+            const deliveryMinor =
+              shopForm.freeDeliveryAboveMinor != null &&
+              subtotalMinor >= shopForm.freeDeliveryAboveMinor
+                ? 0
+                : baseDelivery;
+            const totalMinor = subtotalMinor + deliveryMinor;
+            const itemsCount = lineItems.reduce((s, it) => s + it.quantity, 0);
+            // Frozen snapshot of shopForm.fields[] with the customer's answers.
+            const fieldRows = shopForm.fields.map((f) => ({
+              key: f.key,
+              label: f.label,
+              type: f.type,
+              required: f.required,
+              value: (cartMarkerPayload.fields ?? {})[f.key] ?? null,
+            }));
+
+            const cart = await tx.cart.create({
+              data: {
+                organizationId: args.organizationId,
+                threadId: thread.id,
+                customerPhone: m.from,
+                customerName: thread.customerName ?? thread.customerWhatsappName ?? null,
+                fields: fieldRows as never,
+                subtotalMinor,
+                deliveryMinor,
+                totalMinor,
+                itemsCount,
+                currency: shopForm.currency,
+                status: 'new',
+                items: {
+                  createMany: {
+                    data: lineItems.map((it) => ({
+                      organizationId: args.organizationId,
+                      productId: it.productId,
+                      sku: it.sku,
+                      name: it.name,
+                      quantity: it.quantity,
+                      unitPriceMinor: it.unitPriceMinor,
+                      lineTotalMinor: it.quantity * it.unitPriceMinor,
+                      notes: it.notes,
+                    })),
+                  },
+                },
+              },
+            });
+            await tx.whatsAppNote.create({
+              data: {
+                threadId: thread.id,
+                organizationId: args.organizationId,
+                authorUserId: null,
+                body: `🛒 Cart captured (id ${cart.id.slice(0, 8)}…, ${itemsCount} item${itemsCount === 1 ? '' : 's'}, ${totalMinor} ${shopForm.currency} minor). See /cart.`,
+              },
+            });
+            // Push the thread to 'pending' for operator review unless
+            // an explicit handoff already set escalated.
+            if (!wantsHandoff) {
+              await tx.whatsAppThread.update({
+                where: { id: thread.id },
+                data: { status: 'pending' as never },
+              });
+            }
+            void (await import('../../lib/webhooks.js')).emitWebhookEvent({
+              organizationId: args.organizationId,
+              eventKind: 'cart_created',
+              payload: {
+                id: cart.id,
+                customerPhone: m.from,
+                itemsCount,
+                totalMinor,
+                currency: shopForm.currency,
+              },
+            });
+          }
         }
       });
     } catch (err) {

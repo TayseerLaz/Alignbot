@@ -132,7 +132,7 @@ function DetailsCard({ service, categories }: { service: Service; categories: Ca
     shortDescription: service.shortDescription ?? '',
     description: service.description ?? '',
     durationMinutes: service.durationMinutes ?? 0,
-    basePriceMajor: minorToMajorString(service.basePriceMinor),
+    basePriceMajor: minorToMajorString(service.basePriceMinor, orgCurrency),
     priceUnit: service.priceUnit,
     isAvailable: service.isAvailable,
     categoryId: service.categoryId ?? NO_CATEGORY,
@@ -148,13 +148,13 @@ function DetailsCard({ service, categories }: { service: Service; categories: Ca
       shortDescription: service.shortDescription ?? '',
       description: service.description ?? '',
       durationMinutes: service.durationMinutes ?? 0,
-      basePriceMajor: minorToMajorString(service.basePriceMinor),
+      basePriceMajor: minorToMajorString(service.basePriceMinor, orgCurrency),
       priceUnit: service.priceUnit,
       isAvailable: service.isAvailable,
       categoryId: service.categoryId ?? NO_CATEGORY,
     });
     skipNext.current = true;
-  }, [service]);
+  }, [service, orgCurrency]);
 
   useEffect(() => {
     if (skipNext.current) {
@@ -170,7 +170,7 @@ function DetailsCard({ service, categories }: { service: Service; categories: Ca
           shortDescription: draft.shortDescription || null,
           description: draft.description || null,
           durationMinutes: draft.durationMinutes || null,
-          basePriceMinor: parseMoneyMajor(draft.basePriceMajor),
+          basePriceMinor: parseMoneyMajor(draft.basePriceMajor, orgCurrency),
           // Currency is locked to BusinessInfo.currency server-side.
           priceUnit: draft.priceUnit,
           isAvailable: draft.isAvailable,

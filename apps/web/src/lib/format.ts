@@ -1,31 +1,63 @@
 /**
- * Money is stored as integer minor units (e.g. cents). Format using Intl.
- * Pass null/undefined to get a dash.
+ * Money is stored as integer minor units. The minor-per-major ratio
+ * varies by currency: 100 for the common 2-decimal currencies (USD,
+ * EUR, AED, SAR …) and 1000 for the 3-decimal Gulf dinars (KWD, BHD,
+ * OMR, JOD). Helpers here always take a currency so the form input
+ * stores the right amount and the display reads it back correctly.
+ *
+ * Pre-fix, the helpers hardcoded /100 and *100, so typing "1.500"
+ * into a KWD form stored 150 minor units (≈ 0.15 KWD), and the bot
+ * later read it as 0.150 KWD. After the fix, "1.500" stores 1500
+ * minor units = 1.500 KWD as intended.
  */
+const THREE_DECIMAL_CURRENCIES = new Set(['KWD', 'BHD', 'OMR', 'JOD']);
+
+export function minorPerMajor(currency: string | null | undefined): number {
+  const code = (currency ?? 'USD').toUpperCase();
+  return THREE_DECIMAL_CURRENCIES.has(code) ? 1000 : 100;
+}
+
+export function decimalsFor(currency: string | null | undefined): number {
+  return minorPerMajor(currency) === 1000 ? 3 : 2;
+}
+
 export function formatMoney(
   minor: number | null | undefined,
   currency: string = 'USD',
   locale = 'en-US',
 ): string {
   if (minor === null || minor === undefined) return '—';
+  const mpm = minorPerMajor(currency);
+  const dec = decimalsFor(currency);
   try {
-    return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(minor / 100);
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: dec,
+      maximumFractionDigits: dec,
+    }).format(minor / mpm);
   } catch {
-    return `${(minor / 100).toFixed(2)} ${currency}`;
+    return `${(minor / mpm).toFixed(dec)} ${currency}`;
   }
 }
 
-export function parseMoneyMajor(input: string): number | null {
+export function parseMoneyMajor(
+  input: string,
+  currency?: string | null,
+): number | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
   const num = Number(trimmed.replace(/,/g, ''));
   if (!Number.isFinite(num) || num < 0) return null;
-  return Math.round(num * 100);
+  return Math.round(num * minorPerMajor(currency));
 }
 
-export function minorToMajorString(minor: number | null | undefined): string {
+export function minorToMajorString(
+  minor: number | null | undefined,
+  currency?: string | null,
+): string {
   if (minor === null || minor === undefined) return '';
-  return (minor / 100).toFixed(2);
+  return (minor / minorPerMajor(currency)).toFixed(decimalsFor(currency));
 }
 
 /** Convert minutes-since-midnight (0..1440) to "HH:MM" string. */

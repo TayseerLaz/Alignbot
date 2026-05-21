@@ -185,8 +185,8 @@ function DetailsCard({ product, categories }: { product: Product; categories: Ca
     sku: product.sku,
     shortDescription: product.shortDescription ?? '',
     description: product.description ?? '',
-    priceMajor: minorToMajorString(product.priceMinor),
-    compareAtMajor: minorToMajorString(product.compareAtMinor),
+    priceMajor: minorToMajorString(product.priceMinor, orgCurrency),
+    compareAtMajor: minorToMajorString(product.compareAtMinor, orgCurrency),
     categoryId: product.categoryId ?? NO_CATEGORY,
   });
   const [savedAt, setSavedAt] = useState<Date | null>(null);
@@ -201,12 +201,12 @@ function DetailsCard({ product, categories }: { product: Product; categories: Ca
       sku: product.sku,
       shortDescription: product.shortDescription ?? '',
       description: product.description ?? '',
-      priceMajor: minorToMajorString(product.priceMinor),
-      compareAtMajor: minorToMajorString(product.compareAtMinor),
+      priceMajor: minorToMajorString(product.priceMinor, orgCurrency),
+      compareAtMajor: minorToMajorString(product.compareAtMinor, orgCurrency),
       categoryId: product.categoryId ?? NO_CATEGORY,
     });
     skipNext.current = true;
-  }, [product]);
+  }, [product, orgCurrency]);
 
   // Debounced auto-save.
   useEffect(() => {
@@ -223,8 +223,8 @@ function DetailsCard({ product, categories }: { product: Product; categories: Ca
           sku: draft.sku.trim() || product.sku,
           shortDescription: draft.shortDescription || null,
           description: draft.description || null,
-          priceMinor: parseMoneyMajor(draft.priceMajor),
-          compareAtMinor: parseMoneyMajor(draft.compareAtMajor),
+          priceMinor: parseMoneyMajor(draft.priceMajor, orgCurrency),
+          compareAtMinor: parseMoneyMajor(draft.compareAtMajor, orgCurrency),
           // Currency is locked to BusinessInfo.currency server-side; no
           // longer part of the per-product payload.
           categoryId: draft.categoryId === NO_CATEGORY ? null : draft.categoryId,

@@ -327,6 +327,22 @@ jobs:
             " || echo "[bot-reply-pairing] query failed (non-fatal)"
             echo ""
 
+            echo "--- ALIGNED product prices + currency (smoking gun for the 0.150 vs 1.500 mismatch) ---"
+            # If price_minor for the Oreo Milkshake is 150 → operator
+            # typed 1.500 in the buggy form (KWD stored as if /100); the
+            # /1000 KWD ratio then displays 0.150. If 1500 → data correct,
+            # display fixed by the new currency-aware helpers.
+            PGPASSWORD="$POSTGRES_PASSWORD" psql -h localhost -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=0 -At -c "
+              SELECT p.sku, p.name, p.price_minor, bi.currency
+              FROM products p
+              JOIN organizations o ON o.id = p.organization_id
+              LEFT JOIN business_info bi ON bi.organization_id = o.id
+              WHERE lower(o.name) = 'aligned'
+              ORDER BY p.created_at DESC
+              LIMIT 20;
+            " || echo "[price-audit] query failed (non-fatal)"
+            echo ""
+
             echo "--- last 10 AUDIO inbounds on ALIGNED + their next bot reply ---"
             # Filtered version that only looks at audio/voice inbounds.
             # If 'bot_reply' shows 'audio' the TTS path worked end-to-end.

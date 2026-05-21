@@ -16,7 +16,10 @@ interface PresignResponse {
  *   2. PUT the bytes directly to object storage from the browser.
  *   3. Notify the API the upload is complete (records dimensions, checksum).
  */
-export async function uploadFile(file: File, kind: AssetKind = 'image'): Promise<{ assetId: string; url: string }> {
+export async function uploadFile(
+  file: File,
+  kind: AssetKind = 'image',
+): Promise<{ assetId: string; url: string; storageKey: string }> {
   const presign = await api.post<PresignResponse>('/api/v1/assets/presign-upload', {
     kind,
     contentType: file.type,
@@ -51,7 +54,7 @@ export async function uploadFile(file: File, kind: AssetKind = 'image'): Promise
     const asset = await api.get<{ data: { url: string } }>(`/api/v1/assets/${presign.assetId}/url`);
     url = asset.data.url;
   }
-  return { assetId: presign.assetId, url };
+  return { assetId: presign.assetId, url, storageKey: presign.storageKey };
 }
 
 function readImageDimensions(file: File): Promise<{ width: number; height: number }> {

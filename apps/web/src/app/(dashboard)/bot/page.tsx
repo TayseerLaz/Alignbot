@@ -7,6 +7,7 @@ import {
   Bot,
   CheckCircle2,
   Globe,
+  Image as ImageIcon,
   Loader2,
   Play,
   PowerOff,
@@ -14,6 +15,7 @@ import {
   Send,
   Sparkles,
   Trash2,
+  Upload,
   XCircle,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -31,6 +33,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
+import { uploadFile } from '@/lib/upload';
 import { cn } from '@/lib/utils';
 
 interface BotConfig {
@@ -48,6 +51,7 @@ interface BotConfig {
   replyMode: 'text' | 'voice' | 'match_customer';
   ttsProvider: 'google' | 'elevenlabs';
   ttsVoiceName: string | null;
+  greetingImageStorageKey: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -661,6 +665,12 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
   const [fallback, setFallback] = useState<string>(
     (config?.escalationRules as Record<string, string> | null)?.fallback ?? '',
   );
+  const [greetingImageKey, setGreetingImageKey] = useState<string | null>(
+    config?.greetingImageStorageKey ?? null,
+  );
+  const [greetingImageUrl, setGreetingImageUrl] = useState<string | null>(null);
+  const [uploadingGreeting, setUploadingGreeting] = useState(false);
+  const greetingFileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!config) return;
@@ -669,7 +679,32 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
     setGreetByName(config.greetByName ?? false);
     setLanguages(config.languages ?? 'en');
     setFallback((config.escalationRules as Record<string, string> | null)?.fallback ?? '');
+    setGreetingImageKey(config.greetingImageStorageKey ?? null);
   }, [config]);
+
+  // Fetch a presigned GET URL for the existing greeting image so the
+  // operator can see what they uploaded last time. The endpoint is
+  // /assets/preview-by-key (same one product images use for thumbs).
+  useEffect(() => {
+    let cancelled = false;
+    if (!greetingImageKey) {
+      setGreetingImageUrl(null);
+      return;
+    }
+    api
+      .get<{ data: { url: string } }>(
+        `/api/v1/assets/preview-by-key?key=${encodeURIComponent(greetingImageKey)}`,
+      )
+      .then((r) => {
+        if (!cancelled) setGreetingImageUrl(r.data.url);
+      })
+      .catch(() => {
+        if (!cancelled) setGreetingImageUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [greetingImageKey]);
 
   const save = useMutation({
     mutationFn: () =>
@@ -679,6 +714,7 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
         greetByName,
         languages,
         escalationRules: fallback ? { fallback } : null,
+        greetingImageStorageKey: greetingImageKey,
       }),
     onSuccess: () => {
       toast.success('Saved');
@@ -686,6 +722,30 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
   });
+
+  const onPickGreetingImage = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0]!;
+    if (!file.type.startsWith('image/')) {
+      toast.warning('Please choose an image file');
+      return;
+    }
+    setUploadingGreeting(true);
+    try {
+      const { storageKey } = await uploadFile(file, 'image');
+      setGreetingImageKey(storageKey);
+      toast.success('Greeting image uploaded — remember to save');
+    } catch (err) {
+      if (err instanceof ApiError && err.payload.code === 'SERVICE_UNAVAILABLE') {
+        toast.error('Object storage not configured. Add Wasabi keys to .env.');
+      } else {
+        toast.error(err instanceof Error ? err.message : 'Upload failed');
+      }
+    } finally {
+      setUploadingGreeting(false);
+      if (greetingFileRef.current) greetingFileRef.current.value = '';
+    }
+  };
 
   return (
     <Card>
@@ -751,6 +811,68 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
               </span>
             </span>
           </label>
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Greeting image (optional)</Label>
+            {greetingImageKey ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setGreetingImageKey(null)}
+                className="text-foreground-muted hover:text-red-600"
+              >
+                <Trash2 className="size-3.5" /> Remove
+              </Button>
+            ) : null}
+          </div>
+          <p className="text-[11px] text-foreground-muted">
+            When set, the bot attaches this image alongside any reply that opens with a
+            greeting (hi / hello / مرحبا / bonjour…). One send per customer per 24 hours
+            so a chatty customer doesn&apos;t get the banner over and over.
+          </p>
+          {greetingImageKey && greetingImageUrl ? (
+            <div className="flex items-start gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={greetingImageUrl}
+                alt="Greeting image preview"
+                className="h-24 w-24 rounded-md border border-border object-cover"
+              />
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => greetingFileRef.current?.click()}
+                loading={uploadingGreeting}
+              >
+                <Upload className="size-4" /> Replace
+              </Button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => greetingFileRef.current?.click()}
+              disabled={uploadingGreeting}
+              className="flex w-full flex-col items-center justify-center rounded-md border-2 border-dashed border-border px-4 py-6 text-sm text-foreground-muted transition-colors hover:border-brand-400 hover:bg-brand-50/30 disabled:opacity-60"
+            >
+              {uploadingGreeting ? (
+                <Loader2 className="mb-1 size-5 animate-spin" />
+              ) : (
+                <ImageIcon className="mb-1 size-5 text-foreground-subtle" />
+              )}
+              <span>{uploadingGreeting ? 'Uploading…' : 'Click to upload a greeting image'}</span>
+              <span className="mt-0.5 text-[10px] text-foreground-subtle">
+                JPG / PNG / WEBP up to 10 MB
+              </span>
+            </button>
+          )}
+          <input
+            ref={greetingFileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => onPickGreetingImage(e.target.files)}
+          />
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr]">
           <div className="space-y-1.5">

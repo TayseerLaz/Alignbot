@@ -1492,6 +1492,12 @@ model BotConfig {
   // (en-US-Neural2-J, ar-XA-Wavenet-B). For ElevenLabs it's the 20-char
   // VOICE ID. Falls back to provider-specific env defaults when null.
   ttsVoiceName      String?   @map("tts_voice_name")
+  // Optional Wasabi storage key for an image that's attached to the
+  // bot's greeting reply (e.g. a brand banner or "welcome" graphic).
+  // When set, the bot sends this image alongside any reply that opens
+  // with a greeting word (hi/hello/مرحبا/etc.). Dedup keeps it from
+  // re-attaching within a 24h window per thread.
+  greetingImageStorageKey String? @map("greeting_image_storage_key")
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 

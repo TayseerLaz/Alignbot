@@ -158,4 +158,32 @@ export default async function storageRoutes(app: FastifyInstance) {
       });
     },
   );
+
+  // ---------- GET /assets/preview-by-key ----------------------------------
+  // Resolves a presigned read URL from a raw storage key. Used when the
+  // caller only stored the key (not the assetId) — e.g. BotConfig
+  // .greetingImageStorageKey. Tenant-scoped via the `org/<orgId>/...`
+  // prefix in our key naming scheme; rejects any key that doesn't match
+  // the caller's org so one tenant can't peek into another's bucket.
+  r.get(
+    '/assets/preview-by-key',
+    {
+      schema: {
+        tags: ['storage'],
+        summary: 'Get a presigned read URL for a storage key the caller owns.',
+        querystring: z.object({ key: z.string().min(1).max(500) }),
+        response: { 200: itemEnvelopeSchema(z.object({ url: z.string().url() })) },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const key = req.query.key;
+      if (!key.startsWith(`org/${orgId}/`)) {
+        throw notFound('Asset not found.');
+      }
+      const url = publicUrlFor(key) ?? (await presignGetUrl(key));
+      return { data: { url } };
+    },
+  );
 }

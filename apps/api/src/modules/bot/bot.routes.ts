@@ -53,6 +53,9 @@ const botConfigDto = z.object({
   replyMode: z.enum(['text', 'voice', 'match_customer']),
   ttsProvider: z.enum(['google', 'elevenlabs']),
   ttsVoiceName: z.string().nullable(),
+  // Wasabi storage key for the greeting image (banner / welcome graphic).
+  // Bot attaches it alongside greeting replies; null = no image.
+  greetingImageStorageKey: z.string().nullable(),
   version: z.number().int(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -299,6 +302,7 @@ function serializeConfig(c: {
   replyMode?: string;
   ttsProvider?: string | null;
   ttsVoiceName?: string | null;
+  greetingImageStorageKey?: string | null;
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -323,6 +327,7 @@ function serializeConfig(c: {
       | 'google'
       | 'elevenlabs',
     ttsVoiceName: c.ttsVoiceName ?? null,
+    greetingImageStorageKey: c.greetingImageStorageKey ?? null,
     version: c.version,
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
@@ -483,6 +488,9 @@ export default async function botRoutes(app: FastifyInstance) {
           replyMode: z.enum(['text', 'voice', 'match_customer']).optional(),
           ttsProvider: z.enum(['google', 'elevenlabs']).optional(),
           ttsVoiceName: z.string().trim().max(100).nullable().optional(),
+          // Greeting image — Wasabi storage key (returned by the same
+          // /assets/presign-put flow product images use). `null` clears.
+          greetingImageStorageKey: z.string().trim().max(500).nullable().optional(),
         }),
         response: { 200: itemEnvelopeSchema(botConfigDto) },
       },
@@ -510,6 +518,10 @@ export default async function botRoutes(app: FastifyInstance) {
             ttsProvider: req.body.ttsProvider ?? undefined,
             ttsVoiceName:
               req.body.ttsVoiceName === undefined ? undefined : req.body.ttsVoiceName,
+            greetingImageStorageKey:
+              req.body.greetingImageStorageKey === undefined
+                ? undefined
+                : req.body.greetingImageStorageKey,
             version: { increment: 1 },
           },
         });

@@ -564,7 +564,11 @@ function VariantsCard({ product }: { product: Product }) {
                   ))}
                   <th className="px-2 py-2 text-right">Price (cents)</th>
                   <th className="px-2 py-2 text-right">Stock</th>
-                  <th className="w-10 px-2 py-2" />
+                  {/* Visible header for the delete column. Previously
+                      this was an unlabelled w-10 cell that the wider
+                      Input cells collapsed past on narrow screens,
+                      so the trash button effectively disappeared. */}
+                  <th className="w-24 px-2 py-2 text-right">Delete</th>
                 </tr>
               </thead>
               <tbody>
@@ -641,14 +645,26 @@ function VariantsCard({ product }: { product: Product }) {
                         className="h-8 text-right"
                       />
                     </td>
-                    <td className="px-2 py-1.5 text-right">
+                    <td className="w-24 px-2 py-1.5 text-right">
+                      {/* Labelled destructive button. Was previously
+                          an icon-only ghost button in an unsized
+                          column — operators couldn't see it. */}
                       <Button
-                        size="icon"
+                        size="sm"
                         variant="ghost"
-                        aria-label="Remove variant"
-                        onClick={() => setVariants((prev) => prev.filter((_, idx) => idx !== i))}
+                        className="h-8 text-red-600 hover:bg-red-50 hover:text-red-700"
+                        aria-label={`Delete variant ${v.name || v.sku || `#${i + 1}`}`}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Delete variant "${v.name || v.sku || `#${i + 1}`}"? Remember to click "Save variants" afterwards to persist the change.`,
+                            )
+                          ) {
+                            setVariants((prev) => prev.filter((_, idx) => idx !== i));
+                          }
+                        }}
                       >
-                        <Trash2 className="size-4" />
+                        <Trash2 className="size-4" /> Delete
                       </Button>
                     </td>
                   </tr>

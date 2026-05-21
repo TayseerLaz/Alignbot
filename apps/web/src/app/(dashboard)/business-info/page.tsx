@@ -14,7 +14,7 @@ import {
   FaqVisibility,
 } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, CalendarCheck, MapPin, MessageSquare, Phone, Plus, Save, ScrollText, Trash2 } from 'lucide-react';
+import { Building2, CalendarCheck, MapPin, MessageSquare, Phone, Plus, Save, ScrollText, ShoppingCart, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -66,6 +66,9 @@ export default function BusinessInfoPage() {
           <TabsTrigger value="booking">
             <CalendarCheck className="mr-2 size-4" /> Booking form
           </TabsTrigger>
+          <TabsTrigger value="shop">
+            <ShoppingCart className="mr-2 size-4" /> Shop form
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="profile">
           <ProfilePanel />
@@ -84,6 +87,9 @@ export default function BusinessInfoPage() {
         </TabsContent>
         <TabsContent value="booking">
           <BookingFormPanel />
+        </TabsContent>
+        <TabsContent value="shop">
+          <ShopFormPanel />
         </TabsContent>
       </Tabs>
     </>
@@ -1114,6 +1120,417 @@ function BookingFormPanel() {
           <div className="flex justify-end">
             <Button onClick={() => save.mutate()} loading={save.isPending}>
               <Save className="mr-2 size-4" /> Save booking form
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ---------- shop form ------------------------------------------------------
+const SHOP_FIELD_TYPES = [
+  'text',
+  'email',
+  'phone',
+  'date',
+  'time',
+  'datetime',
+  'number',
+  'long_text',
+  'select',
+] as const;
+type ShopFieldType = (typeof SHOP_FIELD_TYPES)[number];
+
+interface ShopFieldDraft {
+  key: string;
+  label: string;
+  type: ShopFieldType;
+  required: boolean;
+  options?: string[];
+}
+
+interface ShopFormDraft {
+  enabled: boolean;
+  title: string;
+  intentKeywords: string[];
+  fields: ShopFieldDraft[];
+  // Stored in minor units in the DB; this draft uses major (KD, USD) for the
+  // operator UI and only converts on save / load.
+  minOrderMajor: string;
+  deliveryFeeMajor: string;
+  freeDeliveryAboveMajor: string;
+  confirmationMessage: string;
+}
+
+function defaultShopForm(): ShopFormDraft {
+  return {
+    enabled: false,
+    title: 'Place an order',
+    intentKeywords: ['order', 'buy', 'delivery', 'menu', 'want', 'get'],
+    fields: [
+      { key: 'delivery_address', label: 'Delivery address', type: 'text', required: true },
+      { key: 'delivery_time', label: 'When do you want it?', type: 'datetime', required: false },
+      {
+        key: 'payment_method',
+        label: 'Payment',
+        type: 'select',
+        required: true,
+        options: ['Cash', 'Card on delivery', 'KNET / online'],
+      },
+      { key: 'notes', label: 'Anything else?', type: 'long_text', required: false },
+    ],
+    minOrderMajor: '',
+    deliveryFeeMajor: '',
+    freeDeliveryAboveMajor: '',
+    confirmationMessage:
+      "Got it! Order #{{cart_id_short}} is confirmed. Total {{total}}. We'll be in touch shortly. 🙏",
+  };
+}
+
+// Currencies follow ISO 4217 minor-unit counts. KWD uses 3; USD/EUR/GBP use 2.
+// `currency` is the org-default loaded alongside the shop form below.
+function minorToMajor(value: number | null | undefined, currency: string): string {
+  if (value == null) return '';
+  const minorUnits = currency === 'KWD' || currency === 'BHD' || currency === 'OMR' ? 1000 : 100;
+  return (value / minorUnits).toString();
+}
+function majorToMinor(raw: string, currency: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n < 0) return null;
+  const minorUnits = currency === 'KWD' || currency === 'BHD' || currency === 'OMR' ? 1000 : 100;
+  return Math.round(n * minorUnits);
+}
+
+function ShopFormPanel() {
+  const queryClient = useQueryClient();
+  const infoQuery = useQuery({
+    queryKey: ['business-info'],
+    queryFn: () => api.get<{ data: BusinessInfoDto | null }>('/api/v1/business-info'),
+  });
+
+  const orgCurrency = infoQuery.data?.data?.currency ?? 'USD';
+  const [draft, setDraft] = useState<ShopFormDraft>(defaultShopForm());
+  const [keywordsInput, setKeywordsInput] = useState('');
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!infoQuery.data || loaded) return;
+    const incoming = (
+      infoQuery.data.data as {
+        shopForm?: {
+          enabled?: boolean;
+          title?: string;
+          intentKeywords?: string[];
+          fields?: { key: string; label: string; type: string; required?: boolean; options?: string[] }[];
+          minOrderMinor?: number | null;
+          deliveryFeeMinor?: number | null;
+          freeDeliveryAboveMinor?: number | null;
+          confirmationMessage?: string;
+        };
+      } | null
+    )?.shopForm;
+    if (incoming && Array.isArray(incoming.fields)) {
+      setDraft({
+        enabled: !!incoming.enabled,
+        title: incoming.title || 'Place an order',
+        intentKeywords: incoming.intentKeywords ?? [],
+        fields: incoming.fields.map((f) => ({
+          key: f.key,
+          label: f.label,
+          type: (SHOP_FIELD_TYPES as readonly string[]).includes(f.type)
+            ? (f.type as ShopFieldType)
+            : 'text',
+          required: f.required !== false,
+          options: Array.isArray(f.options) ? f.options.slice(0, 40) : undefined,
+        })),
+        minOrderMajor: minorToMajor(incoming.minOrderMinor, orgCurrency),
+        deliveryFeeMajor: minorToMajor(incoming.deliveryFeeMinor, orgCurrency),
+        freeDeliveryAboveMajor: minorToMajor(incoming.freeDeliveryAboveMinor, orgCurrency),
+        confirmationMessage:
+          incoming.confirmationMessage ?? defaultShopForm().confirmationMessage,
+      });
+      setKeywordsInput((incoming.intentKeywords ?? []).join(', '));
+    } else {
+      const d = defaultShopForm();
+      setDraft(d);
+      setKeywordsInput(d.intentKeywords.join(', '));
+    }
+    setLoaded(true);
+  }, [infoQuery.data, loaded, orgCurrency]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.put('/api/v1/business-info', {
+        shopForm: {
+          enabled: draft.enabled,
+          title: draft.title.trim() || 'Shop',
+          intentKeywords: keywordsInput
+            .split(/[,\n]+/)
+            .map((s) => s.trim())
+            .filter(Boolean),
+          fields: draft.fields.map((f) => ({
+            key: f.key,
+            label: f.label,
+            type: f.type,
+            required: f.required,
+            // Only include options for select-type fields.
+            ...(f.type === 'select' && f.options && f.options.length > 0
+              ? { options: f.options }
+              : {}),
+          })),
+          minOrderMinor: majorToMinor(draft.minOrderMajor, orgCurrency),
+          deliveryFeeMinor: majorToMinor(draft.deliveryFeeMajor, orgCurrency),
+          freeDeliveryAboveMinor: majorToMinor(draft.freeDeliveryAboveMajor, orgCurrency),
+          confirmationMessage: draft.confirmationMessage.trim(),
+        },
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['business-info'] });
+      toast.success('Shop form saved');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
+  });
+
+  const setField = (i: number, patch: Partial<ShopFieldDraft>) => {
+    setDraft((d) => {
+      const next = [...d.fields];
+      next[i] = { ...next[i]!, ...patch };
+      return { ...d, fields: next };
+    });
+  };
+
+  const addField = () => {
+    setDraft((d) => ({
+      ...d,
+      fields: [
+        ...d.fields,
+        { key: `field_${d.fields.length + 1}`, label: '', type: 'text', required: true },
+      ],
+    }));
+  };
+
+  const removeField = (i: number) => {
+    setDraft((d) => ({ ...d, fields: d.fields.filter((_, idx) => idx !== i) }));
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Shop form</CardTitle>
+          <CardDescription>
+            Configure what the AI bot asks for once a customer's cart is settled. Each placed order
+            lands on the{' '}
+            <a className="text-brand-600 hover:underline" href="/cart">
+              /cart
+            </a>{' '}
+            page. Money values use this org's currency ({orgCurrency}).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              className="mt-1 size-4 accent-brand-600"
+              checked={draft.enabled}
+              onChange={(e) => setDraft((d) => ({ ...d, enabled: e.target.checked }))}
+            />
+            <div className="text-sm">
+              <p className="font-medium">Enable shop / cart flow</p>
+              <p className="text-xs text-foreground-muted">
+                When on, the bot will help customers build a cart from your products and ask for
+                these fields to finalize the order.
+              </p>
+            </div>
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Title (shown in the prompt + on /cart)</Label>
+              <Input
+                value={draft.title}
+                onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+                placeholder="Place an order"
+              />
+            </div>
+            <div>
+              <Label>Trigger keywords (comma-separated)</Label>
+              <Input
+                value={keywordsInput}
+                onChange={(e) => setKeywordsInput(e.target.value)}
+                placeholder="order, buy, delivery, menu"
+              />
+              <p className="mt-1 text-xs text-foreground-muted">
+                The bot starts the cart flow when the customer's message matches one of these.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <Label>Minimum order ({orgCurrency})</Label>
+              <Input
+                inputMode="decimal"
+                value={draft.minOrderMajor}
+                onChange={(e) => setDraft((d) => ({ ...d, minOrderMajor: e.target.value }))}
+                placeholder="0"
+              />
+              <p className="mt-1 text-xs text-foreground-muted">
+                Refuse to place carts below this. Leave blank for no minimum.
+              </p>
+            </div>
+            <div>
+              <Label>Delivery fee ({orgCurrency})</Label>
+              <Input
+                inputMode="decimal"
+                value={draft.deliveryFeeMajor}
+                onChange={(e) => setDraft((d) => ({ ...d, deliveryFeeMajor: e.target.value }))}
+                placeholder="0"
+              />
+              <p className="mt-1 text-xs text-foreground-muted">
+                Flat fee added to every cart. Leave blank for free delivery.
+              </p>
+            </div>
+            <div>
+              <Label>Free delivery above ({orgCurrency})</Label>
+              <Input
+                inputMode="decimal"
+                value={draft.freeDeliveryAboveMajor}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, freeDeliveryAboveMajor: e.target.value }))
+                }
+                placeholder="—"
+              />
+              <p className="mt-1 text-xs text-foreground-muted">
+                Subtotal threshold that waives the delivery fee. Blank = never waive.
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <Label>Confirmation message</Label>
+            <Textarea
+              rows={3}
+              value={draft.confirmationMessage}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, confirmationMessage: e.target.value }))
+              }
+              placeholder="Got it! Your order is in. We'll be in touch soon."
+            />
+            <p className="mt-1 text-xs text-foreground-muted">
+              What the bot replies when the cart is placed. Supports{' '}
+              <code className="rounded bg-surface-muted px-1 text-[11px]">{`{{cart_id_short}}`}</code>{' '}
+              and{' '}
+              <code className="rounded bg-surface-muted px-1 text-[11px]">{`{{total}}`}</code>{' '}
+              placeholders.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm">Fields to collect</Label>
+              <Button size="sm" variant="ghost" onClick={addField}>
+                <Plus className="mr-1 size-4" /> Add field
+              </Button>
+            </div>
+            {draft.fields.length === 0 ? (
+              <p className="rounded border border-dashed border-border bg-surface-muted/40 p-4 text-center text-xs italic text-foreground-muted">
+                No fields yet. Add at least one to enable the flow.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {draft.fields.map((f, i) => (
+                  <div
+                    key={i}
+                    className="space-y-2 rounded border border-border bg-surface p-3"
+                  >
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1.5fr_140px_120px_36px]">
+                      <Input
+                        placeholder="key (e.g. address)"
+                        value={f.key}
+                        onChange={(e) =>
+                          setField(i, {
+                            key: e.target.value
+                              .replace(/[^a-z0-9_]/gi, '_')
+                              .toLowerCase()
+                              .slice(0, 60),
+                          })
+                        }
+                      />
+                      <Input
+                        placeholder="Label shown to the customer"
+                        value={f.label}
+                        onChange={(e) => setField(i, { label: e.target.value.slice(0, 120) })}
+                      />
+                      <Select
+                        value={f.type}
+                        onValueChange={(v) =>
+                          setField(i, {
+                            type: v as ShopFieldType,
+                            // Reset options if switching away from select.
+                            options: v === 'select' ? f.options ?? [''] : undefined,
+                          })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {SHOP_FIELD_TYPES.map((t) => (
+                            <SelectItem key={t} value={t}>
+                              {t}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <label className="flex items-center gap-1 text-xs">
+                        <input
+                          type="checkbox"
+                          className="size-4 accent-brand-600"
+                          checked={f.required}
+                          onChange={(e) => setField(i, { required: e.target.checked })}
+                        />
+                        Required
+                      </label>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => removeField(i)}
+                        aria-label="Remove field"
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
+                    {f.type === 'select' ? (
+                      <div className="pl-1">
+                        <Label className="text-xs">Choices (one per line)</Label>
+                        <Textarea
+                          rows={2}
+                          value={(f.options ?? []).join('\n')}
+                          onChange={(e) =>
+                            setField(i, {
+                              options: e.target.value
+                                .split(/\n+/)
+                                .map((s) => s.trim())
+                                .filter(Boolean)
+                                .slice(0, 40),
+                            })
+                          }
+                          placeholder={'Cash\nCard\nKNET'}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end">
+            <Button onClick={() => save.mutate()} loading={save.isPending}>
+              <Save className="mr-2 size-4" /> Save shop form
             </Button>
           </div>
         </CardContent>

@@ -2581,13 +2581,65 @@ async function maybeReplyAsBot(args: {
         }
       }
     }
+    // Dedup: the LLM dutifully re-emits [IMAGE: SKU] every time it
+    // mentions a product, including on "what's your name?" / "address?"
+    // / "payment method?" turns mid-cart-flow. Customers don't want
+    // the same photo three times in a row. Skip any SKU we already
+    // sent an image for in this thread within the last hour, UNLESS:
+    //   - this reply contains the final [CART:] marker (re-show the
+    //     gallery as part of the confirmation), or
+    //   - the customer explicitly asked for an image / picture / photo
+    //     / صورة in their latest message.
+    const explicitImageRequest =
+      /\b(image|images|picture|pictures|photo|photos|pic|pics|show me|send.*pic|send.*image|send.*photo)\b/i.test(
+        m.bodyText ?? '',
+      ) || /صورة|صور|ابعتلي.*صور|ورّيني/.test(m.bodyText ?? '');
+    let dedupedImageSends = imageSends;
+    if (imageSends.length > 0 && !cartMarkerPayload && !explicitImageRequest) {
+      const recentlySent = await withRlsBypass(async (tx) => {
+        const rows = await tx.whatsAppMessage.findMany({
+          where: {
+            threadId: ctx.threadId,
+            organizationId: args.organizationId,
+            direction: 'outbound',
+            messageType: 'image',
+            receivedAt: { gt: new Date(Date.now() - 60 * 60 * 1000) },
+          },
+          select: { rawPayload: true },
+          take: 50,
+        });
+        return new Set(
+          rows
+            .map((r) => (r.rawPayload as { sku?: string } | null)?.sku)
+            .filter((s): s is string => typeof s === 'string'),
+        );
+      });
+      const skipped: string[] = [];
+      dedupedImageSends = imageSends.filter((s) => {
+        if (recentlySent.has(s.sku)) {
+          skipped.push(s.sku);
+          return false;
+        }
+        return true;
+      });
+      if (skipped.length > 0) {
+        args.log.info(
+          {
+            threadId: ctx.threadId,
+            skippedSkus: Array.from(new Set(skipped)),
+            kept: dedupedImageSends.length,
+          },
+          '[whatsapp] image dedup: suppressed already-sent SKUs',
+        );
+      }
+    }
     // Back-compat shims for code paths further down that referenced the
     // old single-image variables. They now point at the first send (or
     // null) — the loop further down does the multi-send.
-    const imageProduct = imageSends.length > 0
-      ? ctx.data.products.find((p) => p.sku === imageSends[0]!.sku) ?? null
+    const imageProduct = dedupedImageSends.length > 0
+      ? ctx.data.products.find((p) => p.sku === dedupedImageSends[0]!.sku) ?? null
       : null;
-    const imageStorageKey = imageSends[0]?.storageKey ?? null;
+    const imageStorageKey = dedupedImageSends[0]?.storageKey ?? null;
     // If the LLM emitted ONLY markers (no visible text), fall back to a
     // short acknowledgement so the customer sees something — and so the
     // handoff / booking side effects still run.
@@ -2604,7 +2656,7 @@ async function maybeReplyAsBot(args: {
         reply = 'All set — your request has been captured. A teammate will follow up shortly.';
       }
     }
-    if (!reply && imageSends.length === 0) continue;
+    if (!reply && dedupedImageSends.length === 0) continue;
 
     // Phase 6 — decide text vs voice. `voice` always sends TTS. `match_customer`
     // only sends TTS when the customer's last inbound was itself a voice
@@ -2852,10 +2904,10 @@ async function maybeReplyAsBot(args: {
       // product (subsequent images are implicitly part of the same
       // gallery). Failures here log but DON'T fail the whole reply
       // path — the text reply already landed.
-      if (imageSends.length > 0) {
+      if (dedupedImageSends.length > 0) {
         const { presignGetUrl, publicUrlFor } = await import('../../lib/storage.js');
         let prevSkuForGroup: string | null = null;
-        for (const send of imageSends) {
+        for (const send of dedupedImageSends) {
           try {
             const fileUrl = publicUrlFor(send.storageKey) ?? (await presignGetUrl(send.storageKey));
             const fr = await fetch(fileUrl, { signal: AbortSignal.timeout(15_000) });

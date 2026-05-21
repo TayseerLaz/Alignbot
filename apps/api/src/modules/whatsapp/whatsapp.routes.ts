@@ -2423,29 +2423,49 @@ async function maybeReplyAsBot(args: {
             priceMinor: p.priceMinor,
           })),
         );
-        // Hallucination guard: scan the reply for any "added/removed X" line
-        // whose product fragment fails to match the catalog. Log it so we
-        // can audit prompts that are teaching the LLM to invent products.
+        // Hallucination guard. Two passes:
+        //   1. "added/removed N× X" lines (cart confirmations / removals)
+        //   2. Any "<X> is <price> <currency>" mention in the reply
+        // For each captured product fragment that doesn't substring-match a
+        // catalog product name, log a warn. Cheap (regex over reply text),
+        // diagnostic only — we don't block the send. Catches the bot
+        // inventing items, sizes, or prices the operator never entered.
         try {
-          const addedFragments = Array.from(
-            rawReply.matchAll(
-              /(?:added|i(?:'ve)?\s+added|removed)\s+(?:one|two|three|four|five|\d+)\s*(?:×|x)?\s+([A-Z][^\n.;,]{2,60})/gi,
-            ),
-          ).map((m) => (m[1] ?? '').trim());
-          const parsedNames = new Set(parsed.map((p) => p.name.toLowerCase()));
-          const phantom = addedFragments.filter(
-            (frag) =>
-              frag.length > 0 &&
-              !Array.from(parsedNames).some((n) =>
-                frag.toLowerCase().includes(n) || n.includes(frag.toLowerCase()),
-              ),
-          );
+          const catalogNames = ctx.data.products.map((p) => p.name.toLowerCase());
+          const matchesCatalog = (frag: string) => {
+            const f = frag.toLowerCase().trim();
+            if (f.length === 0) return true;
+            return catalogNames.some((n) => n.length > 1 && (f.includes(n) || n.includes(f)));
+          };
+          const phantom: string[] = [];
+          // Pass 1: explicit cart actions.
+          for (const m of rawReply.matchAll(
+            /(?:added|i(?:'ve)?\s+added|removed)\s+(?:one|two|three|four|five|\d+)\s*(?:×|x)?\s+([A-Z][^\n.;,]{2,60})/gi,
+          )) {
+            const frag = (m[1] ?? '').trim();
+            if (frag && !matchesCatalog(frag)) phantom.push(frag);
+          }
+          // Pass 2: any "<Name>(?) is/at/for <price> <currency>" phrasing —
+          // catches upsells that name a product that doesn't exist. The
+          // currency is dynamic so we read it off the shopForm config.
+          const cur = ctx.data.shopForm?.currency ?? null;
+          if (cur) {
+            const priceRe = new RegExp(
+              String.raw`\b([A-Z][a-zA-Z0-9 '\-]{2,40})\b[^\n.;]{0,30}?(?:\bis\b|\bat\b|\bfor\b|\b\-\b|\b—\b)\s*\d+(?:[.,]\d+)?\s*` +
+                cur,
+              'g',
+            );
+            for (const m of rawReply.matchAll(priceRe)) {
+              const frag = (m[1] ?? '').trim();
+              if (frag && !matchesCatalog(frag)) phantom.push(frag);
+            }
+          }
           if (phantom.length > 0) {
             args.log.warn(
               {
                 orgId: args.organizationId,
                 threadId: ctx.threadId,
-                phantom: phantom.slice(0, 5),
+                phantom: Array.from(new Set(phantom)).slice(0, 5),
                 catalogSize: ctx.data.products.length,
               },
               '[whatsapp] bot quoted product names not found in catalog (possible hallucination)',

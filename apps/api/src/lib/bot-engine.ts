@@ -631,7 +631,7 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
         `    "<NAME> would go great. <PRICE> ${shopForm.currency} if you want one."\n` +
         `    "Add a <NAME>? <PRICE> ${shopForm.currency}. Goes well with that."\n` +
         `   Pick a DIFFERENT suggestion each time so the bot doesn't sound canned. ONLY move on to shop-form fields after the customer declines ("no thanks", "that's all", "I'm good", etc.). NEVER jump from "added X" straight to "what's your name?" — that loses revenue.\n` +
-        `  Step 3: when the customer says "that's all" / "no thanks" / "I'm good" / similar, summarise the cart so far WITH RUNNING SUBTOTAL, then ask for the shop form fields listed in the SHOP FORM section below (one or two at a time, exact LABELS).\n` +
+        `  Step 3: when the customer says "that's all" / "no thanks" / "I'm good" / similar, summarise the cart so far WITH RUNNING SUBTOTAL, then ask for the shop form fields listed in the SHOP FORM section below (one or two at a time, exact LABELS). ⚠️ HARD RULE: when a field has a "choices:" list in the SHOP FORM section, you MUST offer ONLY those choices verbatim — never invent alternatives. For example, if payment_method's choices are "MyFatoorah", ask "How would you like to pay? We accept MyFatoorah." NOT "Cash, KNET, or card" — those are not in the operator's list and will confuse the customer.\n` +
         `  Step 4: final summary — items + delivery fee (if any) + GRAND TOTAL + form answers — then ask the customer to confirm.\n` +
         `  Step 5: as SOON AS they affirm (yes / confirm / go ahead / ok / etc.), emit on a NEW LINE the CART marker:\n` +
         `    [CART: {"items":[{"sku":"<EXACT_SKU>","name":"<EXACT_NAME>","quantity":<N>,"unitPriceMinor":<INT>,"notes":""}],"fields":${JSON.stringify(
@@ -653,11 +653,11 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
         `    User: "no thanks"\n` +
         `    Bot: "Got it. What's the delivery address?"\n` +
         `    User: "Salmiya, Block 4 House 12"\n` +
-        `    Bot: "Cool. Payment? Cash, KNET, or card?"\n` +
-        `    User: "KNET"\n` +
+        `    Bot: "Cool. Payment? <list the EXACT choices from the SHOP FORM's payment_method field — never invent alternatives>"\n` +
+        `    User: "<picks one of the offered choices>"\n` +
         `    Bot: "To confirm:\\n1× Oreo Milkshake\\n1× Crepe Pillow\\nSubtotal 4.500 KWD, delivery 0.750 KWD, total 5.250 KWD.\\nDeliver to Salmiya, Block 4 House 12.\\nGood to go?"\n` +
         `    User: "Yes"\n` +
-        `    Bot: "Done! Your order is in 🙏\\n[CART: {\\"items\\":[{\\"sku\\":\\"ATK-MIX-OREO\\",\\"name\\":\\"Oreo Milkshake\\",\\"quantity\\":1,\\"unitPriceMinor\\":1250,\\"notes\\":\\"\\"},{\\"sku\\":\\"ATK-SWEET-CREPEPILLOW-LEGEND\\",\\"name\\":\\"Crepe Pillow\\",\\"quantity\\":1,\\"unitPriceMinor\\":3250,\\"notes\\":\\"\\"}],\\"fields\\":{\\"delivery_address\\":\\"Salmiya Block 4 House 12\\",\\"payment_method\\":\\"KNET\\",\\"delivery_time\\":\\"\\",\\"notes\\":\\"\\"}}]"`
+        `    Bot: "Done! Your order is in 🙏\\n[CART: {\\"items\\":[{\\"sku\\":\\"ATK-MIX-OREO\\",\\"name\\":\\"Oreo Milkshake\\",\\"quantity\\":1,\\"unitPriceMinor\\":1250,\\"notes\\":\\"\\"},{\\"sku\\":\\"ATK-SWEET-CREPEPILLOW-LEGEND\\",\\"name\\":\\"Crepe Pillow\\",\\"quantity\\":1,\\"unitPriceMinor\\":3250,\\"notes\\":\\"\\"}],\\"fields\\":{\\"delivery_address\\":\\"Salmiya Block 4 House 12\\",\\"payment_method\\":\\"<one of the operator's choices>\\",\\"delivery_time\\":\\"\\",\\"notes\\":\\"\\"}}]"`
       : '',
     `- Hours: when a customer asks about opening times, quote directly from the OPENING HOURS section below. Don't paraphrase — read it back day-by-day, and call out the days that show "Closed" so the customer knows when not to expect a reply.`,
     // Language rule: reply in the customer's language IF it's one we

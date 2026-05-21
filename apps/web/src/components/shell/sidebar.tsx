@@ -92,7 +92,7 @@ const groups: NavGroup[] = [
       // so old bookmarks + intra-app links keep working.
       { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone },
       { href: '/bookings', label: 'Bookings', icon: CalendarCheck },
-      { href: '/cart', label: 'Cart', icon: ShoppingCart },
+      { href: '/cart', label: 'Orders', icon: ShoppingCart },
     ],
   },
   {

@@ -27,7 +27,12 @@ RUN pnpm --filter @aligned/api deploy /out --prod --legacy
 
 # ---------- runtime ----------
 FROM node:20-alpine AS runtime
-RUN apk add --no-cache openssl libc6-compat tini
+# ffmpeg: required for TTS voice-note transcoding. The npm ffmpeg-static
+# package ships a glibc binary that silently fails on alpine's musl libc
+# even with libc6-compat — bot voice replies fell back to text. System
+# ffmpeg via apk is the reliable path; audio-transcode.ts prefers
+# whichever resolves first.
+RUN apk add --no-cache openssl libc6-compat tini ffmpeg
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /out ./

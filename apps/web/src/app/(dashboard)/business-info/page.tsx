@@ -14,7 +14,7 @@ import {
   FaqVisibility,
 } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, CalendarCheck, MapPin, MessageSquare, Phone, Plus, Save, ScrollText, ShoppingCart, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Building2, CalendarCheck, MapPin, MessageSquare, Phone, Plus, Save, ScrollText, ShoppingCart, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -993,6 +993,21 @@ function BookingFormPanel() {
     setDraft((d) => ({ ...d, fields: d.fields.filter((_, idx) => idx !== i) }));
   };
 
+  // Move field at index `i` by `delta` (-1 / +1). The bot asks for
+  // fields in array order, so reordering directly changes the question
+  // sequence the customer experiences during booking.
+  const moveField = (i: number, delta: number) => {
+    setDraft((d) => {
+      const j = i + delta;
+      if (j < 0 || j >= d.fields.length) return d;
+      const next = [...d.fields];
+      const tmp = next[i]!;
+      next[i] = next[j]!;
+      next[j] = tmp;
+      return { ...d, fields: next };
+    });
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -1060,7 +1075,7 @@ function BookingFormPanel() {
                 {draft.fields.map((f, i) => (
                   <div
                     key={i}
-                    className="grid grid-cols-1 gap-2 rounded border border-border bg-surface p-3 sm:grid-cols-[1fr_1.5fr_140px_120px_36px]"
+                    className="grid grid-cols-1 gap-2 rounded border border-border bg-surface p-3 sm:grid-cols-[1fr_1.5fr_140px_120px_32px_32px_36px]"
                   >
                     <Input
                       placeholder="key (e.g. name)"
@@ -1103,6 +1118,24 @@ function BookingFormPanel() {
                       />
                       Required
                     </label>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => moveField(i, -1)}
+                      aria-label="Move field up"
+                      disabled={i === 0}
+                    >
+                      <ArrowUp className="size-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => moveField(i, 1)}
+                      aria-label="Move field down"
+                      disabled={i === draft.fields.length - 1}
+                    >
+                      <ArrowDown className="size-4" />
+                    </Button>
                     <Button
                       size="icon"
                       variant="ghost"
@@ -1342,6 +1375,21 @@ function ShopFormPanel() {
     setDraft((d) => ({ ...d, fields: d.fields.filter((_, idx) => idx !== i) }));
   };
 
+  // Move field at index `i` by `delta` (typically -1 or +1). The bot
+  // asks for fields in array order, so this directly controls the
+  // question sequence the customer experiences.
+  const moveField = (i: number, delta: number) => {
+    setDraft((d) => {
+      const j = i + delta;
+      if (j < 0 || j >= d.fields.length) return d;
+      const next = [...d.fields];
+      const tmp = next[i]!;
+      next[i] = next[j]!;
+      next[j] = tmp;
+      return { ...d, fields: next };
+    });
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -1499,7 +1547,9 @@ function ShopFormPanel() {
                     key={i}
                     className="space-y-2 rounded border border-border bg-surface p-3"
                   >
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1.5fr_140px_120px_36px]">
+                    {/* Grid columns: key · label · type · required · move-up · move-down · delete.
+                        The reorder buttons control the order in which the bot asks for the fields. */}
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1.5fr_140px_120px_32px_32px_36px]">
                       <Input
                         placeholder="key (e.g. address)"
                         value={f.key}
@@ -1547,6 +1597,24 @@ function ShopFormPanel() {
                         />
                         Required
                       </label>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => moveField(i, -1)}
+                        aria-label="Move field up"
+                        disabled={i === 0}
+                      >
+                        <ArrowUp className="size-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => moveField(i, 1)}
+                        aria-label="Move field down"
+                        disabled={i === draft.fields.length - 1}
+                      >
+                        <ArrowDown className="size-4" />
+                      </Button>
                       <Button
                         size="icon"
                         variant="ghost"

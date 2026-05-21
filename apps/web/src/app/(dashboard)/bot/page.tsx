@@ -225,26 +225,11 @@ export default function BotPage() {
         description="Crawl your site, review the auto-generated knowledge base, set personality + greeting, simulate, deploy."
         actions={
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              loading={factoryReset.isPending}
-              onClick={async () => {
-                if (
-                  await confirmDialog({
-                    title: 'Reset the bot’s brain?',
-                    body:
-                      'Wipes every data source the bot uses to ground its replies: all knowledge base entries, conversation-flow candidates (including the active one), test scenarios and their runs, plus the personality / greeting / response templates on the bot config. Your catalog, business info, FAQ, policies and WhatsApp channel are NOT touched. Use this when the bot keeps citing facts that don’t match the business anymore.',
-                    confirmLabel: 'Reset bot brain',
-                    destructive: true,
-                  })
-                ) {
-                  factoryReset.mutate();
-                }
-              }}
-            >
-              <Trash2 className="size-4" /> Reset bot brain
-            </Button>
+            {/* "Reset bot brain" hidden — operators were one click away from
+                nuking every KB entry / flow / scenario / run. The factoryReset
+                mutation + its server endpoint are intentionally left in place;
+                re-add the <Button> here when we have a more nuanced
+                "reset just X" affordance. */}
             {config ? (
               <DeployToggle
                 config={config}

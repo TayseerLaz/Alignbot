@@ -2280,6 +2280,9 @@ async function maybeReplyAsBot(args: {
     // the LLM's delivery-mode banner (match_customer) and the eventual
     // wantsVoice decision below — compute once, reuse both places.
     const customerSpokeAudio = m.type === 'audio' || m.type === 'voice';
+    // Diagnostic log emitted on EVERY bot reply so we can audit voice
+    // mode + greet-by-name decisions in one place. Cheap (one line per
+    // reply) and removes guesswork when behaviour looks wrong.
     args.log.info(
       {
         orgId: args.organizationId,
@@ -2289,8 +2292,13 @@ async function maybeReplyAsBot(args: {
         replyMode: ctx.replyMode,
         ttsProvider: ctx.ttsProvider,
         ttsVoiceName: ctx.ttsVoiceName,
+        greetByName:
+          (ctx.data.config as { greetByName?: boolean | null } | null)?.greetByName === true,
+        customerName: (ctx as { customerName?: string | null }).customerName ?? null,
+        historyLen: ctx.history.length,
+        isFirstReply: !ctx.history.some((h) => h.direction === 'outbound'),
       },
-      '[whatsapp] bot reply: voice-config resolution',
+      '[whatsapp] bot reply: config resolution',
     );
 
     // OpenAI call — outside the tx. Safe to be slow.

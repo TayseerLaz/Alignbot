@@ -458,16 +458,17 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
         ]
       : [];
 
-  // Phase 7 — "Greet by name on first reply" directive. Only fires when:
-  //   - BotConfig.greetByName is true
-  //   - we have a customer name to use
-  //   - this IS the first reply (no prior assistant turns in history)
+  // Phase 7 — "Greet by name" directive. Fires whenever the BotConfig
+  // toggle is on + we have a customer name. The system prompt nudges
+  // the LLM to include the name in greeting-shaped replies, and the
+  // programmatic fallback below prepends the name when the LLM's
+  // output looks like a greeting but doesn't already mention them.
+  //
   // We use the customer's *first* token of their WhatsApp profile name
   // to avoid the bot saying their full surname like a form letter.
   const greetByName = ((config as { greetByName?: boolean | null } | null)?.greetByName) === true;
-  const isFirstReply = !(args.history ?? []).some((m) => m.role === 'assistant');
   const customerFirstName = (args.customerName ?? '').trim().split(/\s+/)[0] ?? '';
-  const shouldGreetByName = greetByName && isFirstReply && customerFirstName.length > 0;
+  const shouldGreetByName = greetByName && customerFirstName.length > 0;
 
   // Compose the system prompt — long but cache-friendly.
   const sys = [
@@ -478,13 +479,13 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     `Tone preset: ${personalityKey}. ${personalityHint}`,
     greeting ? `Default greeting: "${greeting}"` : '',
     shouldGreetByName
-      ? `# 🔴 CRITICAL — FIRST REPLY ADDRESSING\n` +
-        `The customer's name on WhatsApp is "${customerFirstName}". This is your FIRST reply to them. ` +
-        `You MUST open the reply by addressing them by name. Examples:\n` +
-        `  • English: "Hi ${customerFirstName}, " followed by the rest.\n` +
-        `  • Arabic:  "أهلاً ${customerFirstName}، " ثم بقية الرد.\n` +
-        `  • French:  "Bonjour ${customerFirstName}, " puis la suite.\n` +
-        `This applies even if you would otherwise reproduce the Default greeting above — prepend the name to it. Do NOT repeat their name in subsequent replies; this rule fires once per thread.`
+      ? `# 🔴 CRITICAL — ADDRESS CUSTOMER BY NAME WHEN GREETING\n` +
+        `The customer's name on WhatsApp is "${customerFirstName}". ` +
+        `WHENEVER your reply opens with a greeting word — "Hi", "Hello", "Hey", "Welcome", "Good morning/afternoon/evening", "مرحبا", "أهلاً", "سلام", "Bonjour", "Hola", or matches the configured Default greeting above — you MUST include their first name in the greeting. Examples:\n` +
+        `  • English: "Hi ${customerFirstName}, ..." or "Welcome ${customerFirstName}, ..." or "Hello ${customerFirstName}!"\n` +
+        `  • Arabic:  "أهلاً ${customerFirstName}، ..." or "مرحبا ${customerFirstName}، ..."\n` +
+        `  • French:  "Bonjour ${customerFirstName}, ..."\n` +
+        `If your reply is mid-conversation (no greeting word), do NOT shoehorn the name in — just answer normally.`
       : '',
     ``,
     `# Rules`,
@@ -675,20 +676,29 @@ export async function buildBotResponse(args: BotResponseArgs): Promise<{ text: s
     temperature: 0.4,
   });
 
-  // Greet-by-name fallback: if greetByName is on AND it's the first reply,
-  // but the LLM ignored the directive and didn't mention the customer's
-  // first name, prepend it deterministically so the operator's setting
-  // is actually honoured. Skip if the reply already includes the name
-  // (LLM obeyed) or the name appears as a prefix in any form (case-
-  // insensitive substring is good enough — false positives would
-  // double-greet at worst, which we then trim).
+  // Greet-by-name fallback: if greetByName is on AND the LLM's reply
+  // LOOKS LIKE a greeting (starts with hi/hello/welcome/marhaba/etc, or
+  // reproduces the operator's configured greeting), but doesn't already
+  // mention the customer's first name, prepend it deterministically so
+  // the operator's setting is actually honoured even when the LLM goes
+  // off-script.
   let text = result.text;
   if (shouldGreetByName && text) {
     const hasName = text.toLowerCase().includes(customerFirstName.toLowerCase());
-    if (!hasName) {
-      // Detect Arabic / Hebrew / similar RTL alphabets in the reply.
-      // For Arabic, the natural form is "أهلاً <name>،" — keep the
-      // existing reply intact and prepend a culturally-correct greeting.
+    // Greeting-detector. Matches English / Arabic / French / Spanish
+    // opening greetings + emoji-led ones (👋, 🙏, etc.) at the start of
+    // the reply. Anchored to the first ~50 chars so we don't catch
+    // "hi" mid-sentence later in the reply.
+    const opening = text.slice(0, 80).toLowerCase();
+    const greetingRe =
+      /^(\s*[👋🙏✨🌟😊]?\s*)?(hi|hello|hey|welcome|good\s+(morning|afternoon|evening)|greetings|أهل[اًاً]?|مرحب[اًا]|سلام|bonjour|salut|hola|buen(os|as)\s+(d[ií]as|tardes|noches))[\s,!.:؛،]/i;
+    const startsWithConfiguredGreeting =
+      greeting && greeting.length > 4 && text.startsWith(greeting.slice(0, Math.min(greeting.length, 30)));
+    const looksLikeGreeting = greetingRe.test(opening) || startsWithConfiguredGreeting;
+
+    if (!hasName && looksLikeGreeting) {
+      // Detect Arabic / Hebrew / RTL alphabets in the reply for a
+      // culturally-correct prefix. Otherwise default to English.
       const isArabic = /[؀-ۿ]/.test(text);
       const prefix = isArabic ? `أهلاً ${customerFirstName}، ` : `Hi ${customerFirstName}, `;
       text = prefix + text;

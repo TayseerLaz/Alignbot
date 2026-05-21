@@ -741,12 +741,13 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
               className="mt-1 size-4 cursor-pointer accent-brand-600"
             />
             <span>
-              <span className="font-medium">Greet customer by name on the first reply</span>
+              <span className="font-medium">Greet customer by name when the bot says hello</span>
               <span className="block text-[11px] text-foreground-muted">
-                Picks up the customer&apos;s WhatsApp profile name automatically. The bot opens
-                with it once, then doesn&apos;t repeat it in later replies. If WhatsApp
-                didn&apos;t share a name, the bot just uses your greeting as-is — no awkward
-                empty placeholder.
+                Picks up the customer&apos;s WhatsApp profile name automatically. Whenever the
+                bot opens with a greeting (hi / hello / welcome / مرحبا / bonjour…), it
+                includes their first name (e.g. &quot;Hi Razan, welcome to …&quot;). Mid-conversation
+                replies don&apos;t shoehorn the name in. If WhatsApp didn&apos;t share a name, the
+                greeting is used unchanged — no awkward empty placeholder.
               </span>
             </span>
           </label>

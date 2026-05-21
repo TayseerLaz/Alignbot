@@ -2611,9 +2611,17 @@ async function maybeReplyAsBot(args: {
     // note (so they don't get audio replies after typing a text question).
     // `text` keeps existing behaviour. `customerSpokeAudio` already computed
     // above so we could feed it into the LLM's delivery-mode banner.
-    const wantsVoice =
+    //
+    // Order confirmations always come back as text — the customer needs to
+    // see the order summary in writing so they can scroll back, screenshot,
+    // or forward it. Spoken-only confirmations are too easy to miss the
+    // details of (item name, quantity, total). Applies in voice +
+    // match_customer modes alike. Bookings get the same treatment.
+    const isOrderConfirmation = !!cartMarkerPayload || !!bookingMatch;
+    const baseWantsVoice =
       ctx.replyMode === 'voice' ||
       (ctx.replyMode === 'match_customer' && customerSpokeAudio);
+    const wantsVoice = baseWantsVoice && !isOrderConfirmation;
     // Voice-mode visibility: log the decision explicitly so we can tell
     // why a voice reply did/didn't happen without grep-spelunking. The
     // generic "config resolution" line above shows the inputs; this
@@ -2626,13 +2634,17 @@ async function maybeReplyAsBot(args: {
         replyMode: ctx.replyMode,
         customerSpokeAudio,
         inboundType: m.type,
+        baseWantsVoice,
+        isOrderConfirmation,
         wantsVoice,
         ttsProvider: ctx.ttsProvider,
         hasTtsVoice: !!ctx.ttsVoiceName,
       },
       wantsVoice
         ? '[whatsapp] wantsVoice=true — attempting TTS reply'
-        : '[whatsapp] wantsVoice=false — sending text reply',
+        : isOrderConfirmation
+          ? '[whatsapp] wantsVoice=false — order/booking confirmation always sends text'
+          : '[whatsapp] wantsVoice=false — sending text reply',
     );
 
     let metaMessageId: string | null = null;

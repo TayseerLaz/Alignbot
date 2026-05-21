@@ -349,6 +349,120 @@ export default async function botRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- GET /bot/voice-status ----------
+  // One-shot voice-reply diagnostic. Surfaces the exact reason voice
+  // mode did or didn't engage on the last few inbound messages, plus
+  // whether the TTS providers are actually configured at the env
+  // level. Admin-only; cheap; safe to leave in place as a long-term
+  // troubleshooting tool.
+  r.get(
+    '/bot/voice-status',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Diagnose why voice replies are / are not firing.',
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const { isGoogleTtsConfigured } = await import('../../lib/tts-google.js');
+      const { isElevenLabsConfigured } = await import('../../lib/tts-elevenlabs.js');
+      return app.tenant(req, async (tx) => {
+        const cfg = await tx.botConfig.findUnique({ where: { organizationId: orgId } });
+        // Last 10 inbound voice/audio messages — confirms inbound type
+        // is being detected as audio (which is what triggers
+        // match_customer voice mode on the bot side).
+        const recentInbound = await tx.whatsAppMessage.findMany({
+          where: { organizationId: orgId, direction: 'inbound' },
+          orderBy: { receivedAt: 'desc' },
+          take: 10,
+          select: {
+            id: true,
+            receivedAt: true,
+            messageType: true,
+            fromNumber: true,
+          },
+        });
+        // For each of those, also peek at the very next outbound reply
+        // so we can see whether the bot answered with text or audio.
+        const audited = await Promise.all(
+          recentInbound.map(async (inb) => {
+            const reply = await tx.whatsAppMessage.findFirst({
+              where: {
+                organizationId: orgId,
+                direction: 'outbound',
+                receivedAt: { gt: inb.receivedAt },
+                rawPayload: { path: ['sentBy'], equals: 'bot' },
+              },
+              orderBy: { receivedAt: 'asc' },
+              select: { messageType: true, receivedAt: true },
+            });
+            return {
+              inboundAt: inb.receivedAt.toISOString(),
+              inboundType: inb.messageType,
+              from: inb.fromNumber,
+              botReplyType: reply?.messageType ?? null,
+              botRepliedAt: reply?.receivedAt?.toISOString() ?? null,
+            };
+          }),
+        );
+        const replyMode = (cfg?.replyMode as string | null) ?? 'text';
+        const ttsProvider = (cfg?.ttsProvider as string | null) ?? 'google';
+        const providerConfigured =
+          ttsProvider === 'elevenlabs'
+            ? isElevenLabsConfigured()
+            : isGoogleTtsConfigured();
+        // Build an actionable diagnosis sentence so the operator can
+        // act without reading the raw object.
+        const audioInbounds = audited.filter(
+          (a) => a.inboundType === 'audio' || a.inboundType === 'voice',
+        );
+        const audioRepliedAsText = audioInbounds.filter(
+          (a) => a.botReplyType && a.botReplyType !== 'audio',
+        );
+        let diagnosis: string;
+        if (replyMode === 'text') {
+          diagnosis =
+            'replyMode is "text" — the bot ALWAYS sends text regardless of inbound type. Switch to "match_customer" or "voice" on /bot to get voice replies.';
+        } else if (!providerConfigured) {
+          diagnosis =
+            `replyMode is "${replyMode}" but the ${ttsProvider} TTS provider is not configured. ` +
+            (ttsProvider === 'elevenlabs'
+              ? 'Set ELEVENLABS_API_KEY + ELEVENLABS_VOICE_ID secrets in GitHub Actions and redeploy.'
+              : 'Set GOOGLE_TTS_API_KEY secret in GitHub Actions and redeploy.');
+        } else if (replyMode === 'match_customer' && audioInbounds.length === 0) {
+          diagnosis =
+            'replyMode is "match_customer" and TTS is configured, but none of the last 10 inbound messages were audio. The bot only speaks back when the customer speaks first. Send a voice note and retry.';
+        } else if (replyMode === 'match_customer' && audioRepliedAsText.length > 0) {
+          diagnosis =
+            'TTS is configured + customer sent audio + replyMode is "match_customer" — but the bot replied as text. Likely the TTS call or transcode failed at runtime. Check journalctl -u aligned-api | grep -E "TTS|wantsVoice".';
+        } else {
+          diagnosis = 'Voice path looks healthy. Send another voice note and check the result.';
+        }
+        return {
+          data: {
+            diagnosis,
+            config: {
+              replyMode,
+              ttsProvider,
+              ttsVoiceName: cfg?.ttsVoiceName ?? null,
+              deployed: cfg?.deployedAt != null,
+            },
+            providerConfigured,
+            googleTtsConfigured: isGoogleTtsConfigured(),
+            elevenLabsConfigured: isElevenLabsConfigured(),
+            recentMessages: audited,
+            summary: {
+              recentInboundAudio: audioInbounds.length,
+              audioRepliedAsText: audioRepliedAsText.length,
+            },
+          },
+        };
+      });
+    },
+  );
+
   // ---------- PUT /bot/config ----------
   r.put(
     '/bot/config',

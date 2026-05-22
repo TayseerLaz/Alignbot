@@ -421,50 +421,6 @@ function InlineProvenanceDetail({ p }: { p: MessageProvenance }) {
           </ul>
         )}
       </Section>
-      <Section title="LLM call">
-        <dl className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
-          <dt className="text-foreground-subtle">Model</dt>
-          <dd className="font-mono">{p.model}</dd>
-          <dt className="text-foreground-subtle">Temperature</dt>
-          <dd className="font-mono">{p.temperature.toFixed(2)}</dd>
-          <dt className="text-foreground-subtle">Prompt tokens</dt>
-          <dd className="font-mono">{p.promptTokens.toLocaleString()}</dd>
-          <dt className="text-foreground-subtle">Completion tokens</dt>
-          <dd className="font-mono">{p.completionTokens.toLocaleString()}</dd>
-          <dt className="text-foreground-subtle">Latency</dt>
-          <dd className="font-mono">{p.latencyMs} ms</dd>
-          <dt className="text-foreground-subtle">Prompt SHA-256</dt>
-          <dd className="truncate font-mono text-[10px]" title={p.systemPrompt.sha256}>
-            {p.systemPrompt.sha256.slice(0, 16)}…
-          </dd>
-        </dl>
-      </Section>
-      <Section title="Raw I/O">
-        <details className="text-[11px]">
-          <summary className="cursor-pointer font-medium text-foreground-muted">
-            System prompt ({p.systemPrompt.body.length.toLocaleString()} chars)
-          </summary>
-          <pre className="mt-1 max-h-40 overflow-auto rounded bg-surface px-2 py-1 text-[10px] leading-snug text-foreground">
-            {p.systemPrompt.body}
-          </pre>
-        </details>
-        <details className="mt-1 text-[11px]">
-          <summary className="cursor-pointer font-medium text-foreground-muted">
-            User prompt
-          </summary>
-          <pre className="mt-1 overflow-auto rounded bg-surface px-2 py-1 text-[10px] text-foreground">
-            {p.userPrompt}
-          </pre>
-        </details>
-        <details className="mt-1 text-[11px]">
-          <summary className="cursor-pointer font-medium text-foreground-muted">
-            History ({p.historyJson.length} turns)
-          </summary>
-          <pre className="mt-1 max-h-40 overflow-auto rounded bg-surface px-2 py-1 text-[10px] text-foreground">
-            {p.historyJson.map((t) => `[${t.role}] ${t.content}`).join('\n\n')}
-          </pre>
-        </details>
-      </Section>
     </div>
   );
 }

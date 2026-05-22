@@ -433,12 +433,30 @@ export function scanReply(reply: string, c: ScanCandidates): ScanResult {
       }
       if (!lastCap) continue;
       const frag = lastCap[1]!.trim();
-      // Stoplist — verbs / connectors / interjections that capitalise on
-      // sentence starts but aren't product names.
+      // Stoplist — capitalised tokens that are NEVER product names, even
+      // when they appear right before a price. Three groups:
+      //   1. Verbs / interjections / greetings (sentence-openers)
+      //   2. Order-summary labels (Subtotal, Total, Delivery, …) —
+      //      ALWAYS precede a price in a cart-confirmation reply and
+      //      were the #1 source of false-positive hallucinations.
+      //   3. Currency codes (KWD, USD, …) — the regex's capitalised-
+      //      phrase matcher treats them as words. Without this entry
+      //      a confirmation like "Subtotal 0.150 KWD, delivery 0.000
+      //      KWD" flags KWD itself as an unknown product.
       const stop = new Set([
+        // verbs / interjections
         'I', 'You', 'We', 'Hi', 'Hey', 'Hello', 'Welcome', 'Want', 'Try', 'Get',
         'Add', 'Order', 'Pick', 'Have', 'Take', 'Need', 'Yes', 'No', 'Sure',
-        'Okay', 'Great', 'Perfect', 'Thanks', 'Thank', 'Sorry', 'The',
+        'Okay', 'Great', 'Perfect', 'Thanks', 'Thank', 'Sorry', 'The', 'Just',
+        'Got', 'Done', 'Cool', 'Awesome', 'Lovely', 'Nice', 'Excellent',
+        // order-summary labels
+        'Subtotal', 'Total', 'Grandtotal', 'Tax', 'Vat', 'Fee', 'Fees',
+        'Delivery', 'Shipping', 'Discount', 'Discounts', 'Service', 'Tip',
+        'Charge', 'Surcharge', 'Refund', 'Credit', 'Balance', 'Amount',
+        'Price', 'Quantity', 'Qty',
+        // ISO 4217 codes for currencies we support today + common ones
+        'USD', 'EUR', 'GBP', 'KWD', 'BHD', 'OMR', 'JOD', 'AED', 'SAR',
+        'QAR', 'EGP', 'JPY', 'CNY', 'INR', 'TRY', 'CHF', 'CAD', 'AUD',
       ]);
       if (stop.has(frag.split(/\s+/)[0]!)) {
         // Common opener captured — fall back to scanning ALL phrases and

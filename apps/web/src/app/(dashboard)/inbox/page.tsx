@@ -1187,9 +1187,7 @@ function ProvenancePanel({
 }: {
   query: ReturnType<typeof useQuery<{ data: MessageProvenance }>>;
 }) {
-  const [tab, setTab] = useState<'sources' | 'hallucinations' | 'llm' | 'raw'>(
-    'sources',
-  );
+  const [tab, setTab] = useState<'sources' | 'hallucinations'>('sources');
   if (query.isLoading) {
     return (
       <div className="rounded-md border border-border bg-surface-muted/40 px-3 py-2 text-xs text-foreground-muted">
@@ -1225,14 +1223,10 @@ function ProvenancePanel({
           label={`Hallucinations (${hals.length})`}
           accent={hals.length > 0 ? 'rose' : undefined}
         />
-        <ProvTab active={tab === 'llm'} onClick={() => setTab('llm')} label="LLM call" />
-        <ProvTab active={tab === 'raw'} onClick={() => setTab('raw')} label="Raw I/O" />
       </div>
       <div className="max-h-72 overflow-auto px-3 py-2 leading-relaxed">
         {tab === 'sources' ? <ProvSources p={p} /> : null}
         {tab === 'hallucinations' ? <ProvHallucinations p={p} /> : null}
-        {tab === 'llm' ? <ProvLLM p={p} /> : null}
-        {tab === 'raw' ? <ProvRaw p={p} /> : null}
       </div>
     </div>
   );
@@ -1463,73 +1457,6 @@ function ProvHallucinations({ p }: { p: MessageProvenance }) {
         </li>
       ))}
     </ul>
-  );
-}
-
-function ProvLLM({ p }: { p: MessageProvenance }) {
-  return (
-    <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
-      <dt className="text-foreground-subtle">Model</dt>
-      <dd className="font-mono">{p.model}</dd>
-      <dt className="text-foreground-subtle">Temperature</dt>
-      <dd className="font-mono">{p.temperature.toFixed(2)}</dd>
-      <dt className="text-foreground-subtle">Prompt tokens</dt>
-      <dd className="font-mono">{p.promptTokens.toLocaleString()}</dd>
-      <dt className="text-foreground-subtle">Completion tokens</dt>
-      <dd className="font-mono">{p.completionTokens.toLocaleString()}</dd>
-      <dt className="text-foreground-subtle">Latency</dt>
-      <dd className="font-mono">{p.latencyMs} ms</dd>
-      <dt className="text-foreground-subtle">Prompt SHA-256</dt>
-      <dd className="truncate font-mono text-[10px]" title={p.systemPrompt.sha256}>
-        {p.systemPrompt.sha256.slice(0, 16)}…
-      </dd>
-      <dt className="text-foreground-subtle">Candidates packed</dt>
-      <dd className="font-mono">
-        {p.candidates.products.length}p / {p.candidates.services.length}s /{' '}
-        {p.candidates.faqs.length}f
-      </dd>
-      <dt className="text-foreground-subtle">Recorded</dt>
-      <dd className="font-mono">{formatRelative(p.createdAt)}</dd>
-    </dl>
-  );
-}
-
-function ProvRaw({ p }: { p: MessageProvenance }) {
-  return (
-    <div className="space-y-2">
-      <details>
-        <summary className="cursor-pointer text-[11px] font-medium text-foreground-muted hover:text-foreground">
-          System prompt ({p.systemPrompt.body.length.toLocaleString()} chars)
-        </summary>
-        <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface px-2 py-1.5 text-[10px] leading-snug text-foreground">
-          {p.systemPrompt.body}
-        </pre>
-      </details>
-      <details>
-        <summary className="cursor-pointer text-[11px] font-medium text-foreground-muted hover:text-foreground">
-          User prompt
-        </summary>
-        <pre className="mt-1 overflow-auto rounded bg-surface px-2 py-1.5 text-[10px] text-foreground">
-          {p.userPrompt}
-        </pre>
-      </details>
-      <details>
-        <summary className="cursor-pointer text-[11px] font-medium text-foreground-muted hover:text-foreground">
-          History ({p.historyJson.length} turns)
-        </summary>
-        <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface px-2 py-1.5 text-[10px] text-foreground">
-          {p.historyJson.map((t) => `[${t.role}] ${t.content}`).join('\n\n')}
-        </pre>
-      </details>
-      <details>
-        <summary className="cursor-pointer text-[11px] font-medium text-foreground-muted hover:text-foreground">
-          Candidate set (products / services / FAQs packed into the prompt)
-        </summary>
-        <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface px-2 py-1.5 text-[10px] text-foreground">
-          {JSON.stringify(p.candidates, null, 2)}
-        </pre>
-      </details>
-    </div>
   );
 }
 

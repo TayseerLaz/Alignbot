@@ -121,6 +121,25 @@ export interface BotData {
 // "booking"), a human-readable label ("Book a consultation"), and an
 // optional response template — the wording the operator wants the bot
 // to use when the customer's message matches that intent.
+// Phase 10.3 — intents whose response templates duplicate fields that
+// already have a canonical home elsewhere are SKIPPED so we don't pack
+// two competing answers to the same question into the prompt:
+//   • 'greeting'     → canonical home is BotConfig.greeting
+//   • 'about' / 'who_we_are' / 'company' → canonical home is BusinessInfo.about
+// Operators can still edit them in the flow editor but the bot won't
+// quote them anymore. The greeting / about field is the single source.
+const SUPPRESSED_INTENT_KEYS = new Set([
+  'greeting',
+  'welcome',
+  'hello',
+  'about',
+  'about_us',
+  'who_we_are',
+  'company',
+  'tell_me_about',
+  'company_info',
+]);
+
 function extractIntents(
   conversationFlow: unknown,
   responseTemplates: unknown,
@@ -139,6 +158,7 @@ function extractIntents(
     for (const n of nodes) {
       const intent = (n.intent ?? '').trim();
       if (!intent || seen.has(intent)) continue;
+      if (SUPPRESSED_INTENT_KEYS.has(intent.toLowerCase().replace(/\s+/g, '_'))) continue;
       const response = (n.response ?? '').trim();
       const label = (n.label ?? intent).trim();
       if (!response) continue; // empty templates don't help the LLM
@@ -151,6 +171,7 @@ function extractIntents(
     for (const [k, v] of Object.entries(responseTemplates as Record<string, unknown>)) {
       const intent = k.trim();
       if (!intent || seen.has(intent)) continue;
+      if (SUPPRESSED_INTENT_KEYS.has(intent.toLowerCase().replace(/\s+/g, '_'))) continue;
       if (typeof v !== 'string' || !v.trim()) continue;
       seen.add(intent);
       out.push({ intent, label: intent, response: v.trim() });
@@ -209,13 +230,12 @@ function formatMoney(minor: number | null, currency: string | null): string {
 // concrete tenant transaction client narrows further than we need.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
-  const [config, kb, products, services, biz, faqs, policies] = (await Promise.all([
+  // Phase 10.1 — KB consolidated into FAQs. Every approved KnowledgeBase
+  // row has been copied into `faqs` via migration; the bot now reads ONE
+  // Q&A source. The kb[] slot in BotData stays for backward-compat with
+  // the BotData type but is always empty going forward.
+  const [config, products, services, biz, faqs, policies] = (await Promise.all([
     tx.botConfig.findUnique({ where: { organizationId: orgId } }),
-    tx.knowledgeBaseEntry.findMany({
-      where: { organizationId: orgId, approved: true },
-      orderBy: { updatedAt: 'desc' },
-      take: 60,
-    }),
     // Include up to 5 images per product, primary first. The bot reply
     // path attaches them when the LLM emits an [IMAGE: <sku>] marker
     // (multiple images → gallery send).
@@ -254,7 +274,6 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
     }),
   ])) as [
     BotData['config'],
-    BotData['kb'],
     // Prisma return type has nested images[]; we'll flatten next.
     (Omit<BotData['products'][number], 'imageStorageKeys'> & {
       images: { asset: { storageKey: string } }[];
@@ -264,6 +283,8 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
     BotData['faqs'],
     BotData['policies'],
   ];
+  // KB stays in BotData for back-compat but is always empty post-Phase 10.
+  const kb: BotData['kb'] = [];
 
   const flatProducts: BotData['products'] = products.map((p) => ({
     id: p.id,
@@ -738,8 +759,11 @@ export async function buildBotResponse(
             const imgs = p.imageStorageKeys?.length ?? 0;
             const imgTag =
               imgs > 1 ? ` [has ${imgs} images]` : imgs === 1 ? ' [has image]' : '';
+            // Phase 10.2 — currency is org-wide. Always quote prices in
+            // BusinessInfo.currency, never the per-product column (which
+            // is read-only and mirrors biz; this guards stale rows).
             const priceTag = p.priceMinor != null
-              ? ` · ${formatMoney(p.priceMinor, p.currency)}`
+              ? ` · ${formatMoney(p.priceMinor, biz?.currency ?? p.currency)}`
               : '';
             const desc = p.shortDescription ? ` — ${p.shortDescription.slice(0, 120)}` : '';
             return `- ${p.name} (${p.sku})${imgTag}${priceTag}${desc}`;
@@ -748,7 +772,7 @@ export async function buildBotResponse(
       : '(no products listed)',
     services.length > 0
       ? `Services:\n${services
-          .map((s) => `- ${s.name}${s.basePriceMinor != null ? ` · ${formatMoney(s.basePriceMinor, s.currency)}` : ''}${s.durationMinutes ? ` · ${s.durationMinutes}min` : ''}${s.shortDescription ? ` — ${s.shortDescription.slice(0, 120)}` : ''}`)
+          .map((s) => `- ${s.name}${s.basePriceMinor != null ? ` · ${formatMoney(s.basePriceMinor, biz?.currency ?? s.currency)}` : ''}${s.durationMinutes ? ` · ${s.durationMinutes}min` : ''}${s.shortDescription ? ` — ${s.shortDescription.slice(0, 120)}` : ''}`)
           .join('\n')}`
       : '',
     faqs.length > 0

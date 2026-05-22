@@ -497,11 +497,11 @@ function KnowledgeBaseCard() {
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-2">
         <div>
-          <CardTitle>Knowledge base</CardTitle>
+          <CardTitle>Knowledge base <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">Deprecated</span></CardTitle>
           <CardDescription>
-            What the bot answers from. AI entries start unapproved — review them, then approve or
-            edit before deploy. If the bot keeps citing stale facts (e.g. items from a previous
-            crawl), use Delete all to wipe and re-analyse.
+            <strong>The bot no longer reads from this section.</strong> All approved entries have been
+            migrated to <a href="/business-info" className="text-brand-600 underline">FAQs on /business-info</a> —
+            edit your Q&amp;A there. This view stays so you can verify the migration and clean up any duplicates.
           </CardDescription>
         </div>
         <div className="flex items-center gap-2">

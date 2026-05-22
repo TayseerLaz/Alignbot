@@ -185,28 +185,43 @@ function findMatchingNgram(
   return null;
 }
 
-// Look ~40 chars on either side of `position` in `reply` for a price token
-// (digits + currency). Returns the parsed minor-units value if found.
+// Find the price token associated with a product mention at `position`.
+// Constrained to the SAME LINE so that in a multi-item bullet list like
+//   - Blah Blah Milkshake, 1.000 KWD
+//   - Enstein Milkshake,    0.150 KWD
+// asking for the price of "Enstein Milkshake" doesn't bleed into the
+// previous bullet's "1.000 KWD". Preference order:
+//   1. Same-line FORWARD of `position` (matches "Name, PRICE" phrasings)
+//   2. Same-line BACKWARD of `position` (matches "PRICE for Name")
 function extractPriceNear(
   reply: string,
   position: number,
   currency: string | null,
 ): { rawText: string; minor: number } | null {
-  const win = reply.slice(Math.max(0, position - 40), position + 80);
+  const lineStart = Math.max(0, reply.lastIndexOf('\n', position - 1) + 1);
+  const lineEndRaw = reply.indexOf('\n', position);
+  const lineEnd = lineEndRaw < 0 ? reply.length : lineEndRaw;
+  const forward = reply.slice(position, lineEnd);
+  const backward = reply.slice(lineStart, position);
+
   const code = (currency ?? 'USD').toUpperCase();
-  // Numbers (e.g. 1.250 / 1,250 / 4.50) followed by the currency code, or
-  // preceded by a known symbol ($, €, £, ﷼).
   const codeRe = new RegExp(String.raw`\b(\d+(?:[.,]\d+)?)\s*${escapeRegex(code)}\b`, 'i');
   const symbolRe = /([$€£])\s*(\d+(?:[.,]\d+)?)/;
-  const mCode = win.match(codeRe);
-  const mSym = win.match(symbolRe);
-  const m = mCode ?? mSym;
-  if (!m) return null;
-  const numStr = (mCode ? m[1] : m[2])!.replace(',', '.');
-  const major = parseFloat(numStr);
+
+  const tryFind = (window: string): { rawText: string; numStr: string } | null => {
+    const mCode = window.match(codeRe);
+    if (mCode) return { rawText: mCode[0], numStr: mCode[1]! };
+    const mSym = window.match(symbolRe);
+    if (mSym) return { rawText: mSym[0], numStr: mSym[2]! };
+    return null;
+  };
+
+  const hit = tryFind(forward) ?? tryFind(backward);
+  if (!hit) return null;
+  const major = parseFloat(hit.numStr.replace(',', '.'));
   if (!Number.isFinite(major)) return null;
   const { minorPerMajor } = currencyMeta(currency);
-  return { rawText: m[0], minor: Math.round(major * minorPerMajor) };
+  return { rawText: hit.rawText, minor: Math.round(major * minorPerMajor) };
 }
 
 // True iff `frag` (a phrase pulled from the reply) is a substring-equivalent

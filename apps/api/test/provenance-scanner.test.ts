@@ -64,6 +64,37 @@ describe('scanReply — citations', () => {
     expect(out.hallucinations.filter((h) => h.type === 'price_drift')).toHaveLength(0);
   });
 
+  it('does NOT bleed the previous bullet\'s price into the next item', () => {
+    // Real-world false positive from production: in a list like
+    //   - Blah Blah Milkshake, 1.000 KWD
+    //   - Oreo Milkshake, 0.150 KWD
+    // the scanner used to grab "1.000 KWD" as Oreo's cited price.
+    const kb = makeKb({
+      products: [
+        {
+          id: 'p1',
+          name: 'Blah Blah Milkshake',
+          sku: 'BLAH',
+          priceMinor: 1000,
+          currency: 'KWD',
+        },
+        {
+          id: 'p2',
+          name: 'Oreo Milkshake',
+          sku: 'OREO',
+          priceMinor: 150,
+          currency: 'KWD',
+        },
+      ],
+    });
+    const r = '- Blah Blah Milkshake, 1.000 KWD\n- Oreo Milkshake, 0.150 KWD';
+    const out = scanReply(r, kb);
+    const oreoDrift = out.hallucinations.find(
+      (h) => h.type === 'price_drift' && /Oreo/i.test(h.reason),
+    );
+    expect(oreoDrift).toBeUndefined();
+  });
+
   it('cites a FAQ when a distinctive 3-gram from its answer appears', () => {
     const kb = makeKb({
       faqs: [

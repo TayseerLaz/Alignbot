@@ -125,7 +125,8 @@ interface MessageProvenance {
           | 'faq'
           | 'policy'
           | 'business_info'
-          | 'bot_config';
+          | 'bot_config'
+          | 'customer_profile';
         id: string | null;
         label: string;
         snippet: string;
@@ -1023,12 +1024,17 @@ function Bubble({
   // Phase 8 / 1.3 — ALIGNED-admin only: click any bot bubble to inline
   // the message provenance panel underneath. Regular users see nothing.
   const isBotMessage = isOut && message.sentBy === 'bot';
-  const canAudit = isAlignedAdmin && isBotMessage;
   // Phase 8 / 1.5 — image bubbles have no LLM provenance row, but we
   // still surface their upstream source inline (greeting image on /bot
   // vs product image keyed by SKU). Visible to ALIGNED admins only.
   const hasImageSource =
     isAlignedAdmin && isBotMessage && message.imageSource != null;
+  // Image bubbles never call the LLM, so the "AI source" button +
+  // 4-tab panel are nonsense for them — clicking would just return a
+  // 404 and confuse the operator. The inline image-source attribution
+  // below the bubble IS the provenance for image messages.
+  const isImage = (message.messageType ?? '').toLowerCase() === 'image';
+  const canAudit = isAlignedAdmin && isBotMessage && !isImage;
   const [open, setOpen] = useState(false);
   const provQ = useQuery({
     queryKey: ['provenance', message.id],
@@ -1334,48 +1340,80 @@ function CitationDetail({
       priceMatchesDb?: boolean;
     };
     return (
-      <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px]">
-        {meta.sku ? (
-          <>
-            <dt className="text-foreground-subtle">SKU</dt>
-            <dd>
-              <code className="rounded bg-surface-muted px-1 font-mono">{meta.sku}</code>
-            </dd>
-          </>
-        ) : null}
-        {typeof meta.catalogPriceMinor === 'number' ? (
-          <>
-            <dt className="text-foreground-subtle">Catalog price</dt>
-            <dd className="font-mono">{(meta.catalogPriceMinor / 1000).toFixed(3)}</dd>
-          </>
-        ) : null}
-        {meta.citedPrice ? (
-          <>
-            <dt className="text-foreground-subtle">Cited in reply</dt>
-            <dd className="font-mono">
-              {meta.citedPrice}{' '}
-              {meta.priceMatchesDb === true ? (
-                <span className="text-emerald-700">✓ matches</span>
-              ) : meta.priceMatchesDb === false ? (
-                <span className="text-rose-700">⚠ differs from catalog</span>
-              ) : null}
-            </dd>
-          </>
-        ) : null}
-      </dl>
+      <>
+        <p className="mt-1 text-[11px] text-foreground-muted">
+          Taken from the <span className="font-medium">{c.type === 'product' ? 'Products' : 'Services'}</span>{' '}
+          page (catalog row).
+        </p>
+        <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px]">
+          {meta.sku ? (
+            <>
+              <dt className="text-foreground-subtle">SKU</dt>
+              <dd>
+                <code className="rounded bg-surface-muted px-1 font-mono">{meta.sku}</code>
+              </dd>
+            </>
+          ) : null}
+          {typeof meta.catalogPriceMinor === 'number' ? (
+            <>
+              <dt className="text-foreground-subtle">Catalog price</dt>
+              <dd className="font-mono">{(meta.catalogPriceMinor / 1000).toFixed(3)}</dd>
+            </>
+          ) : null}
+          {meta.citedPrice ? (
+            <>
+              <dt className="text-foreground-subtle">Cited in reply</dt>
+              <dd className="font-mono">
+                {meta.citedPrice}{' '}
+                {meta.priceMatchesDb === true ? (
+                  <span className="text-emerald-700">✓ matches</span>
+                ) : meta.priceMatchesDb === false ? (
+                  <span className="text-rose-700">⚠ differs from catalog</span>
+                ) : null}
+              </dd>
+            </>
+          ) : null}
+        </dl>
+      </>
     );
   }
   if (c.type === 'bot_config' && c.label === 'greeting') {
     return (
       <p className="mt-1 text-[11px] text-foreground-muted">
-        Configured greeting (BotConfig.greeting)
+        Taken from the <span className="font-medium">Greeting</span> you wrote on the Bot
+        page.
       </p>
     );
   }
   if (c.type === 'business_info' && c.label === 'menuUrl') {
     return (
       <p className="mt-1 text-[11px] text-foreground-muted">
-        Menu link set on Business info
+        Taken from the <span className="font-medium">Menu link</span> field on the
+        Business info page.
+      </p>
+    );
+  }
+  if (c.type === 'business_info' && c.label === 'legalName') {
+    return (
+      <p className="mt-1 text-[11px] text-foreground-muted">
+        Taken from the <span className="font-medium">Business name</span> field on the
+        Business info page.
+      </p>
+    );
+  }
+  if (c.type === 'business_info' && c.label === 'websiteUrl') {
+    return (
+      <p className="mt-1 text-[11px] text-foreground-muted">
+        Taken from the <span className="font-medium">Website</span> field on the
+        Business info page.
+      </p>
+    );
+  }
+  if (c.type === 'business_info' && c.label === 'operatingHours') {
+    return (
+      <p className="mt-1 text-[11px] text-foreground-muted">
+        Taken from the <span className="font-medium">Opening hours</span> on the
+        Business info page.
       </p>
     );
   }
@@ -1386,11 +1424,44 @@ function CitationDetail({
       </p>
     );
   }
+  if (c.type === 'customer_profile') {
+    const meta = (c.meta ?? {}) as { sourceDescription?: string };
+    return (
+      <p className="mt-1 text-[11px] text-foreground-muted">
+        {meta.sourceDescription ??
+          "Customer's WhatsApp profile (Meta-provided, not editable)"}
+        .
+      </p>
+    );
+  }
+  if (c.type === 'faq') {
+    return (
+      <p className="mt-1 text-[11px] text-foreground-muted">
+        Taken from your <span className="font-medium">FAQs</span> on the Business info
+        page.
+      </p>
+    );
+  }
+  if (c.type === 'policy') {
+    return (
+      <p className="mt-1 text-[11px] text-foreground-muted">
+        Taken from your <span className="font-medium">Policies</span> on the Business info
+        page.
+      </p>
+    );
+  }
   return null;
 }
 
 function sourcePageForCitation(c: {
-  type: 'product' | 'service' | 'faq' | 'policy' | 'business_info' | 'bot_config';
+  type:
+    | 'product'
+    | 'service'
+    | 'faq'
+    | 'policy'
+    | 'business_info'
+    | 'bot_config'
+    | 'customer_profile';
   id: string | null;
   label: string;
 }): { href: string; label: string } | null {
@@ -1411,6 +1482,11 @@ function sourcePageForCitation(c: {
       return { href: '/business-info', label: 'Edit on /business-info' };
     case 'bot_config':
       return { href: '/bot', label: 'Edit on /bot' };
+    case 'customer_profile':
+      // No operator-editable page — the source is the customer's WhatsApp
+      // profile, set on their phone. We could deep-link to the thread,
+      // but the field itself is not editable from our portal.
+      return null;
     default:
       return null;
   }
@@ -1463,7 +1539,14 @@ function ProvHallucinations({ p }: { p: MessageProvenance }) {
 function ProvTypeBadge({
   type,
 }: {
-  type: 'product' | 'service' | 'faq' | 'policy' | 'business_info' | 'bot_config';
+  type:
+    | 'product'
+    | 'service'
+    | 'faq'
+    | 'policy'
+    | 'business_info'
+    | 'bot_config'
+    | 'customer_profile';
 }) {
   const colours: Record<typeof type, string> = {
     product: 'bg-emerald-100 text-emerald-700',
@@ -1472,6 +1555,7 @@ function ProvTypeBadge({
     policy: 'bg-amber-100 text-amber-700',
     business_info: 'bg-slate-100 text-slate-700',
     bot_config: 'bg-fuchsia-100 text-fuchsia-700',
+    customer_profile: 'bg-indigo-100 text-indigo-700',
   };
   return (
     <span

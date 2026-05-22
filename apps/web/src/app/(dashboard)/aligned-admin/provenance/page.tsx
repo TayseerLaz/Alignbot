@@ -73,7 +73,14 @@ interface MessageProvenance {
   };
   citations:
     | {
-        type: 'product' | 'service' | 'faq' | 'policy' | 'business_info';
+        type:
+          | 'product'
+          | 'service'
+          | 'faq'
+          | 'policy'
+          | 'business_info'
+          | 'bot_config'
+          | 'customer_profile';
         id: string | null;
         label: string;
         snippet: string;
@@ -457,7 +464,14 @@ function Section({
 function SourceTypeBadge({
   t,
 }: {
-  t: 'product' | 'service' | 'faq' | 'policy' | 'business_info';
+  t:
+    | 'product'
+    | 'service'
+    | 'faq'
+    | 'policy'
+    | 'business_info'
+    | 'bot_config'
+    | 'customer_profile';
 }) {
   const colours: Record<typeof t, string> = {
     product: 'bg-emerald-100 text-emerald-700',
@@ -465,6 +479,8 @@ function SourceTypeBadge({
     faq: 'bg-violet-100 text-violet-700',
     policy: 'bg-amber-100 text-amber-700',
     business_info: 'bg-slate-100 text-slate-700',
+    bot_config: 'bg-fuchsia-100 text-fuchsia-700',
+    customer_profile: 'bg-indigo-100 text-indigo-700',
   };
   return (
     <span

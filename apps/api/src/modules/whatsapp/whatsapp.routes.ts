@@ -3610,6 +3610,16 @@ async function maybeReplyAsBot(args: {
             config: ctx.data.config
               ? { greeting: ctx.data.config.greeting }
               : null,
+            // Phase 8 / 1.6 — pass the customer's WhatsApp display name +
+            // any operator-set thread nickname so the scanner can cite
+            // them when the greet-by-name path injects them into the reply.
+            customer: {
+              whatsappName:
+                (ctx as { customerName?: string | null }).customerName ?? null,
+              // We don't currently surface the operator nickname distinct
+              // from customerName; they get merged in gatherBotData.
+              operatorNickname: null,
+            },
           },
           log: args.log,
         });

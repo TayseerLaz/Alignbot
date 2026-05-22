@@ -33,7 +33,11 @@ export interface Citation {
     | 'business_info'
     // Phase 8 / 1.5 — `bot_config` covers fields from the BotConfig record
     // (greeting, persona, etc.). The UI renders these with a /bot link.
-    | 'bot_config';
+    | 'bot_config'
+    // Phase 8 / 1.6 — `customer_profile` covers values pulled from the
+    // customer side of the conversation (their WhatsApp display name,
+    // their phone number). NOT operator-editable; comes from Meta.
+    | 'customer_profile';
   // The catalog row's UUID; null for fields without their own row
   // (e.g. business_info field-name citations, policy kinds, bot config).
   id: string | null;
@@ -90,6 +94,13 @@ export interface ScanCandidates {
   // languages) can be added if we want citations for them.
   config: {
     greeting: string | null;
+  } | null;
+  // The customer's WhatsApp display name (Meta-provided) + the
+  // operator-set nickname if any. The scanner cites whichever appears
+  // in the reply — this is how the greet-by-name path is attributed.
+  customer: {
+    whatsappName: string | null;
+    operatorNickname: string | null;
   } | null;
 }
 
@@ -360,6 +371,52 @@ export function scanReply(reply: string, c: ScanCandidates): ScanResult {
         confidence: 0.5,
         meta: { reason: 'Time-shaped token in reply' },
       });
+    }
+  }
+
+  // ---- customer_profile citations ----
+  // Customer's WhatsApp display name (or operator-set nickname) appears
+  // in greetings when the greet-by-name fallback fires. We cite the
+  // FIRST TOKEN since the bot-engine only uses the first word (avoids
+  // form-letter "Dear Mr. Surname" awkwardness). Confidence is 1.0 —
+  // the bot-engine literally injected this token into the reply.
+  if (c.customer?.whatsappName) {
+    const first = c.customer.whatsappName.trim().split(/\s+/)[0] ?? '';
+    if (first.length > 1) {
+      const m = findSnippet(reply, first);
+      if (m) {
+        citations.push({
+          type: 'customer_profile',
+          id: null,
+          label: 'WhatsApp display name',
+          snippet: m.snippet,
+          confidence: 1.0,
+          meta: {
+            value: first,
+            sourceDescription: "Customer's WhatsApp profile (Meta-provided, not editable)",
+          },
+        });
+      }
+    }
+  } else if (c.customer?.operatorNickname) {
+    // Fallback: when the customer has no WhatsApp display name, the
+    // bot uses the nickname the operator typed into the thread row.
+    const first = c.customer.operatorNickname.trim().split(/\s+/)[0] ?? '';
+    if (first.length > 1) {
+      const m = findSnippet(reply, first);
+      if (m) {
+        citations.push({
+          type: 'customer_profile',
+          id: null,
+          label: 'Customer nickname (operator-set)',
+          snippet: m.snippet,
+          confidence: 1.0,
+          meta: {
+            value: first,
+            sourceDescription: 'Nickname an operator typed on this thread',
+          },
+        });
+      }
     }
   }
 

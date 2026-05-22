@@ -1050,13 +1050,19 @@ export default async function inboxRoutes(app: FastifyInstance) {
               })
             : Promise.resolve([]),
         ]);
-        return { prov, products, services, faqs };
+        // Load any existing flag decisions so the UI can show "already
+        // marked" state on each hallucination row.
+        const decisions = await tx.provenanceFlagDecision.findMany({
+          where: { provenanceId: prov.id },
+          select: { flagIndex: true, decision: true, decidedAt: true, note: true },
+        });
+        return { prov, products, services, faqs, decisions };
       });
       if (!result) {
         reply.code(404);
         return { error: { code: ApiErrorCode.NOT_FOUND, message: 'No provenance for this message.' } };
       }
-      const { prov, products, services, faqs } = result;
+      const { prov, products, services, faqs, decisions } = result;
       return {
         data: {
           messageId: prov.messageId,
@@ -1079,6 +1085,13 @@ export default async function inboxRoutes(app: FastifyInstance) {
           // Outputs
           citations: prov.citations,
           hallucinations: prov.hallucinations,
+          // Per-flag decisions the operator already made.
+          flagDecisions: decisions.map((d) => ({
+            flagIndex: d.flagIndex,
+            decision: d.decision as 'false_positive' | 'true_positive' | 'skip',
+            decidedAt: d.decidedAt.toISOString(),
+            note: d.note,
+          })),
           // LLM call metadata
           model: prov.model,
           temperature: prov.temperature,
@@ -1171,6 +1184,125 @@ export default async function inboxRoutes(app: FastifyInstance) {
           flaggedMessageIds: first ? first.flagged_message_ids : [],
         },
       };
+    },
+  );
+
+  // ===================================================================
+  // Phase 8 / 1.7 — operator feedback loop.
+  //
+  // POST /inbox/messages/:messageId/flags/:flagIndex/decide
+  //
+  // ALIGNED-admin clicks one of the buttons on a hallucination row:
+  //   ✓ Not a problem  → decision='false_positive', auto-suppress the
+  //                      phrase for this org so the scanner stops
+  //                      flagging it on future replies
+  //   ⚠ Yes wrong      → decision='true_positive', no suppression
+  //   🤷 Skip           → decision='skip', no suppression
+  //
+  // Upsert by (provenance_id, flag_index) so re-clicking overwrites.
+  // ===================================================================
+  r.post(
+    '/inbox/messages/:messageId/flags/:flagIndex/decide',
+    {
+      schema: {
+        tags: ['inbox'],
+        summary: 'ALIGNED-admin only — mark a hallucination as fp/tp/skip.',
+        params: z.object({
+          messageId: uuidSchema,
+          flagIndex: z.coerce.number().int().min(0),
+        }),
+        body: z.object({
+          decision: z.enum(['false_positive', 'true_positive', 'skip']),
+          note: z.string().trim().max(500).optional(),
+        }),
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req, reply) => {
+      const { withRlsBypass } = await import('../../lib/db.js');
+      const { normalisePhraseForSuppression } = await import(
+        '../../lib/provenance-scanner.js'
+      );
+      const result = await withRlsBypass(async (tx) => {
+        const prov = await tx.messageProvenance.findUnique({
+          where: { messageId: req.params.messageId },
+          select: { id: true, organizationId: true, hallucinations: true },
+        });
+        if (!prov) return { error: 'not_found' as const };
+        const hals = Array.isArray(prov.hallucinations)
+          ? (prov.hallucinations as Array<{ matchedText?: string }>)
+          : [];
+        const flag = hals[req.params.flagIndex];
+        if (!flag) return { error: 'flag_index_out_of_range' as const };
+        const flaggedText = String(flag.matchedText ?? '').trim();
+        if (!flaggedText) return { error: 'flag_has_no_text' as const };
+
+        // Upsert the decision.
+        await tx.provenanceFlagDecision.upsert({
+          where: {
+            provenanceId_flagIndex: {
+              provenanceId: prov.id,
+              flagIndex: req.params.flagIndex,
+            },
+          },
+          create: {
+            organizationId: prov.organizationId,
+            provenanceId: prov.id,
+            flagIndex: req.params.flagIndex,
+            flaggedText,
+            decision: req.body.decision,
+            decidedByUserId: req.auth!.userId,
+            note: req.body.note ?? null,
+          },
+          update: {
+            decision: req.body.decision,
+            decidedByUserId: req.auth!.userId,
+            decidedAt: new Date(),
+            note: req.body.note ?? null,
+          },
+        });
+
+        // For false_positive: also create the suppression row so the
+        // scanner skips this phrase on future replies. The unique index
+        // on (organization_id, phrase) is partial (org_id IS NOT NULL),
+        // so we use findFirst + create instead of upsert — duplicate
+        // clicks just no-op.
+        if (req.body.decision === 'false_positive') {
+          const normalised = normalisePhraseForSuppression(flaggedText);
+          if (normalised.length > 0) {
+            const existing = await tx.provenanceSuppression.findFirst({
+              where: { organizationId: prov.organizationId, phrase: normalised },
+              select: { id: true },
+            });
+            if (!existing) {
+              await tx.provenanceSuppression.create({
+                data: {
+                  organizationId: prov.organizationId,
+                  phrase: normalised,
+                  note: req.body.note ?? 'Marked as not a problem from /inbox',
+                  createdByUserId: req.auth!.userId,
+                },
+              });
+            }
+          }
+        }
+
+        return { ok: true as const };
+      });
+
+      if ('error' in result) {
+        reply.code(result.error === 'not_found' ? 404 : 400);
+        return {
+          error: {
+            code:
+              result.error === 'not_found'
+                ? ApiErrorCode.NOT_FOUND
+                : ApiErrorCode.VALIDATION_ERROR,
+            message: result.error,
+          },
+        };
+      }
+      return { ok: true as const };
     },
   );
 }

@@ -142,6 +142,12 @@ SELECT _aligned_apply_tenant_rls('cart_items');
 -- Phase 8 — AI message provenance / audit trail
 SELECT _aligned_apply_tenant_rls('system_prompt_snapshots');
 SELECT _aligned_apply_tenant_rls('message_provenances');
+SELECT _aligned_apply_tenant_rls('provenance_flag_decisions');
+-- provenance_suppressions has a custom policy (NULL org_id = global,
+-- readable by every tenant). The migration installs it inline; we just
+-- enable + force RLS here on every re-apply for safety.
+ALTER TABLE provenance_suppressions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE provenance_suppressions FORCE ROW LEVEL SECURITY;
 -- plans is GLOBAL (no organization_id) — no RLS needed; access via API only.
 
 -- ---------- pg_trgm GIN indexes for fast search (Prisma can't express) ------

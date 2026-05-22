@@ -19,6 +19,7 @@ import {
   ScanSearch,
   Settings,
   ShieldCheck,
+  ShieldOff,
   ShoppingCart,
   TrendingUp,
   Upload,
@@ -111,6 +112,7 @@ const alignedAdminItems: NavItem[] = [
   { href: '/aligned-admin/system', label: 'System health', icon: Code2 },
   { href: '/aligned-admin/audit', label: 'Cross-tenant audit', icon: Activity },
   { href: '/aligned-admin/provenance', label: 'AI provenance', icon: ScanSearch },
+  { href: '/aligned-admin/provenance/suppressions', label: 'Suppression list', icon: ShieldOff },
   { href: '/aligned-admin/revenue', label: 'Revenue', icon: CreditCard },
 ];
 

@@ -345,8 +345,10 @@ model Organization {
   // Carts — customer orders captured by the AI bot or entered manually
   carts                 Cart[]
   // Phase 8 — AI message provenance / audit trail
-  systemPromptSnapshots SystemPromptSnapshot[]
-  messageProvenances    MessageProvenance[]
+  systemPromptSnapshots   SystemPromptSnapshot[]
+  messageProvenances      MessageProvenance[]
+  provenanceSuppressions  ProvenanceSuppression[]
+  provenanceFlagDecisions ProvenanceFlagDecision[]
 
   @@index([status])
   @@map("organizations")
@@ -390,6 +392,9 @@ model User {
   auditLogs           AuditLog[]       @relation("AuditActor")
   // Phase 3
   assignedThreads     WhatsAppThread[] @relation("WhatsAppThreadAssignee")
+  // Phase 8 — provenance feedback authorship
+  provenanceSuppressionsCreated ProvenanceSuppression[]   @relation("ProvenanceSuppressionAuthor")
+  provenanceFlagDecisionsMade   ProvenanceFlagDecision[]  @relation("ProvenanceFlagDecider")
 
   @@index([status])
   @@map("users")
@@ -2228,8 +2233,67 @@ model MessageProvenance {
   organization         Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   message              WhatsAppMessage      @relation(fields: [messageId], references: [id], onDelete: Cascade)
   systemPromptSnapshot SystemPromptSnapshot @relation(fields: [systemPromptSnapshotId], references: [id], onDelete: Restrict)
+  flagDecisions        ProvenanceFlagDecision[]
 
   @@index([organizationId, createdAt(sort: Desc)])
   @@index([systemPromptSnapshotId])
   @@map("message_provenances")
+}
+
+// ----------------------------------------------------------------------------
+// Phase 8 / 1.7 — operator feedback loop.
+//
+// ProvenanceSuppression — phrases the scanner should NOT flag. Org-scoped
+// for tenant-specific noise (e.g. their own brand name overlapping with
+// an English word) and org_id-nullable for GLOBAL entries that apply to
+// every tenant (e.g. order-summary labels like "Subtotal", currency
+// codes, etc.). ALIGNED admins can promote per-org rows to global.
+//
+// ProvenanceFlagDecision — every click on the ✓ Not a problem / ⚠ Yes
+// wrong / 🤷 Skip buttons writes a row here. Drives precision metrics
+// and the auto-suggest "≥3 tenants suppressed this — promote globally?"
+// banner.
+// ----------------------------------------------------------------------------
+
+model ProvenanceSuppression {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // NULL = global (applies to all tenants). Non-NULL = per-org.
+  organizationId String?  @map("organization_id") @db.Uuid
+  // Lower-cased + whitespace-normalised phrase. Scanner normalises
+  // matchedText the same way at scan time, then SELECTs.
+  phrase         String
+  note           String?
+  createdByUserId String? @map("created_by_user_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+  // Bumped each time the scanner suppresses a flag because of this row.
+  matchesCount   Int      @default(0) @map("matches_count")
+  lastMatchedAt  DateTime? @map("last_matched_at")
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?         @relation("ProvenanceSuppressionAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@map("provenance_suppressions")
+}
+
+model ProvenanceFlagDecision {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  provenanceId    String   @map("provenance_id") @db.Uuid
+  // Index into MessageProvenance.hallucinations JSONB array.
+  flagIndex       Int      @map("flag_index")
+  flaggedText     String   @map("flagged_text")
+  // 'false_positive' | 'true_positive' | 'skip'
+  decision        String
+  decidedByUserId String?  @map("decided_by_user_id") @db.Uuid
+  decidedAt       DateTime @default(now()) @map("decided_at")
+  note            String?
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  provenance   MessageProvenance @relation(fields: [provenanceId], references: [id], onDelete: Cascade)
+  decidedBy    User?             @relation("ProvenanceFlagDecider", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([provenanceId, flagIndex])
+  @@index([organizationId, decidedAt(sort: Desc)])
+  @@map("provenance_flag_decisions")
 }

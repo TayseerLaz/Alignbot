@@ -18,7 +18,12 @@ import { createHash } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import { withTenant } from './db.js';
 import type { BotResponseInputs } from './bot-engine.js';
-import { scanReply, type ScanCandidates } from './provenance-scanner.js';
+import {
+  normalisePhraseForSuppression,
+  scanReply,
+  type ScanCandidates,
+  type SuppressionSet,
+} from './provenance-scanner.js';
 
 export interface RecordProvenanceArgs {
   organizationId: string;
@@ -33,6 +38,36 @@ export interface RecordProvenanceArgs {
   // re-fetched so the scanner is pure CPU (no DB round-trip).
   kb: ScanCandidates;
   log?: FastifyBaseLogger | Pick<FastifyBaseLogger, 'warn' | 'info'>;
+}
+
+/**
+ * Phase 8 / 1.7 — load the suppression list the scanner should consult
+ * for this org. Union of GLOBAL rows (organization_id IS NULL — apply to
+ * every tenant) + this org's rows. Returned as a normalised Set the
+ * scanner can membership-test in O(1).
+ *
+ * Read inside withTenant so RLS auto-filters to (global OR this org).
+ * The provenance_suppressions policy explicitly allows reading global
+ * rows even when current_org_id is set, so this returns BOTH halves
+ * with a single SELECT.
+ */
+async function loadSuppressionSet(organizationId: string): Promise<SuppressionSet> {
+  try {
+    const rows = await withTenant(organizationId, async (tx) => {
+      return tx.provenanceSuppression.findMany({
+        select: { phrase: true },
+      });
+    });
+    const s = new Set<string>();
+    for (const r of rows) s.add(normalisePhraseForSuppression(r.phrase));
+    return s;
+  } catch {
+    // Never block a provenance write on this — empty set falls through
+    // to the scanner's hardcoded stoplist (which still catches the
+    // common cases). The settings UI will show "0 suppressions" until
+    // the next successful write.
+    return new Set<string>();
+  }
 }
 
 /**
@@ -67,10 +102,13 @@ export async function recordProvenance(args: RecordProvenanceArgs): Promise<void
   const { organizationId, messageId, inputs, reply, kb, log } = args;
   try {
     const snapshotId = await upsertSystemPromptSnapshot(organizationId, inputs.systemPrompt);
+    // Phase 8 / 1.7 — load operator-curated suppression list before
+    // scanning. The scanner drops any flag whose normalised text matches.
+    const suppressed = await loadSuppressionSet(organizationId);
     // Phase 1.2 — pure-CPU pass: extract citations + hallucinations from
     // the final reply so the admin UI has them on the same row as the
     // inputs. Never throws; on empty/odd input it returns empty arrays.
-    const scan = scanReply(reply, kb);
+    const scan = scanReply(reply, kb, suppressed);
     await withTenant(organizationId, async (tx) => {
       await tx.messageProvenance.create({
         data: {

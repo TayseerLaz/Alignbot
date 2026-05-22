@@ -5,6 +5,7 @@ import {
   adminCreateTenantResponseSchema,
   adminListOrgsQuerySchema,
   adminUpdateOrgBodySchema,
+  ApiErrorCode,
   itemEnvelopeSchema,
   listEnvelopeSchema,
   organizationSchema,
@@ -810,6 +811,198 @@ export default async function adminRoutes(app: FastifyInstance) {
         })),
         nextCursor: hasMore ? trimmed[trimmed.length - 1]!.id : null,
       };
+    },
+  );
+
+  // ---------- GET /aligned-admin/provenance/suppressions ------------------
+  // Phase 8 / 1.7 — list every suppression row visible to an ALIGNED
+  // admin: GLOBAL rows + every tenant's per-org rows. The UI groups
+  // them by scope.
+  r.get(
+    '/aligned-admin/provenance/suppressions',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'ALIGNED-admin only — list all provenance suppression rows (global + per-org).',
+        querystring: z.object({
+          scope: z.enum(['all', 'global', 'org']).default('all'),
+          organizationId: z.string().uuid().optional(),
+        }),
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const rows = await withRlsBypass(async (tx) => {
+        return tx.provenanceSuppression.findMany({
+          where: {
+            ...(req.query.scope === 'global' ? { organizationId: null } : {}),
+            ...(req.query.scope === 'org' ? { NOT: { organizationId: null } } : {}),
+            ...(req.query.organizationId ? { organizationId: req.query.organizationId } : {}),
+          },
+          orderBy: [{ organizationId: 'asc' }, { createdAt: 'desc' }],
+          include: {
+            organization: { select: { id: true, name: true, slug: true } },
+            createdBy: { select: { email: true, firstName: true, lastName: true } },
+          },
+          take: 500,
+        });
+      });
+      return {
+        data: rows.map((r) => ({
+          id: r.id,
+          phrase: r.phrase,
+          note: r.note,
+          scope: r.organizationId === null ? ('global' as const) : ('org' as const),
+          organizationId: r.organizationId,
+          organizationName: r.organization?.name ?? null,
+          organizationSlug: r.organization?.slug ?? null,
+          createdByEmail: r.createdBy?.email ?? null,
+          createdByName: r.createdBy
+            ? [r.createdBy.firstName, r.createdBy.lastName].filter(Boolean).join(' ') ||
+              null
+            : null,
+          createdAt: r.createdAt.toISOString(),
+          matchesCount: r.matchesCount,
+          lastMatchedAt: r.lastMatchedAt?.toISOString() ?? null,
+        })),
+      };
+    },
+  );
+
+  // ---------- POST /aligned-admin/provenance/suppressions ----------------
+  // Manually add a suppression — global or for a specific org.
+  r.post(
+    '/aligned-admin/provenance/suppressions',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'ALIGNED-admin only — manually add a suppression row.',
+        body: z.object({
+          phrase: z.string().trim().min(1).max(200),
+          note: z.string().trim().max(500).optional(),
+          scope: z.enum(['global', 'org']),
+          organizationId: z.string().uuid().optional(),
+        }),
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req, reply) => {
+      if (req.body.scope === 'org' && !req.body.organizationId) {
+        reply.code(400);
+        return {
+          error: {
+            code: ApiErrorCode.VALIDATION_ERROR,
+            message: 'organizationId required when scope=org',
+          },
+        };
+      }
+      const { normalisePhraseForSuppression } = await import(
+        '../../lib/provenance-scanner.js'
+      );
+      const phrase = normalisePhraseForSuppression(req.body.phrase);
+      if (phrase.length === 0) {
+        reply.code(400);
+        return {
+          error: {
+            code: ApiErrorCode.VALIDATION_ERROR,
+            message: 'Phrase normalises to empty',
+          },
+        };
+      }
+      const orgId = req.body.scope === 'global' ? null : req.body.organizationId!;
+      const created = await withRlsBypass(async (tx) => {
+        const existing = await tx.provenanceSuppression.findFirst({
+          where: { organizationId: orgId, phrase },
+          select: { id: true },
+        });
+        if (existing) return { id: existing.id, alreadyExists: true };
+        const row = await tx.provenanceSuppression.create({
+          data: {
+            organizationId: orgId,
+            phrase,
+            note: req.body.note ?? null,
+            createdByUserId: req.auth!.userId,
+          },
+          select: { id: true },
+        });
+        return { id: row.id, alreadyExists: false };
+      });
+      return { data: created };
+    },
+  );
+
+  // ---------- DELETE /aligned-admin/provenance/suppressions/:id ----------
+  r.delete(
+    '/aligned-admin/provenance/suppressions/:id',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'ALIGNED-admin only — remove a suppression row.',
+        params: z.object({ id: uuidSchema }),
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      await withRlsBypass((tx) =>
+        tx.provenanceSuppression.delete({ where: { id: req.params.id } }),
+      );
+      return { ok: true as const };
+    },
+  );
+
+  // ---------- POST /aligned-admin/provenance/suppressions/:id/promote ----
+  // Promote a per-org row to global by clearing organization_id. If a
+  // global row with the same phrase already exists, the per-org row is
+  // just deleted (the global one already covers everyone).
+  r.post(
+    '/aligned-admin/provenance/suppressions/:id/promote-global',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'ALIGNED-admin only — promote a per-org suppression to global.',
+        params: z.object({ id: uuidSchema }),
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req, reply) => {
+      const result = await withRlsBypass(async (tx) => {
+        const row = await tx.provenanceSuppression.findUnique({
+          where: { id: req.params.id },
+          select: { id: true, phrase: true, organizationId: true },
+        });
+        if (!row) return { error: 'not_found' as const };
+        if (row.organizationId === null) {
+          return { error: 'already_global' as const };
+        }
+        const existingGlobal = await tx.provenanceSuppression.findFirst({
+          where: { organizationId: null, phrase: row.phrase },
+          select: { id: true },
+        });
+        if (existingGlobal) {
+          // Already covered globally — just delete the per-org duplicate.
+          await tx.provenanceSuppression.delete({ where: { id: row.id } });
+          return { ok: true, promotedId: existingGlobal.id, alreadyExisted: true };
+        }
+        const promoted = await tx.provenanceSuppression.update({
+          where: { id: row.id },
+          data: { organizationId: null },
+          select: { id: true },
+        });
+        return { ok: true, promotedId: promoted.id, alreadyExisted: false };
+      });
+      if ('error' in result) {
+        reply.code(result.error === 'not_found' ? 404 : 400);
+        return {
+          error: {
+            code:
+              result.error === 'not_found'
+                ? ApiErrorCode.NOT_FOUND
+                : ApiErrorCode.VALIDATION_ERROR,
+            message: result.error,
+          },
+        };
+      }
+      return { data: { promotedId: result.promotedId, alreadyExisted: result.alreadyExisted } };
     },
   );
 }

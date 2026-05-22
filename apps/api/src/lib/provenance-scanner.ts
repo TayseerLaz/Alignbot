@@ -109,6 +109,16 @@ export interface ScanResult {
   hallucinations: Hallucination[];
 }
 
+// Phase 8 / 1.7 — operator-curated suppression list (union of GLOBAL +
+// per-org rows from `provenance_suppressions`). The scanner skips any
+// flagged matchedText whose normalised form matches a phrase in here.
+// Pre-normalised by the loader so the scanner stays pure-CPU.
+export type SuppressionSet = ReadonlySet<string>;
+
+export function normalisePhraseForSuppression(s: string): string {
+  return normalize(s);
+}
+
 // ---------- helpers --------------------------------------------------------
 
 function normalize(s: string): string {
@@ -248,7 +258,18 @@ function fragmentMatchesAnyCandidate(
 
 // ---------- main scanner --------------------------------------------------
 
-export function scanReply(reply: string, c: ScanCandidates): ScanResult {
+export function scanReply(
+  reply: string,
+  c: ScanCandidates,
+  suppressed?: SuppressionSet,
+): ScanResult {
+  // Helper closed over the optional suppression set. Returns true iff
+  // the given text matches a phrase the operator has marked "not a
+  // problem" — at which point the scanner drops the flag silently.
+  const isSuppressed = (text: string): boolean => {
+    if (!suppressed || suppressed.size === 0) return false;
+    return suppressed.has(normalize(text));
+  };
   const citations: Citation[] = [];
   const hallucinations: Hallucination[] = [];
   if (!reply || reply.trim().length === 0) return { citations, hallucinations };
@@ -273,7 +294,7 @@ export function scanReply(reply: string, c: ScanCandidates): ScanResult {
         const driftRatio = Math.abs(priceInfo.minor - p.priceMinor) / p.priceMinor;
         const matches = driftRatio <= 0.02; // ±2 %
         meta.priceMatchesDb = matches;
-        if (!matches) {
+        if (!matches && !isSuppressed(priceInfo.rawText)) {
           hallucinations.push({
             type: 'price_drift',
             matchedText: priceInfo.rawText,
@@ -469,6 +490,7 @@ export function scanReply(reply: string, c: ScanCandidates): ScanResult {
     if (!frag) continue;
     if (fragmentMatchesAnyCandidate(frag, c)) continue;
     if (citedNames.has(normalize(frag))) continue;
+    if (isSuppressed(frag)) continue;
     hallucinations.push({
       type: 'unknown_product',
       matchedText: frag,
@@ -543,6 +565,7 @@ export function scanReply(reply: string, c: ScanCandidates): ScanResult {
         const rfrag = replacement.trim();
         if (fragmentMatchesAnyCandidate(rfrag, c)) continue;
         if (citedNames.has(normalize(rfrag))) continue;
+        if (isSuppressed(rfrag)) continue;
         hallucinations.push({
           type: 'unknown_product',
           matchedText: rfrag,
@@ -554,6 +577,7 @@ export function scanReply(reply: string, c: ScanCandidates): ScanResult {
       }
       if (fragmentMatchesAnyCandidate(frag, c)) continue;
       if (citedNames.has(normalize(frag))) continue;
+      if (isSuppressed(frag)) continue;
       hallucinations.push({
         type: 'unknown_product',
         matchedText: frag,

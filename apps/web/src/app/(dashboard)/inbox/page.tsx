@@ -143,6 +143,14 @@ interface MessageProvenance {
         reason: string;
       }[]
     | null;
+  // Phase 8 / 1.7 — operator-recorded decisions on each hallucination
+  // flag. Keyed by flagIndex (position in `hallucinations` array).
+  flagDecisions?: {
+    flagIndex: number;
+    decision: 'false_positive' | 'true_positive' | 'skip';
+    decidedAt: string;
+    note: string | null;
+  }[];
   model: string;
   temperature: number;
   promptTokens: number;
@@ -1502,37 +1510,155 @@ function ProvHallucinations({ p }: { p: MessageProvenance }) {
       </p>
     );
   }
+  const decisionsByIndex = new Map(
+    (p.flagDecisions ?? []).map((d) => [d.flagIndex, d] as const),
+  );
   return (
     <ul className="space-y-2">
       {hals.map((h, i) => (
-        <li
+        <HallucinationRow
           key={i}
-          className={cn(
-            'rounded border px-2 py-1.5',
-            h.severity === 'critical'
-              ? 'border-rose-300 bg-rose-50'
-              : 'border-amber-300 bg-amber-50',
-          )}
-        >
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="font-medium">
-              <span
-                className={cn(
-                  'mr-1 rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white',
-                  h.severity === 'critical' ? 'bg-rose-500' : 'bg-amber-500',
-                )}
-              >
-                {h.severity}
-              </span>
-              {h.matchedText}
-            </span>
-            <span className="text-[10px] text-foreground-subtle">{h.type}</span>
-          </div>
-          <p className="mt-1 text-[11px] italic text-foreground-muted">"{h.context}"</p>
-          <p className="mt-1 text-[11px] text-foreground">{h.reason}</p>
-        </li>
+          h={h}
+          flagIndex={i}
+          messageId={p.messageId}
+          existingDecision={decisionsByIndex.get(i)?.decision ?? null}
+        />
       ))}
     </ul>
+  );
+}
+
+// Phase 8 / 1.7 — single hallucination row with feedback buttons.
+// Clicking "Not a problem" marks it as a false positive (and auto-adds
+// the phrase to this org's suppression list — the scanner will skip
+// future matches automatically). "Yes wrong" confirms it's a real
+// hallucination (powers the precision metric). "Skip" defers.
+function HallucinationRow({
+  h,
+  flagIndex,
+  messageId,
+  existingDecision,
+}: {
+  h: NonNullable<MessageProvenance['hallucinations']>[number];
+  flagIndex: number;
+  messageId: string;
+  existingDecision: 'false_positive' | 'true_positive' | 'skip' | null;
+}) {
+  const queryClient = useQueryClient();
+  const decide = useMutation({
+    mutationFn: (decision: 'false_positive' | 'true_positive' | 'skip') =>
+      api.post(`/api/v1/inbox/messages/${messageId}/flags/${flagIndex}/decide`, {
+        decision,
+      }),
+    onSuccess: (_data, decision) => {
+      toast.success(
+        decision === 'false_positive'
+          ? 'Marked as not a problem. Future replies with this phrase will not be flagged.'
+          : decision === 'true_positive'
+            ? 'Confirmed as wrong. Recorded for the metrics.'
+            : 'Skipped.',
+      );
+      queryClient.invalidateQueries({ queryKey: ['provenance', messageId] });
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Could not record decision.'),
+  });
+  return (
+    <li
+      className={cn(
+        'rounded border px-2 py-1.5',
+        h.severity === 'critical'
+          ? 'border-rose-300 bg-rose-50'
+          : 'border-amber-300 bg-amber-50',
+      )}
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="font-medium">
+          <span
+            className={cn(
+              'mr-1 rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white',
+              h.severity === 'critical' ? 'bg-rose-500' : 'bg-amber-500',
+            )}
+          >
+            {h.severity}
+          </span>
+          {h.matchedText}
+        </span>
+        <span className="text-[10px] text-foreground-subtle">{h.type}</span>
+      </div>
+      <p className="mt-1 text-[11px] italic text-foreground-muted">"{h.context}"</p>
+      <p className="mt-1 text-[11px] text-foreground">{h.reason}</p>
+      <div className="mt-2 flex items-center gap-1.5">
+        {existingDecision === 'false_positive' ? (
+          <span className="rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+            ✓ Marked as not a problem · future replies suppressed
+          </span>
+        ) : existingDecision === 'true_positive' ? (
+          <span className="rounded bg-rose-100 px-2 py-0.5 text-[10px] font-medium text-rose-700">
+            ⚠ Confirmed wrong
+          </span>
+        ) : existingDecision === 'skip' ? (
+          <span className="rounded bg-foreground/10 px-2 py-0.5 text-[10px] font-medium text-foreground-muted">
+            Skipped
+          </span>
+        ) : null}
+        <FlagButton
+          icon="✓"
+          label="Not a problem"
+          variant="ok"
+          disabled={decide.isPending}
+          onClick={() => decide.mutate('false_positive')}
+        />
+        <FlagButton
+          icon="⚠"
+          label="Yes, wrong"
+          variant="bad"
+          disabled={decide.isPending}
+          onClick={() => decide.mutate('true_positive')}
+        />
+        <FlagButton
+          icon="🤷"
+          label="Skip"
+          variant="skip"
+          disabled={decide.isPending}
+          onClick={() => decide.mutate('skip')}
+        />
+      </div>
+    </li>
+  );
+}
+
+function FlagButton({
+  icon,
+  label,
+  variant,
+  onClick,
+  disabled,
+}: {
+  icon: string;
+  label: string;
+  variant: 'ok' | 'bad' | 'skip';
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  const styles: Record<typeof variant, string> = {
+    ok: 'border-emerald-300 text-emerald-700 hover:bg-emerald-100',
+    bad: 'border-rose-300 text-rose-700 hover:bg-rose-100',
+    skip: 'border-border text-foreground-muted hover:bg-surface-muted',
+  };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        'rounded border bg-surface px-2 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-50',
+        styles[variant],
+      )}
+    >
+      <span className="mr-1">{icon}</span>
+      {label}
+    </button>
   );
 }
 

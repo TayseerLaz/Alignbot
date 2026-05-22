@@ -130,15 +130,21 @@ export async function complete(args: CompleteArgs): Promise<{ text: string; inpu
   };
 }
 
-// Whisper-based speech-to-text. Used to transcribe inbound voice notes
-// from WhatsApp so the AI chatbot can understand and reply to them.
-// Whisper accepts up to 25 MB per file in any of: mp3, mp4, mpeg, mpga,
-// m4a, wav, webm, ogg, flac. WhatsApp voice notes arrive as audio/ogg
-// (with Opus), well inside the supported set.
+// Speech-to-text. Used to transcribe inbound WhatsApp voice notes so
+// the AI chatbot can understand and reply to them.
 //
-// Cost rough-cut: ~$0.006 / minute. We pre-charge ~600 "tokens" (≈ 1
-// chatbot-reply equivalent) against the daily org budget so a flood
-// of long voice notes still trips the cap.
+// Default model is `gpt-4o-transcribe` (OpenAI's best transcription
+// model — materially better than the original whisper-1 on Arabic
+// dialects + code-switched audio). Operators can switch the model via
+// the OPENAI_TRANSCRIBE_MODEL env var without a code push if needed.
+//
+// API supports up to 25 MB per file in mp3 / mp4 / mpeg / mpga / m4a /
+// wav / webm / ogg / flac. WhatsApp voice notes arrive as audio/ogg
+// with Opus — well inside the supported set.
+//
+// Cost rough-cut: ~$0.006 / minute on gpt-4o-transcribe. We pre-charge
+// ~600 "tokens" (≈ 1 chatbot-reply equivalent) against the daily org
+// budget so a flood of long voice notes still trips the cap.
 export interface TranscribeArgs {
   organizationId: string;
   bytes: Buffer;
@@ -148,6 +154,12 @@ export interface TranscribeArgs {
 
 export async function transcribeAudio(args: TranscribeArgs): Promise<{
   text: string;
+  // Detected language (ISO code). gpt-4o-transcribe doesn't return this
+  // — only whisper-1 with response_format='verbose_json' did. Kept on
+  // the return type so callers can stay forward-compatible; downstream
+  // code never relied on it being non-null. Currently always null on
+  // gpt-4o-transcribe, populated only when the env var is set to
+  // 'whisper-1'.
   language: string | null;
 }> {
   const ok = await consumeDailyTokens(args.organizationId, 600);
@@ -159,16 +171,20 @@ export async function transcribeAudio(args: TranscribeArgs): Promise<{
   const c = client();
   const blob = new Blob([new Uint8Array(args.bytes)], { type: args.mimeType ?? 'audio/ogg' });
   const file = new File([blob], args.filename, { type: args.mimeType ?? 'audio/ogg' });
-  // verbose_json gives us the detected language so the bot path can
-  // log + reason about Arabic dialects, Spanish vs Portuguese, etc.
-  //
-  // The `prompt` hint biases Whisper to recognise dialectal vocabulary
-  // it would otherwise round-trip to Modern Standard. It's a bias, not
-  // a constraint — English / French / etc. transcripts are unaffected.
+  const model = env.OPENAI_TRANSCRIBE_MODEL;
+  // gpt-4o-transcribe + gpt-4o-mini-transcribe ONLY support
+  // response_format = 'json' or 'text'. verbose_json is whisper-1-only.
+  // We pick json regardless so the caller gets a uniform { text } shape;
+  // language is no longer returned upstream on the gpt-4o models.
+  const isWhisper = model === 'whisper-1';
+  // The `prompt` hint biases the model to preserve dialectal Arabic
+  // vocabulary rather than round-tripping it to MSA. Same hint works
+  // for both whisper-1 and gpt-4o-transcribe. English / French /
+  // Spanish transcripts are unaffected.
   const res = (await c.audio.transcriptions.create({
     file,
-    model: 'whisper-1',
-    response_format: 'verbose_json',
+    model,
+    response_format: isWhisper ? 'verbose_json' : 'json',
     prompt:
       'Customer-service voice note. Possible Arabic dialects include Lebanese / Levantine: شو، كيفك، بدي، عم. Egyptian: إزيك، عايز، فين. Gulf: شلونك، أبغى. Also English, French, Spanish.',
   })) as { text?: string; language?: string };

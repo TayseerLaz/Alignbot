@@ -83,6 +83,14 @@ const envSchema = z.object({
   // 503; the rest of the platform keeps working).
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-4o-mini'),
+  // Phase 11 — Whisper-1 (the original 2022 model) was OK at English but
+  // mediocre on Arabic dialects; it routinely normalised Lebanese /
+  // Egyptian / Gulf into MSA and butchered code-switched audio. We've
+  // upgraded the default to gpt-4o-transcribe — best-in-class on dialects
+  // + code-switching, same cost-per-minute as whisper-1. The env var
+  // exists so ops can roll back to "whisper-1" without a code push if
+  // gpt-4o-transcribe has an outage.
+  OPENAI_TRANSCRIBE_MODEL: z.string().default('gpt-4o-transcribe'),
 
   // Phase 3 §5.1.3 — Stripe billing. Empty values disable billing surfaces:
   // /billing/checkout 503s, /webhooks/stripe rejects, cap middleware

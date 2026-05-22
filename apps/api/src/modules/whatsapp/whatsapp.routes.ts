@@ -3546,14 +3546,20 @@ async function maybeReplyAsBot(args: {
       // The scanner uses ctx.data (the in-memory KB we packed into the
       // prompt) to compute citations + hallucinations against the final
       // `reply` text the customer sees.
-      args.log.info(
-        {
-          gateBotMessageId: !!botMessageId,
-          gateHasInputs: !!result?.inputs,
-          gateHasCtx: !!ctx?.data,
-        },
-        '[whatsapp] provenance gate evaluated',
-      );
+      // Only log when the gate FAILS — successful writes are the boring
+      // happy path and would just flood the log. If we ever stop seeing
+      // provenance rows in /aligned-admin/provenance for fresh replies,
+      // these warns will tell us which side of the gate is collapsing.
+      if (!(botMessageId && result?.inputs)) {
+        args.log.warn(
+          {
+            gateBotMessageId: !!botMessageId,
+            gateHasInputs: !!result?.inputs,
+            gateHasCtx: !!ctx?.data,
+          },
+          '[whatsapp] provenance gate FAILED — no provenance row will be written',
+        );
+      }
       if (botMessageId && result?.inputs) {
         try {
           const { recordProvenance } = await import('../../lib/provenance.js');
@@ -3595,7 +3601,14 @@ async function maybeReplyAsBot(args: {
                   websiteUrl: ctx.data.biz.websiteUrl,
                   operatingHours: ctx.data.biz.operatingHours,
                   currency: ctx.data.biz.currency,
+                  // Phase 8 / 1.5 — menuUrl is on shopForm, not biz, in
+                  // BotData. Surface it under biz for the scanner since
+                  // it lives on the BusinessInfo row in the schema.
+                  menuUrl: ctx.data.shopForm?.menuUrl ?? null,
                 }
+              : null,
+            config: ctx.data.config
+              ? { greeting: ctx.data.config.greeting }
               : null,
           },
           log: args.log,

@@ -97,6 +97,9 @@ interface Message {
   body: string | null;
   receivedAt: string;
   sentBy: 'bot' | 'operator' | null;
+  // Phase 8 / 1.5 — for image-type bot messages, the upstream source.
+  // Either the greeting image set on /bot, or a product image by SKU.
+  imageSource: { kind: 'greeting' | 'product'; productSku: string | null } | null;
 }
 
 // Phase 8 / 1.3 — shape returned by GET /inbox/messages/:id/provenance.
@@ -116,7 +119,13 @@ interface MessageProvenance {
   };
   citations:
     | {
-        type: 'product' | 'service' | 'faq' | 'policy' | 'business_info';
+        type:
+          | 'product'
+          | 'service'
+          | 'faq'
+          | 'policy'
+          | 'business_info'
+          | 'bot_config';
         id: string | null;
         label: string;
         snippet: string;
@@ -1015,6 +1024,11 @@ function Bubble({
   // the message provenance panel underneath. Regular users see nothing.
   const isBotMessage = isOut && message.sentBy === 'bot';
   const canAudit = isAlignedAdmin && isBotMessage;
+  // Phase 8 / 1.5 — image bubbles have no LLM provenance row, but we
+  // still surface their upstream source inline (greeting image on /bot
+  // vs product image keyed by SKU). Visible to ALIGNED admins only.
+  const hasImageSource =
+    isAlignedAdmin && isBotMessage && message.imageSource != null;
   const [open, setOpen] = useState(false);
   const provQ = useQuery({
     queryKey: ['provenance', message.id],
@@ -1114,7 +1128,51 @@ function Bubble({
           <ProvenancePanel query={provQ} />
         </div>
       ) : null}
+      {hasImageSource ? (
+        <div
+          className={cn(
+            'mt-1 max-w-[80%] rounded-md border border-border bg-surface-muted/40 px-2 py-1 text-[11px] text-foreground-muted',
+            isOut ? 'self-end' : 'self-start',
+          )}
+        >
+          <ImageSourceAttribution source={message.imageSource!} />
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+// Phase 8 / 1.5 — inline attribution shown under image bubbles for
+// ALIGNED admins. Tells the admin EXACTLY which catalog row or config
+// field the image came from + links straight to the editor.
+function ImageSourceAttribution({
+  source,
+}: {
+  source: { kind: 'greeting' | 'product'; productSku: string | null };
+}) {
+  if (source.kind === 'greeting') {
+    return (
+      <span className="flex items-center gap-1">
+        <span className="font-semibold">Image source:</span>
+        <span>Greeting image uploaded on</span>
+        <a href="/bot" className="font-medium text-brand-600 hover:underline">
+          /bot
+        </a>
+      </span>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1 flex-wrap">
+      <span className="font-semibold">Image source:</span>
+      <span>Product image for SKU</span>
+      <code className="rounded bg-surface px-1 py-0.5 text-[10px] font-mono">
+        {source.productSku ?? '(unknown)'}
+      </code>
+      <span>—</span>
+      <a href="/products" className="font-medium text-brand-600 hover:underline">
+        find it on /products
+      </a>
+    </span>
   );
 }
 
@@ -1224,25 +1282,144 @@ function ProvSources({ p }: { p: MessageProvenance }) {
   return (
     <ul className="space-y-2">
       {cits.map((c, i) => (
-        <li key={i} className="rounded border border-border bg-surface px-2 py-1.5">
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="font-medium">
-              <ProvTypeBadge type={c.type} /> {c.label}
-            </span>
-            <span className="text-[10px] text-foreground-subtle">
-              {(c.confidence * 100).toFixed(0)}%
-            </span>
-          </div>
-          <p className="mt-1 text-[11px] italic text-foreground-muted">"{c.snippet}"</p>
-          {c.meta && Object.keys(c.meta).length > 0 ? (
-            <pre className="mt-1 overflow-x-auto rounded bg-surface-muted px-1.5 py-1 text-[10px] text-foreground-subtle">
-              {JSON.stringify(c.meta)}
-            </pre>
-          ) : null}
-        </li>
+        <SourceCitationRow key={i} c={c} />
       ))}
     </ul>
   );
+}
+
+// Phase 8 / 1.5 — type-specific rendering of a single citation. Shows:
+// - product/service: name + SKU + DB price + cited price (with ✓ or ⚠
+//   if they differ) + a clickable /products link
+// - bot_config greeting: "Configured greeting on /bot"
+// - business_info menuUrl: "Menu link · set on /business-info"
+// - faq: question + matched n-gram snippet + link to /faqs
+// - policy: kind + title
+// Goal: when the admin opens this panel they can see at a glance EXACTLY
+// where the bot pulled each fragment from, in the operator's own terms.
+function SourceCitationRow({
+  c,
+}: {
+  c: MessageProvenance['citations'] extends Array<infer U> | null ? U : never;
+}) {
+  const sourceUrl = sourcePageForCitation(c);
+  return (
+    <li className="rounded border border-border bg-surface px-2 py-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="font-medium">
+          <ProvTypeBadge type={c.type} /> {c.label}
+        </span>
+        <span className="text-[10px] text-foreground-subtle">
+          {(c.confidence * 100).toFixed(0)}%
+        </span>
+      </div>
+      <p className="mt-1 text-[11px] italic text-foreground-muted">"{c.snippet}"</p>
+      <CitationDetail c={c} />
+      {sourceUrl ? (
+        <p className="mt-1 text-[10px]">
+          <a href={sourceUrl.href} className="text-brand-600 hover:underline">
+            {sourceUrl.label} →
+          </a>
+        </p>
+      ) : null}
+    </li>
+  );
+}
+
+function CitationDetail({
+  c,
+}: {
+  c: MessageProvenance['citations'] extends Array<infer U> | null ? U : never;
+}) {
+  if (c.type === 'product' || c.type === 'service') {
+    const meta = (c.meta ?? {}) as {
+      sku?: string;
+      catalogPriceMinor?: number | null;
+      citedPrice?: string;
+      citedPriceMinor?: number;
+      priceMatchesDb?: boolean;
+    };
+    return (
+      <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px]">
+        {meta.sku ? (
+          <>
+            <dt className="text-foreground-subtle">SKU</dt>
+            <dd>
+              <code className="rounded bg-surface-muted px-1 font-mono">{meta.sku}</code>
+            </dd>
+          </>
+        ) : null}
+        {typeof meta.catalogPriceMinor === 'number' ? (
+          <>
+            <dt className="text-foreground-subtle">Catalog price</dt>
+            <dd className="font-mono">{(meta.catalogPriceMinor / 1000).toFixed(3)}</dd>
+          </>
+        ) : null}
+        {meta.citedPrice ? (
+          <>
+            <dt className="text-foreground-subtle">Cited in reply</dt>
+            <dd className="font-mono">
+              {meta.citedPrice}{' '}
+              {meta.priceMatchesDb === true ? (
+                <span className="text-emerald-700">✓ matches</span>
+              ) : meta.priceMatchesDb === false ? (
+                <span className="text-rose-700">⚠ differs from catalog</span>
+              ) : null}
+            </dd>
+          </>
+        ) : null}
+      </dl>
+    );
+  }
+  if (c.type === 'bot_config' && c.label === 'greeting') {
+    return (
+      <p className="mt-1 text-[11px] text-foreground-muted">
+        Configured greeting (BotConfig.greeting)
+      </p>
+    );
+  }
+  if (c.type === 'business_info' && c.label === 'menuUrl') {
+    return (
+      <p className="mt-1 text-[11px] text-foreground-muted">
+        Menu link set on Business info
+      </p>
+    );
+  }
+  if (c.type === 'business_info') {
+    return (
+      <p className="mt-1 text-[11px] text-foreground-muted">
+        Business info field: <code className="font-mono">{c.label}</code>
+      </p>
+    );
+  }
+  return null;
+}
+
+function sourcePageForCitation(c: {
+  type: 'product' | 'service' | 'faq' | 'policy' | 'business_info' | 'bot_config';
+  id: string | null;
+  label: string;
+}): { href: string; label: string } | null {
+  switch (c.type) {
+    case 'product':
+      return c.id
+        ? { href: `/products/${c.id}`, label: 'Open in /products' }
+        : { href: '/products', label: 'Open /products' };
+    case 'service':
+      return c.id
+        ? { href: `/services/${c.id}`, label: 'Open in /services' }
+        : { href: '/services', label: 'Open /services' };
+    case 'faq':
+      return { href: '/business-info', label: 'Edit FAQs on /business-info' };
+    case 'policy':
+      return { href: '/business-info', label: 'Edit policies on /business-info' };
+    case 'business_info':
+      return { href: '/business-info', label: 'Edit on /business-info' };
+    case 'bot_config':
+      return { href: '/bot', label: 'Edit on /bot' };
+    default:
+      return null;
+  }
 }
 
 function ProvHallucinations({ p }: { p: MessageProvenance }) {
@@ -1359,7 +1536,7 @@ function ProvRaw({ p }: { p: MessageProvenance }) {
 function ProvTypeBadge({
   type,
 }: {
-  type: 'product' | 'service' | 'faq' | 'policy' | 'business_info';
+  type: 'product' | 'service' | 'faq' | 'policy' | 'business_info' | 'bot_config';
 }) {
   const colours: Record<typeof type, string> = {
     product: 'bg-emerald-100 text-emerald-700',
@@ -1367,6 +1544,7 @@ function ProvTypeBadge({
     faq: 'bg-violet-100 text-violet-700',
     policy: 'bg-amber-100 text-amber-700',
     business_info: 'bg-slate-100 text-slate-700',
+    bot_config: 'bg-fuchsia-100 text-fuchsia-700',
   };
   return (
     <span

@@ -25,9 +25,17 @@
 //   product-shaped (cart action + price-shape), "warning" otherwise.
 
 export interface Citation {
-  type: 'product' | 'service' | 'faq' | 'policy' | 'business_info';
+  type:
+    | 'product'
+    | 'service'
+    | 'faq'
+    | 'policy'
+    | 'business_info'
+    // Phase 8 / 1.5 — `bot_config` covers fields from the BotConfig record
+    // (greeting, persona, etc.). The UI renders these with a /bot link.
+    | 'bot_config';
   // The catalog row's UUID; null for fields without their own row
-  // (e.g. business_info field-name citations, policy kinds).
+  // (e.g. business_info field-name citations, policy kinds, bot config).
   id: string | null;
   // Human-readable label for the UI.
   label: string;
@@ -74,6 +82,14 @@ export interface ScanCandidates {
     websiteUrl: string | null;
     operatingHours: unknown;
     currency: string;
+    // Operator-configured public menu / catalog URL. Set on /business-info.
+    menuUrl: string | null;
+  } | null;
+  // BotConfig-derived candidate fields used by the scanner. Currently
+  // just the configured greeting; other fields (custom personality,
+  // languages) can be added if we want citations for them.
+  config: {
+    greeting: string | null;
   } | null;
 }
 
@@ -307,6 +323,18 @@ export function scanReply(reply: string, c: ScanCandidates): ScanResult {
         confidence: 1.0,
       });
     }
+    // Menu link from BusinessInfo.shopForm.menuUrl — appears verbatim in
+    // replies to "what's on the menu" / "where can I order" / etc.
+    if (c.biz.menuUrl && reply.includes(c.biz.menuUrl)) {
+      citations.push({
+        type: 'business_info',
+        id: null,
+        label: 'menuUrl',
+        snippet: c.biz.menuUrl,
+        confidence: 1.0,
+        meta: { sourcePage: '/business-info', field: 'Menu link (optional)' },
+      });
+    }
     if (c.biz.legalName) {
       const m = findSnippet(reply, c.biz.legalName);
       if (m) {
@@ -332,6 +360,30 @@ export function scanReply(reply: string, c: ScanCandidates): ScanResult {
         confidence: 0.5,
         meta: { reason: 'Time-shaped token in reply' },
       });
+    }
+  }
+
+  // ---- bot_config citations ----
+  // Greeting: BotConfig.greeting (set on /bot → Greeting section). Cited
+  // when the reply opens with a substring of the configured greeting OR
+  // (post-fallback) the configured greeting prefix appears anywhere in
+  // the first 120 chars. Confidence is high because the bot-engine
+  // greeting fallback often pastes the operator's exact wording in.
+  if (c.config?.greeting) {
+    const greeting = c.config.greeting.trim();
+    if (greeting.length >= 4) {
+      const head = reply.slice(0, Math.max(160, greeting.length + 60));
+      const greetingHead = greeting.slice(0, Math.min(greeting.length, 40));
+      if (normalize(head).includes(normalize(greetingHead))) {
+        citations.push({
+          type: 'bot_config',
+          id: null,
+          label: 'greeting',
+          snippet: greeting.slice(0, 120),
+          confidence: 0.9,
+          meta: { sourcePage: '/bot', field: 'Greeting' },
+        });
+      }
     }
   }
 

@@ -65,6 +65,16 @@ const messageDtoSchema = z.object({
   // means it has a provenance row; 'operator' means a human sent it
   // from the portal. Null on inbound + legacy rows without rawPayload.
   sentBy: z.enum(['bot', 'operator']).nullable(),
+  // Phase 8 / 1.5 — for image-type bot messages, the source: either the
+  // greeting image set on /bot, or a product image identified by SKU.
+  // The inline inbox UI renders an attribution line under image bubbles
+  // for ALIGNED admins so they can verify the right image fired.
+  imageSource: z
+    .object({
+      kind: z.enum(['greeting', 'product']),
+      productSku: z.string().nullable(),
+    })
+    .nullable(),
 });
 
 const noteDtoSchema = z.object({
@@ -275,7 +285,9 @@ export default async function inboxRoutes(app: FastifyInstance) {
         });
         return {
           data: messages.map((m) => {
-            const raw = (m.rawPayload ?? null) as { sentBy?: unknown } | null;
+            const raw = (m.rawPayload ?? null) as
+              | { sentBy?: unknown; kind?: unknown; sku?: unknown }
+              | null;
             const sentByRaw = raw && typeof raw.sentBy === 'string' ? raw.sentBy : null;
             const sentBy: 'bot' | 'operator' | null =
               m.direction === 'outbound'
@@ -283,6 +295,19 @@ export default async function inboxRoutes(app: FastifyInstance) {
                   ? 'bot'
                   : 'operator'
                 : null;
+            // Phase 8 / 1.5 — derive imageSource from the rawPayload the
+            // bot send paths write. The 3095 image-attach path sets
+            // either `kind: 'greeting'` (greeting image) or `sku: '...'`
+            // (product image). Non-bot or non-image rows return null.
+            let imageSource: { kind: 'greeting' | 'product'; productSku: string | null } | null =
+              null;
+            if (m.direction === 'outbound' && sentByRaw === 'bot' && m.messageType === 'image') {
+              if (raw && raw.kind === 'greeting') {
+                imageSource = { kind: 'greeting', productSku: null };
+              } else if (raw && typeof raw.sku === 'string') {
+                imageSource = { kind: 'product', productSku: raw.sku };
+              }
+            }
             return {
               id: m.id,
               direction: m.direction === 'outbound' ? ('outbound' as const) : ('inbound' as const),
@@ -293,6 +318,7 @@ export default async function inboxRoutes(app: FastifyInstance) {
               body: m.body,
               receivedAt: m.receivedAt.toISOString(),
               sentBy,
+              imageSource,
             };
           }),
           nextCursor: null,

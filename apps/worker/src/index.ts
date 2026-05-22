@@ -7,6 +7,7 @@ import { collectDefaultMetrics, Counter, Gauge, Registry } from 'prom-client';
 import { env } from './lib/env.js';
 import { startBookingReminderTick } from './jobs/booking-reminder-tick.js';
 import { startDraftCartTtlTick } from './jobs/draft-cart-ttl.js';
+import { startProvenanceDigestTick } from './jobs/provenance-digest-tick.js';
 import { startBroadcastFanoutWorker } from './jobs/broadcast-fanout.js';
 import { startBroadcastSendWorker } from './jobs/broadcast-send.js';
 import { startCrawlWorker } from './jobs/crawl.js';
@@ -99,6 +100,11 @@ async function main() {
   // than 14 days so abandoned in-progress orders don't accumulate.
   const draftCartTtlTick = startDraftCartTtlTick();
   log.info({ name: draftCartTtlTick.name }, 'tick started');
+  // Phase 8 / 1.4 — daily provenance digest. Aggregates the prior 24h of
+  // flagged bot replies across all tenants and emails the summary to every
+  // ALIGNED admin. Silent when there are zero flagged replies in the window.
+  const provenanceDigestTick = startProvenanceDigestTick();
+  log.info({ name: provenanceDigestTick.name }, 'tick started');
 
   const workers = [
     startImportWorker(),

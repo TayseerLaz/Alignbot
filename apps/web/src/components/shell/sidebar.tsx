@@ -16,6 +16,7 @@ import {
   type LucideIcon,
   Megaphone,
   Package,
+  ScanSearch,
   Settings,
   ShieldCheck,
   ShoppingCart,
@@ -109,6 +110,7 @@ const alignedAdminItems: NavItem[] = [
   { href: '/aligned-admin', label: 'Tenants', icon: ShieldCheck },
   { href: '/aligned-admin/system', label: 'System health', icon: Code2 },
   { href: '/aligned-admin/audit', label: 'Cross-tenant audit', icon: Activity },
+  { href: '/aligned-admin/provenance', label: 'AI provenance', icon: ScanSearch },
   { href: '/aligned-admin/revenue', label: 'Revenue', icon: CreditCard },
 ];
 

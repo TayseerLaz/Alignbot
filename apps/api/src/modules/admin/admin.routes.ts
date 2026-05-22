@@ -694,4 +694,122 @@ export default async function adminRoutes(app: FastifyInstance) {
       return { data: { removed: removedIds.length } };
     },
   );
+
+  // ---------- GET /aligned-admin/provenance --------------------------------
+  // Phase 8 / 1.4 — cross-tenant browser of every persisted bot reply
+  // provenance row. Filters: organizationId, flagged (boolean), since/until
+  // (ISO), cursor pagination. Returns lightweight summary rows; click into
+  // one to hit /inbox/messages/:id/provenance for the full body.
+  r.get(
+    '/aligned-admin/provenance',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'ALIGNED-admin only — list of every bot-reply provenance row across all tenants.',
+        querystring: z.object({
+          organizationId: z.string().uuid().optional(),
+          flagged: z.enum(['true', 'false']).optional(),
+          since: z.string().datetime().optional(),
+          until: z.string().datetime().optional(),
+          cursor: z.string().uuid().optional(),
+          take: z.coerce.number().int().min(1).max(200).default(50),
+        }),
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const { organizationId, flagged, since, until, cursor, take } = req.query;
+      const rows = await withRlsBypass(async (tx) => {
+        // Build raw WHERE clauses — Prisma's query API can't easily
+        // express jsonb_array_length, and we need it for the flagged
+        // filter anyway. Safe because every input is type-checked by Zod.
+        const wheres: string[] = ['1=1'];
+        const vals: unknown[] = [];
+        let i = 1;
+        if (organizationId) {
+          wheres.push(`p.organization_id = $${i++}::uuid`);
+          vals.push(organizationId);
+        }
+        if (since) {
+          wheres.push(`p.created_at >= $${i++}::timestamptz`);
+          vals.push(since);
+        }
+        if (until) {
+          wheres.push(`p.created_at <= $${i++}::timestamptz`);
+          vals.push(until);
+        }
+        if (flagged === 'true') {
+          wheres.push(`jsonb_array_length(COALESCE(p.hallucinations, '[]'::jsonb)) > 0`);
+        } else if (flagged === 'false') {
+          wheres.push(`jsonb_array_length(COALESCE(p.hallucinations, '[]'::jsonb)) = 0`);
+        }
+        if (cursor) {
+          // Cursor = the id of the LAST row from previous page. Combined
+          // with created_at DESC ordering this gives a stable forward
+          // pagination as long as no row's created_at changes (it never does).
+          wheres.push(
+            `(p.created_at, p.id) < (SELECT created_at, id FROM message_provenances WHERE id = $${i++}::uuid)`,
+          );
+          vals.push(cursor);
+        }
+        const sql = `
+          SELECT
+            p.id, p.message_id, p.organization_id, p.created_at,
+            p.model, p.latency_ms, p.prompt_tokens, p.completion_tokens,
+            jsonb_array_length(COALESCE(p.hallucinations, '[]'::jsonb)) AS halluc_count,
+            jsonb_array_length(COALESCE(p.citations, '[]'::jsonb))      AS cit_count,
+            m.body, m.message_type, m.thread_id,
+            o.name AS org_name, o.slug AS org_slug
+          FROM message_provenances p
+          JOIN organizations o ON o.id = p.organization_id
+          LEFT JOIN whatsapp_messages m ON m.id = p.message_id
+          WHERE ${wheres.join(' AND ')}
+          ORDER BY p.created_at DESC, p.id DESC
+          LIMIT $${i}
+        `;
+        vals.push(take + 1);
+        return tx.$queryRawUnsafe<
+          {
+            id: string;
+            message_id: string;
+            organization_id: string;
+            created_at: Date;
+            model: string;
+            latency_ms: number;
+            prompt_tokens: number;
+            completion_tokens: number;
+            halluc_count: number;
+            cit_count: number;
+            body: string | null;
+            message_type: string | null;
+            thread_id: string | null;
+            org_name: string;
+            org_slug: string;
+          }[]
+        >(sql, ...vals);
+      });
+      const hasMore = rows.length > take;
+      const trimmed = hasMore ? rows.slice(0, take) : rows;
+      return {
+        data: trimmed.map((r) => ({
+          provenanceId: r.id,
+          messageId: r.message_id,
+          organizationId: r.organization_id,
+          organizationName: r.org_name,
+          organizationSlug: r.org_slug,
+          messageBody: r.body ? r.body.slice(0, 200) : null,
+          messageType: r.message_type,
+          threadId: r.thread_id,
+          createdAt: r.created_at.toISOString(),
+          hallucinationCount: Number(r.halluc_count),
+          citationCount: Number(r.cit_count),
+          model: r.model,
+          promptTokens: r.prompt_tokens,
+          completionTokens: r.completion_tokens,
+          latencyMs: r.latency_ms,
+        })),
+        nextCursor: hasMore ? trimmed[trimmed.length - 1]!.id : null,
+      };
+    },
+  );
 }

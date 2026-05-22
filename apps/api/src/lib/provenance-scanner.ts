@@ -1,0 +1,426 @@
+// Phase 8 / 1.2 — post-LLM provenance scanner.
+//
+// Walks an outbound bot reply and produces two side-by-side lists:
+//
+//   citations[]      — for every catalog item / FAQ / business-info field
+//                      mentioned in the reply, a row linking it back to its
+//                      source plus the snippet that triggered the match.
+//
+//   hallucinations[] — for every product-or-price-shaped phrase that doesn't
+//                      match anything we surfaced to the LLM, a red-flag row
+//                      so the admin can audit "the bot just invented this".
+//
+// Pure CPU; no DB calls; <50 ms for typical replies. Runs synchronously
+// inside recordProvenance() before the row is persisted, so citations +
+// hallucinations land on the same INSERT as the rest of the provenance.
+//
+// Design notes:
+// • We can't trust the LLM to self-cite (it ignores soft prompts), so all
+//   matching is deterministic regex / substring against the candidate set
+//   we packed into the prompt.
+// • A product cited via substring also matches the cart/price-shaped
+//   hallucination patterns; `citedNames` is a per-scan suppression list to
+//   keep us from double-flagging.
+// • Hallucinations are scored "critical" when the match is unambiguously
+//   product-shaped (cart action + price-shape), "warning" otherwise.
+
+export interface Citation {
+  type: 'product' | 'service' | 'faq' | 'policy' | 'business_info';
+  // The catalog row's UUID; null for fields without their own row
+  // (e.g. business_info field-name citations, policy kinds).
+  id: string | null;
+  // Human-readable label for the UI.
+  label: string;
+  // The snippet from the reply that triggered the match (~60 chars).
+  snippet: string;
+  // 0-1 confidence in the match.
+  confidence: number;
+  // Free-form per-type metadata: price comparison, matched n-gram, etc.
+  meta?: Record<string, unknown>;
+}
+
+export interface Hallucination {
+  type:
+    // Product-shaped phrase not present in the candidate catalog.
+    | 'unknown_product'
+    // Cited a price that drifts >2 % from the catalog row.
+    | 'price_drift'
+    // Time / address / contact pattern that doesn't match BusinessInfo.
+    | 'unknown_business_info';
+  matchedText: string;
+  context: string;
+  severity: 'critical' | 'warning';
+  reason: string;
+}
+
+export interface ScanCandidates {
+  products: Array<{
+    id: string;
+    name: string;
+    sku: string;
+    priceMinor: number | null;
+    currency: string | null;
+  }>;
+  services: Array<{
+    id: string;
+    name: string;
+    basePriceMinor: number | null;
+    currency: string | null;
+  }>;
+  faqs: Array<{ id: string; question: string; answer: string }>;
+  policies: Array<{ kind: string; title: string; content: string }>;
+  biz: {
+    legalName: string | null;
+    websiteUrl: string | null;
+    operatingHours: unknown;
+    currency: string;
+  } | null;
+}
+
+export interface ScanResult {
+  citations: Citation[];
+  hallucinations: Hallucination[];
+}
+
+// ---------- helpers --------------------------------------------------------
+
+function normalize(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Currency → (minorPerMajor, decimals). Mirrors formatMoney in bot-engine.ts.
+function currencyMeta(currency: string | null): { minorPerMajor: number; decimals: number } {
+  const code = (currency ?? 'USD').toUpperCase();
+  const big3 = code === 'KWD' || code === 'BHD' || code === 'OMR' || code === 'JOD';
+  return { minorPerMajor: big3 ? 1000 : 100, decimals: big3 ? 3 : 2 };
+}
+
+function formatMoney(minor: number | null, currency: string | null): string {
+  if (minor == null) return '';
+  const { minorPerMajor, decimals } = currencyMeta(currency);
+  return `${(minor / minorPerMajor).toFixed(decimals)} ${(currency ?? 'USD').toUpperCase()}`;
+}
+
+// Find the first case-insensitive, punctuation-tolerant occurrence of
+// `needle` in `reply`. Returns the snippet (~60 chars, original casing).
+function findSnippet(reply: string, needle: string, windowSize = 60): { index: number; snippet: string } | null {
+  if (needle.trim().length === 0) return null;
+  const nReply = normalize(reply);
+  const nNeedle = normalize(needle);
+  if (nNeedle.length < 2) return null;
+  const idx = nReply.indexOf(nNeedle);
+  if (idx < 0) return null;
+  // Approximate the snippet from the ORIGINAL reply, not the normalized
+  // copy — the admin UI shows what the customer actually saw.
+  const ratio = reply.length / Math.max(nReply.length, 1);
+  const origStart = Math.max(0, Math.floor(idx * ratio) - Math.floor(windowSize / 3));
+  const origEnd = Math.min(
+    reply.length,
+    Math.ceil((idx + nNeedle.length) * ratio) + Math.floor((windowSize * 2) / 3),
+  );
+  const snippet = reply.slice(origStart, origEnd).replace(/\s+/g, ' ').trim();
+  return { index: idx, snippet };
+}
+
+// All 3-grams from `text` built from words longer than 4 chars (skip
+// fillers like "the", "and", "you"). Returned in source order so the
+// caller can try them sequentially against a reply.
+function candidateNgrams(text: string): string[] {
+  const words = normalize(text)
+    .split(/\s+/)
+    .filter((w) => w.length > 4);
+  if (words.length < 3) return [];
+  const out: string[] = [];
+  for (let i = 0; i + 3 <= words.length; i++) {
+    out.push(words.slice(i, i + 3).join(' '));
+  }
+  return out;
+}
+
+// Find the first 3-gram from `body` that appears in `reply`. Returns the
+// matched n-gram + the snippet from the reply, or null if none match.
+function findMatchingNgram(
+  reply: string,
+  body: string,
+): { ngram: string; snippet: string } | null {
+  for (const ngram of candidateNgrams(body)) {
+    const m = findSnippet(reply, ngram, 80);
+    if (m) return { ngram, snippet: m.snippet };
+  }
+  return null;
+}
+
+// Look ~40 chars on either side of `position` in `reply` for a price token
+// (digits + currency). Returns the parsed minor-units value if found.
+function extractPriceNear(
+  reply: string,
+  position: number,
+  currency: string | null,
+): { rawText: string; minor: number } | null {
+  const win = reply.slice(Math.max(0, position - 40), position + 80);
+  const code = (currency ?? 'USD').toUpperCase();
+  // Numbers (e.g. 1.250 / 1,250 / 4.50) followed by the currency code, or
+  // preceded by a known symbol ($, €, £, ﷼).
+  const codeRe = new RegExp(String.raw`\b(\d+(?:[.,]\d+)?)\s*${escapeRegex(code)}\b`, 'i');
+  const symbolRe = /([$€£])\s*(\d+(?:[.,]\d+)?)/;
+  const mCode = win.match(codeRe);
+  const mSym = win.match(symbolRe);
+  const m = mCode ?? mSym;
+  if (!m) return null;
+  const numStr = (mCode ? m[1] : m[2])!.replace(',', '.');
+  const major = parseFloat(numStr);
+  if (!Number.isFinite(major)) return null;
+  const { minorPerMajor } = currencyMeta(currency);
+  return { rawText: m[0], minor: Math.round(major * minorPerMajor) };
+}
+
+// True iff `frag` (a phrase pulled from the reply) is a substring-equivalent
+// of any product/service name in the candidate set. Used to suppress
+// hallucination false positives.
+function fragmentMatchesAnyCandidate(
+  fragment: string,
+  c: ScanCandidates,
+): boolean {
+  const nFrag = normalize(fragment);
+  if (nFrag.length < 2) return true;
+  for (const p of c.products) {
+    const np = normalize(p.name);
+    if (np.length > 1 && (np.includes(nFrag) || nFrag.includes(np))) return true;
+    // SKU match too — operator-typed SKUs sometimes appear in the reply.
+    if (p.sku && nFrag === normalize(p.sku)) return true;
+  }
+  for (const s of c.services) {
+    const ns = normalize(s.name);
+    if (ns.length > 1 && (ns.includes(nFrag) || nFrag.includes(ns))) return true;
+  }
+  return false;
+}
+
+// ---------- main scanner --------------------------------------------------
+
+export function scanReply(reply: string, c: ScanCandidates): ScanResult {
+  const citations: Citation[] = [];
+  const hallucinations: Hallucination[] = [];
+  if (!reply || reply.trim().length === 0) return { citations, hallucinations };
+
+  // Names we've already cited — used to suppress hallucination false
+  // positives for the same phrase. Normalized form.
+  const citedNames = new Set<string>();
+
+  // ---- product citations ----
+  for (const p of c.products) {
+    const m = findSnippet(reply, p.name);
+    if (!m) continue;
+    citedNames.add(normalize(p.name));
+
+    // Price extraction near the mention.
+    const priceInfo = extractPriceNear(reply, m.index, p.currency ?? c.biz?.currency ?? null);
+    const meta: Record<string, unknown> = { sku: p.sku, catalogPriceMinor: p.priceMinor };
+    if (priceInfo) {
+      meta.citedPrice = priceInfo.rawText;
+      meta.citedPriceMinor = priceInfo.minor;
+      if (p.priceMinor != null && p.priceMinor > 0) {
+        const driftRatio = Math.abs(priceInfo.minor - p.priceMinor) / p.priceMinor;
+        const matches = driftRatio <= 0.02; // ±2 %
+        meta.priceMatchesDb = matches;
+        if (!matches) {
+          hallucinations.push({
+            type: 'price_drift',
+            matchedText: priceInfo.rawText,
+            context: m.snippet,
+            severity: 'warning',
+            reason: `Bot quoted ${priceInfo.rawText} for ${p.name}, catalog has ${formatMoney(p.priceMinor, p.currency)}`,
+          });
+        }
+      }
+    }
+
+    citations.push({
+      type: 'product',
+      id: p.id,
+      label: p.name,
+      snippet: m.snippet,
+      confidence: 0.95,
+      meta,
+    });
+  }
+
+  // ---- service citations ----
+  for (const s of c.services) {
+    const m = findSnippet(reply, s.name);
+    if (!m) continue;
+    citedNames.add(normalize(s.name));
+    citations.push({
+      type: 'service',
+      id: s.id,
+      label: s.name,
+      snippet: m.snippet,
+      confidence: 0.95,
+      meta: { catalogPriceMinor: s.basePriceMinor },
+    });
+  }
+
+  // ---- FAQ citations ----
+  for (const f of c.faqs) {
+    const hit = findMatchingNgram(reply, f.answer);
+    if (!hit) continue;
+    citations.push({
+      type: 'faq',
+      id: f.id,
+      label: f.question,
+      snippet: hit.snippet,
+      confidence: 0.7,
+      meta: { matchedPhrase: hit.ngram },
+    });
+  }
+
+  // ---- policy citations ----
+  for (const pol of c.policies) {
+    const hit = findMatchingNgram(reply, pol.content);
+    if (!hit) continue;
+    citations.push({
+      type: 'policy',
+      id: null,
+      label: `${pol.title} (${pol.kind})`,
+      snippet: hit.snippet,
+      confidence: 0.65,
+      meta: { kind: pol.kind, matchedPhrase: hit.ngram },
+    });
+  }
+
+  // ---- business-info citations ----
+  if (c.biz) {
+    if (c.biz.websiteUrl && reply.includes(c.biz.websiteUrl)) {
+      citations.push({
+        type: 'business_info',
+        id: null,
+        label: 'websiteUrl',
+        snippet: c.biz.websiteUrl,
+        confidence: 1.0,
+      });
+    }
+    if (c.biz.legalName) {
+      const m = findSnippet(reply, c.biz.legalName);
+      if (m) {
+        citations.push({
+          type: 'business_info',
+          id: null,
+          label: 'legalName',
+          snippet: m.snippet,
+          confidence: 0.95,
+        });
+      }
+    }
+    // Weak signal: time-shaped tokens. Tells the admin the bot was
+    // probably citing hours; the inline UI can render a side-by-side.
+    const timeRe = /\b(\d{1,2})(?::(\d{2}))?\s*(?:am|pm|AM|PM)\b/;
+    const timeMatch = reply.match(timeRe);
+    if (c.biz.operatingHours && timeMatch) {
+      citations.push({
+        type: 'business_info',
+        id: null,
+        label: 'operatingHours',
+        snippet: timeMatch[0],
+        confidence: 0.5,
+        meta: { reason: 'Time-shaped token in reply' },
+      });
+    }
+  }
+
+  // ---- hallucination scan ----
+
+  // Pattern 1: cart actions — "added one Oreo Milkshake" / "removed 2x foo"
+  const cartActionRe =
+    /(?:added|i(?:'ve)?\s+added|i\s+added|removed)\s+(?:one|two|three|four|five|\d+)\s*(?:×|x)?\s+([A-Z][^\n.;,]{2,60})/gi;
+  for (const m of reply.matchAll(cartActionRe)) {
+    const frag = (m[1] ?? '').trim();
+    if (!frag) continue;
+    if (fragmentMatchesAnyCandidate(frag, c)) continue;
+    if (citedNames.has(normalize(frag))) continue;
+    hallucinations.push({
+      type: 'unknown_product',
+      matchedText: frag,
+      context: m[0].slice(0, 120),
+      severity: 'critical',
+      reason: 'Cart action references an item not in the candidate catalog',
+    });
+  }
+
+  // Pattern 2: price-proximity. Two passes:
+  //   (a) Find every price token (digits + currency code).
+  //   (b) Look back up to 60 chars (or to the previous newline) for the
+  //       RIGHTMOST capitalised noun phrase and treat that as the
+  //       referenced item. Filters out common verbs ("Want", "Try", etc.)
+  //       so we don't mis-blame the upsell verb instead of the noun.
+  const currency = c.biz?.currency;
+  if (currency) {
+    const priceTokenRe = new RegExp(
+      String.raw`\b(\d+(?:[.,]\d+)?)\s*${escapeRegex(currency)}\b`,
+      'gi',
+    );
+    for (const m of reply.matchAll(priceTokenRe)) {
+      const priceIdx = m.index!;
+      const lineStart = Math.max(0, reply.lastIndexOf('\n', priceIdx - 1) + 1);
+      const winStart = Math.max(lineStart, priceIdx - 60);
+      const win = reply.slice(winStart, priceIdx);
+
+      // Rightmost capitalised 1-3 word phrase in the window.
+      const capRe = /\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+){0,2})\b/g;
+      let lastCap: RegExpExecArray | null = null;
+      let next: RegExpExecArray | null;
+      while ((next = capRe.exec(win)) !== null) {
+        lastCap = next;
+      }
+      if (!lastCap) continue;
+      const frag = lastCap[1]!.trim();
+      // Stoplist — verbs / connectors / interjections that capitalise on
+      // sentence starts but aren't product names.
+      const stop = new Set([
+        'I', 'You', 'We', 'Hi', 'Hey', 'Hello', 'Welcome', 'Want', 'Try', 'Get',
+        'Add', 'Order', 'Pick', 'Have', 'Take', 'Need', 'Yes', 'No', 'Sure',
+        'Okay', 'Great', 'Perfect', 'Thanks', 'Thank', 'Sorry', 'The',
+      ]);
+      if (stop.has(frag.split(/\s+/)[0]!)) {
+        // Common opener captured — fall back to scanning ALL phrases and
+        // pick the last non-stoplisted one.
+        capRe.lastIndex = 0;
+        const all: string[] = [];
+        let next2: RegExpExecArray | null;
+        while ((next2 = capRe.exec(win)) !== null) all.push(next2[1]!);
+        const filtered = all.filter((p) => !stop.has(p.split(/\s+/)[0]!));
+        const replacement = filtered[filtered.length - 1];
+        if (!replacement) continue;
+        const rfrag = replacement.trim();
+        if (fragmentMatchesAnyCandidate(rfrag, c)) continue;
+        if (citedNames.has(normalize(rfrag))) continue;
+        hallucinations.push({
+          type: 'unknown_product',
+          matchedText: rfrag,
+          context: reply.slice(winStart, priceIdx + m[0].length).trim(),
+          severity: 'critical',
+          reason: 'Price-adjacent phrase references an item not in the candidate catalog',
+        });
+        continue;
+      }
+      if (fragmentMatchesAnyCandidate(frag, c)) continue;
+      if (citedNames.has(normalize(frag))) continue;
+      hallucinations.push({
+        type: 'unknown_product',
+        matchedText: frag,
+        context: reply.slice(winStart, priceIdx + m[0].length).trim(),
+        severity: 'critical',
+        reason: 'Price-adjacent phrase references an item not in the candidate catalog',
+      });
+    }
+  }
+
+  return { citations, hallucinations };
+}

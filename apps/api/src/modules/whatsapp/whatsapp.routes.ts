@@ -3216,6 +3216,10 @@ async function maybeReplyAsBot(args: {
         }
       }
 
+      // Captured from inside the tx, used AFTER commit for fire-and-forget
+      // provenance write. Writing provenance from inside the tx would race
+      // the message-row FK (provenance.message_id → whatsapp_messages.id).
+      let botMessageId: string | null = null;
       await withRlsBypass(async (tx) => {
         const thread = await tx.whatsAppThread.findFirst({
           where: { organizationId: args.organizationId, customerPhone: m.from },
@@ -3227,7 +3231,7 @@ async function maybeReplyAsBot(args: {
         // instead of a plain text bubble. `body` still holds the
         // transcript for search + LLM history.
         const sentAsVoice = wantsVoice && sendOk;
-        await tx.whatsAppMessage.create({
+        const botMessage = await tx.whatsAppMessage.create({
           data: {
             threadId: thread.id,
             organizationId: args.organizationId,
@@ -3238,7 +3242,9 @@ async function maybeReplyAsBot(args: {
             body: reply,
             rawPayload: { sentBy: 'bot', tts: sentAsVoice } as never,
           },
+          select: { id: true },
         });
+        botMessageId = botMessage.id;
         await tx.whatsAppThread.update({
           where: { id: thread.id },
           data: {
@@ -3533,6 +3539,56 @@ async function maybeReplyAsBot(args: {
           }
         }
       });
+
+      // Phase 8 — provenance write, AFTER the tx commits so the bot
+      // message row is visible to the FK check. Fire-and-forget: any
+      // error logs at WARN and is swallowed by recordProvenance itself.
+      // The scanner uses ctx.data (the in-memory KB we packed into the
+      // prompt) to compute citations + hallucinations against the final
+      // `reply` text the customer sees.
+      if (botMessageId && result?.inputs) {
+        const { recordProvenance } = await import('../../lib/provenance.js');
+        void recordProvenance({
+          organizationId: args.organizationId,
+          messageId: botMessageId,
+          inputs: result.inputs,
+          reply,
+          kb: {
+            products: ctx.data.products.map((p) => ({
+              id: p.id,
+              name: p.name,
+              sku: p.sku,
+              priceMinor: p.priceMinor,
+              currency: p.currency,
+            })),
+            services: ctx.data.services.map((s) => ({
+              id: s.id,
+              name: s.name,
+              basePriceMinor: s.basePriceMinor,
+              currency: s.currency,
+            })),
+            faqs: ctx.data.faqs.map((f) => ({
+              id: f.id,
+              question: f.question,
+              answer: f.answer,
+            })),
+            policies: ctx.data.policies.map((p) => ({
+              kind: p.kind,
+              title: p.title,
+              content: p.content,
+            })),
+            biz: ctx.data.biz
+              ? {
+                  legalName: ctx.data.biz.legalName,
+                  websiteUrl: ctx.data.biz.websiteUrl,
+                  operatingHours: ctx.data.biz.operatingHours,
+                  currency: ctx.data.biz.currency,
+                }
+              : null,
+          },
+          log: args.log,
+        });
+      }
     } catch (err) {
       args.log.warn({ err }, '[whatsapp] bot send threw');
     }

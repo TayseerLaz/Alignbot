@@ -292,58 +292,61 @@ model Organization {
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
 
-  memberships         Membership[]
-  invitations         Invitation[]
-  apiKeys             ApiKey[]
-  auditLogs           AuditLog[]
-  sessions            Session[]
-  products            Product[]
-  productVariants     ProductVariant[]
-  productImages       ProductImage[]
-  categories          Category[]
-  services            Service[]
-  servicePricingTiers ServicePricingTier[]
-  availabilityWindows AvailabilityWindow[]
-  businessInfo        BusinessInfo?
-  locations           Location[]
-  contactChannels     ContactChannel[]
-  faqs                FAQ[]
-  policies            Policy[]
-  assets              Asset[]
+  memberships           Membership[]
+  invitations           Invitation[]
+  apiKeys               ApiKey[]
+  auditLogs             AuditLog[]
+  sessions              Session[]
+  products              Product[]
+  productVariants       ProductVariant[]
+  productImages         ProductImage[]
+  categories            Category[]
+  services              Service[]
+  servicePricingTiers   ServicePricingTier[]
+  availabilityWindows   AvailabilityWindow[]
+  businessInfo          BusinessInfo?
+  locations             Location[]
+  contactChannels       ContactChannel[]
+  faqs                  FAQ[]
+  policies              Policy[]
+  assets                Asset[]
   // Day 3
-  importJobs          ImportJob[]
-  importJobRows       ImportJobRow[]
-  apiConnectors       ApiConnector[]
-  syncRuns            SyncRun[]
-  webhookEndpoints    WebhookEndpoint[]
-  webhookDeliveries   WebhookDelivery[]
+  importJobs            ImportJob[]
+  importJobRows         ImportJobRow[]
+  apiConnectors         ApiConnector[]
+  syncRuns              SyncRun[]
+  webhookEndpoints      WebhookEndpoint[]
+  webhookDeliveries     WebhookDelivery[]
   // Day 4
-  catalogRevisions    CatalogRevision[]
-  notifications       Notification[]
+  catalogRevisions      CatalogRevision[]
+  notifications         Notification[]
   // Phase 1.5 / Phase 3
-  whatsappChannels    WhatsAppChannel[]
-  whatsappThreads     WhatsAppThread[]
+  whatsappChannels      WhatsAppChannel[]
+  whatsappThreads       WhatsAppThread[]
   // Phase 2
-  botConfig           BotConfig?
+  botConfig             BotConfig?
   // Phase 3 §5.1.3 + §5.1.4
-  subscription        Subscription?
-  branding            BrandingConfig?
-  dataExports         DataExport[]
+  subscription          Subscription?
+  branding              BrandingConfig?
+  dataExports           DataExport[]
   // Phase 4 — Broadcasts
-  contacts            Contact[]
-  contactTags         ContactTag[]
-  segments            Segment[]
-  broadcasts          Broadcast[]
-  broadcastRecipients BroadcastRecipient[]
-  broadcastEvents     BroadcastEvent[]
+  contacts              Contact[]
+  contactTags           ContactTag[]
+  segments              Segment[]
+  broadcasts            Broadcast[]
+  broadcastRecipients   BroadcastRecipient[]
+  broadcastEvents       BroadcastEvent[]
   // Phase 5.4 — Sequences (drip)
-  sequences           Sequence[]
-  sequenceSteps       SequenceStep[]
-  sequenceEnrollments SequenceEnrollment[]
+  sequences             Sequence[]
+  sequenceSteps         SequenceStep[]
+  sequenceEnrollments   SequenceEnrollment[]
   // Bookings — customer intakes captured by the AI bot
-  bookings            Booking[]
+  bookings              Booking[]
   // Carts — customer orders captured by the AI bot or entered manually
-  carts               Cart[]
+  carts                 Cart[]
+  // Phase 8 — AI message provenance / audit trail
+  systemPromptSnapshots SystemPromptSnapshot[]
+  messageProvenances    MessageProvenance[]
 
   @@index([status])
   @@map("organizations")
@@ -1180,7 +1183,8 @@ model WhatsAppMessage {
   rawPayload     Json?     @map("raw_payload")
   receivedAt     DateTime  @default(now()) @map("received_at")
 
-  thread WhatsAppThread? @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  thread     WhatsAppThread?    @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  provenance MessageProvenance?
 
   @@index([organizationId, receivedAt(sort: Desc)])
   @@index([threadId, receivedAt(sort: Asc)])
@@ -1252,29 +1256,29 @@ model WhatsAppThread {
 // form is edited later.
 // ----------------------------------------------------------------------------
 model Booking {
-  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String   @map("organization_id") @db.Uuid
-  threadId       String?  @map("thread_id") @db.Uuid
-  customerPhone  String   @map("customer_phone")
-  customerName   String?  @map("customer_name")
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  threadId           String?   @map("thread_id") @db.Uuid
+  customerPhone      String    @map("customer_phone")
+  customerName       String?   @map("customer_name")
   // Frozen snapshot of the form at booking time:
   // [{ key, label, type, required, value }]
-  fields         Json     @default("[]")
-  status         String   @default("new")
-  notes          String?
+  fields             Json      @default("[]")
+  status             String    @default("new")
+  notes              String?
   // Resolved appointment timestamp. The bookings page parses the
   // (possibly natural-language) date+time fields on the row and PATCHes
   // this back; the reminder tick reads it directly to decide when to fire.
   // Nullable because not every booking has a parseable appointment.
-  appointmentAt       DateTime? @map("appointment_at")
+  appointmentAt      DateTime? @map("appointment_at")
   // Operator-picked, pre-approved WhatsApp template to send as the
   // 2-hour reminder. NULL = reminder disabled for this booking.
-  reminderTemplateId  String?   @map("reminder_template_id") @db.Uuid
+  reminderTemplateId String?   @map("reminder_template_id") @db.Uuid
   // Stamped by the reminder tick after a successful Meta send so we
   // never send twice for the same booking.
-  reminderSentAt      DateTime? @map("reminder_sent_at")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  reminderSentAt     DateTime? @map("reminder_sent_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
   organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   thread           WhatsAppThread?   @relation(fields: [threadId], references: [id], onDelete: SetNull)
@@ -1299,28 +1303,28 @@ model Booking {
 // All non-`new` transitions are operator-driven from the dashboard.
 // ----------------------------------------------------------------------------
 model Cart {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId  String   @map("organization_id") @db.Uuid
-  threadId        String?  @map("thread_id") @db.Uuid
-  customerPhone   String   @map("customer_phone")
-  customerName    String?  @map("customer_name")
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  threadId       String?  @map("thread_id") @db.Uuid
+  customerPhone  String   @map("customer_phone")
+  customerName   String?  @map("customer_name")
   // Frozen snapshot of the shopForm's `fields[]` answers — same shape
   // as Booking.fields. [{ key, label, type, required, value }].
-  fields          Json     @default("[]")
+  fields         Json     @default("[]")
   // Cart-level money. All in `currency`. subtotalMinor = sum of
   // CartItem.lineTotalMinor; totalMinor = subtotal + delivery.
-  subtotalMinor   Int      @default(0) @map("subtotal_minor")
-  deliveryMinor   Int      @default(0) @map("delivery_minor")
-  totalMinor      Int      @default(0) @map("total_minor")
-  currency        String   @default("USD") @db.Char(3)
+  subtotalMinor  Int      @default(0) @map("subtotal_minor")
+  deliveryMinor  Int      @default(0) @map("delivery_minor")
+  totalMinor     Int      @default(0) @map("total_minor")
+  currency       String   @default("USD") @db.Char(3)
   // 'new' | 'confirmed' | 'completed' | 'cancelled'
-  status          String   @default("new")
-  notes           String?
+  status         String   @default("new")
+  notes          String?
   // Denormalized count for fast list rendering — kept in sync by the
   // route layer (no Prisma middleware to do it implicitly).
-  itemsCount      Int      @default(0) @map("items_count")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  itemsCount     Int      @default(0) @map("items_count")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   thread       WhatsAppThread? @relation(fields: [threadId], references: [id], onDelete: SetNull)
@@ -1332,23 +1336,23 @@ model Cart {
 }
 
 model CartItem {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId  String   @map("organization_id") @db.Uuid
-  cartId          String   @map("cart_id") @db.Uuid
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  cartId         String   @map("cart_id") @db.Uuid
   // FK snapshots — products / services may change or get soft-deleted
   // after the cart is placed. We keep `name`, `sku`, `variantLabel` as
   // frozen text so historical orders render correctly.
-  productId       String?  @map("product_id") @db.Uuid
-  serviceId       String?  @map("service_id") @db.Uuid
-  variantId       String?  @map("variant_id") @db.Uuid
-  sku             String?
-  name            String
-  variantLabel    String?  @map("variant_label")
-  quantity        Int      @default(1)
-  unitPriceMinor  Int      @map("unit_price_minor")
-  lineTotalMinor  Int      @map("line_total_minor")
-  notes           String?
-  createdAt       DateTime @default(now()) @map("created_at")
+  productId      String?  @map("product_id") @db.Uuid
+  serviceId      String?  @map("service_id") @db.Uuid
+  variantId      String?  @map("variant_id") @db.Uuid
+  sku            String?
+  name           String
+  variantLabel   String?  @map("variant_label")
+  quantity       Int      @default(1)
+  unitPriceMinor Int      @map("unit_price_minor")
+  lineTotalMinor Int      @map("line_total_minor")
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
 
   cart Cart @relation(fields: [cartId], references: [id], onDelete: Cascade)
 
@@ -1447,59 +1451,59 @@ enum CrawlJobStatus {
 }
 
 model BotConfig {
-  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId    String    @unique @map("organization_id") @db.Uuid
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId          String    @unique @map("organization_id") @db.Uuid
   // Personality preset name + free-form override.
-  personality       String? // 'formal' | 'casual' | 'friendly' | 'clinical' | custom
-  customPersonality String?   @map("custom_personality")
+  personality             String? // 'formal' | 'casual' | 'friendly' | 'clinical' | custom
+  customPersonality       String?   @map("custom_personality")
   // Detected by the LLM during analysis. Used to seed the personality picker.
-  detectedTone      String?   @map("detected_tone")
+  detectedTone            String?   @map("detected_tone")
   // The greeting text the bot opens with.
-  greeting          String?
+  greeting                String?
   // If true, the bot's FIRST reply in a thread addresses the customer
   // by their WhatsApp profile name (Meta's contacts[].profile.name,
   // stored on WhatsAppThread.customerWhatsappName). Subsequent replies
   // are unaffected. Defaults off so existing tenants don't see new
   // behaviour without opting in.
-  greetByName       Boolean   @default(false) @map("greet_by_name")
+  greetByName             Boolean   @default(false) @map("greet_by_name")
   // Comma-separated language codes the bot replies in. Default 'en'.
-  languages         String    @default("en")
+  languages               String    @default("en")
   // Escalation rules — what triggers a handoff to a human, business hours, etc.
-  escalationRules   Json?     @map("escalation_rules")
+  escalationRules         Json?     @map("escalation_rules")
   // Conversation flow — for now a JSON object keyed by intent (greeting,
   // product_inquiry, booking, support, escalation) with prompt overrides.
   // Drag-and-drop editor shipping later replaces this with a node graph.
-  conversationFlow  Json?     @map("conversation_flow")
+  conversationFlow        Json?     @map("conversation_flow")
   // Pre-generated response templates: { intent_key: "template text" }
-  responseTemplates Json?     @map("response_templates")
+  responseTemplates       Json?     @map("response_templates")
   // True once the client clicks "Deploy". Inbound webhook's bot-runtime
   // hook only fires when this is set + WhatsAppChannel.isActive is true.
-  deployedAt        DateTime? @map("deployed_at")
+  deployedAt              DateTime? @map("deployed_at")
   // Simple version counter, bumped on every PUT. Surfaced in the UI so
   // the operator can see when something changed.
-  version           Int       @default(1)
+  version                 Int       @default(1)
   // Phase 6 — TTS reply mode.
   //   text            : current behaviour. Plain WhatsApp text reply.
   //   voice           : every reply spoken with Google Cloud TTS.
   //   match_customer  : voice when the customer's last inbound was a
   //                     voice note; text otherwise.
-  replyMode         String    @default("text") @map("reply_mode")
+  replyMode               String    @default("text") @map("reply_mode")
   // TTS provider — `google` (default) or `elevenlabs`. Each provider
   // has independent credentials in env; falling back to text if the
   // chosen provider isn't configured.
-  ttsProvider       String    @default("google") @map("tts_provider")
+  ttsProvider             String    @default("google") @map("tts_provider")
   // Voice identifier — for Google this is the voice NAME
   // (en-US-Neural2-J, ar-XA-Wavenet-B). For ElevenLabs it's the 20-char
   // VOICE ID. Falls back to provider-specific env defaults when null.
-  ttsVoiceName      String?   @map("tts_voice_name")
+  ttsVoiceName            String?   @map("tts_voice_name")
   // Optional Wasabi storage key for an image that's attached to the
   // bot's greeting reply (e.g. a brand banner or "welcome" graphic).
   // When set, the bot sends this image alongside any reply that opens
   // with a greeting word (hi/hello/مرحبا/etc.). Dedup keeps it from
   // re-attaching within a 24h window per thread.
-  greetingImageStorageKey String? @map("greeting_image_storage_key")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+  greetingImageStorageKey String?   @map("greeting_image_storage_key")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
@@ -2150,4 +2154,82 @@ model SequenceEnrollment {
   @@unique([sequenceId, contactId])
   @@index([organizationId, status, nextStepDueAt])
   @@map("sequence_enrollments")
+}
+
+// ----------------------------------------------------------------------------
+// Phase 8 — AI message provenance / audit trail.
+//
+// Every outbound bot reply gets one MessageProvenance row capturing exactly
+// what we fed the LLM (system prompt hash + candidate catalog/business-info
+// rows + history) and what the LLM cited / fabricated in its reply. Lets
+// ALIGNED admins audit "where did the bot get this answer from?" for any
+// message in the inbox.
+//
+// The system prompt is content-addressed via SystemPromptSnapshot so we
+// don't store the same 3-5KB prompt with every message — it only changes
+// when the operator edits BotConfig.
+// ----------------------------------------------------------------------------
+
+model SystemPromptSnapshot {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  // SHA-256 of the body, hex-encoded. Dedupes identical prompts within an
+  // org (the prompt only changes when BotConfig is edited).
+  sha256         String   @db.Char(64)
+  body           String
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  provenances  MessageProvenance[]
+
+  @@unique([organizationId, sha256])
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@map("system_prompt_snapshots")
+}
+
+model MessageProvenance {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  // The bot's outbound WhatsApp message this provenance describes.
+  // 1:1 — every bot message gets exactly one provenance row.
+  messageId      String @unique @map("message_id") @db.Uuid
+
+  // FK to the deduped system prompt body.
+  systemPromptSnapshotId String @map("system_prompt_snapshot_id") @db.Uuid
+
+  // What the LLM saw on this turn.
+  userPrompt  String @map("user_prompt")
+  historyJson Json   @map("history_json")
+
+  // The candidate set we packed into the prompt (subset of catalog/biz-info).
+  // The Phase 1.2 scanner cross-references these against the reply text to
+  // produce `citations` (what the LLM actually used). Anything the LLM
+  // mentioned that ISN'T in these arrays is a potential hallucination.
+  candidateProductIds  String[] @map("candidate_product_ids") @db.Uuid
+  candidateServiceIds  String[] @map("candidate_service_ids") @db.Uuid
+  candidateFaqIds      String[] @map("candidate_faq_ids") @db.Uuid
+  candidatePolicyKinds String[] @map("candidate_policy_kinds")
+  businessInfoFields   String[] @map("business_info_fields")
+
+  // Filled by the Phase 1.2 post-LLM scanner. Nullable here so Phase 1.1
+  // can ship before the scanner exists.
+  citations      Json?
+  hallucinations Json?
+
+  // LLM call metadata.
+  model            String
+  temperature      Float
+  promptTokens     Int    @map("prompt_tokens")
+  completionTokens Int    @map("completion_tokens")
+  latencyMs        Int    @map("latency_ms")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  organization         Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  message              WhatsAppMessage      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  systemPromptSnapshot SystemPromptSnapshot @relation(fields: [systemPromptSnapshotId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([systemPromptSnapshotId])
+  @@map("message_provenances")
 }

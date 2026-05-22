@@ -139,6 +139,9 @@ SELECT _aligned_apply_tenant_rls('sequence_enrollments');
 -- Cart / Shop feature
 SELECT _aligned_apply_tenant_rls('carts');
 SELECT _aligned_apply_tenant_rls('cart_items');
+-- Phase 8 — AI message provenance / audit trail
+SELECT _aligned_apply_tenant_rls('system_prompt_snapshots');
+SELECT _aligned_apply_tenant_rls('message_provenances');
 -- plans is GLOBAL (no organization_id) — no RLS needed; access via API only.
 
 -- ---------- pg_trgm GIN indexes for fast search (Prisma can't express) ------

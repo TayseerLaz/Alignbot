@@ -22,7 +22,8 @@ export type ValidatorCategory =
   | 'booking_confirmation_without_marker'
   | 'handoff_false_positive'
   | 'welcome_repeat'
-  | 'cart_marker_missing';
+  | 'cart_marker_missing'
+  | 'currency_subunit_conversion';
 
 export interface ValidatorWarning {
   category: ValidatorCategory;
@@ -75,6 +76,89 @@ function formatMoney(minor: number, currency: string): string {
   const div = Math.pow(10, dec);
   return `${(minor / div).toFixed(dec)} ${code}`;
 }
+
+// ---------- currency subunit table ----------------------------------------
+//
+// Operator wants prices quoted ONLY in the configured 3-letter currency
+// code (e.g. KWD), never in subunits. Different currencies use different
+// subunit names + ratios, so we look up by org's `biz.currency`:
+//   KWD / BHD / OMR / JOD — 1000 minor subunits per major (3 decimals)
+//   AED / SAR / QAR / EGP / USD / EUR / GBP / INR / TRY — 100 minor (2 dec)
+//
+// When the LLM writes "150 fils" we rewrite to "0.150 KWD" (or the proper
+// major-unit form for that currency). Tenant-agnostic — the org's
+// configured currency picks the right row.
+// Trailing terminator that works for BOTH Latin and Arabic scripts: the
+// next char must be whitespace, end-of-string, or terminal punctuation.
+// `\b` doesn't fire between two Arabic chars (neither side is in JS's
+// word-char set), so we can't rely on it for the Arabic alternations.
+const END = '(?=\\s|$|[.,!?؟،؛:;\\)\\]])';
+
+const SUBUNIT_TABLE: Record<
+  string,
+  { regex: RegExp; perMajor: number }
+> = {
+  KWD: {
+    regex: new RegExp(`\\b(\\d+(?:[.,]\\d+)?)\\s*(?:fils?|فلس|فلوس)${END}`, 'gi'),
+    perMajor: 1000,
+  },
+  BHD: {
+    regex: new RegExp(`\\b(\\d+(?:[.,]\\d+)?)\\s*(?:fils?|فلس|فلوس)${END}`, 'gi'),
+    perMajor: 1000,
+  },
+  OMR: {
+    regex: new RegExp(`\\b(\\d+(?:[.,]\\d+)?)\\s*(?:ba[iy]sas?|بيسة|بيسات)${END}`, 'gi'),
+    perMajor: 1000,
+  },
+  JOD: {
+    regex: new RegExp(
+      `\\b(\\d+(?:[.,]\\d+)?)\\s*(?:piastres?|qirsh|fils?|قرش|فلس)${END}`,
+      'gi',
+    ),
+    perMajor: 1000,
+  },
+  AED: {
+    regex: new RegExp(`\\b(\\d+(?:[.,]\\d+)?)\\s*(?:fils?|فلس)${END}`, 'gi'),
+    perMajor: 100,
+  },
+  SAR: {
+    regex: new RegExp(
+      `\\b(\\d+(?:[.,]\\d+)?)\\s*(?:halalas?|halalat|هللة|هللات)${END}`,
+      'gi',
+    ),
+    perMajor: 100,
+  },
+  // QAR's subunit IS called "dirham" — yes, the same word as the
+  // UAE major currency, hence the careful word-boundary regex.
+  QAR: {
+    regex: new RegExp(`\\b(\\d+(?:[.,]\\d+)?)\\s*(?:dirhams?)${END}`, 'gi'),
+    perMajor: 100,
+  },
+  EGP: {
+    regex: new RegExp(`\\b(\\d+(?:[.,]\\d+)?)\\s*(?:piastres?|قرش)${END}`, 'gi'),
+    perMajor: 100,
+  },
+  USD: {
+    regex: new RegExp(`\\b(\\d+(?:[.,]\\d+)?)\\s*(?:cents?|¢)${END}`, 'gi'),
+    perMajor: 100,
+  },
+  EUR: {
+    regex: new RegExp(`\\b(\\d+(?:[.,]\\d+)?)\\s*(?:cents?|¢)${END}`, 'gi'),
+    perMajor: 100,
+  },
+  GBP: {
+    regex: new RegExp(`\\b(\\d+(?:[.,]\\d+)?)\\s*(?:pence|pennies|p)${END}`, 'gi'),
+    perMajor: 100,
+  },
+  INR: {
+    regex: new RegExp(`\\b(\\d+(?:[.,]\\d+)?)\\s*(?:paise|paisa)${END}`, 'gi'),
+    perMajor: 100,
+  },
+  TRY: {
+    regex: new RegExp(`\\b(\\d+(?:[.,]\\d+)?)\\s*(?:kuruş|kurus)${END}`, 'gi'),
+    perMajor: 100,
+  },
+};
 
 // ---------- validators -----------------------------------------------------
 
@@ -284,6 +368,52 @@ function validateHandoffMarker(reply: string, ctx: ValidationContext): {
 }
 
 /**
+ * Rewrite currency subunits ("150 fils", "50 cents", "halala") into the
+ * configured 3-letter currency code. Operators do not want the LLM
+ * converting prices into subunits — only the catalog currency code
+ * (KWD, USD, AED, …) should appear in customer-facing replies.
+ *
+ * Conversion is deterministic + tenant-agnostic: looks up the org's
+ * `biz.currency`, finds the subunit regex + per-major ratio in
+ * SUBUNIT_TABLE, replaces every match with the major-unit form using
+ * the same decimal-places rule formatMoney uses.
+ */
+function validateCurrencySubunits(reply: string, ctx: ValidationContext): {
+  reply: string;
+  warnings: ValidatorWarning[];
+} {
+  const warnings: ValidatorWarning[] = [];
+  const currency = ctx.kb.biz?.currency?.toUpperCase();
+  if (!currency) return { reply, warnings };
+  const entry = SUBUNIT_TABLE[currency];
+  if (!entry) return { reply, warnings };
+
+  // Same decimals rule as formatMoney — keep them in sync. 3 decimals for
+  // KWD/BHD/OMR/JOD, 2 for everything else we know about today.
+  const decimals =
+    currency === 'KWD' || currency === 'BHD' || currency === 'OMR' || currency === 'JOD'
+      ? 3
+      : 2;
+
+  // Reset lastIndex on the shared regex before each call since it's
+  // declared at module scope with the /g flag.
+  entry.regex.lastIndex = 0;
+  const out = reply.replace(entry.regex, (match, numStr: string) => {
+    const value = parseFloat(numStr.replace(',', '.'));
+    if (!Number.isFinite(value)) return match;
+    const major = value / entry.perMajor;
+    const formatted = `${major.toFixed(decimals)} ${currency}`;
+    warnings.push({
+      category: 'currency_subunit_conversion',
+      detail: `Bot wrote "${match.trim()}"; rewrote to "${formatted}" — the configured currency is ${currency} and operators want only the 3-letter code in replies.`,
+      matchedText: match.trim(),
+    });
+    return formatted;
+  });
+  return { reply: out, warnings };
+}
+
+/**
  * Suppress repeat-welcome bubbles when the previous bot reply already
  * sent the operator's configured greeting. Mirrors the 2-min greeting-
  * image dedup so the text doesn't keep firing every time the customer
@@ -333,13 +463,15 @@ export function validateReply(ctx: ValidationContext): ValidationResult {
   //   3. Cart total — patch the demurral if the customer asked.
   //   4. Booking fidelity — never claim a booking we didn't write.
   //   5. Handoff strictness — strip marker when user didn't ask for human.
-  //   6. Welcome dedup — last, because it can replace the whole reply.
+  //   6. Currency subunits — rewrite "150 fils" → "0.150 KWD".
+  //   7. Welcome dedup — last, because it can replace the whole reply.
   const pipeline: Validator[] = [
     validateImageMarkers,
     stripVoiceApologies,
     injectCartTotalIfRequested,
     validateBookingFidelity,
     validateHandoffMarker,
+    validateCurrencySubunits,
     dedupWelcomeText,
   ];
 

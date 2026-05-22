@@ -231,6 +231,75 @@ describe('validateReply — handoff strictness', () => {
   });
 });
 
+describe('validateReply — currency subunits', () => {
+  it('rewrites "150 fils" to "0.150 KWD" when biz currency is KWD', () => {
+    const out = validateReply(
+      makeCtx({
+        reply: 'The Oreo Milkshake is 150 fils.',
+      }),
+    );
+    expect(out.reply).toContain('0.150 KWD');
+    expect(out.reply).not.toMatch(/fils/i);
+    expect(out.warnings.find((w) => w.category === 'currency_subunit_conversion')).toBeDefined();
+  });
+
+  it('rewrites "50 cents" to "0.50 USD" when biz currency is USD', () => {
+    const out = validateReply(
+      makeCtx({
+        kb: {
+          products: [],
+          services: [],
+          faqs: [],
+          policies: [],
+          biz: { legalName: null, websiteUrl: null, operatingHours: null, currency: 'USD', menuUrl: null },
+          config: null,
+          customer: null,
+        },
+        reply: 'Service charge is 50 cents.',
+      }),
+    );
+    expect(out.reply).toContain('0.50 USD');
+    expect(out.reply).not.toMatch(/cents/i);
+  });
+
+  it('rewrites "75 halala" to "0.75 SAR" when biz currency is SAR', () => {
+    const out = validateReply(
+      makeCtx({
+        kb: {
+          products: [],
+          services: [],
+          faqs: [],
+          policies: [],
+          biz: { legalName: null, websiteUrl: null, operatingHours: null, currency: 'SAR', menuUrl: null },
+          config: null,
+          customer: null,
+        },
+        reply: 'It costs 75 halala.',
+      }),
+    );
+    expect(out.reply).toContain('0.75 SAR');
+  });
+
+  it('rewrites Arabic "150 فلس" to "0.150 KWD"', () => {
+    const out = validateReply(
+      makeCtx({
+        reply: 'سعرها 150 فلس فقط.',
+      }),
+    );
+    expect(out.reply).toContain('0.150 KWD');
+    expect(out.reply).not.toMatch(/فلس/);
+  });
+
+  it('does NOT touch already-formatted "0.150 KWD" prices', () => {
+    const out = validateReply(
+      makeCtx({
+        reply: 'The Oreo Milkshake is 0.150 KWD.',
+      }),
+    );
+    expect(out.reply).toBe('The Oreo Milkshake is 0.150 KWD.');
+  });
+});
+
 describe('validateReply — welcome dedup', () => {
   it('replaces a repeat welcome with a soft continuation', () => {
     const out = validateReply(

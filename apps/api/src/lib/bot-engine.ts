@@ -737,10 +737,7 @@ export async function buildBotResponse(
       ? `Opening hours:\n${formatOperatingHours(biz.operatingHours)}`
       : '',
     ``,
-    `# Knowledge base (${kb.length})`,
-    kb.length > 0
-      ? kb.map((e) => `Q: ${e.question}\nA: ${e.answer}`).join('\n\n')
-      : '(no curated entries — the bot only has the data sections below)',
+    // Phase 10 — Knowledge Base section dropped. The Q&A source is FAQs.
     ``,
     intents.length > 0 ? `# Preferred phrasings (${intents.length})` : '',
     intents.length > 0

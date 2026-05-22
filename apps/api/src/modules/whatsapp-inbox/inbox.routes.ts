@@ -1126,7 +1126,7 @@ export default async function inboxRoutes(app: FastifyInstance) {
       preHandler: [app.requireAlignedAdmin],
     },
     async (req) => {
-      const { withRlsBypass, prisma } = await import('../../lib/db.js');
+      const { withRlsBypass } = await import('../../lib/db.js');
       const rows = await withRlsBypass(async (tx) => {
         // Raw SQL: count provenance rows where jsonb_array_length(hallucinations) > 0.
         return tx.$queryRaw<{ flagged_count: bigint; flagged_message_ids: string[] }[]>`
@@ -1138,7 +1138,6 @@ export default async function inboxRoutes(app: FastifyInstance) {
           WHERE m.thread_id = ${req.params.id}::uuid
         `;
       });
-      void prisma;
       const first = rows[0];
       return {
         data: {

@@ -9,7 +9,7 @@
 // (no inbox spam on quiet days). Distributed-locked via Redis so multiple
 // worker replicas don't double-send.
 
-import { prisma, withRlsBypass } from './db.js';
+import { withRlsBypass } from './db.js';
 import { env } from '../lib/env.js';
 import { sendEmail } from '../lib/email.js';
 import { getConnection } from '../lib/redis.js';
@@ -197,7 +197,6 @@ export function startProvenanceDigestTick(): { name: string; close: () => Promis
   // The Redis distributed lock will silently skip if another replica
   // already ran the digest within the TTL window.
   timer = setTimeout(run, 5 * 60 * 1000);
-  void prisma;
   return {
     name: 'provenance-digest-tick',
     close: async () => {

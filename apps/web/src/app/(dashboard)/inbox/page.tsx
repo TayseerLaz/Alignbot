@@ -20,6 +20,7 @@ import {
   UserCheck,
   X,
 } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -174,7 +175,13 @@ const STATUS_VARIANT: Record<ThreadStatus, 'default' | 'success' | 'warning' | '
 export default function InboxPage() {
   const queryClient = useQueryClient();
   const { session } = useSession();
-  const [activeId, setActiveId] = useState<string | null>(null);
+  // Honour ?thread=<uuid> on initial mount so /aligned-admin/provenance's
+  // "View thread →" link lands the operator on the right conversation.
+  // SearchParams is read once at mount; subsequent thread clicks just
+  // update `activeId` without touching the URL.
+  const searchParams = useSearchParams();
+  const initialThreadId = searchParams?.get('thread') ?? null;
+  const [activeId, setActiveId] = useState<string | null>(initialThreadId);
   const [filterQ, setFilterQ] = useState('');
   const [filterStatus, setFilterStatus] = useState<ThreadStatus | 'all'>('all');
   const [filterTag, setFilterTag] = useState('');
@@ -1229,7 +1236,7 @@ function ProvSources({ p }: { p: MessageProvenance }) {
           <p className="mt-1 text-[11px] italic text-foreground-muted">"{c.snippet}"</p>
           {c.meta && Object.keys(c.meta).length > 0 ? (
             <pre className="mt-1 overflow-x-auto rounded bg-surface-muted px-1.5 py-1 text-[10px] text-foreground-subtle">
-              {JSON.stringify(c.meta, null, 0)}
+              {JSON.stringify(c.meta)}
             </pre>
           ) : null}
         </li>

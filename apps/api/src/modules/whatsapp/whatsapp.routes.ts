@@ -2383,6 +2383,37 @@ async function maybeReplyAsBot(args: {
       '[whatsapp] bot reply: config resolution',
     );
 
+    // Phase 9 — load the active draft cart for this thread so the LLM
+    // has the deterministic running total ready to quote. Loaded before
+    // the LLM call; passed in as `cartState`. If no draft exists, the
+    // bot-engine silently skips the "running cart" prompt section.
+    const cartStateForLLM = await withRlsBypass(async (tx) => {
+      const draft = await tx.cart.findFirst({
+        where: {
+          organizationId: args.organizationId,
+          threadId: ctx.threadId,
+          status: 'draft',
+        },
+        include: { items: true },
+      });
+      if (!draft || draft.items.length === 0) return null;
+      const currency = (draft.currency ?? ctx.data.shopForm?.currency ?? 'USD').toUpperCase();
+      const subtotalMinor = draft.items.reduce(
+        (s, it) => s + it.unitPriceMinor * it.quantity,
+        0,
+      );
+      return {
+        items: draft.items.map((it) => ({
+          name: it.name,
+          quantity: it.quantity,
+          unitPriceMinor: it.unitPriceMinor,
+          sku: it.sku,
+        })),
+        subtotalMinor,
+        currency,
+      };
+    });
+
     // OpenAI call — outside the tx. Safe to be slow.
     const result = await buildBotResponse({
       organizationId: args.organizationId,
@@ -2395,6 +2426,7 @@ async function maybeReplyAsBot(args: {
       replyMode: ctx.replyMode as 'text' | 'voice' | 'match_customer',
       customerSpokeAudio,
       customerName: (ctx as { customerName?: string | null }).customerName ?? null,
+      cartState: cartStateForLLM,
     }).catch((err) => {
       args.log.warn({ err }, '[whatsapp] bot-engine failed');
       return null;
@@ -2402,6 +2434,89 @@ async function maybeReplyAsBot(args: {
     let rawReply = result?.text ?? null;
     const channel = ctx.channel;
     if (!rawReply) continue;
+
+    // Phase 9 — universal reply validators. Runs the pre-send pipeline:
+    // image-marker SKU check, voice-apology strip, cart-total override,
+    // booking-fidelity guard, handoff strictness, welcome dedup. Tenant-
+    // agnostic — every tenant's bot replies pass through the same logic.
+    {
+      const { validateReply } = await import('../../lib/reply-validators.js');
+      const previousBotReply =
+        [...ctx.history]
+          .reverse()
+          .find((h) => h.direction === 'outbound')?.body ?? null;
+      const validation = validateReply({
+        reply: rawReply,
+        userMessage: m.bodyText!,
+        inputs: result!.inputs,
+        kb: {
+          products: ctx.data.products.map((p) => ({
+            id: p.id,
+            name: p.name,
+            sku: p.sku,
+            priceMinor: p.priceMinor,
+            currency: p.currency,
+          })),
+          services: ctx.data.services.map((s) => ({
+            id: s.id,
+            name: s.name,
+            basePriceMinor: s.basePriceMinor,
+            currency: s.currency,
+          })),
+          faqs: ctx.data.faqs.map((f) => ({
+            id: f.id,
+            question: f.question,
+            answer: f.answer,
+          })),
+          policies: ctx.data.policies.map((p) => ({
+            kind: p.kind,
+            title: p.title,
+            content: p.content,
+          })),
+          biz: ctx.data.biz
+            ? {
+                legalName: ctx.data.biz.legalName,
+                websiteUrl: ctx.data.biz.websiteUrl,
+                operatingHours: ctx.data.biz.operatingHours,
+                currency: ctx.data.biz.currency,
+                menuUrl: ctx.data.shopForm?.menuUrl ?? null,
+              }
+            : null,
+          config: ctx.data.config
+            ? { greeting: ctx.data.config.greeting }
+            : null,
+          customer: {
+            whatsappName:
+              (ctx as { customerName?: string | null }).customerName ?? null,
+            operatorNickname: null,
+          },
+        },
+        cartDraft: cartStateForLLM
+          ? {
+              items: cartStateForLLM.items,
+              totalMinor: cartStateForLLM.subtotalMinor,
+              currency: cartStateForLLM.currency,
+            }
+          : null,
+        bookingFormEnabled: !!ctx.data.bookingForm?.enabled,
+        shopFormEnabled: !!ctx.data.shopForm?.enabled,
+        voiceMode:
+          ctx.replyMode === 'voice'
+            ? 'voice'
+            : ctx.replyMode === 'match_customer' && customerSpokeAudio
+              ? 'voice'
+              : 'text',
+        previousBotReply,
+        configuredGreeting: ctx.data.config?.greeting ?? null,
+      });
+      if (validation.warnings.length > 0) {
+        args.log.warn(
+          { warnings: validation.warnings, orgId: args.organizationId },
+          '[whatsapp] reply validators fired',
+        );
+      }
+      rawReply = validation.reply;
+    }
 
     // Stateful cart — parse "added N× <product>" lines out of the bot's
     // reply and upsert each one into a draft Cart row for this thread.

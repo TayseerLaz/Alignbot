@@ -412,6 +412,16 @@ interface BotResponseArgs {
   // in the thread, the system prompt asks the model to open with the
   // customer's name once. Null / empty silently skips the directive.
   customerName?: string | null;
+  // Phase 9 — pre-LLM enrichment. Pass the active draft cart for this
+  // thread so the LLM has the deterministic running total + line items
+  // ready to quote when the customer asks "what's the total?". The
+  // validator layer also patches replies that demur, but giving the
+  // model the number up-front means it almost never demurs.
+  cartState?: {
+    items: Array<{ name: string; quantity: number; unitPriceMinor: number; sku: string | null }>;
+    subtotalMinor: number;
+    currency: string;
+  } | null;
 }
 
 // Provenance bundle returned alongside the bot reply text. Captures
@@ -774,6 +784,32 @@ export async function buildBotResponse(
             ? `\nDelivery fee: ${shopForm.deliveryFeeMinor} minor units${shopForm.freeDeliveryAboveMinor != null ? ` (waived if subtotal ≥ ${shopForm.freeDeliveryAboveMinor} minor units)` : ''}.`
             : ''
         }`
+      : '',
+    // Phase 9 — running cart state. The caller computes this from the
+    // active draft cart for this thread; the LLM can quote the total
+    // deterministically when asked, so we never get "I can't provide
+    // the total" on a non-empty draft.
+    args.cartState && args.cartState.items.length > 0
+      ? (() => {
+          const code = args.cartState!.currency.toUpperCase();
+          const dec =
+            code === 'KWD' || code === 'BHD' || code === 'OMR' || code === 'JOD' ? 3 : 2;
+          const div = Math.pow(10, dec);
+          const fmt = (m: number) => `${(m / div).toFixed(dec)} ${code}`;
+          const lines = args.cartState!.items
+            .map(
+              (it) =>
+                `- ${it.quantity}× ${it.name}${it.sku ? ` (SKU ${it.sku})` : ''} @ ${fmt(it.unitPriceMinor)} each = ${fmt(it.quantity * it.unitPriceMinor)}`,
+            )
+            .join('\n');
+          return [
+            `# 🛒 Running cart state for THIS conversation`,
+            `Subtotal so far: ${fmt(args.cartState!.subtotalMinor)} (${args.cartState!.items.reduce((s, i) => s + i.quantity, 0)} items)`,
+            `Items:`,
+            lines,
+            `When the customer asks "what's the total" / "how much" / "كم المجموع", quote the subtotal above VERBATIM. NEVER reply "I can't compute the total" or "I don't have that info" — you have the running total right here.`,
+          ].join('\n');
+        })()
       : '',
   ]
     .filter(Boolean)

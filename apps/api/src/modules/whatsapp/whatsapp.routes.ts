@@ -3546,9 +3546,21 @@ async function maybeReplyAsBot(args: {
       // The scanner uses ctx.data (the in-memory KB we packed into the
       // prompt) to compute citations + hallucinations against the final
       // `reply` text the customer sees.
+      args.log.info(
+        {
+          gateBotMessageId: !!botMessageId,
+          gateHasInputs: !!result?.inputs,
+          gateHasCtx: !!ctx?.data,
+        },
+        '[whatsapp] provenance gate evaluated',
+      );
       if (botMessageId && result?.inputs) {
-        const { recordProvenance } = await import('../../lib/provenance.js');
-        void recordProvenance({
+        try {
+          const { recordProvenance } = await import('../../lib/provenance.js');
+          // Synchronous await so any throw lands in the surrounding catch
+          // and writes the [whatsapp] bot send threw log line. The
+          // additional latency is bounded (≈ 50 ms scanner + 2 DB writes).
+          await recordProvenance({
           organizationId: args.organizationId,
           messageId: botMessageId,
           inputs: result.inputs,
@@ -3588,6 +3600,14 @@ async function maybeReplyAsBot(args: {
           },
           log: args.log,
         });
+        } catch (err) {
+          // Inner catch — provenance is never load-bearing. We log loudly
+          // (both pino + console.error so it lands in /var/log even when
+          // the pino sink is flushed slowly) and continue.
+          args.log.warn({ err, botMessageId }, '[whatsapp] provenance recordProvenance threw');
+          // eslint-disable-next-line no-console
+          console.error('[whatsapp] provenance recordProvenance threw', err);
+        }
       }
     } catch (err) {
       args.log.warn({ err }, '[whatsapp] bot send threw');

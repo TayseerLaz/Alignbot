@@ -95,6 +95,49 @@ interface Message {
   messageType: string | null;
   body: string | null;
   receivedAt: string;
+  sentBy: 'bot' | 'operator' | null;
+}
+
+// Phase 8 / 1.3 — shape returned by GET /inbox/messages/:id/provenance.
+// Only ALIGNED admins ever fetch this.
+interface MessageProvenance {
+  messageId: string;
+  organizationId: string;
+  systemPrompt: { sha256: string; body: string };
+  userPrompt: string;
+  historyJson: { role: 'user' | 'assistant'; content: string }[];
+  candidates: {
+    products: { id: string; name: string; sku: string; priceMinor: number | null; currency: string | null }[];
+    services: { id: string; name: string; basePriceMinor: number | null; currency: string | null }[];
+    faqs: { id: string; question: string; answer: string }[];
+    policyKinds: string[];
+    businessInfoFields: string[];
+  };
+  citations:
+    | {
+        type: 'product' | 'service' | 'faq' | 'policy' | 'business_info';
+        id: string | null;
+        label: string;
+        snippet: string;
+        confidence: number;
+        meta?: Record<string, unknown> | null;
+      }[]
+    | null;
+  hallucinations:
+    | {
+        type: 'unknown_product' | 'price_drift' | 'unknown_business_info';
+        matchedText: string;
+        context: string;
+        severity: 'critical' | 'warning';
+        reason: string;
+      }[]
+    | null;
+  model: string;
+  temperature: number;
+  promptTokens: number;
+  completionTokens: number;
+  latencyMs: number;
+  createdAt: string;
 }
 
 interface Note {
@@ -148,6 +191,24 @@ export default function InboxPage() {
     // on every server tick so the perceived freshness is sub-2s.
     refetchInterval: 30_000,
   });
+
+  // Phase 8 / 1.3 — per-thread hallucination counts for the red-dot.
+  // Only fetched for ALIGNED admins. One round-trip across all threads.
+  const isAdmin = session?.user.isAlignedAdmin === true;
+  const flaggedQ = useQuery({
+    queryKey: ['inbox-flagged-summary'],
+    queryFn: () =>
+      api.get<{ data: { threadId: string; flaggedCount: number }[] }>(
+        '/api/v1/inbox/threads/flagged-summary',
+      ),
+    enabled: isAdmin,
+    refetchInterval: 60_000,
+  });
+  const flaggedByThread = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of flaggedQ.data?.data ?? []) m.set(r.threadId, r.flaggedCount);
+    return m;
+  }, [flaggedQ.data]);
 
   // SSE realtime: every 2s tick from the server invalidates the thread
   // queries so they refetch. Cheap for the server (one timer per
@@ -214,6 +275,7 @@ export default function InboxPage() {
             activeId={activeId}
             onSelect={setActiveId}
             loading={threadsQ.isLoading}
+            flaggedByThread={flaggedByThread}
           />
         </div>
         <ThreadView
@@ -239,11 +301,16 @@ function ThreadList({
   activeId,
   onSelect,
   loading,
+  flaggedByThread,
 }: {
   threads: Thread[];
   activeId: string | null;
   onSelect: (id: string) => void;
   loading: boolean;
+  // Phase 8 / 1.3 — ALIGNED-admin only: map of threadId → hallucination
+  // count. Renders a red dot on flagged threads. Empty map when the user
+  // isn't an admin (the parent never fetches the summary).
+  flaggedByThread: Map<string, number>;
 }) {
   return (
     <ul className="min-h-0 flex-1 overflow-y-auto" aria-label="Conversations">
@@ -278,6 +345,14 @@ function ThreadList({
                 <span className="flex items-center gap-1.5 truncate font-mono text-xs">
                   <Phone className="size-3.5 shrink-0 text-foreground-muted" />
                   {t.customerName ?? t.customerPhone}
+                  {/* ALIGNED-admin only — red dot indicating ≥1 bot reply
+                      on this thread has hallucinations flagged. */}
+                  {(flaggedByThread.get(t.id) ?? 0) > 0 ? (
+                    <span
+                      className="ml-0.5 inline-flex h-2 w-2 shrink-0 rounded-full bg-rose-500"
+                      title={`${flaggedByThread.get(t.id)} flagged bot reply${(flaggedByThread.get(t.id) ?? 0) > 1 ? 'ies' : ''}`}
+                    />
+                  ) : null}
                 </span>
                 <span className="whitespace-nowrap text-[10px] text-foreground-subtle">
                   {formatRelative(t.lastMessageAt)}
@@ -330,6 +405,10 @@ function ThreadView({
   currentUserId: string | null;
 }) {
   const queryClient = useQueryClient();
+  // Phase 8 / 1.3 — only ALIGNED admins see the AI provenance affordance
+  // on bot bubbles. Regular org users get a clean chat surface.
+  const { session } = useSession();
+  const isAlignedAdmin = session?.user.isAlignedAdmin === true;
 
   // Whether the AI bot is deployed at the org level. This + an
   // unassigned thread are the two preconditions for auto-reply; the
@@ -525,7 +604,11 @@ function ThreadView({
         ) : (
           timeline.map((item) =>
             item.kind === 'msg' ? (
-              <Bubble key={item.msg.id} message={item.msg} />
+              <Bubble
+                key={item.msg.id}
+                message={item.msg}
+                isAlignedAdmin={isAlignedAdmin}
+              />
             ) : (
               <NoteBubble key={item.note.id} note={item.note} />
             ),
@@ -913,8 +996,28 @@ function AiStatusBanner({ thread, botDeployed }: { thread: Thread; botDeployed: 
   );
 }
 
-function Bubble({ message }: { message: Message }) {
+function Bubble({
+  message,
+  isAlignedAdmin,
+}: {
+  message: Message;
+  isAlignedAdmin: boolean;
+}) {
   const isOut = message.direction === 'outbound';
+  // Phase 8 / 1.3 — ALIGNED-admin only: click any bot bubble to inline
+  // the message provenance panel underneath. Regular users see nothing.
+  const isBotMessage = isOut && message.sentBy === 'bot';
+  const canAudit = isAlignedAdmin && isBotMessage;
+  const [open, setOpen] = useState(false);
+  const provQ = useQuery({
+    queryKey: ['provenance', message.id],
+    queryFn: () =>
+      api.get<{ data: MessageProvenance }>(
+        `/api/v1/inbox/messages/${message.id}/provenance`,
+      ),
+    enabled: open && canAudit,
+    staleTime: 60_000,
+  });
   // Detect button/interactive replies and surface them visually. The
   // body text is already the button's label (via extractInboundBody on
   // the API side) — but a customer tapping "INTERESTED" looks
@@ -937,12 +1040,15 @@ function Bubble({ message }: { message: Message }) {
     contacts: '👤 Contact',
   };
   const mediaTag = MEDIA_TAGS[mt];
+  const flaggedCount = provQ.data?.data?.hallucinations?.length ?? 0;
   return (
-    <div className={cn('flex', isOut ? 'justify-end' : 'justify-start')}>
+    <div className={cn('flex flex-col', isOut ? 'items-end' : 'items-start')}>
       <div
         className={cn(
           'max-w-[80%] rounded-lg px-3 py-2 text-sm',
           isOut ? 'bg-brand-500 text-white' : 'bg-surface-muted text-foreground',
+          // Subtle red ring when the scanner flagged hallucinations.
+          canAudit && flaggedCount > 0 ? 'ring-2 ring-rose-400/70' : '',
         )}
       >
         {isButtonReply ? (
@@ -967,11 +1073,303 @@ function Bubble({ message }: { message: Message }) {
         <p className="whitespace-pre-wrap break-words">
           {message.body ?? <em className="opacity-70">[{message.messageType ?? 'media'}]</em>}
         </p>
-        <p className={cn('mt-1 text-[10px]', isOut ? 'text-white/80' : 'text-foreground-subtle')}>
-          {formatRelative(message.receivedAt)}
-        </p>
+        <div
+          className={cn(
+            'mt-1 flex items-center gap-2 text-[10px]',
+            isOut ? 'text-white/80' : 'text-foreground-subtle',
+          )}
+        >
+          <span>{formatRelative(message.receivedAt)}</span>
+          {canAudit ? (
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className={cn(
+                'flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide transition-colors',
+                isOut
+                  ? 'bg-white/10 hover:bg-white/20'
+                  : 'bg-foreground/10 hover:bg-foreground/20',
+              )}
+              title="ALIGNED admin — view AI provenance"
+            >
+              {open ? 'Hide' : 'AI source'}
+              {flaggedCount > 0 ? (
+                <span className="ml-1 rounded-full bg-rose-500 px-1.5 text-[9px] font-bold text-white">
+                  {flaggedCount}
+                </span>
+              ) : null}
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {canAudit && open ? (
+        <div className={cn('mt-1 w-full max-w-[80%]', isOut ? 'self-end' : 'self-start')}>
+          <ProvenancePanel query={provQ} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// Phase 8 / 1.3 — inline provenance panel rendered under a bot bubble in
+// /inbox when an ALIGNED admin clicks "AI source". Four tabs:
+//   • Sources         — citations + dereferenced rows
+//   • Hallucinations  — flagged phrases
+//   • LLM call        — model / tokens / latency
+//   • Raw I/O         — full system prompt + history
+function ProvenancePanel({
+  query,
+}: {
+  query: ReturnType<typeof useQuery<{ data: MessageProvenance }>>;
+}) {
+  const [tab, setTab] = useState<'sources' | 'hallucinations' | 'llm' | 'raw'>(
+    'sources',
+  );
+  if (query.isLoading) {
+    return (
+      <div className="rounded-md border border-border bg-surface-muted/40 px-3 py-2 text-xs text-foreground-muted">
+        Loading provenance…
+      </div>
+    );
+  }
+  if (query.error || !query.data?.data) {
+    const status =
+      query.error instanceof ApiError && query.error.status === 404
+        ? 'No provenance recorded for this message yet.'
+        : 'Could not load provenance.';
+    return (
+      <div className="rounded-md border border-border bg-surface-muted/40 px-3 py-2 text-xs text-foreground-muted">
+        {status}
+      </div>
+    );
+  }
+  const p = query.data.data;
+  const cits = p.citations ?? [];
+  const hals = p.hallucinations ?? [];
+  return (
+    <div className="rounded-md border border-border bg-surface-muted/30 text-xs">
+      <div className="flex items-center gap-1 border-b border-border px-2 py-1">
+        <ProvTab
+          active={tab === 'sources'}
+          onClick={() => setTab('sources')}
+          label={`Sources (${cits.length})`}
+        />
+        <ProvTab
+          active={tab === 'hallucinations'}
+          onClick={() => setTab('hallucinations')}
+          label={`Hallucinations (${hals.length})`}
+          accent={hals.length > 0 ? 'rose' : undefined}
+        />
+        <ProvTab active={tab === 'llm'} onClick={() => setTab('llm')} label="LLM call" />
+        <ProvTab active={tab === 'raw'} onClick={() => setTab('raw')} label="Raw I/O" />
+      </div>
+      <div className="max-h-72 overflow-auto px-3 py-2 leading-relaxed">
+        {tab === 'sources' ? <ProvSources p={p} /> : null}
+        {tab === 'hallucinations' ? <ProvHallucinations p={p} /> : null}
+        {tab === 'llm' ? <ProvLLM p={p} /> : null}
+        {tab === 'raw' ? <ProvRaw p={p} /> : null}
       </div>
     </div>
+  );
+}
+
+function ProvTab({
+  active,
+  onClick,
+  label,
+  accent,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  accent?: 'rose';
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'rounded px-2 py-0.5 text-[11px] font-medium transition-colors',
+        active
+          ? accent === 'rose'
+            ? 'bg-rose-500 text-white'
+            : 'bg-brand-500 text-white'
+          : accent === 'rose'
+            ? 'text-rose-700 hover:bg-rose-100'
+            : 'text-foreground-muted hover:bg-surface-muted',
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+function ProvSources({ p }: { p: MessageProvenance }) {
+  const cits = p.citations ?? [];
+  if (cits.length === 0) {
+    return (
+      <p className="text-foreground-muted">
+        No source matched the reply text. The bot might have replied with conversational
+        filler only.
+      </p>
+    );
+  }
+  return (
+    <ul className="space-y-2">
+      {cits.map((c, i) => (
+        <li key={i} className="rounded border border-border bg-surface px-2 py-1.5">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="font-medium">
+              <ProvTypeBadge type={c.type} /> {c.label}
+            </span>
+            <span className="text-[10px] text-foreground-subtle">
+              {(c.confidence * 100).toFixed(0)}%
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] italic text-foreground-muted">"{c.snippet}"</p>
+          {c.meta && Object.keys(c.meta).length > 0 ? (
+            <pre className="mt-1 overflow-x-auto rounded bg-surface-muted px-1.5 py-1 text-[10px] text-foreground-subtle">
+              {JSON.stringify(c.meta, null, 0)}
+            </pre>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ProvHallucinations({ p }: { p: MessageProvenance }) {
+  const hals = p.hallucinations ?? [];
+  if (hals.length === 0) {
+    return (
+      <p className="text-emerald-700">
+        ✓ Nothing flagged. Every product, price, and business-info phrase the bot used was
+        present in the candidate catalog.
+      </p>
+    );
+  }
+  return (
+    <ul className="space-y-2">
+      {hals.map((h, i) => (
+        <li
+          key={i}
+          className={cn(
+            'rounded border px-2 py-1.5',
+            h.severity === 'critical'
+              ? 'border-rose-300 bg-rose-50'
+              : 'border-amber-300 bg-amber-50',
+          )}
+        >
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="font-medium">
+              <span
+                className={cn(
+                  'mr-1 rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white',
+                  h.severity === 'critical' ? 'bg-rose-500' : 'bg-amber-500',
+                )}
+              >
+                {h.severity}
+              </span>
+              {h.matchedText}
+            </span>
+            <span className="text-[10px] text-foreground-subtle">{h.type}</span>
+          </div>
+          <p className="mt-1 text-[11px] italic text-foreground-muted">"{h.context}"</p>
+          <p className="mt-1 text-[11px] text-foreground">{h.reason}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ProvLLM({ p }: { p: MessageProvenance }) {
+  return (
+    <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+      <dt className="text-foreground-subtle">Model</dt>
+      <dd className="font-mono">{p.model}</dd>
+      <dt className="text-foreground-subtle">Temperature</dt>
+      <dd className="font-mono">{p.temperature.toFixed(2)}</dd>
+      <dt className="text-foreground-subtle">Prompt tokens</dt>
+      <dd className="font-mono">{p.promptTokens.toLocaleString()}</dd>
+      <dt className="text-foreground-subtle">Completion tokens</dt>
+      <dd className="font-mono">{p.completionTokens.toLocaleString()}</dd>
+      <dt className="text-foreground-subtle">Latency</dt>
+      <dd className="font-mono">{p.latencyMs} ms</dd>
+      <dt className="text-foreground-subtle">Prompt SHA-256</dt>
+      <dd className="truncate font-mono text-[10px]" title={p.systemPrompt.sha256}>
+        {p.systemPrompt.sha256.slice(0, 16)}…
+      </dd>
+      <dt className="text-foreground-subtle">Candidates packed</dt>
+      <dd className="font-mono">
+        {p.candidates.products.length}p / {p.candidates.services.length}s /{' '}
+        {p.candidates.faqs.length}f
+      </dd>
+      <dt className="text-foreground-subtle">Recorded</dt>
+      <dd className="font-mono">{formatRelative(p.createdAt)}</dd>
+    </dl>
+  );
+}
+
+function ProvRaw({ p }: { p: MessageProvenance }) {
+  return (
+    <div className="space-y-2">
+      <details>
+        <summary className="cursor-pointer text-[11px] font-medium text-foreground-muted hover:text-foreground">
+          System prompt ({p.systemPrompt.body.length.toLocaleString()} chars)
+        </summary>
+        <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface px-2 py-1.5 text-[10px] leading-snug text-foreground">
+          {p.systemPrompt.body}
+        </pre>
+      </details>
+      <details>
+        <summary className="cursor-pointer text-[11px] font-medium text-foreground-muted hover:text-foreground">
+          User prompt
+        </summary>
+        <pre className="mt-1 overflow-auto rounded bg-surface px-2 py-1.5 text-[10px] text-foreground">
+          {p.userPrompt}
+        </pre>
+      </details>
+      <details>
+        <summary className="cursor-pointer text-[11px] font-medium text-foreground-muted hover:text-foreground">
+          History ({p.historyJson.length} turns)
+        </summary>
+        <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface px-2 py-1.5 text-[10px] text-foreground">
+          {p.historyJson.map((t) => `[${t.role}] ${t.content}`).join('\n\n')}
+        </pre>
+      </details>
+      <details>
+        <summary className="cursor-pointer text-[11px] font-medium text-foreground-muted hover:text-foreground">
+          Candidate set (products / services / FAQs packed into the prompt)
+        </summary>
+        <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface px-2 py-1.5 text-[10px] text-foreground">
+          {JSON.stringify(p.candidates, null, 2)}
+        </pre>
+      </details>
+    </div>
+  );
+}
+
+function ProvTypeBadge({
+  type,
+}: {
+  type: 'product' | 'service' | 'faq' | 'policy' | 'business_info';
+}) {
+  const colours: Record<typeof type, string> = {
+    product: 'bg-emerald-100 text-emerald-700',
+    service: 'bg-sky-100 text-sky-700',
+    faq: 'bg-violet-100 text-violet-700',
+    policy: 'bg-amber-100 text-amber-700',
+    business_info: 'bg-slate-100 text-slate-700',
+  };
+  return (
+    <span
+      className={cn(
+        'mr-1 rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide',
+        colours[type],
+      )}
+    >
+      {type}
+    </span>
   );
 }
 

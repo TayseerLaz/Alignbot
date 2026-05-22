@@ -61,6 +61,10 @@ const messageDtoSchema = z.object({
   messageType: z.string().nullable(),
   body: z.string().nullable(),
   receivedAt: z.string().datetime(),
+  // Phase 8 / 1.3 — surface who composed this outbound message. 'bot'
+  // means it has a provenance row; 'operator' means a human sent it
+  // from the portal. Null on inbound + legacy rows without rawPayload.
+  sentBy: z.enum(['bot', 'operator']).nullable(),
 });
 
 const noteDtoSchema = z.object({
@@ -270,16 +274,27 @@ export default async function inboxRoutes(app: FastifyInstance) {
           take: 500,
         });
         return {
-          data: messages.map((m) => ({
-            id: m.id,
-            direction: m.direction === 'outbound' ? ('outbound' as const) : ('inbound' as const),
-            metaMessageId: m.metaMessageId,
-            fromNumber: m.fromNumber,
-            toNumber: m.toNumber,
-            messageType: m.messageType,
-            body: m.body,
-            receivedAt: m.receivedAt.toISOString(),
-          })),
+          data: messages.map((m) => {
+            const raw = (m.rawPayload ?? null) as { sentBy?: unknown } | null;
+            const sentByRaw = raw && typeof raw.sentBy === 'string' ? raw.sentBy : null;
+            const sentBy: 'bot' | 'operator' | null =
+              m.direction === 'outbound'
+                ? sentByRaw === 'bot'
+                  ? 'bot'
+                  : 'operator'
+                : null;
+            return {
+              id: m.id,
+              direction: m.direction === 'outbound' ? ('outbound' as const) : ('inbound' as const),
+              metaMessageId: m.metaMessageId,
+              fromNumber: m.fromNumber,
+              toNumber: m.toNumber,
+              messageType: m.messageType,
+              body: m.body,
+              receivedAt: m.receivedAt.toISOString(),
+              sentBy,
+            };
+          }),
           nextCursor: null,
         };
       }),
@@ -937,5 +952,200 @@ export default async function inboxRoutes(app: FastifyInstance) {
         await tx.cannedResponse.deleteMany({ where: { id: req.params.id } });
         return { ok: true as const };
       }),
+  );
+
+  // ===================================================================
+  // PROVENANCE — ALIGNED-admin only. Phase 8 / 1.3.
+  //
+  // Returns the full audit trail for one outbound bot message:
+  //   • inputs we fed the LLM (system prompt body via the snapshot table,
+  //     user message, trimmed history, candidate KB ids)
+  //   • outputs (citations + hallucinations from the post-LLM scanner)
+  //   • LLM call metadata
+  //   • dereferenced source rows for the cited products / services / faqs
+  //     so the UI can render names without a second hop.
+  //
+  // Gated by requireAlignedAdmin (regular org admins do NOT see this).
+  // Uses withRlsBypass so an ALIGNED admin can audit any tenant's reply.
+  // ===================================================================
+  r.get(
+    '/inbox/messages/:messageId/provenance',
+    {
+      schema: {
+        tags: ['inbox'],
+        summary: 'ALIGNED-admin only — fetch the AI message provenance audit trail.',
+        params: z.object({ messageId: uuidSchema }),
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req, reply) => {
+      const { withRlsBypass } = await import('../../lib/db.js');
+      const result = await withRlsBypass(async (tx) => {
+        const prov = await tx.messageProvenance.findUnique({
+          where: { messageId: req.params.messageId },
+          include: {
+            systemPromptSnapshot: { select: { sha256: true, body: true } },
+            message: {
+              select: {
+                id: true,
+                body: true,
+                messageType: true,
+                receivedAt: true,
+                threadId: true,
+                organizationId: true,
+              },
+            },
+          },
+        });
+        if (!prov) return null;
+        // Dereference candidate rows so the UI can render names.
+        const [products, services, faqs] = await Promise.all([
+          prov.candidateProductIds.length > 0
+            ? tx.product.findMany({
+                where: { id: { in: prov.candidateProductIds } },
+                select: { id: true, name: true, sku: true, priceMinor: true, currency: true },
+              })
+            : Promise.resolve([]),
+          prov.candidateServiceIds.length > 0
+            ? tx.service.findMany({
+                where: { id: { in: prov.candidateServiceIds } },
+                select: {
+                  id: true,
+                  name: true,
+                  basePriceMinor: true,
+                  currency: true,
+                },
+              })
+            : Promise.resolve([]),
+          prov.candidateFaqIds.length > 0
+            ? tx.fAQ.findMany({
+                where: { id: { in: prov.candidateFaqIds } },
+                select: { id: true, question: true, answer: true },
+              })
+            : Promise.resolve([]),
+        ]);
+        return { prov, products, services, faqs };
+      });
+      if (!result) {
+        reply.code(404);
+        return { error: { code: ApiErrorCode.NOT_FOUND, message: 'No provenance for this message.' } };
+      }
+      const { prov, products, services, faqs } = result;
+      return {
+        data: {
+          messageId: prov.messageId,
+          organizationId: prov.organizationId,
+          // Inputs
+          systemPrompt: {
+            sha256: prov.systemPromptSnapshot.sha256,
+            body: prov.systemPromptSnapshot.body,
+          },
+          userPrompt: prov.userPrompt,
+          historyJson: prov.historyJson,
+          // Candidate set (with dereferenced rows for the UI)
+          candidates: {
+            products,
+            services,
+            faqs,
+            policyKinds: prov.candidatePolicyKinds,
+            businessInfoFields: prov.businessInfoFields,
+          },
+          // Outputs
+          citations: prov.citations,
+          hallucinations: prov.hallucinations,
+          // LLM call metadata
+          model: prov.model,
+          temperature: prov.temperature,
+          promptTokens: prov.promptTokens,
+          completionTokens: prov.completionTokens,
+          latencyMs: prov.latencyMs,
+          createdAt: prov.createdAt.toISOString(),
+          message: prov.message
+            ? {
+                id: prov.message.id,
+                body: prov.message.body,
+                messageType: prov.message.messageType,
+                receivedAt: prov.message.receivedAt.toISOString(),
+                threadId: prov.message.threadId,
+              }
+            : null,
+        },
+      };
+    },
+  );
+
+  // ---------- GET /inbox/threads/flagged-summary -----------------------
+  // Returns a Map<threadId, hallucinationCount> across all open threads.
+  // Used by the inbox list to render the per-thread red-dot when an
+  // ALIGNED admin opens /inbox. One round-trip; no N+1.
+  r.get(
+    '/inbox/threads/flagged-summary',
+    {
+      schema: {
+        tags: ['inbox'],
+        summary: 'ALIGNED-admin only — per-thread hallucination counts for the inbox list.',
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      void req;
+      const { withRlsBypass } = await import('../../lib/db.js');
+      const rows = await withRlsBypass(async (tx) => {
+        return tx.$queryRaw<{ thread_id: string; flagged_count: bigint }[]>`
+          SELECT
+            m.thread_id::text AS thread_id,
+            COUNT(*)::bigint AS flagged_count
+          FROM message_provenances p
+          JOIN whatsapp_messages m ON m.id = p.message_id
+          WHERE jsonb_array_length(COALESCE(p.hallucinations, '[]'::jsonb)) > 0
+            AND m.thread_id IS NOT NULL
+          GROUP BY m.thread_id
+        `;
+      });
+      return {
+        data: rows.map((r) => ({
+          threadId: r.thread_id,
+          flaggedCount: Number(r.flagged_count),
+        })),
+      };
+    },
+  );
+
+  // ---------- GET /inbox/threads/:id/flagged-counts --------------------
+  // Returns the count of message_provenances with non-empty hallucinations
+  // on this thread. Used by the inbox list to render the red-dot badge
+  // when threads have flagged bot replies. ALIGNED-admin only.
+  r.get(
+    '/inbox/threads/:id/flagged-counts',
+    {
+      schema: {
+        tags: ['inbox'],
+        summary: 'ALIGNED-admin only — count of bot replies on this thread with hallucination flags.',
+        params: z.object({ id: uuidSchema }),
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const { withRlsBypass, prisma } = await import('../../lib/db.js');
+      const rows = await withRlsBypass(async (tx) => {
+        // Raw SQL: count provenance rows where jsonb_array_length(hallucinations) > 0.
+        return tx.$queryRaw<{ flagged_count: bigint; flagged_message_ids: string[] }[]>`
+          SELECT
+            COALESCE(SUM(CASE WHEN jsonb_array_length(COALESCE(p.hallucinations, '[]'::jsonb)) > 0 THEN 1 ELSE 0 END), 0)::bigint AS flagged_count,
+            COALESCE(ARRAY_AGG(p.message_id) FILTER (WHERE jsonb_array_length(COALESCE(p.hallucinations, '[]'::jsonb)) > 0), ARRAY[]::uuid[]) AS flagged_message_ids
+          FROM message_provenances p
+          JOIN whatsapp_messages m ON m.id = p.message_id
+          WHERE m.thread_id = ${req.params.id}::uuid
+        `;
+      });
+      void prisma;
+      const first = rows[0];
+      return {
+        data: {
+          flaggedCount: first ? Number(first.flagged_count) : 0,
+          flaggedMessageIds: first ? first.flagged_message_ids : [],
+        },
+      };
+    },
   );
 }

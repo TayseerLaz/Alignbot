@@ -24,8 +24,46 @@ function client(): OpenAI {
   return _client;
 }
 
+// Phase 12 — Groq backend for chat completions only. Groq's /openai/v1
+// endpoint is OpenAI-API-compatible so the same SDK works with just a
+// baseURL + apiKey swap. Transcription stays on the OpenAI client
+// (gpt-4o-transcribe is better than Groq's Whisper for Arabic dialects).
+//
+// Active when GROQ_API_KEY is set. Falls back to the OpenAI client
+// otherwise — every deployment without the key behaves exactly as
+// before. Operators flip Groq on by adding the key to GH secrets.
+let _groqClient: OpenAI | null = null;
+function groqClient(): OpenAI | null {
+  if (!env.GROQ_API_KEY) return null;
+  if (_groqClient) return _groqClient;
+  _groqClient = new OpenAI({
+    apiKey: env.GROQ_API_KEY,
+    baseURL: env.GROQ_BASE_URL,
+  });
+  return _groqClient;
+}
+
+// Returns the client + model + a label that should be used for chat
+// completions, picking Groq when configured. Each call site stays
+// provider-agnostic; provenance + logs include the label so an operator
+// can see which provider actually ran for any given message.
+function chatClientAndModel(): { client: OpenAI; model: string; provider: 'openai' | 'groq' } {
+  const groq = groqClient();
+  if (groq) {
+    return { client: groq, model: env.GROQ_MODEL, provider: 'groq' };
+  }
+  return { client: client(), model: env.OPENAI_MODEL, provider: 'openai' };
+}
+
 export function isOpenAIConfigured(): boolean {
   return !!env.OPENAI_API_KEY;
+}
+
+// Phase 12 — surface the active chat provider + model so the provenance
+// row + logs reflect what actually ran (not just env.OPENAI_MODEL).
+export function activeChatProvider(): { provider: 'openai' | 'groq'; model: string } {
+  const { provider, model } = chatClientAndModel();
+  return { provider, model };
 }
 
 export const DAILY_TOKEN_LIMIT_PER_ORG = 200_000;
@@ -110,9 +148,9 @@ export async function complete(args: CompleteArgs): Promise<{ text: string; inpu
     throw err;
   }
 
-  const c = client();
+  const { client: c, model } = chatClientAndModel();
   const res = await c.chat.completions.create({
-    model: env.OPENAI_MODEL,
+    model,
     max_tokens: args.maxTokens ?? 1024,
     temperature: args.temperature ?? 0.4,
     messages: [
@@ -208,9 +246,9 @@ export async function completeJson<T = unknown>(args: CompleteArgs): Promise<T> 
     throw err;
   }
 
-  const c = client();
+  const { client: c, model } = chatClientAndModel();
   const res = await c.chat.completions.create({
-    model: env.OPENAI_MODEL,
+    model,
     max_tokens: args.maxTokens ?? 400,
     temperature: args.temperature ?? 0,
     response_format: { type: 'json_object' },

@@ -97,6 +97,18 @@ const envSchema = z.object({
   // exists so ops can roll back to "whisper-1" without a code push if
   // gpt-4o-transcribe has an outage.
   OPENAI_TRANSCRIBE_MODEL: z.string().default('gpt-4o-transcribe'),
+  // Phase 12 — optional Groq backend for chat completions. Groq's LPU
+  // inference runs Llama 3.3 70B at ~500 tokens/sec (vs OpenAI's ~50-100
+  // tok/sec) — every bot reply lands ~1.5-3s faster. The /openai/v1
+  // base URL is OpenAI-API-compatible so we use the same SDK. When
+  // GROQ_API_KEY is unset (default), every chat call goes to OpenAI
+  // exactly as before — no behaviour change for existing deployments.
+  //
+  // Transcription stays on OpenAI (gpt-4o-transcribe is meaningfully
+  // better on Arabic dialects than Groq's Whisper Large v3).
+  GROQ_API_KEY: z.string().optional(),
+  GROQ_MODEL: z.string().default('llama-3.3-70b-versatile'),
+  GROQ_BASE_URL: z.string().url().default('https://api.groq.com/openai/v1'),
 
   // Phase 3 §5.1.3 — Stripe billing. Empty values disable billing surfaces:
   // /billing/checkout 503s, /webhooks/stripe rejects, cap middleware

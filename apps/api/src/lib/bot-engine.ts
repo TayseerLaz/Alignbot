@@ -21,8 +21,13 @@
 //                                        with NO tx held
 // Call sites do tx1 → release → LLM → tx2.
 
-import { complete, completeJson } from './openai.js';
+import { activeChatProvider, complete, completeJson } from './openai.js';
 import { env } from './env.js';
+
+function activeProviderModelLabel(): string {
+  const { provider, model } = activeChatProvider();
+  return provider === 'groq' ? `groq:${model}` : model;
+}
 
 const PERSONALITY_DESCRIPTIONS: Record<string, string> = {
   formal: 'Professional, precise, no contractions. Address customer with full sentences.',
@@ -933,9 +938,12 @@ export async function buildBotResponse(
       candidateFaqIds: faqs.map((f) => f.id),
       candidatePolicyKinds: policies.map((p) => p.kind),
       businessInfoFields,
-      // env.OPENAI_MODEL is the actual model name passed to OpenAI inside
-      // complete(). Mirrored here so the provenance row is self-contained.
-      model: env.OPENAI_MODEL,
+      // Phase 12 — record the model that actually ran. When Groq is
+      // configured (GROQ_API_KEY set), this is the Groq model name
+      // prefixed with "groq:" so /aligned-admin/provenance can group
+      // by provider for A/B comparisons. Falls back to env.OPENAI_MODEL
+      // when Groq is unset.
+      model: activeProviderModelLabel(),
       temperature: TEMPERATURE,
       promptTokens: result.inputTokens,
       completionTokens: result.outputTokens,

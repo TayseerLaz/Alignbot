@@ -60,8 +60,31 @@ import healthcheck from './plugins/healthcheck.js';
 import metrics from './plugins/metrics.js';
 import tenantContext from './plugins/tenant-context.js';
 
+// Phase 11.5 — bump the undici HTTP-agent keep-alive window from the
+// default 4s to 60s, and bump max connections per host. Cuts ~50-150 ms
+// off every outbound call to api.openai.com / api.elevenlabs.io /
+// graph.facebook.com when traffic is steady (we make 3-5 of these per
+// bot reply, so the savings stack). Affects every `fetch()` call in
+// the api process + every SDK that wraps the global fetch (incl. the
+// OpenAI SDK on Node 20+).
+async function tuneHttpAgent(): Promise<void> {
+  try {
+    const { Agent, setGlobalDispatcher } = await import('undici');
+    setGlobalDispatcher(
+      new Agent({
+        keepAliveTimeout: 60_000, // hold the TCP socket open for 60s
+        keepAliveMaxTimeout: 600_000, // cap to 10 min total reuse
+        connections: 64, // up from default 1 per origin
+      }),
+    );
+  } catch {
+    // undici isn't strictly required; node's built-in fetch still works.
+  }
+}
+
 export async function buildServer() {
   initSentry();
+  await tuneHttpAgent();
   const app = Fastify({
     logger: {
       level: env.LOG_LEVEL,

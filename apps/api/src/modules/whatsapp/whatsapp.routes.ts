@@ -2111,28 +2111,27 @@ async function maybeReplyAsBot(args: {
     // bodyText for inbound audio defaults to "[audio]" (truthy), so we
     // can't gate on `!m.bodyText` — we gate on the type + mediaId. If
     // Whisper succeeds, we overwrite the placeholder with the transcript.
-    if (m.from && (m.type === 'audio' || m.type === 'voice') && m.mediaId) {
-      const transcript = await transcribeInboundVoice({
-        organizationId: args.organizationId,
-        mediaId: m.mediaId,
-        mediaMime: m.mediaMime,
-        wamid: m.metaId,
-        log: args.log,
-      });
-      if (transcript) {
-        m.bodyText = transcript;
-      } else {
-        // Transcription failed — skip this message entirely so the LLM
-        // doesn't see "[audio]" and reply with a generic "can't listen"
-        // fallback. The audio bubble still shows in the inbox.
-        continue;
-      }
-    }
-    if (!m.bodyText || !m.from) continue;
+    //
+    // Phase 11.1 — transcribe runs in PARALLEL with the prompt-data
+    // gather. They share no data deps; both take ~1-2s end-to-end on
+    // cold path. Promise.all means the LLM call starts the moment the
+    // SLOWER of the two finishes, not the sum. Saves ~200-400 ms per
+    // voice reply on hot path; up to 1.5 s on cold-cache cases where
+    // gatherBotData is the slower side.
+    const isVoice = !!(m.from && (m.type === 'audio' || m.type === 'voice') && m.mediaId);
+    const transcribePromise: Promise<string | null> = isVoice
+      ? transcribeInboundVoice({
+          organizationId: args.organizationId,
+          mediaId: m.mediaId!,
+          mediaMime: m.mediaMime,
+          wamid: m.metaId,
+          log: args.log,
+        })
+      : Promise.resolve(null);
 
     // tx1: read everything we need to decide whether to reply + the prompt
     // data. No LLM call inside.
-    const ctx = await withRlsBypass(async (tx) => {
+    const ctxPromise = withRlsBypass(async (tx) => {
       const config = await tx.botConfig.findUnique({
         where: { organizationId: args.organizationId },
       });
@@ -2211,6 +2210,20 @@ async function maybeReplyAsBot(args: {
           thread.customerWhatsappName ?? thread.customerName ?? null,
       };
     });
+
+    // Phase 11.1 — await both transcribe + ctx in parallel here.
+    // Whichever is slower sets the wall-clock; the other is "free".
+    const [transcript, ctx] = await Promise.all([transcribePromise, ctxPromise]);
+    if (isVoice) {
+      if (!transcript) {
+        // Transcription failed — skip this message entirely so the LLM
+        // doesn't see "[audio]" and reply with a generic "can't listen"
+        // fallback. The audio bubble still shows in the inbox.
+        continue;
+      }
+      m.bodyText = transcript;
+    }
+    if (!m.bodyText || !m.from) continue;
     if (!ctx) continue;
 
     // Escalation short-circuit: if the bot's most recent reply asked
@@ -2733,7 +2746,7 @@ async function maybeReplyAsBot(args: {
     ).trim();
     // Resolve every emitted SKU against the catalog. Dedupe by product
     // id so multiple markers for the same SKU collapse to one send.
-    const imageSends: { sku: string; name: string; storageKey: string; kind?: 'product' | 'greeting' }[] = [];
+    const imageSends: { sku: string; name: string; storageKey: string; productImageId?: string; kind?: 'product' | 'greeting' }[] = [];
     const seenProductIds = new Set<string>();
     for (const sku of imageSkus) {
       const product = ctx.data.products.find(
@@ -2741,9 +2754,14 @@ async function maybeReplyAsBot(args: {
       );
       if (!product || seenProductIds.has(product.id)) continue;
       seenProductIds.add(product.id);
-      for (const key of product.imageStorageKeys ?? []) {
-        if (key && key.length > 0) {
-          imageSends.push({ sku: product.sku, name: product.name, storageKey: key });
+      for (const im of product.images ?? []) {
+        if (im.storageKey && im.storageKey.length > 0) {
+          imageSends.push({
+            sku: product.sku,
+            name: product.name,
+            storageKey: im.storageKey,
+            productImageId: im.productImageId,
+          });
         }
       }
     }
@@ -3126,44 +3144,68 @@ async function maybeReplyAsBot(args: {
       // gallery). Failures here log but DON'T fail the whole reply
       // path — the text reply already landed.
       if (dedupedImageSends.length > 0) {
+        const { getOrUploadMetaMediaId } = await import('../../lib/meta-media-cache.js');
         const { presignGetUrl, publicUrlFor } = await import('../../lib/storage.js');
         let prevSkuForGroup: string | null = null;
         for (const send of dedupedImageSends) {
           try {
-            const fileUrl = publicUrlFor(send.storageKey) ?? (await presignGetUrl(send.storageKey));
-            const fr = await fetch(fileUrl, { signal: AbortSignal.timeout(15_000) });
-            if (!fr.ok) {
-              args.log.warn(
-                { status: fr.status, key: send.storageKey },
-                '[whatsapp] bot image fetch from Wasabi failed',
-              );
-              continue;
+            // Phase 11.3 — try the cached Meta media_id first; falls
+            // back to the per-message upload when not cached, stale,
+            // greeting image (no row), or any failure inside the helper.
+            let mediaId: string | null = null;
+            if (send.productImageId) {
+              mediaId = await getOrUploadMetaMediaId({
+                productImageId: send.productImageId,
+                storageKey: send.storageKey,
+                channel: {
+                  id: channel.id,
+                  phoneNumberId: channel.phoneNumberId,
+                  accessToken: channel.accessToken,
+                },
+                log: args.log,
+              });
             }
-            const fileBytes = Buffer.from(await fr.arrayBuffer());
-            const fd = new FormData();
-            fd.append('messaging_product', 'whatsapp');
-            fd.append(
-              'file',
-              new Blob([new Uint8Array(fileBytes)], { type: 'image/jpeg' }),
-              `${send.sku}.jpg`,
-            );
-            const mediaRes = await fetch(
-              `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/media`,
-              {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${channel.accessToken!}` },
-                body: fd,
-                signal: AbortSignal.timeout(20_000),
-              },
-            );
-            const mediaJson = (await mediaRes.json().catch(() => ({}))) as { id?: string };
-            if (!mediaRes.ok || !mediaJson.id) {
-              args.log.warn(
-                { status: mediaRes.status, mediaJson },
-                '[whatsapp] bot image upload to Meta failed',
+            if (!mediaId) {
+              // Cache miss / greeting image / failure — upload bytes
+              // inline as before. ~1-2 s slower, but still functional.
+              const fileUrl = publicUrlFor(send.storageKey) ?? (await presignGetUrl(send.storageKey));
+              const fr = await fetch(fileUrl, { signal: AbortSignal.timeout(15_000) });
+              if (!fr.ok) {
+                args.log.warn(
+                  { status: fr.status, key: send.storageKey },
+                  '[whatsapp] bot image fetch from Wasabi failed',
+                );
+                continue;
+              }
+              const fileBytes = Buffer.from(await fr.arrayBuffer());
+              const fd = new FormData();
+              fd.append('messaging_product', 'whatsapp');
+              fd.append(
+                'file',
+                new Blob([new Uint8Array(fileBytes)], { type: 'image/jpeg' }),
+                `${send.sku}.jpg`,
               );
-              continue;
+              const mediaRes = await fetch(
+                `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/media`,
+                {
+                  method: 'POST',
+                  headers: { Authorization: `Bearer ${channel.accessToken!}` },
+                  body: fd,
+                  signal: AbortSignal.timeout(20_000),
+                },
+              );
+              const mediaJson = (await mediaRes.json().catch(() => ({}))) as { id?: string };
+              if (!mediaRes.ok || !mediaJson.id) {
+                args.log.warn(
+                  { status: mediaRes.status, mediaJson },
+                  '[whatsapp] bot image upload to Meta failed',
+                );
+                continue;
+              }
+              mediaId = mediaJson.id;
             }
+            // Reuse the variable name the downstream code expects.
+            const mediaJson: { id: string } = { id: mediaId! };
             // Greeting images are captionless (the bot's greeting text
             // is the caption). For product images, only caption the
             // first image of each group — subsequent gallery shots

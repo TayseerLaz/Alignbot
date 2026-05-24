@@ -57,11 +57,11 @@ export interface BotData {
     priceMinor: number | null;
     currency: string | null;
     shortDescription: string | null;
-    // Storage keys of EVERY image attached to this product, primary
-    // first. Used by maybeReplyAsBot to attach images when the LLM
-    // emits an [IMAGE: <sku>] marker — when there is more than one,
-    // we send them all as a gallery.
-    imageStorageKeys: string[];
+    // Images attached to this product, primary first. Used by
+    // maybeReplyAsBot to attach when the LLM emits [IMAGE: <sku>].
+    // Carries the productImageId so the Phase 11.3 Meta media_id cache
+    // can read/write per-row without an extra lookup.
+    images: { storageKey: string; productImageId: string }[];
   }[];
   services: {
     id: string;
@@ -251,7 +251,7 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
         images: {
           orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
           take: 5,
-          select: { asset: { select: { storageKey: true } } },
+          select: { id: true, asset: { select: { storageKey: true } } },
         },
       },
       take: 30,
@@ -275,8 +275,8 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
   ])) as [
     BotData['config'],
     // Prisma return type has nested images[]; we'll flatten next.
-    (Omit<BotData['products'][number], 'imageStorageKeys'> & {
-      images: { asset: { storageKey: string } }[];
+    (Omit<BotData['products'][number], 'images'> & {
+      images: { id: string; asset: { storageKey: string } }[];
     })[],
     BotData['services'],
     BotData['biz'],
@@ -293,9 +293,12 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
     priceMinor: p.priceMinor,
     currency: p.currency,
     shortDescription: p.shortDescription,
-    imageStorageKeys: (p.images ?? [])
-      .map((im) => im.asset?.storageKey)
-      .filter((s): s is string => typeof s === 'string' && s.length > 0),
+    images: (p.images ?? [])
+      .map((im) => ({
+        storageKey: im.asset?.storageKey ?? '',
+        productImageId: im.id,
+      }))
+      .filter((it) => it.storageKey.length > 0),
   }));
 
   // BusinessInfo.bookingForm — only surface when enabled AND there is at
@@ -754,7 +757,7 @@ export async function buildBotResponse(
     products.length > 0
       ? `Products:\n${products
           .map((p) => {
-            const imgs = p.imageStorageKeys?.length ?? 0;
+            const imgs = p.images?.length ?? 0;
             const imgTag =
               imgs > 1 ? ` [has ${imgs} images]` : imgs === 1 ? ' [has image]' : '';
             // Phase 10.2 — currency is org-wide. Always quote prices in

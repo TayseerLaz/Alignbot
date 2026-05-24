@@ -658,6 +658,15 @@ model ProductImage {
   sortOrder      Int      @default(0) @map("sort_order")
   isPrimary      Boolean  @default(false) @map("is_primary")
   createdAt      DateTime @default(now()) @map("created_at")
+  // Phase 11.3 — cache of the Meta-side media_id for this image so the
+  // WhatsApp send path can skip the per-message upload (~1-2 s round-
+  // trip). Meta media_ids are valid for 30 days; the bot send path
+  // re-uploads when stale or when the active channel changed.
+  metaMediaId          String?   @map("meta_media_id")
+  metaMediaIdUploadedAt DateTime? @map("meta_media_id_uploaded_at")
+  // Media_ids are scoped to the WhatsApp business account (phone_number_id).
+  // Cached id only valid if the active primary channel matches this id.
+  metaMediaIdChannelId String?   @map("meta_media_id_channel_id") @db.Uuid
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   product      Product      @relation(fields: [productId], references: [id], onDelete: Cascade)

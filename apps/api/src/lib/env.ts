@@ -63,7 +63,13 @@ const envSchema = z.object({
   // silently fall back to text.
   ELEVENLABS_API_KEY: z.string().optional(),
   ELEVENLABS_VOICE_ID: z.string().optional(),
-  ELEVENLABS_MODEL: z.string().default('eleven_multilingual_v2'),
+  // Phase 11.2 — default switched from `eleven_multilingual_v2` (1.5-3.5s
+  // per voice note) to `eleven_flash_v2_5` (0.4-0.8s, ~3x faster).
+  // Quality on short customer-service replies is comparable; the
+  // difference matters more for long-form narration. Operators can pin
+  // back to the older model via the env var without a code push if
+  // quality regresses on a specific use case.
+  ELEVENLABS_MODEL: z.string().default('eleven_flash_v2_5'),
 
   RATE_LIMIT_AUTH_PER_MINUTE: z.coerce.number().int().positive().default(10),
   RATE_LIMIT_API_PER_SECOND: z.coerce.number().int().positive().default(100),

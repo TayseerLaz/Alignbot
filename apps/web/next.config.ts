@@ -4,6 +4,13 @@ const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   typedRoutes: true,
+  // Portal lives at hader.ai/app/* so the marketing site at hader.ai can
+  // own the root domain without a separate subdomain + DNS record. Next
+  // prefixes every <Link>, router.push, and server `redirect()`
+  // automatically; the API builds user-facing URLs from `WEB_PUBLIC_URL`
+  // (now configured to include `/app`) so password resets, invites, and
+  // billing returns all land on the right path too.
+  basePath: '/app',
   // Type-checking is done by tsc in the shared/api/db build steps; skip here
   // because Next 15.5 + TS 5.9 have a compat glitch on `--ignoreDeprecations`
   // during `next build` that otherwise prevents production bundling.

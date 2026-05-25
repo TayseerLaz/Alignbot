@@ -1,16 +1,27 @@
 import type { Metadata } from 'next';
-import { JetBrains_Mono, Plus_Jakarta_Sans } from 'next/font/google';
+import { Fraunces, JetBrains_Mono, Plus_Jakarta_Sans } from 'next/font/google';
 
 import { Providers } from '@/components/providers';
 import '@/styles/globals.css';
 
-// Aligned design system — Plus Jakarta Sans (display + body) +
-// JetBrains Mono (SKUs, IDs, code, mono numerics).
+// Hader AI brand book — Fraunces (display + headlines) + Plus Jakarta Sans
+// (body + UI) + JetBrains Mono (SKUs, IDs, code, mono numerics).
 const jakarta = Plus_Jakarta_Sans({
   subsets: ['latin'],
   weight: ['300', '400', '500', '600', '700', '800'],
   variable: '--font-jakarta',
   display: 'swap',
+});
+
+const fraunces = Fraunces({
+  subsets: ['latin'],
+  weight: ['300', '400', '500', '600', '700'],
+  variable: '--font-fraunces',
+  display: 'swap',
+  // Fraunces ships a variable optical-size axis — letting Next bake it in
+  // means headings render with the "Display" optical sizing without us
+  // having to set font-optical-sizing manually on every heading.
+  axes: ['opsz'],
 });
 
 const monoJb = JetBrains_Mono({
@@ -22,10 +33,10 @@ const monoJb = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: 'ALIGNED Business Platform',
-    template: '%s · ALIGNED',
+    default: 'Hader AI',
+    template: '%s · Hader AI',
   },
-  description: 'Manage your business data and WhatsApp chatbot from one place.',
+  description: 'The AI ops layer for your business. WhatsApp catalogs, conversations, and intelligence in one place.',
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'),
 };
 
@@ -47,7 +58,11 @@ const themeBootstrap = `
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${jakarta.variable} ${monoJb.variable}`} suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${jakarta.variable} ${fraunces.variable} ${monoJb.variable}`}
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
       </head>

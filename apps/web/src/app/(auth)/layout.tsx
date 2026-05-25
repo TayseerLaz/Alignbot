@@ -1,34 +1,20 @@
-import Image from 'next/image';
-import { Outfit } from 'next/font/google';
+import { AlignedLogo } from '@/components/brand/logo';
 
-const outfit = Outfit({
-  subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700'],
-  display: 'swap',
-});
-
-// Full-page two-column auth shell. Left = animated blue lava-lamp
-// panel (6 drifting blobs merged via SVG goo filter) with Alignbot
-// pitch + chips. Right = dark form area (children).
+// Full-page two-column auth shell. Left = animated oxblood lava-lamp
+// panel (6 drifting blobs merged via SVG goo filter) with the Hader
+// pitch + feature chips. Right = dark form area (children). Background
+// is the brand-book near-black; the form text inherits the Hader sans.
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       <GooFilter />
       <BlobKeyframes />
-      <div
-        className={`${outfit.className} fixed inset-0 grid overflow-hidden bg-[#0a0a0c] text-white lg:grid-cols-2`}
-      >
+      <div className="fixed inset-0 grid overflow-hidden bg-[#0a0b0e] text-white lg:grid-cols-2">
         <BrandPanel />
         <section className="flex h-full flex-col justify-center overflow-hidden px-6 py-10 sm:px-12 lg:px-16">
           <div className="mx-auto w-full max-w-sm">
             <div className="mb-8 flex justify-center lg:hidden">
-              <Image
-                src="/aligned-logo.webp"
-                alt="ALIGNED"
-                width={180}
-                height={36}
-                priority
-              />
+              <AlignedLogo className="text-white" />
             </div>
             {children}
           </div>
@@ -51,8 +37,10 @@ function BrandPanel() {
     <aside
       className="relative hidden flex-col overflow-hidden p-12 lg:flex"
       style={{
+        // Hader oxblood → near-black radial. Same shape as the old
+        // Mediterranean panel, just on the new palette.
         background:
-          'radial-gradient(ellipse 90% 70% at 55% 50%, #1F4A78 0%, #0E2747 45%, #061224 100%)',
+          'radial-gradient(ellipse 90% 70% at 55% 50%, #844758 0%, #360516 45%, #0a0b0e 100%)',
       }}
     >
       {/* Lava blobs — merged into one organic shape by the SVG goo
@@ -77,7 +65,7 @@ function BrandPanel() {
         className="pointer-events-none absolute inset-0 z-[1]"
         style={{
           background:
-            'radial-gradient(ellipse 70% 50% at 50% 45%, rgba(143,196,240,0.18) 0%, transparent 60%), linear-gradient(180deg, rgba(6,18,36,0) 0%, rgba(6,18,36,0.4) 100%)',
+            'radial-gradient(ellipse 70% 50% at 50% 45%, rgba(207,192,169,0.22) 0%, transparent 60%), linear-gradient(180deg, rgba(10,11,14,0) 0%, rgba(10,11,14,0.45) 100%)',
         }}
       />
       {/* Grain texture for premium feel. */}
@@ -92,19 +80,16 @@ function BrandPanel() {
 
       {/* Content layer — z-3, above everything. */}
       <div className="relative z-[3] flex h-full flex-col">
-        <Image
-          src="/aligned-logo.webp"
-          alt="ALIGNED"
-          width={200}
-          height={40}
-          priority
-        />
+        <AlignedLogo className="text-white" />
 
         <div className="mt-auto">
-          <h2 className="mb-7 text-5xl font-semibold leading-[1.05] tracking-tight text-white">
+          <h2
+            className="mb-7 text-5xl font-medium leading-[1.05] tracking-tight text-white"
+            style={{ fontFamily: 'var(--font-serif)' }}
+          >
             One inbox for
             <br />
-            <span className="text-white">every Business</span>
+            <span className="text-white">every business.</span>
           </h2>
 
           <ul className="grid grid-cols-3 gap-2.5">
@@ -113,14 +98,14 @@ function BrandPanel() {
                 key={f.n}
                 className={
                   f.active
-                    ? 'flex min-h-[108px] flex-col justify-between rounded-xl border border-white bg-white p-3 text-[#0E2747] shadow-[0_20px_50px_-10px_rgba(8,20,40,0.5),0_0_0_1px_rgba(255,255,255,0.4)] transition'
-                    : 'flex min-h-[108px] flex-col justify-between rounded-xl border border-[rgba(143,196,240,0.12)] bg-[rgba(8,20,40,0.55)] p-3 text-white/75 backdrop-blur-md transition hover:-translate-y-0.5 hover:border-[rgba(143,196,240,0.3)]'
+                    ? 'flex min-h-[108px] flex-col justify-between rounded-xl border border-white bg-white p-3 text-[#360516] shadow-[0_20px_50px_-10px_rgba(10,11,14,0.5),0_0_0_1px_rgba(255,255,255,0.4)] transition'
+                    : 'flex min-h-[108px] flex-col justify-between rounded-xl border border-[rgba(207,192,169,0.18)] bg-[rgba(54,5,22,0.42)] p-3 text-white/75 backdrop-blur-md transition hover:-translate-y-0.5 hover:border-[rgba(207,192,169,0.35)]'
                 }
               >
                 <span
                   className={
                     f.active
-                      ? 'flex size-6 items-center justify-center rounded-full bg-[#0E2747] text-[11px] font-semibold text-white'
+                      ? 'flex size-6 items-center justify-center rounded-full bg-[#360516] text-[11px] font-semibold text-white'
                       : 'flex size-6 items-center justify-center rounded-full bg-white/10 text-[11px] font-semibold text-white/85'
                   }
                 >
@@ -180,23 +165,25 @@ function GooFilter() {
 function BlobKeyframes() {
   return (
     <style>{`
+      /* Hader lava blobs — oxblood, signal red, and a sand highlight on
+         the smallest blob so the warm secondary peeks through. */
       .aligned-blob-1 { width: 380px; height: 380px; top: 8%; left: 18%;
-        background: radial-gradient(circle at 35% 30%, #8FC4F0, #3D86C5 50%, transparent 70%);
+        background: radial-gradient(circle at 35% 30%, #c66a7a, #5c1f2c 50%, transparent 70%);
         animation: aligned-drift-1 24s ease-in-out infinite; }
       .aligned-blob-2 { width: 320px; height: 320px; top: 38%; left: 48%;
-        background: radial-gradient(circle at 40% 35%, #5DA4E2, #1F4A78 55%, transparent 75%);
+        background: radial-gradient(circle at 40% 35%, #a04258, #360516 55%, transparent 75%);
         animation: aligned-drift-2 30s ease-in-out infinite; }
       .aligned-blob-3 { width: 280px; height: 280px; top: 58%; left: 8%;
-        background: radial-gradient(circle at 50% 40%, #8FC4F0, #3D86C5 60%, transparent 78%);
+        background: radial-gradient(circle at 50% 40%, #d8807a, #b22a23 60%, transparent 78%);
         animation: aligned-drift-3 28s ease-in-out infinite; }
       .aligned-blob-4 { width: 240px; height: 240px; top: 22%; left: 58%;
-        background: radial-gradient(circle at 45% 35%, #5DA4E2, #1F4A78 60%, transparent 80%);
+        background: radial-gradient(circle at 45% 35%, #a04258, #2a0410 60%, transparent 80%);
         animation: aligned-drift-4 26s ease-in-out infinite; }
       .aligned-blob-5 { width: 200px; height: 200px; top: 70%; left: 50%;
-        background: radial-gradient(circle at 50% 40%, #8FC4F0, #3D86C5 55%, transparent 78%);
+        background: radial-gradient(circle at 50% 40%, #e8666a, #c1342c 55%, transparent 78%);
         animation: aligned-drift-5 32s ease-in-out infinite; }
       .aligned-blob-6 { width: 160px; height: 160px; top: 4%; left: 62%; opacity: 0.85;
-        background: radial-gradient(circle at 50% 40%, #BEE3FF, #5DA4E2 50%, transparent 75%);
+        background: radial-gradient(circle at 50% 40%, #efdcc1, #cfc0a9 50%, transparent 75%);
         animation: aligned-drift-6 22s ease-in-out infinite; }
 
       @keyframes aligned-drift-1 {

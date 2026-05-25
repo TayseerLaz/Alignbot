@@ -215,7 +215,7 @@ export function Sidebar({
           <div className="space-y-1 border-t border-border pt-6">
             {!collapsed ? (
               <p className="px-3 text-[11px] font-semibold uppercase tracking-wider text-brand-500">
-                ALIGNED admin
+                Hader admin
               </p>
             ) : null}
             {alignedAdminItems.map(renderItem)}

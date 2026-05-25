@@ -59,7 +59,7 @@ function VerifyEmailInner() {
         <>
           <h1 className="text-2xl font-semibold tracking-tight">Email verified</h1>
           <p className="text-sm text-foreground-muted">
-            You're all set. You can now sign in to ALIGNED.
+            You're all set. You can now sign in to Hader AI.
           </p>
           <Button asChild>
             <Link href="/login">Continue to sign in</Link>

@@ -1,70 +1,95 @@
 @import "tailwindcss";
 
 /* ============================================================================
-   ALIGNED design tokens — Soft lavender + coral system.
-   Mapped 1:1 onto the existing semantic Tailwind tokens (brand-*, surface-*,
-   foreground-*, border-*) so the whole app re-themes without per-component
-   class changes. See aligned-design-system/ for the visual reference.
+   Hader AI design tokens — Oxblood + Sand + Signal palette.
+   Brand book at /Hader AI Brand Book _standalone_.html:
+     --serif:   Fraunces           (display + headings)
+     --sans:    Plus Jakarta Sans  (body)
+     --mono:    JetBrains Mono     (code, IDs, SKUs)
+     --oxblood: #360516            (primary brand)
+     --sand:    #cfc0a9            (warm secondary)
+     --signal:  #e53e34            (accent / CTA / alert)
+     bg cream:  #faf9f5
+     near-blk:  #0a0b0e
+   The semantic Tailwind tokens below (brand-*, coral-*, etc.) keep their
+   names so no component has to be touched — only their hex values change.
    ============================================================================ */
 
 @theme {
-  --font-sans: var(--font-jakarta), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-mono: var(--font-mono-jb), ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --font-sans:  var(--font-jakarta), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-serif: var(--font-fraunces), ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-mono:  var(--font-mono-jb), ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
-  /* Brand — Mediterranean Blue (matches the logo + login screen) */
-  --color-brand-50: #eef5fb;
-  --color-brand-100: #d6e6f3;
-  --color-brand-200: #adcce8;
-  --color-brand-300: #7fb1da;
-  --color-brand-400: #4a90c8;
-  --color-brand-500: #1b4f72;
-  --color-brand-600: #174363;
-  --color-brand-700: #133852;
-  --color-brand-800: #0e2a3e;
-  --color-brand-900: #091c29;
+  /* Brand — Oxblood ramp (anchored at 500 = #360516). Top half desaturates
+     into dusty rose so light surfaces, hover tints, and focus rings have
+     enough contrast against the cream background. */
+  --color-brand-50:  #faf0f1;
+  --color-brand-100: #f0d8de;
+  --color-brand-200: #d9aebb;
+  --color-brand-300: #b87a8d;
+  --color-brand-400: #844758;
+  --color-brand-500: #360516;
+  --color-brand-600: #2c0412;
+  --color-brand-700: #25030f;
+  --color-brand-800: #1c020c;
+  --color-brand-900: #110108;
 
-  /* Coral — accent (escalation, CTA highlights) */
-  --color-coral-50: #fff5f1;
-  --color-coral-100: #ffe5dc;
-  --color-coral-500: #ff8a6b;
-  --color-coral-600: #f37454;
-  --color-coral-700: #b14322;
+  /* Coral — Signal red ramp (anchored at 500 = #e53e34). Used for escalation,
+     CTA emphasis, and the brand's "alert" accent in the brand book. */
+  --color-coral-50:  #fdecea;
+  --color-coral-100: #fbd6d3;
+  --color-coral-200: #f7adab;
+  --color-coral-300: #f17b78;
+  --color-coral-400: #ed5751;
+  --color-coral-500: #e53e34;
+  --color-coral-600: #c1342c;
+  --color-coral-700: #9c2a24;
 
-  /* Surfaces — soft cool-blue-tinted neutral (matches the brand) */
-  --color-surface: #ffffff;
-  --color-surface-muted: #f3f6fa;
-  --color-surface-elevated: #f9fbfd;
-  --color-border: #e3e8ef;
-  --color-border-strong: #cdd5e0;
+  /* Sand — warm secondary, used for soft fills, dividers, and the
+     "warm neutral" badge variant. Not part of the existing ramp so
+     it's exposed as flat tokens. */
+  --color-sand-50:  #f9f5ee;
+  --color-sand-100: #f0e8d8;
+  --color-sand-200: #e5d8c1;
+  --color-sand-300: #cfc0a9;
+  --color-sand-500: #b39d7f;
+  --color-sand-700: #6f5f48;
 
-  /* Foreground */
-  --color-foreground: #0f172a;
-  --color-foreground-muted: #475569;
-  --color-foreground-subtle: #64748b;
+  /* Surfaces — cream-tinted neutral (brand-book bg #faf9f5). */
+  --color-surface:          #ffffff;
+  --color-surface-muted:    #faf9f5;
+  --color-surface-elevated: #f5f3ed;
+  --color-border:           #e8e4d8;
+  --color-border-strong:    #cfc0a9;
 
-  /* Semantic — matched to the new palette warmth */
+  /* Foreground — near-black + warm grays. */
+  --color-foreground:        #0a0b0e;
+  --color-foreground-muted:  #4a4842;
+  --color-foreground-subtle: #75726a;
+
+  /* Semantic — warmth-matched. */
   --color-success: #2e8849;
   --color-success-100: #d8f2de;
   --color-warning: #8a6a12;
   --color-warning-100: #fff3d1;
   --color-danger: #c13241;
   --color-danger-100: #ffe0e4;
-  --color-info: #1f6cb5;
+  --color-info: #1b4f72;
   --color-info-100: #dceeff;
 
-  /* Radii — much rounder than the old slate-navy system */
+  /* Radii — kept rounder than the old slate-navy system. */
   --radius-xs: 0.5rem;
-  --radius-sm: 0.875rem;   /* inputs, textareas */
-  --radius-md: 1.25rem;    /* small cards */
-  --radius-lg: 1.75rem;    /* default cards (28px) */
-  --radius-xl: 2.25rem;    /* hero / showcase (36px) */
+  --radius-sm: 0.875rem;
+  --radius-md: 1.25rem;
+  --radius-lg: 1.75rem;
+  --radius-xl: 2.25rem;
 
-  /* Shadows — cool-blue tinted to harmonise with the Mediterranean palette */
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 2px 8px rgba(15, 23, 42, 0.04);
-  --shadow-md: 0 4px 16px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.04);
-  --shadow-lg: 0 14px 40px rgba(15, 23, 42, 0.08), 0 4px 12px rgba(15, 23, 42, 0.04);
-  --shadow-brand: 0 10px 26px rgba(27, 79, 114, 0.28);
-  --shadow-coral: 0 10px 26px rgba(255, 138, 107, 0.30);
+  /* Shadows — oxblood-tinted so elevated cards read as part of the palette. */
+  --shadow-sm: 0 1px 2px rgba(54, 5, 22, 0.05), 0 2px 8px rgba(54, 5, 22, 0.04);
+  --shadow-md: 0 4px 16px rgba(54, 5, 22, 0.07), 0 1px 3px rgba(54, 5, 22, 0.04);
+  --shadow-lg: 0 14px 40px rgba(54, 5, 22, 0.10), 0 4px 12px rgba(54, 5, 22, 0.05);
+  --shadow-brand: 0 10px 26px rgba(54, 5, 22, 0.32);
+  --shadow-coral: 0 10px 26px rgba(229, 62, 52, 0.30);
 }
 
 /* ============================================================================
@@ -73,31 +98,40 @@
    are overridden in @theme so every Tailwind utility re-themes automatically.
    ============================================================================ */
 .dark {
-  /* Brand stays the same hue but lifted for contrast on dark surfaces. */
-  --color-brand-50: #0e2a3e;
-  --color-brand-100: #133852;
-  --color-brand-200: #174363;
-  --color-brand-300: #1b4f72;
-  --color-brand-400: #2f6d99;
-  --color-brand-500: #4a90c8;
-  --color-brand-600: #7fb1da;
-  --color-brand-700: #adcce8;
-  --color-brand-800: #d6e6f3;
-  --color-brand-900: #eef5fb;
+  /* Brand — Oxblood lifted toward dusty rose so it stays legible on dark
+     surfaces while still reading as "Hader red." */
+  --color-brand-50:  #1c020c;
+  --color-brand-100: #25030f;
+  --color-brand-200: #2c0412;
+  --color-brand-300: #4a0d22;
+  --color-brand-400: #7a2a3d;
+  --color-brand-500: #b8627a;
+  --color-brand-600: #d99bac;
+  --color-brand-700: #e8c1cc;
+  --color-brand-800: #f3dde4;
+  --color-brand-900: #fbeef2;
 
-  /* Surfaces — deep slate with a slight blue tint. */
-  --color-surface: #1a2230;
-  --color-surface-muted: #0f1623;
-  --color-surface-elevated: #232c3d;
-  --color-border: #2a3447;
-  --color-border-strong: #3a4661;
+  /* Surfaces — near-black with a hint of oxblood depth. */
+  --color-surface:          #161013;
+  --color-surface-muted:    #0a0b0e;
+  --color-surface-elevated: #211a1d;
+  --color-border:           #2d2528;
+  --color-border-strong:    #3f3438;
 
-  /* Foreground */
-  --color-foreground: #e8ecf2;
-  --color-foreground-muted: #a3aabd;
-  --color-foreground-subtle: #6b7388;
+  /* Foreground — warm off-whites paired with sand undertones. */
+  --color-foreground:        #f5f1ea;
+  --color-foreground-muted:  #b8b0a1;
+  --color-foreground-subtle: #82796d;
 
-  /* Semantic — bumped saturation a touch so they read on dark. */
+  /* Sand on dark — pulled darker so it doesn't shout next to the brand. */
+  --color-sand-50:  #2a2620;
+  --color-sand-100: #3a3429;
+  --color-sand-200: #51483a;
+  --color-sand-300: #cfc0a9;
+  --color-sand-500: #b39d7f;
+  --color-sand-700: #6f5f48;
+
+  /* Semantic — bumped saturation so they read on dark. */
   --color-success: #4ade80;
   --color-success-100: #14322a;
   --color-warning: #facc15;
@@ -107,11 +141,11 @@
   --color-info: #60a5fa;
   --color-info-100: #112338;
 
-  /* Shadows — much deeper so cards still feel elevated against dark bg. */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.3);
-  --shadow-brand: 0 10px 26px rgba(74, 144, 200, 0.35);
+  /* Shadows — black with a touch of oxblood undertone. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-brand: 0 10px 26px rgba(184, 98, 122, 0.35);
 }
 
 /* ----------------------------------------------------------------------------
@@ -187,11 +221,19 @@
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
-  h1 { line-height: 1.2; letter-spacing: -0.025em; }
-  h2 { line-height: 1.25; letter-spacing: -0.02em; }
+  /* Hader brand: display headlines in Fraunces (optical-size enabled
+     via next/font), body + UI text in Plus Jakarta Sans. Smaller UI
+     surfaces (h3/h4 in cards, table headers) stay on sans so the
+     density is comparable to the old type system. */
+  h1, h2 {
+    font-family: var(--font-serif);
+    font-weight: 500;
+    font-feature-settings: "ss01", "ss02";
+  }
+  h1 { line-height: 1.1;  letter-spacing: -0.03em; }
+  h2 { line-height: 1.18; letter-spacing: -0.022em; }
   h3, h4 { line-height: 1.3; letter-spacing: -0.015em; }
   p { line-height: 1.6; }
-  /* Tables stay tight — but with a slightly more comfortable row height. */
   td, th { line-height: 1.45; }
   :focus-visible {
     outline: 2px solid var(--color-brand-500);

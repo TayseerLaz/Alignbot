@@ -188,7 +188,7 @@ export default function ProfilePage() {
               </div>
               {user.isAlignedAdmin ? (
                 <p className="text-xs text-brand-500">
-                  You have ALIGNED super-admin access across all tenants.
+                  You have Hader AI super-admin access across all tenants.
                 </p>
               ) : null}
             </CardContent>

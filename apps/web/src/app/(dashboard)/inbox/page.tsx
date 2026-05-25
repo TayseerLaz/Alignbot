@@ -1285,7 +1285,7 @@ function Bubble({
                   ? 'bg-white/10 hover:bg-white/20'
                   : 'bg-foreground/10 hover:bg-foreground/20',
               )}
-              title="ALIGNED admin — view AI provenance"
+              title="Hader admin — view AI provenance"
             >
               {open ? 'Hide' : 'AI source'}
               {flaggedCount > 0 ? (

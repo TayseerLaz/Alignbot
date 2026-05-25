@@ -639,7 +639,7 @@ function ImportWizard({
           <div className="space-y-3">
             <p className="text-xs text-foreground-muted">
               Found {uploadedHeaders.length} column{uploadedHeaders.length === 1 ? '' : 's'} in your file. Set
-              each to the matching ALIGNED field, or <em>Ignore</em> to skip it.
+              each to the matching Hader field, or <em>Ignore</em> to skip it.
             </p>
             <div className="max-h-80 space-y-2 overflow-auto rounded-md border border-border bg-surface-muted/20 p-2">
               {uploadedHeaders.map((h) => (

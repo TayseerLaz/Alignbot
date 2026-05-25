@@ -14,14 +14,14 @@ import { useSession } from '@/lib/session';
 
 type Step = 'credentials' | 'totp';
 
-// Shared input styles. White input on a Desert Sand page surface, so the
-// field reads as the active element. Border picks up the brand on focus
-// with a soft 2px ring.
+// Form sits on the oxblood layout surface — every label / hint / link is
+// white; the inputs themselves stay white-with-oxblood-text so the field
+// becomes the visual focus point.
 const INPUT =
-  'w-full rounded-lg border border-brand-500/15 bg-white px-4 py-3 text-[15px] text-brand-500 placeholder:text-brand-500/35 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/15';
+  'w-full rounded-lg border border-white/20 bg-white px-4 py-3 text-[15px] text-brand-500 placeholder:text-brand-500/40 outline-none transition focus:border-white focus:ring-2 focus:ring-white/30';
 
 const PRIMARY_BTN =
-  'w-full rounded-lg bg-brand-500 px-6 py-3 text-[15px] font-semibold text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60';
+  'w-full rounded-lg bg-white px-6 py-3 text-[15px] font-semibold text-brand-500 transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-60';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -108,10 +108,10 @@ export default function LoginPage() {
   if (step === 'credentials') {
     return (
       <div>
-        <h1 className="text-3xl font-semibold tracking-tight text-brand-500">
+        <h1 className="text-3xl font-semibold tracking-tight text-white">
           Welcome back
         </h1>
-        <p className="mt-2 text-sm text-brand-500/75">
+        <p className="mt-2 text-sm text-white/70">
           Sign in to continue to your Hader workspace.
         </p>
 
@@ -130,12 +130,12 @@ export default function LoginPage() {
 
           <div className="space-y-2">
             <div className="flex items-baseline justify-between">
-              <label htmlFor="password" className="text-sm font-medium text-brand-500">
+              <label htmlFor="password" className="text-sm font-medium text-white">
                 Password
               </label>
               <Link
                 href="/forgot-password"
-                className="text-xs font-medium text-brand-500 hover:underline"
+                className="text-xs font-medium text-white/80 hover:text-white hover:underline"
               >
                 Forgot password?
               </Link>
@@ -160,7 +160,7 @@ export default function LoginPage() {
               </button>
             </div>
             {form.formState.errors.password ? (
-              <p className="text-xs font-medium text-red-600">
+              <p className="text-xs font-medium text-rose-200">
                 {form.formState.errors.password.message}
               </p>
             ) : null}
@@ -175,9 +175,9 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="mt-8 text-center text-sm text-brand-500/75">
+        <p className="mt-8 text-center text-sm text-white/70">
           New to Hader?{' '}
-          <Link href="/signup" className="font-semibold text-brand-500 hover:underline">
+          <Link href="/signup" className="font-semibold text-white hover:underline">
             Create an account
           </Link>
         </p>
@@ -188,17 +188,17 @@ export default function LoginPage() {
   // Two-factor step.
   return (
     <div>
-      <div className="mb-6 flex size-12 items-center justify-center rounded-full bg-brand-500/10">
-        <ShieldCheck className="size-5 text-brand-500" />
+      <div className="mb-6 flex size-12 items-center justify-center rounded-full bg-white/10 ring-1 ring-white/20">
+        <ShieldCheck className="size-5 text-white" />
       </div>
-      <h1 className="text-3xl font-semibold tracking-tight text-brand-500">
+      <h1 className="text-3xl font-semibold tracking-tight text-white">
         Two-factor code
       </h1>
-      <p className="mt-2 text-sm text-brand-500/75">
+      <p className="mt-2 text-sm text-white/70">
         Open your authenticator app and enter the 6-digit code.
       </p>
-      <p className="mt-1 text-xs text-brand-500/60">
-        Signing in as <span className="font-medium text-brand-500">{stash.current?.email}</span>
+      <p className="mt-1 text-xs text-white/60">
+        Signing in as <span className="font-medium text-white">{stash.current?.email}</span>
       </p>
 
       <form onSubmit={onSubmitTotp} className="mt-8 space-y-4">
@@ -218,9 +218,9 @@ export default function LoginPage() {
           aria-invalid={!!totpError}
         />
         {totpError ? (
-          <p className="text-center text-xs font-medium text-red-600">{totpError}</p>
+          <p className="text-center text-xs font-medium text-rose-200">{totpError}</p>
         ) : (
-          <p className="text-center text-xs text-brand-500/60">
+          <p className="text-center text-xs text-white/60">
             Lost your authenticator? Type an 8-character recovery code.
           </p>
         )}
@@ -241,7 +241,7 @@ export default function LoginPage() {
             setTotpError(null);
             setStep('credentials');
           }}
-          className="flex w-full items-center justify-center gap-1.5 text-sm text-brand-500/75 transition hover:text-brand-500"
+          className="flex w-full items-center justify-center gap-1.5 text-sm text-white/70 transition hover:text-white"
         >
           <ArrowLeft className="size-3.5" /> Use a different account
         </button>
@@ -263,11 +263,11 @@ function Field({
 }) {
   return (
     <div className="space-y-2">
-      <label htmlFor={htmlFor} className="block text-sm font-medium text-brand-500">
+      <label htmlFor={htmlFor} className="block text-sm font-medium text-white">
         {label}
       </label>
       {children}
-      {error ? <p className="text-xs font-medium text-red-600">{error}</p> : null}
+      {error ? <p className="text-xs font-medium text-rose-200">{error}</p> : null}
     </div>
   );
 }

@@ -669,6 +669,138 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- GET /aligned-admin/debug/thread/:id --------------------------
+  // One-shot diagnostic for "the thread shows X in / Y out but /messages
+  // returns nothing". Compares thread.customerPhone against the actual
+  // message rows + orphan rows in the same org, so we can see whether
+  // messages are landing under a different threadId, with NULL threadId,
+  // or in a different organizationId entirely.
+  r.get(
+    '/aligned-admin/debug/thread/:id',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Cross-tenant diagnostic for one whatsapp_thread row.',
+        params: z.object({ id: uuidSchema }),
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      return withRlsBypass(async (tx) => {
+        const thread = await tx.whatsAppThread.findUnique({
+          where: { id: req.params.id },
+          select: {
+            id: true,
+            organizationId: true,
+            customerPhone: true,
+            customerName: true,
+            customerWhatsappName: true,
+            inboundCount: true,
+            outboundCount: true,
+            lastMessageAt: true,
+            createdAt: true,
+            status: true,
+          },
+        });
+        if (!thread) throw notFound('Thread not found.');
+        const phone = thread.customerPhone;
+        const phoneNoPlus = phone.replace(/^\+/, '');
+        const phonePlus = phone.startsWith('+') ? phone : `+${phone}`;
+
+        const [
+          linkedToThis,
+          sameOrgSamePhoneFrom,
+          sameOrgSamePhoneTo,
+          orphans,
+          siblingThreads,
+          sampleMessagesByPhone,
+        ] = await Promise.all([
+          tx.whatsAppMessage.count({ where: { threadId: thread.id } }),
+          tx.whatsAppMessage.count({
+            where: {
+              organizationId: thread.organizationId,
+              OR: [{ fromNumber: phone }, { fromNumber: phoneNoPlus }, { fromNumber: phonePlus }],
+            },
+          }),
+          tx.whatsAppMessage.count({
+            where: {
+              organizationId: thread.organizationId,
+              OR: [{ toNumber: phone }, { toNumber: phoneNoPlus }, { toNumber: phonePlus }],
+            },
+          }),
+          tx.whatsAppMessage.count({
+            where: {
+              organizationId: thread.organizationId,
+              threadId: null,
+              OR: [
+                { fromNumber: phone },
+                { fromNumber: phoneNoPlus },
+                { fromNumber: phonePlus },
+                { toNumber: phone },
+                { toNumber: phoneNoPlus },
+                { toNumber: phonePlus },
+              ],
+            },
+          }),
+          tx.whatsAppThread.findMany({
+            where: {
+              organizationId: thread.organizationId,
+              id: { not: thread.id },
+              OR: [
+                { customerPhone: phone },
+                { customerPhone: phoneNoPlus },
+                { customerPhone: phonePlus },
+              ],
+            },
+            select: { id: true, customerPhone: true, inboundCount: true, outboundCount: true },
+          }),
+          tx.whatsAppMessage.findMany({
+            where: {
+              organizationId: thread.organizationId,
+              OR: [
+                { fromNumber: phone },
+                { fromNumber: phoneNoPlus },
+                { fromNumber: phonePlus },
+                { toNumber: phone },
+                { toNumber: phoneNoPlus },
+                { toNumber: phonePlus },
+              ],
+            },
+            orderBy: { receivedAt: 'desc' },
+            take: 10,
+            select: {
+              id: true,
+              direction: true,
+              threadId: true,
+              fromNumber: true,
+              toNumber: true,
+              receivedAt: true,
+              messageType: true,
+              body: true,
+            },
+          }),
+        ]);
+
+        return {
+          data: {
+            thread,
+            counts: {
+              linkedToThis,
+              sameOrgSamePhoneFrom,
+              sameOrgSamePhoneTo,
+              orphans,
+            },
+            siblingThreads,
+            sampleMessagesByPhone: sampleMessagesByPhone.map((m) => ({
+              ...m,
+              body: m.body ? m.body.slice(0, 80) : null,
+            })),
+          },
+        };
+      });
+    },
+  );
+
   // ---------- POST /aligned-admin/queues/:queue/drain-failed ---------------
   // Clears all failed jobs on a queue. Useful for wiping out orphan repeatable
   // jobs that reference deleted orgs (they re-fire forever otherwise).

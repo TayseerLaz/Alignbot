@@ -55,16 +55,12 @@
   --color-sand-500: #b39d7f;
   --color-sand-700: #6f5f48;
 
-  /* Surfaces — Desert Sand (#cfc0a9, PMS 7501 C) is the brand's common
-     ground: the page background everything else lifts off of. Cards take
-     a lighter sand so they read as raised above the floor, hover / elevated
-     surfaces lighter still, borders go deeper sand so the separation is
-     visible against the sand-on-sand stack. */
-  --color-surface:          #f1e7d4;
-  --color-surface-muted:    #cfc0a9;
-  --color-surface-elevated: #faf2df;
-  --color-border:           #a3947b;
-  --color-border-strong:    #75694f;
+  /* Surfaces — cream-tinted neutral (brand-book bg #faf9f5). */
+  --color-surface:          #ffffff;
+  --color-surface-muted:    #faf9f5;
+  --color-surface-elevated: #f5f3ed;
+  --color-border:           #e8e4d8;
+  --color-border-strong:    #cfc0a9;
 
   /* Foreground — near-black + warm grays. */
   --color-foreground:        #0a0b0e;
@@ -102,32 +98,28 @@
    are overridden in @theme so every Tailwind utility re-themes automatically.
    ============================================================================ */
 .dark {
-  /* Brand — dark mode pairs the brand book's two anchors directly:
-     Signal Red #E53E34 (PMS 485 C) as the action color at 500, with
-     Oxblood #360516 (PMS 490 C) at the deep stops so brand-tinted
-     surfaces / hover backgrounds still feel grounded in the same
-     palette as light mode. Upper half lightens toward a soft signal-
-     pink for text-on-brand and focus-ring contrast on near-black. */
-  --color-brand-50:  #1c020c;
-  --color-brand-100: #360516;
-  --color-brand-200: #5c2b2e;
-  --color-brand-300: #9c2a24;
-  --color-brand-400: #c1342c;
+  /* Brand — Oxblood doesn't have enough light to fire on near-black
+     surfaces, so dark mode anchors on Signal Red #E53E34 (brand-book
+     PMS 485 C). Deep stops keep the dark-oxblood family for brand-tinted
+     backgrounds + hover states; upper half lightens toward soft signal-
+     pink for text-on-brand + focus-ring contrast on the dark floor. */
+  --color-brand-50:  #1c0908;
+  --color-brand-100: #2c100c;
+  --color-brand-200: #4a1a14;
+  --color-brand-300: #7a261d;
+  --color-brand-400: #b03128;
   --color-brand-500: #e53e34;
   --color-brand-600: #ed5751;
   --color-brand-700: #f17b78;
   --color-brand-800: #f7adab;
   --color-brand-900: #fdecea;
 
-  /* Surfaces — near-black bg with sand-tinted elevated tones + borders
-     so Desert Sand reads as the cross-mode common ground (its plain hex
-     is the body bg in light mode; here it tints every layered surface
-     instead, since pure sand would blow out against the dark floor). */
-  --color-surface:          #1a1612;
+  /* Surfaces — near-black with a hint of oxblood depth. */
+  --color-surface:          #161013;
   --color-surface-muted:    #0a0b0e;
-  --color-surface-elevated: #2a2520;
-  --color-border:           #3a3225;
-  --color-border-strong:    #5a4b34;
+  --color-surface-elevated: #211a1d;
+  --color-border:           #2d2528;
+  --color-border-strong:    #3f3438;
 
   /* Foreground — warm off-whites paired with sand undertones. */
   --color-foreground:        #f5f1ea;
@@ -152,11 +144,11 @@
   --color-info: #60a5fa;
   --color-info-100: #112338;
 
-  /* Shadows — black with a warm-orange undertone matching the brand. */
+  /* Shadows — black with a signal-red undertone matching the brand. */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-brand: 0 10px 26px rgba(245, 122, 58, 0.35);
+  --shadow-brand: 0 10px 26px rgba(229, 62, 52, 0.35);
 }
 
 /* ----------------------------------------------------------------------------

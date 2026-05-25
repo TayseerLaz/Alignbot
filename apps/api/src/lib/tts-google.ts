@@ -12,6 +12,7 @@
 // downsamples + remixes to mono before media upload so the play bubble
 // renders correctly.
 import { env } from './env.js';
+import { normalizeCurrencyForTts } from './tts-text-normalizer.js';
 
 const TTS_ENDPOINT = 'https://texttospeech.googleapis.com/v1/text:synthesize';
 
@@ -56,7 +57,11 @@ export async function synthesizeSpeech(args: SynthesizeArgs): Promise<Synthesize
   if (!isGoogleTtsConfigured()) {
     return { ok: false, error: 'GOOGLE_TTS_API_KEY not configured' };
   }
-  const text = args.text.trim();
+  // Phase 12.1 — expand currency codes to full words so TTS reads
+  // "0.150 KWD" → "zero point one five zero Kuwaiti dinar" instead of
+  // its built-in colloquial conversion to "150 fils". Matches the
+  // ElevenLabs path.
+  const text = normalizeCurrencyForTts(args.text.trim());
   if (!text) return { ok: false, error: 'empty text' };
   if (text.length > 4900) {
     return { ok: false, error: `text too long (${text.length} chars; max 4900)` };

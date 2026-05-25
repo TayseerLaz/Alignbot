@@ -5,6 +5,7 @@
 // transcode + Meta-upload code. Returns OGG/Opus bytes (16 kHz mono),
 // which the existing audio-transcode helper passes through to WhatsApp.
 import { env } from './env.js';
+import { normalizeCurrencyForTts } from './tts-text-normalizer.js';
 
 const TTS_ENDPOINT = 'https://api.elevenlabs.io/v1/text-to-speech';
 
@@ -38,7 +39,12 @@ export async function synthesizeSpeech(args: SynthesizeArgs): Promise<Synthesize
   if (!voiceId) {
     return { ok: false, error: 'ELEVENLABS_VOICE_ID not configured and no per-tenant override' };
   }
-  const text = args.text.trim();
+  // Phase 12.1 — expand currency codes to full words BEFORE TTS so the
+  // engine reads "0.150 KWD" → "zero point one five zero Kuwaiti dinar"
+  // instead of colloquially-converting to "150 fils". Combined with
+  // apply_text_normalization='off' below this gives us deterministic
+  // control over what the customer hears.
+  const text = normalizeCurrencyForTts(args.text.trim());
   if (!text) return { ok: false, error: 'empty text' };
   if (text.length > 4900) {
     return { ok: false, error: `text too long (${text.length} chars; max 4900)` };
@@ -52,6 +58,11 @@ export async function synthesizeSpeech(args: SynthesizeArgs): Promise<Synthesize
       similarity_boost: 0.75,
       use_speaker_boost: true,
     },
+    // Disable ElevenLabs' built-in "smart" number/currency normalization.
+    // We already pre-expanded currency codes above; without this flag
+    // the engine would still convert "0.150 Kuwaiti dinar" → "150 fils"
+    // on its own initiative.
+    apply_text_normalization: 'off',
   };
 
   // output_format=opus_48000_64 keeps the payload small (~6 KB/sec) and

@@ -2,7 +2,7 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { loginBodySchema, type LoginBody } from '@aligned/shared';
-import { ArrowLeft, Eye, EyeOff, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -20,8 +20,6 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [step, setStep] = useState<Step>('credentials');
 
-  // Stash the credentials between steps so we can re-POST with the TOTP
-  // code attached. Kept in a ref (not state) so re-renders don't churn.
   const stash = useRef<{ email: string; password: string } | null>(null);
   const [totpCode, setTotpCode] = useState('');
   const [totpError, setTotpError] = useState<string | null>(null);
@@ -43,9 +41,6 @@ export default function LoginPage() {
     router.push('/dashboard');
   };
 
-  // Step 1: credentials. On TOTP_REQUIRED, slide to step 2 instead of
-  // showing an error toast — the password was right, we just need another
-  // factor.
   const onSubmitCredentials = form.handleSubmit(async (values) => {
     try {
       const res = await api.post<{ accessToken: string; expiresAt: string }>(
@@ -67,7 +62,6 @@ export default function LoginPage() {
     }
   });
 
-  // Step 2: re-submit with TOTP code (or 8-char recovery code).
   const onSubmitTotp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!stash.current) {
@@ -102,29 +96,44 @@ export default function LoginPage() {
     }
   };
 
+  // Marketing-site visual language: warm sand card, oxblood text + inputs,
+  // Signal Red primary button. Tokens come from the portal theme so
+  // light / dark switches still work — sand ramp lifts toward cream in
+  // dark mode automatically.
   const inputClass =
-    'w-full rounded-lg border border-white/[0.06] bg-[#19191c] px-3.5 py-2.5 text-sm text-white placeholder:text-white/30 outline-none transition focus:border-white/30 focus:bg-[#1c1c20]';
+    'w-full rounded-full border border-brand-500/15 bg-white/85 px-4 py-3 text-sm text-brand-500 placeholder:text-brand-500/40 outline-none transition focus:border-brand-500/40 focus:bg-white focus:ring-4 focus:ring-brand-500/10';
 
   return (
     <div className="flex flex-col">
       <div className="relative overflow-hidden">
         {step === 'credentials' ? (
-          <div
-            key="credentials"
-            className="motion-safe:animate-[al-slide-in_300ms_ease-out]"
-            style={{ animationName: 'al-slide-in-left' }}
-          >
-            <div className="text-center">
-              <h1 className="text-3xl font-bold tracking-tight text-white">Sign in to Account</h1>
-              <p className="mt-2 text-sm text-white/60">Enter your details to continue.</p>
-            </div>
+          <div key="credentials" className="motion-safe:animate-[al-slide-in-left_300ms_ease-out]">
+            {/* Mono kicker eyebrow — same shape as the marketing site. */}
+            <p className="mb-3 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-brand-500/70">
+              <span className="size-1.5 rounded-full bg-coral-500" />
+              Login
+            </p>
+            <h1
+              className="text-4xl font-extrabold leading-[0.95] tracking-[-0.035em] text-brand-500"
+            >
+              Sign in to your{' '}
+              <span
+                className="font-normal not-italic"
+                style={{ fontFamily: 'var(--font-serif)', fontStyle: 'italic' }}
+              >
+                workspace.
+              </span>
+            </h1>
+            <p className="mt-3 text-sm text-brand-500/70">
+              Enter your email and password to continue.
+            </p>
 
-            <form onSubmit={onSubmitCredentials} className="mt-7 space-y-4">
+            <form onSubmit={onSubmitCredentials} className="mt-8 space-y-4">
               <Field label="Email" error={form.formState.errors.email?.message}>
                 <input
                   type="email"
                   autoComplete="email"
-                  placeholder="eg. johnfrans@gmail.com"
+                  placeholder="you@company.com"
                   className={inputClass}
                   aria-invalid={!!form.formState.errors.email}
                   {...form.register('email')}
@@ -132,13 +141,13 @@ export default function LoginPage() {
               </Field>
 
               <div className="space-y-1.5">
-                <div className="flex items-baseline justify-between">
-                  <label htmlFor="password" className="block text-xs font-medium text-white/80">
+                <div className="flex items-baseline justify-between px-1">
+                  <label htmlFor="password" className="text-xs font-semibold text-brand-500">
                     Password
                   </label>
                   <Link
                     href="/forgot-password"
-                    className="text-[11px] text-white/60 hover:text-white hover:underline"
+                    className="text-[11px] font-medium text-brand-500/70 hover:text-coral-500"
                   >
                     Forgot password?
                   </Link>
@@ -149,7 +158,7 @@ export default function LoginPage() {
                     type={showPassword ? 'text' : 'password'}
                     autoComplete="current-password"
                     placeholder="Enter your password"
-                    className={`${inputClass} pr-10`}
+                    className={`${inputClass} pr-12`}
                     aria-invalid={!!form.formState.errors.password}
                     {...form.register('password')}
                   />
@@ -157,13 +166,13 @@ export default function LoginPage() {
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white"
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-brand-500/60 transition hover:text-brand-500"
                   >
                     {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                   </button>
                 </div>
                 {form.formState.errors.password ? (
-                  <p className="text-[11px] text-rose-300">
+                  <p className="px-1 text-[11px] font-medium text-coral-600">
                     {form.formState.errors.password.message}
                   </p>
                 ) : null}
@@ -172,28 +181,44 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={form.formState.isSubmitting}
-                className="mt-2 w-full rounded-lg bg-white py-3 text-sm font-semibold text-black transition hover:bg-white/90 disabled:opacity-60"
+                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-full bg-coral-500 px-6 py-3.5 text-sm font-semibold text-brand-500 shadow-coral transition hover:-translate-y-0.5 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
               >
-                {form.formState.isSubmitting ? 'Signing in…' : 'Sign In'}
+                {form.formState.isSubmitting ? 'Signing in…' : 'Sign in'}
+                {!form.formState.isSubmitting ? <ArrowRight className="size-4" /> : null}
               </button>
             </form>
+
+            <p className="mt-7 text-center text-xs text-brand-500/70">
+              New to Hader?{' '}
+              <Link href="/signup" className="font-semibold text-brand-500 hover:text-coral-500">
+                Create an account
+              </Link>
+            </p>
           </div>
         ) : (
-          <div
-            key="totp"
-            className="motion-safe:animate-[al-slide-in_300ms_ease-out]"
-            style={{ animationName: 'al-slide-in-right' }}
-          >
+          <div key="totp" className="motion-safe:animate-[al-slide-in-right_300ms_ease-out]">
             <div className="text-center">
-              <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-white/[0.08] ring-1 ring-white/10">
-                <ShieldCheck className="size-5 text-white" />
+              <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-coral-500/15 ring-1 ring-coral-500/30">
+                <ShieldCheck className="size-5 text-coral-500" />
               </div>
-              <h1 className="text-2xl font-bold tracking-tight text-white">Two-factor code</h1>
-              <p className="mt-2 text-sm text-white/60">
+              <p className="mb-2 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-brand-500/70">
+                <span className="size-1.5 rounded-full bg-coral-500" />
+                Two-factor
+              </p>
+              <h1 className="text-3xl font-extrabold leading-tight tracking-[-0.03em] text-brand-500">
+                Verify it's{' '}
+                <span
+                  className="font-normal not-italic"
+                  style={{ fontFamily: 'var(--font-serif)', fontStyle: 'italic' }}
+                >
+                  you.
+                </span>
+              </h1>
+              <p className="mt-3 text-sm text-brand-500/70">
                 Open your authenticator app and enter the 6-digit code.
               </p>
-              <p className="mt-1 text-xs text-white/40">
-                Signing in as <span className="text-white/70">{stash.current?.email}</span>
+              <p className="mt-1 text-xs text-brand-500/55">
+                Signing in as <span className="font-medium text-brand-500">{stash.current?.email}</span>
               </p>
             </div>
 
@@ -215,9 +240,9 @@ export default function LoginPage() {
                   aria-invalid={!!totpError}
                 />
                 {totpError ? (
-                  <p className="text-center text-[11px] text-rose-300">{totpError}</p>
+                  <p className="text-center text-[11px] font-medium text-coral-600">{totpError}</p>
                 ) : (
-                  <p className="text-center text-[11px] text-white/40">
+                  <p className="text-center text-[11px] text-brand-500/55">
                     Lost your authenticator? Type an 8-character recovery code.
                   </p>
                 )}
@@ -226,9 +251,10 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={verifying || totpCode.trim().length < 6}
-                className="mt-2 w-full rounded-lg bg-white py-3 text-sm font-semibold text-black transition hover:bg-white/90 disabled:opacity-60"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-coral-500 px-6 py-3.5 text-sm font-semibold text-brand-500 shadow-coral transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
               >
                 {verifying ? 'Verifying…' : 'Verify & continue'}
+                {!verifying ? <ArrowRight className="size-4" /> : null}
               </button>
 
               <button
@@ -239,7 +265,7 @@ export default function LoginPage() {
                   setTotpError(null);
                   setStep('credentials');
                 }}
-                className="flex w-full items-center justify-center gap-1.5 text-xs text-white/60 transition hover:text-white"
+                className="flex w-full items-center justify-center gap-1.5 text-xs font-medium text-brand-500/70 transition hover:text-coral-500"
               >
                 <ArrowLeft className="size-3.5" /> Use a different account
               </button>
@@ -248,9 +274,6 @@ export default function LoginPage() {
         )}
       </div>
 
-      {/* Step-transition keyframes. Scoped to this page so they don't
-          pollute global stylesheets. motion-reduce users get an instant
-          swap (motion-safe: on the wrapper above). */}
       <style jsx global>{`
         @keyframes al-slide-in-left {
           from { opacity: 0; transform: translateX(-12px); }
@@ -276,9 +299,9 @@ function Field({
 }) {
   return (
     <div className="space-y-1.5">
-      <label className="block text-xs font-medium text-white/80">{label}</label>
+      <label className="block px-1 text-xs font-semibold text-brand-500">{label}</label>
       {children}
-      {error ? <p className="text-[11px] text-rose-300">{error}</p> : null}
+      {error ? <p className="px-1 text-[11px] font-medium text-coral-600">{error}</p> : null}
     </div>
   );
 }

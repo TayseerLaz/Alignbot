@@ -14,9 +14,12 @@ import { useSession } from '@/lib/session';
 
 type Step = 'credentials' | 'totp';
 
-// Sand-coloured Hader mark, sized for the slide-10 hero. Picks up the
-// page's sand foreground so the whole stack reads as one continuous
-// flat tone against oxblood.
+// Literal hexes — bypass the portal theme tokens because brand-500
+// flips to Signal Red in dark mode. The auth shell is locked to the
+// brand-book Oxblood + Desert Sand pairing regardless of system theme.
+const OXBLOOD = '#360516';
+const SAND = '#cfc0a9';
+
 function HaderIconMark({ size = 96 }: { size?: number }) {
   return (
     <span
@@ -26,7 +29,7 @@ function HaderIconMark({ size = 96 }: { size?: number }) {
       style={{
         width: size,
         height: size,
-        backgroundColor: 'var(--color-sand-300)',
+        backgroundColor: SAND,
         WebkitMaskImage: 'url(/hader-icon.png)',
         maskImage: 'url(/hader-icon.png)',
         WebkitMaskSize: 'contain',
@@ -40,24 +43,21 @@ function HaderIconMark({ size = 96 }: { size?: number }) {
   );
 }
 
-// Two-colour input: transparent on oxblood with a sand border and sand
-// text. Focus pulls the border to full sand with a soft sand ring.
+// Inputs: transparent on Oxblood with Sand border + Sand text. Focus
+// ramps the border to full Sand with a soft Sand ring.
 const INPUT =
-  'w-full rounded-lg border border-sand-300/40 bg-transparent px-4 py-3 text-[15px] text-sand-300 placeholder:text-sand-300/45 outline-none transition focus:border-sand-300 focus:ring-2 focus:ring-sand-300/25';
+  'w-full rounded-lg border border-[#cfc0a9]/40 bg-transparent px-4 py-3 text-[15px] text-[#cfc0a9] placeholder:text-[#cfc0a9]/45 outline-none transition focus:border-[#cfc0a9] focus:ring-2 focus:ring-[#cfc0a9]/25';
 
-// Outline button by default — sand border + sand text. Hover inverts
-// to a filled sand pill with oxblood text. Same invert pattern every
-// interactive surface on the page uses.
+// Outline pill — Sand border + Sand text → hover inverts to filled
+// Sand with Oxblood text.
 const PRIMARY_BTN =
-  'w-full rounded-lg border-2 border-sand-300 bg-transparent px-6 py-3 text-[15px] font-semibold text-sand-300 transition hover:bg-sand-300 hover:text-brand-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-sand-300';
+  'w-full rounded-lg border-2 border-[#cfc0a9] bg-transparent px-6 py-3 text-[15px] font-semibold text-[#cfc0a9] transition hover:bg-[#cfc0a9] hover:text-[#360516] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-[#cfc0a9]';
 
-// Inline-text link: sand text, hover inverts to a sand pill with
-// oxblood text. Small horizontal padding so the highlight has room.
 const LINK =
-  'rounded px-1.5 py-0.5 font-semibold text-sand-300 transition hover:bg-sand-300 hover:text-brand-500';
+  'rounded px-1.5 py-0.5 font-semibold text-[#cfc0a9] transition hover:bg-[#cfc0a9] hover:text-[#360516]';
 
 const LINK_SUBTLE =
-  'rounded px-1.5 py-0.5 font-medium text-sand-300/70 transition hover:bg-sand-300 hover:text-brand-500';
+  'rounded px-1.5 py-0.5 font-medium text-[#cfc0a9]/70 transition hover:bg-[#cfc0a9] hover:text-[#360516]';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -145,7 +145,9 @@ export default function LoginPage() {
     return (
       <div className="flex w-full max-w-sm flex-col items-center text-center">
         <HaderIconMark size={96} />
-        <h1 className="mt-8 text-5xl font-extrabold leading-[0.95] tracking-[-0.04em] text-sand-300 sm:text-6xl">
+        <h1
+          className="mt-8 text-5xl font-extrabold leading-[0.95] tracking-[-0.04em] text-[#cfc0a9] sm:text-6xl"
+        >
           Welcome{' '}
           <span
             className="font-normal"
@@ -154,7 +156,7 @@ export default function LoginPage() {
             back.
           </span>
         </h1>
-        <p className="mt-3 text-sm text-sand-300/70">
+        <p className="mt-3 text-sm text-[#cfc0a9]/70">
           Sign in to continue to your Hader workspace.
         </p>
 
@@ -173,7 +175,7 @@ export default function LoginPage() {
 
           <div className="space-y-2">
             <div className="flex items-baseline justify-between">
-              <label htmlFor="password" className="text-sm font-medium text-sand-300">
+              <label htmlFor="password" className="text-sm font-medium text-[#cfc0a9]">
                 Password
               </label>
               <Link href="/forgot-password" className={`text-xs ${LINK_SUBTLE}`}>
@@ -194,13 +196,13 @@ export default function LoginPage() {
                 type="button"
                 onClick={() => setShowPassword((v) => !v)}
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
-                className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-sand-300/60 transition hover:bg-sand-300 hover:text-brand-500"
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-[#cfc0a9]/60 transition hover:bg-[#cfc0a9] hover:text-[#360516]"
               >
                 {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
               </button>
             </div>
             {form.formState.errors.password ? (
-              <p className="text-xs font-medium text-sand-300/90">
+              <p className="text-xs font-medium text-[#cfc0a9]/90">
                 {form.formState.errors.password.message}
               </p>
             ) : null}
@@ -215,7 +217,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="mt-8 text-sm text-sand-300/70">
+        <p className="mt-8 text-sm text-[#cfc0a9]/70">
           New to Hader?{' '}
           <Link href="/signup" className={LINK}>
             Create an account
@@ -225,14 +227,13 @@ export default function LoginPage() {
     );
   }
 
-  // Two-factor — same invert pattern. Shield ring badge in sand on
-  // oxblood, headline + body all sand.
+  // Two-factor — same pattern. Sand shield ring on Oxblood.
   return (
     <div className="flex w-full max-w-sm flex-col items-center text-center">
-      <div className="flex size-24 items-center justify-center rounded-full border-2 border-sand-300/40">
-        <ShieldCheck className="size-10 text-sand-300" />
+      <div className="flex size-24 items-center justify-center rounded-full border-2 border-[#cfc0a9]/40">
+        <ShieldCheck className="size-10 text-[#cfc0a9]" />
       </div>
-      <h1 className="mt-8 text-5xl font-extrabold leading-[0.95] tracking-[-0.04em] text-sand-300 sm:text-6xl">
+      <h1 className="mt-8 text-5xl font-extrabold leading-[0.95] tracking-[-0.04em] text-[#cfc0a9] sm:text-6xl">
         Verify it's{' '}
         <span
           className="font-normal"
@@ -241,11 +242,11 @@ export default function LoginPage() {
           you.
         </span>
       </h1>
-      <p className="mt-3 text-sm text-sand-300/70">
+      <p className="mt-3 text-sm text-[#cfc0a9]/70">
         Open your authenticator app and enter the 6-digit code.
       </p>
-      <p className="mt-1 text-xs text-sand-300/60">
-        Signing in as <span className="font-medium text-sand-300">{stash.current?.email}</span>
+      <p className="mt-1 text-xs text-[#cfc0a9]/60">
+        Signing in as <span className="font-medium text-[#cfc0a9]">{stash.current?.email}</span>
       </p>
 
       <form onSubmit={onSubmitTotp} className="mt-10 w-full space-y-4">
@@ -265,9 +266,9 @@ export default function LoginPage() {
           aria-invalid={!!totpError}
         />
         {totpError ? (
-          <p className="text-center text-xs font-medium text-sand-300/90">{totpError}</p>
+          <p className="text-center text-xs font-medium text-[#cfc0a9]/90">{totpError}</p>
         ) : (
-          <p className="text-center text-xs text-sand-300/60">
+          <p className="text-center text-xs text-[#cfc0a9]/60">
             Lost your authenticator? Type an 8-character recovery code.
           </p>
         )}
@@ -288,7 +289,7 @@ export default function LoginPage() {
             setTotpError(null);
             setStep('credentials');
           }}
-          className="flex w-full items-center justify-center gap-1.5 rounded-md py-1.5 text-sm text-sand-300/70 transition hover:bg-sand-300 hover:text-brand-500"
+          className="flex w-full items-center justify-center gap-1.5 rounded-md py-1.5 text-sm text-[#cfc0a9]/70 transition hover:bg-[#cfc0a9] hover:text-[#360516]"
         >
           <ArrowLeft className="size-3.5" /> Use a different account
         </button>
@@ -296,6 +297,11 @@ export default function LoginPage() {
     </div>
   );
 }
+
+// Silence eslint about unused constants — they document the locked
+// palette + can be imported elsewhere.
+void OXBLOOD;
+void SAND;
 
 function Field({
   label,
@@ -310,12 +316,12 @@ function Field({
 }) {
   return (
     <div className="space-y-2">
-      <label htmlFor={htmlFor} className="block text-sm font-medium text-sand-300">
+      <label htmlFor={htmlFor} className="block text-sm font-medium text-[#cfc0a9]">
         {label}
       </label>
       {children}
       {error ? (
-        <p className="text-xs font-medium text-sand-300/90" role="alert">
+        <p className="text-xs font-medium text-[#cfc0a9]/90" role="alert">
           {error}
         </p>
       ) : null}

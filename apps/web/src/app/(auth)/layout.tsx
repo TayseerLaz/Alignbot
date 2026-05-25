@@ -1,26 +1,28 @@
 import { AlignedLogo } from '@/components/brand/logo';
 
-// Two colours, period:
-//   bg     = Oxblood   (#360516)
-//   text   = Desert Sand (#cfc0a9)
-//   hover  = invert (sand bg + oxblood text)
-// No accents, no signal red, no semantic colour bleed. Every
-// hoverable surface flips the same way so the whole page feels
-// like one interaction model.
+// Two colours, period — bypassing the theme tokens because brand-500
+// flips to Signal Red in dark mode. These literal hexes lock the
+// auth shell to the brand-book pairing regardless of system theme.
+const OXBLOOD = '#360516';
+const SAND = '#cfc0a9';
+
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 flex flex-col overflow-y-auto bg-brand-500 text-sand-300">
+    <div
+      className="fixed inset-0 flex flex-col overflow-y-auto"
+      style={{ backgroundColor: OXBLOOD, color: SAND }}
+    >
       <header className="flex items-center justify-between px-6 py-6 sm:px-10 lg:px-14">
         <a
           href="https://hader.ai/"
           aria-label="Hader AI — back to homepage"
-          className="rounded-md px-2 py-1 transition hover:bg-sand-300 [&>span]:hover:!bg-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sand-300/40"
+          className="rounded-md px-2 py-1 transition hover:bg-[#cfc0a9] [&>span]:hover:!bg-[#360516] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#cfc0a9]/40"
         >
-          <AlignedLogo className="!text-sand-300" />
+          <AlignedLogo className="!text-[#cfc0a9]" />
         </a>
         <a
           href="https://hader.ai/"
-          className="rounded-md px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-sand-300/70 transition hover:bg-sand-300 hover:text-brand-500"
+          className="rounded-md px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-[#cfc0a9]/70 transition hover:bg-[#cfc0a9] hover:text-[#360516]"
         >
           ← Back to site
         </a>
@@ -30,7 +32,10 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         {children}
       </main>
 
-      <footer className="hidden items-center justify-between px-14 pb-7 font-mono text-[12px] uppercase tracking-[0.18em] text-sand-300/50 sm:flex">
+      <footer
+        className="hidden items-center justify-between px-14 pb-7 font-mono text-[12px] uppercase tracking-[0.18em] sm:flex"
+        style={{ color: `${SAND}80` }}
+      >
         <span>Hader AI · Portal</span>
         <span>Sign in / 01</span>
       </footer>

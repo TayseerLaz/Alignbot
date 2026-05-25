@@ -15,12 +15,14 @@ const jakarta = Plus_Jakarta_Sans({
 
 const fraunces = Fraunces({
   subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700'],
+  // next/font requires weight to be omitted (or `variable`) when axes are
+  // declared, since the file IS the variable font. Without weight we get
+  // the full 100-900 axis at runtime via `font-weight` — same effect as
+  // listing discrete weights but in one file.
   variable: '--font-fraunces',
   display: 'swap',
   // Fraunces ships a variable optical-size axis — letting Next bake it in
-  // means headings render with the "Display" optical sizing without us
-  // having to set font-optical-sizing manually on every heading.
+  // means headings render with the "Display" optical sizing automatically.
   axes: ['opsz'],
 });
 

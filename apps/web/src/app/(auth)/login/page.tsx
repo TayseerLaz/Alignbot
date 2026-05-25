@@ -21,6 +21,10 @@ const OXBLOOD = '#360516';
 const SAND = '#cfc0a9';
 
 function HaderIconMark({ size = 96 }: { size?: number }) {
+  // URL is /app/-prefixed because Next.js's basePath does not rewrite
+  // string URLs embedded in inline style attributes. At the root domain
+  // `/hader-icon.png` would fall through Caddy's try_files to the
+  // marketing site's index.html — silently breaking the mask.
   return (
     <span
       role="img"
@@ -30,8 +34,8 @@ function HaderIconMark({ size = 96 }: { size?: number }) {
         width: size,
         height: size,
         backgroundColor: SAND,
-        WebkitMaskImage: 'url(/hader-icon.png)',
-        maskImage: 'url(/hader-icon.png)',
+        WebkitMaskImage: 'url(/app/hader-icon.png)',
+        maskImage: 'url(/app/hader-icon.png)',
         WebkitMaskSize: 'contain',
         maskSize: 'contain',
         WebkitMaskRepeat: 'no-repeat',
@@ -216,13 +220,6 @@ export default function LoginPage() {
             {form.formState.isSubmitting ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
-
-        <p className="mt-8 text-sm text-[#cfc0a9]/70">
-          New to Hader?{' '}
-          <Link href="/signup" className={LINK}>
-            Create an account
-          </Link>
-        </p>
       </div>
     );
   }

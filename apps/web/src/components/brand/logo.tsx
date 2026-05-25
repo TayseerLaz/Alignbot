@@ -32,8 +32,12 @@ export function AlignedLogo({
         className={cn('inline-block size-9 shrink-0 text-brand-500', className)}
         style={{
           backgroundColor: 'currentColor',
-          WebkitMaskImage: 'url(/hader-icon.png)',
-          maskImage: 'url(/hader-icon.png)',
+          // Prefix with /app — basePath is not auto-applied to URLs
+          // inside inline style attributes, and at the root domain
+          // /hader-icon.png falls through Caddy's try_files to the
+          // marketing site's index.html.
+          WebkitMaskImage: 'url(/app/hader-icon.png)',
+          maskImage: 'url(/app/hader-icon.png)',
           WebkitMaskSize: 'contain',
           maskSize: 'contain',
           WebkitMaskRepeat: 'no-repeat',
@@ -57,8 +61,10 @@ export function AlignedLogo({
         height: 36,
         aspectRatio: '6452 / 1272',
         backgroundColor: 'currentColor',
-        WebkitMaskImage: 'url(/hader-wordmark.png)',
-        maskImage: 'url(/hader-wordmark.png)',
+        // Prefixed with /app for the same basePath reason as the
+        // iconOnly branch above.
+        WebkitMaskImage: 'url(/app/hader-wordmark.png)',
+        maskImage: 'url(/app/hader-wordmark.png)',
         WebkitMaskSize: 'contain',
         maskSize: 'contain',
         WebkitMaskRepeat: 'no-repeat',

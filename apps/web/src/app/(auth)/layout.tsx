@@ -1,23 +1,26 @@
 import { AlignedLogo } from '@/components/brand/logo';
 
-// Auth shell — Slide 10 ("Sign-off") of the Hader brand book, applied
-// in the inverse colour treatment: Desert Sand surface, Oxblood
-// foreground (the marketing-site root palette). Oxblood is the single
-// accent — icon, headline, button, focus all share it.
+// Two colours, period:
+//   bg     = Oxblood   (#360516)
+//   text   = Desert Sand (#cfc0a9)
+//   hover  = invert (sand bg + oxblood text)
+// No accents, no signal red, no semantic colour bleed. Every
+// hoverable surface flips the same way so the whole page feels
+// like one interaction model.
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 flex flex-col overflow-y-auto bg-sand-300 text-brand-500">
+    <div className="fixed inset-0 flex flex-col overflow-y-auto bg-brand-500 text-sand-300">
       <header className="flex items-center justify-between px-6 py-6 sm:px-10 lg:px-14">
         <a
           href="https://hader.ai/"
           aria-label="Hader AI — back to homepage"
-          className="rounded transition hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30"
+          className="rounded-md px-2 py-1 transition hover:bg-sand-300 [&>span]:hover:!bg-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sand-300/40"
         >
-          <AlignedLogo className="!text-brand-500" />
+          <AlignedLogo className="!text-sand-300" />
         </a>
         <a
           href="https://hader.ai/"
-          className="font-mono text-[11px] uppercase tracking-[0.18em] text-brand-500/60 transition hover:text-brand-500"
+          className="rounded-md px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-sand-300/70 transition hover:bg-sand-300 hover:text-brand-500"
         >
           ← Back to site
         </a>
@@ -27,7 +30,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         {children}
       </main>
 
-      <footer className="hidden items-center justify-between px-14 pb-7 font-mono text-[12px] uppercase tracking-[0.18em] text-brand-500/50 sm:flex">
+      <footer className="hidden items-center justify-between px-14 pb-7 font-mono text-[12px] uppercase tracking-[0.18em] text-sand-300/50 sm:flex">
         <span>Hader AI · Portal</span>
         <span>Sign in / 01</span>
       </footer>

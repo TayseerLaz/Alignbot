@@ -2101,7 +2101,13 @@ async function maybeReplyAsBot(args: {
   const { withRlsBypass } = await import('../../lib/db.js');
   const { buildBotResponse, gatherBotData } = await import('../../lib/bot-engine.js');
 
+  // Phase 13 — pipeline stopwatch (one per inbound message). Threaded
+  // through every station so we can show the operator exactly where
+  // time goes on each reply.
+  const { PipelineStopwatch } = await import('../../lib/pipeline-timer.js');
+
   for (const m of args.messages) {
+    const stopwatch = new PipelineStopwatch();
     // Voice-note path: customer sent an audio/voice message. Download
     // the bytes from Meta, run Whisper, then feed the transcript into
     // the same bot reply pipeline as a text message. We also patch the
@@ -2214,6 +2220,7 @@ async function maybeReplyAsBot(args: {
     // Phase 11.1 — await both transcribe + ctx in parallel here.
     // Whichever is slower sets the wall-clock; the other is "free".
     const [transcript, ctx] = await Promise.all([transcribePromise, ctxPromise]);
+    stopwatch.lap(isVoice ? 'transcribe+gather (parallel)' : 'gather_bot_data');
     if (isVoice) {
       if (!transcript) {
         // Transcription failed — skip this message entirely so the LLM
@@ -2444,6 +2451,7 @@ async function maybeReplyAsBot(args: {
       args.log.warn({ err }, '[whatsapp] bot-engine failed');
       return null;
     });
+    stopwatch.lap('llm');
     let rawReply = result?.text ?? null;
     const channel = ctx.channel;
     if (!rawReply) continue;
@@ -2530,6 +2538,7 @@ async function maybeReplyAsBot(args: {
       }
       rawReply = validation.reply;
     }
+    stopwatch.lap('validators');
 
     // Stateful cart — parse "added N× <product>" lines out of the bot's
     // reply and upsert each one into a draft Cart row for this thread.
@@ -3002,6 +3011,7 @@ async function maybeReplyAsBot(args: {
           voiceName: ctx.ttsVoiceName ?? '',
           voiceId: ctx.ttsVoiceName ?? null,
         });
+        stopwatch.lap('tts_synthesize', { provider });
         if (!tts.ok) {
           args.log.warn(
             {
@@ -3018,6 +3028,7 @@ async function maybeReplyAsBot(args: {
           // ffmpeg to force mono + the exact bitrate Meta's voice-note
           // validator likes. ~30 ms operation; cheap insurance.
           const transcoded = await transcodeToOggOpus(tts.bytes);
+          stopwatch.lap('ffmpeg_transcode');
           if (!transcoded.ok) {
             args.log.warn(
               { err: transcoded.error },
@@ -3043,6 +3054,7 @@ async function maybeReplyAsBot(args: {
                 },
               );
               const mediaJson = (await mediaRes.json().catch(() => ({}))) as { id?: string };
+              stopwatch.lap('meta_media_upload_audio');
               if (!mediaRes.ok || !mediaJson.id) {
                 args.log.warn(
                   { status: mediaRes.status, body: mediaJson },
@@ -3069,6 +3081,7 @@ async function maybeReplyAsBot(args: {
                   },
                 );
                 const audioBody = await audioRes.text();
+                stopwatch.lap('meta_messages_send', { type: 'audio' });
                 if (!audioRes.ok) {
                   args.log.warn(
                     { status: audioRes.status, body: audioBody.slice(0, 200) },
@@ -3115,6 +3128,7 @@ async function maybeReplyAsBot(args: {
           },
         );
         const text = await res.text();
+        stopwatch.lap('meta_messages_send', { type: 'text' });
         if (!res.ok) {
           args.log.warn(
             { status: res.status, text: text.slice(0, 200) },
@@ -3144,6 +3158,9 @@ async function maybeReplyAsBot(args: {
       // gallery). Failures here log but DON'T fail the whole reply
       // path — the text reply already landed.
       if (dedupedImageSends.length > 0) {
+        const imagesStartedAt = Date.now();
+        let cacheHits = 0;
+        let cacheMisses = 0;
         const { getOrUploadMetaMediaId } = await import('../../lib/meta-media-cache.js');
         const { presignGetUrl, publicUrlFor } = await import('../../lib/storage.js');
         let prevSkuForGroup: string | null = null;
@@ -3164,8 +3181,10 @@ async function maybeReplyAsBot(args: {
                 },
                 log: args.log,
               });
+              if (mediaId) cacheHits += 1;
             }
             if (!mediaId) {
+              cacheMisses += 1;
               // Cache miss / greeting image / failure — upload bytes
               // inline as before. ~1-2 s slower, but still functional.
               const fileUrl = publicUrlFor(send.storageKey) ?? (await presignGetUrl(send.storageKey));
@@ -3276,6 +3295,12 @@ async function maybeReplyAsBot(args: {
             args.log.warn({ err, sku: send.sku }, '[whatsapp] bot image attach failed');
           }
         }
+        stopwatch.lap('image_attach', {
+          count: dedupedImageSends.length,
+          cacheHits,
+          cacheMisses,
+          totalMsThisStation: Date.now() - imagesStartedAt,
+        });
       }
       // Persist outbound + bump thread.
       // wantsHandoff flips the thread to 'escalated' so the inbox can
@@ -3696,6 +3721,7 @@ async function maybeReplyAsBot(args: {
           }
         }
       });
+      stopwatch.lap('persist');
 
       // Phase 8 — provenance write, AFTER the tx commits so the bot
       // message row is visible to the FK check. Fire-and-forget: any
@@ -3778,6 +3804,9 @@ async function maybeReplyAsBot(args: {
               operatorNickname: null,
             },
           },
+          // Phase 13 — per-station pipeline trace from the stopwatch
+          // we've been lapping through the whole bot reply path.
+          pipelineTimings: stopwatch.snapshot(),
           log: args.log,
         });
         } catch (err) {

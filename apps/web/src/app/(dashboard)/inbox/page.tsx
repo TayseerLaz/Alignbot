@@ -151,6 +151,16 @@ interface MessageProvenance {
     decidedAt: string;
     note: string | null;
   }[];
+  // Phase 13 — per-station pipeline trace from received → sent.
+  pipelineTimings?: {
+    totalMs: number;
+    laps: {
+      station: string;
+      durationMs: number;
+      cumulativeMs: number;
+      meta?: Record<string, unknown> | null;
+    }[];
+  } | null;
   model: string;
   temperature: number;
   promptTokens: number;
@@ -1201,7 +1211,7 @@ function ProvenancePanel({
 }: {
   query: ReturnType<typeof useQuery<{ data: MessageProvenance }>>;
 }) {
-  const [tab, setTab] = useState<'sources' | 'hallucinations'>('sources');
+  const [tab, setTab] = useState<'sources' | 'hallucinations' | 'timing'>('sources');
   if (query.isLoading) {
     return (
       <div className="rounded-md border border-border bg-surface-muted/40 px-3 py-2 text-xs text-foreground-muted">
@@ -1237,10 +1247,18 @@ function ProvenancePanel({
           label={`Hallucinations (${hals.length})`}
           accent={hals.length > 0 ? 'rose' : undefined}
         />
+        {p.pipelineTimings ? (
+          <ProvTab
+            active={tab === 'timing'}
+            onClick={() => setTab('timing')}
+            label={`Timing (${(p.pipelineTimings.totalMs / 1000).toFixed(2)} s)`}
+          />
+        ) : null}
       </div>
       <div className="max-h-72 overflow-auto px-3 py-2 leading-relaxed">
         {tab === 'sources' ? <ProvSources p={p} /> : null}
         {tab === 'hallucinations' ? <ProvHallucinations p={p} /> : null}
+        {tab === 'timing' ? <ProvTiming p={p} /> : null}
       </div>
     </div>
   );
@@ -1498,6 +1516,75 @@ function sourcePageForCitation(c: {
     default:
       return null;
   }
+}
+
+// Phase 13 — per-station pipeline timing breakdown for one bot reply.
+// Visualises every station the message went through from received →
+// sent, with both per-station duration + a horizontal bar showing
+// each station's share of the total wall-clock time. The big number
+// at the top is the total elapsed time the customer waited.
+function ProvTiming({ p }: { p: MessageProvenance }) {
+  const t = p.pipelineTimings;
+  if (!t || t.laps.length === 0) {
+    return (
+      <p className="text-foreground-muted">
+        No timing trace for this message (pre-Phase-13 reply, or stopwatch failed).
+      </p>
+    );
+  }
+  // Each bar is sized relative to the SLOWEST station so a tiny step
+  // doesn't render at 0 px. Color-codes by relative cost so the
+  // operator can spot the hot stations at a glance.
+  const slowest = Math.max(1, ...t.laps.map((l) => l.durationMs));
+  const colourFor = (ms: number) => {
+    const ratio = ms / slowest;
+    if (ratio > 0.5) return 'bg-rose-400';
+    if (ratio > 0.25) return 'bg-amber-400';
+    if (ratio > 0.1) return 'bg-sky-400';
+    return 'bg-emerald-400';
+  };
+  return (
+    <div className="space-y-2">
+      <div className="flex items-baseline justify-between">
+        <p className="text-[11px] text-foreground-muted">
+          From received → sent: customer waited {' '}
+          <span className="text-base font-semibold text-foreground">
+            {(t.totalMs / 1000).toFixed(2)} s
+          </span>
+        </p>
+        <p className="text-[10px] text-foreground-subtle">
+          {t.laps.length} stations
+        </p>
+      </div>
+      <ul className="space-y-1.5">
+        {t.laps.map((lap, i) => (
+          <li key={i} className="text-[11px]">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="font-mono text-foreground">{lap.station}</span>
+              <span className="whitespace-nowrap font-mono text-foreground-subtle">
+                {lap.durationMs.toLocaleString()} ms
+              </span>
+            </div>
+            <div className="mt-0.5 h-1.5 w-full rounded bg-surface-muted">
+              <div
+                className={cn('h-full rounded', colourFor(lap.durationMs))}
+                style={{
+                  width: `${Math.max(2, (lap.durationMs / slowest) * 100)}%`,
+                }}
+              />
+            </div>
+            {lap.meta ? (
+              <p className="mt-0.5 text-[10px] text-foreground-subtle">
+                {Object.entries(lap.meta)
+                  .map(([k, v]) => `${k}: ${String(v)}`)
+                  .join(' · ')}
+              </p>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function ProvHallucinations({ p }: { p: MessageProvenance }) {

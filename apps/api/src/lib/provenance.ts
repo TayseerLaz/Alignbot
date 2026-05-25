@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import { withTenant } from './db.js';
 import type { BotResponseInputs } from './bot-engine.js';
+import type { PipelineSnapshot } from './pipeline-timer.js';
 import {
   normalisePhraseForSuppression,
   scanReply,
@@ -37,6 +38,10 @@ export interface RecordProvenanceArgs {
   // In-memory KB snapshot used to build the prompt. Passed instead of
   // re-fetched so the scanner is pure CPU (no DB round-trip).
   kb: ScanCandidates;
+  // Phase 13 — per-station pipeline trace captured by the stopwatch
+  // threaded through maybeReplyAsBot. Optional; older callers can
+  // still skip it and the column stays NULL.
+  pipelineTimings?: PipelineSnapshot | null;
   log?: FastifyBaseLogger | Pick<FastifyBaseLogger, 'warn' | 'info'>;
 }
 
@@ -99,7 +104,7 @@ async function upsertSystemPromptSnapshot(
  * path should NOT block on it. Errors are logged at WARN and swallowed.
  */
 export async function recordProvenance(args: RecordProvenanceArgs): Promise<void> {
-  const { organizationId, messageId, inputs, reply, kb, log } = args;
+  const { organizationId, messageId, inputs, reply, kb, pipelineTimings, log } = args;
   try {
     const snapshotId = await upsertSystemPromptSnapshot(organizationId, inputs.systemPrompt);
     // Phase 8 / 1.7 — load operator-curated suppression list before
@@ -129,6 +134,7 @@ export async function recordProvenance(args: RecordProvenanceArgs): Promise<void
           promptTokens: inputs.promptTokens,
           completionTokens: inputs.completionTokens,
           latencyMs: inputs.latencyMs,
+          pipelineTimings: (pipelineTimings ?? undefined) as never,
         },
       });
     });

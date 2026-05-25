@@ -1085,6 +1085,8 @@ export default async function inboxRoutes(app: FastifyInstance) {
           // Outputs
           citations: prov.citations,
           hallucinations: prov.hallucinations,
+          // Phase 13 — per-station pipeline trace (received → sent)
+          pipelineTimings: prov.pipelineTimings ?? null,
           // Per-flag decisions the operator already made.
           flagDecisions: decisions.map((d) => ({
             flagIndex: d.flagIndex,

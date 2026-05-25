@@ -2229,6 +2229,10 @@ model MessageProvenance {
   // can ship before the scanner exists.
   citations      Json?
   hallucinations Json?
+  // Phase 13 — per-station pipeline timing trace. Shape:
+  //   { totalMs, laps: [{ station, durationMs, cumulativeMs }] }
+  // Filled by the Stopwatch threaded through maybeReplyAsBot.
+  pipelineTimings Json? @map("pipeline_timings")
 
   // LLM call metadata.
   model            String

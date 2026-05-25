@@ -98,18 +98,21 @@
    are overridden in @theme so every Tailwind utility re-themes automatically.
    ============================================================================ */
 .dark {
-  /* Brand — Oxblood lifted toward dusty rose so it stays legible on dark
-     surfaces while still reading as "Hader red." */
-  --color-brand-50:  #1c020c;
-  --color-brand-100: #25030f;
-  --color-brand-200: #2c0412;
-  --color-brand-300: #4a0d22;
-  --color-brand-400: #7a2a3d;
-  --color-brand-500: #b8627a;
-  --color-brand-600: #d99bac;
-  --color-brand-700: #e8c1cc;
-  --color-brand-800: #f3dde4;
-  --color-brand-900: #fbeef2;
+  /* Brand — Hader oxblood doesn't have enough light to fire on near-black
+     surfaces, so dark mode shifts the brand axis to a warm orange. Same
+     warmth family (the brand book's signal red is the bridge); just hue-
+     rotated toward amber so it reads as energetic rather than alarming
+     against the deep background. Anchor: #f57a3a at 500. */
+  --color-brand-50:  #1a0d05;
+  --color-brand-100: #2a1408;
+  --color-brand-200: #3d1d0c;
+  --color-brand-300: #5c2c12;
+  --color-brand-400: #a25030;
+  --color-brand-500: #f57a3a;
+  --color-brand-600: #ff9a64;
+  --color-brand-700: #ffb98c;
+  --color-brand-800: #ffd6b3;
+  --color-brand-900: #ffe9d6;
 
   /* Surfaces — near-black with a hint of oxblood depth. */
   --color-surface:          #161013;
@@ -141,11 +144,11 @@
   --color-info: #60a5fa;
   --color-info-100: #112338;
 
-  /* Shadows — black with a touch of oxblood undertone. */
+  /* Shadows — black with a warm-orange undertone matching the brand. */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-brand: 0 10px 26px rgba(184, 98, 122, 0.35);
+  --shadow-brand: 0 10px 26px rgba(245, 122, 58, 0.35);
 }
 
 /* ----------------------------------------------------------------------------

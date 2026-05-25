@@ -1,15 +1,20 @@
 import { cn } from '@/lib/utils';
 
 /**
- * AlignedLogo — single source of truth for the Hader AI brand mark.
+ * AlignedLogo — Hader AI brand mark + wordmark.
  *
  * Component name is kept as `AlignedLogo` so the dozen-or-so imports
- * around the app don't need touching. Renders the Hader wordmark
- * (Fraunces serif) + small-caps "AI" subscript, in oxblood on light
- * surfaces and cream on dark.
+ * around the app don't need touching. Both variants render the source
+ * PNGs through CSS mask-image so the actual fill is `currentColor` —
+ * the parent's text color decides whether the mark reads as oxblood
+ * (light surface), cream (dark hero), or anything else context-driven.
  *
- * `iconOnly` (collapsed sidebar): oxblood rounded square with "H" —
- * a wordmark can't crop cleanly into 36×36 so we drop to the monogram.
+ *   iconOnly = true  → /hader-icon.png        (chat-bubble-E mark)
+ *   iconOnly = false → /hader-wordmark.png    (mark + "Hader AI" text)
+ *
+ * Native aspect ratios:
+ *   icon:     2695  × 2702  ≈ 1:1
+ *   wordmark: 6452  × 1272  ≈ 5.07:1
  */
 export function AlignedLogo({
   className,
@@ -21,38 +26,46 @@ export function AlignedLogo({
 }) {
   if (iconOnly) {
     return (
-      <div
-        className={cn(
-          'flex size-9 items-center justify-center rounded-md bg-brand-500 font-semibold text-white shadow-sm',
-          className,
-        )}
+      <span
+        role="img"
         aria-label="Hader AI"
-        style={{ fontFamily: 'var(--font-serif)' }}
-      >
-        H
-      </div>
+        className={cn('inline-block size-9 shrink-0 text-brand-500', className)}
+        style={{
+          backgroundColor: 'currentColor',
+          WebkitMaskImage: 'url(/hader-icon.png)',
+          maskImage: 'url(/hader-icon.png)',
+          WebkitMaskSize: 'contain',
+          maskSize: 'contain',
+          WebkitMaskRepeat: 'no-repeat',
+          maskRepeat: 'no-repeat',
+          WebkitMaskPosition: 'center',
+          maskPosition: 'center',
+        }}
+      />
     );
   }
 
   return (
     <span
-      className={cn(
-        'inline-flex items-baseline gap-1.5 text-brand-500 dark:text-brand-700',
-        className,
-      )}
+      role="img"
       aria-label="Hader AI"
-    >
-      <span
-        className="text-[26px] font-medium leading-none tracking-[-0.02em]"
-        style={{ fontFamily: 'var(--font-serif)' }}
-      >
-        Hader
-      </span>
-      <span
-        className="rounded-sm bg-brand-500 px-1 py-[1px] text-[10px] font-semibold uppercase leading-none tracking-[0.18em] text-white dark:bg-brand-700 dark:text-brand-100"
-      >
-        AI
-      </span>
-    </span>
+      className={cn('inline-block text-brand-500', className)}
+      style={{
+        // 5.07:1 aspect, default height 36 → ~183px wide. Caller can
+        // override either dimension via Tailwind classes (h-7, h-10, …)
+        // and the aspect-ratio keeps the wordmark from squishing.
+        height: 36,
+        aspectRatio: '6452 / 1272',
+        backgroundColor: 'currentColor',
+        WebkitMaskImage: 'url(/hader-wordmark.png)',
+        maskImage: 'url(/hader-wordmark.png)',
+        WebkitMaskSize: 'contain',
+        maskSize: 'contain',
+        WebkitMaskRepeat: 'no-repeat',
+        maskRepeat: 'no-repeat',
+        WebkitMaskPosition: 'left center',
+        maskPosition: 'left center',
+      }}
+    />
   );
 }

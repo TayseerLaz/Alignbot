@@ -490,6 +490,110 @@ export default async function inboxRoutes(app: FastifyInstance) {
       }),
   );
 
+  // ---------- DELETE /inbox/threads/:id --------------------------------
+  // Hard-delete the thread + all its messages + provenance + notes + tags.
+  // Bookings + carts that referenced this thread keep their rows but get
+  // their thread_id set to NULL (FK behaviour) — those are business records
+  // we don't want to silently drop.
+  //
+  // The customer disappears from the inbox immediately. Their next inbound
+  // WhatsApp message will create a brand-new thread row via the webhook's
+  // upsert, so this is a non-destructive "kick from inbox" operation as
+  // far as the customer relationship goes.
+  r.delete(
+    '/inbox/threads/:id',
+    {
+      schema: {
+        tags: ['inbox'],
+        summary: 'Permanently delete a thread + its messages. Customer reappears on next inbound.',
+        params: z.object({ id: uuidSchema }),
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const thread = await tx.whatsAppThread.findUnique({
+          where: { id: req.params.id },
+          select: { id: true, customerPhone: true, customerName: true },
+        });
+        if (!thread) throw notFound('Thread not found.');
+        // Delete messages first because the FK from whatsapp_messages.thread_id
+        // is ON DELETE SET NULL — leaving them in place would orphan rows
+        // that the operator clearly meant to discard. Cascade on the message
+        // table handles message_provenances rows automatically.
+        await tx.whatsAppMessage.deleteMany({ where: { threadId: req.params.id } });
+        // CASCADE handles whatsapp_notes + whatsapp_thread_tags.
+        // SET NULL preserves bookings + carts as standalone records.
+        await tx.whatsAppThread.delete({ where: { id: req.params.id } });
+        await recordAudit({
+          action: 'business_info_updated',
+          organizationId: req.auth!.organizationId,
+          actorUserId: req.auth!.userId,
+          entityType: 'whatsapp_thread',
+          entityId: thread.id,
+          metadata: {
+            event: 'thread_deleted',
+            customerPhone: thread.customerPhone,
+            customerName: thread.customerName,
+          },
+        });
+        return { ok: true as const };
+      }),
+  );
+
+  // ---------- POST /inbox/threads/:id/reset ----------------------------
+  // Wipe the message history but keep the thread row + customer name +
+  // assignment metadata. Used when the operator wants to "start a fresh
+  // conversation" with the same person without losing their renamed
+  // customer name or tags. Counts go back to 0, lastMessagePreview is
+  // cleared, status flips to 'open'.
+  r.post(
+    '/inbox/threads/:id/reset',
+    {
+      schema: {
+        tags: ['inbox'],
+        summary: "Clear a thread's chat history. Keeps the thread row, name, and tags.",
+        params: z.object({ id: uuidSchema }),
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const thread = await tx.whatsAppThread.findUnique({
+          where: { id: req.params.id },
+          select: { id: true },
+        });
+        if (!thread) throw notFound('Thread not found.');
+        await tx.whatsAppMessage.deleteMany({ where: { threadId: req.params.id } });
+        const updated = await tx.whatsAppThread.update({
+          where: { id: req.params.id },
+          data: {
+            inboundCount: 0,
+            outboundCount: 0,
+            lastMessageAt: new Date(),
+            lastMessagePreview: null,
+            searchText: '',
+            status: 'open' as never,
+          },
+          include: {
+            assignedTo: { select: { firstName: true, lastName: true, email: true } },
+            tags: { select: { tag: true } },
+            _count: { select: { notes: true } },
+          },
+        });
+        await recordAudit({
+          action: 'business_info_updated',
+          organizationId: req.auth!.organizationId,
+          actorUserId: req.auth!.userId,
+          entityType: 'whatsapp_thread',
+          entityId: thread.id,
+          metadata: { event: 'thread_reset' },
+        });
+        return { data: serializeThread(updated) };
+      }),
+  );
+
   // ---------- PATCH /inbox/threads/:id/required-skill ------------------
   r.patch(
     '/inbox/threads/:id/required-skill',

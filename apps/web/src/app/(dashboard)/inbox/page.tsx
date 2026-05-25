@@ -11,6 +11,7 @@ import {
   MessageCircle,
   Paperclip,
   Phone,
+  RotateCcw,
   Send,
   Sparkles,
   Mic,
@@ -324,6 +325,7 @@ export default function InboxPage() {
             // refetch is gated by staleTime on the sidebar query.
             queryClient.invalidateQueries({ queryKey: ['sidebar-inbox-counts'] });
           }}
+          onDeleted={() => setActiveId(null)}
           currentUserId={session?.user.id ?? null}
         />
       </div>
@@ -433,10 +435,14 @@ function ThreadList({
 function ThreadView({
   thread,
   onChanged,
+  onDeleted,
   currentUserId,
 }: {
   thread: Thread | null;
   onChanged: () => void;
+  // Fires after a successful hard-delete so the parent can clear the
+  // selection and remove the now-gone thread from the right pane.
+  onDeleted: () => void;
   currentUserId: string | null;
 }) {
   const queryClient = useQueryClient();
@@ -586,6 +592,44 @@ function ThreadView({
     },
   });
 
+  // Hard-delete this thread + every message in it. The customer drops out
+  // of the inbox immediately and only reappears when they send a new
+  // WhatsApp message (the webhook upsert creates a fresh thread row).
+  const deleteThread = useMutation({
+    mutationFn: () =>
+      thread
+        ? api.delete(`/api/v1/inbox/threads/${thread.id}`)
+        : Promise.reject(new Error('no thread')),
+    onSuccess: () => {
+      toast.success('Conversation deleted');
+      onDeleted();
+      onChanged();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Delete failed'),
+  });
+
+  // Wipe the message history but keep the thread row + customer name +
+  // assignment. Acts as a "start fresh" reset that doesn't lose the
+  // operator's rename or tags.
+  const resetThread = useMutation({
+    mutationFn: () =>
+      thread
+        ? api.post(`/api/v1/inbox/threads/${thread.id}/reset`, {})
+        : Promise.reject(new Error('no thread')),
+    onSuccess: () => {
+      toast.success('Conversation reset — chat cleared');
+      // The thread row stays but its message history is gone — invalidate
+      // the messages query so the right pane redraws empty.
+      if (thread) {
+        queryClient.invalidateQueries({ queryKey: ['inbox-thread', thread.id, 'messages'] });
+      }
+      onChanged();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Reset failed'),
+  });
+
   // IMPORTANT: hooks must be called in the same order every render. The
   // early `return` for the null-thread case must come AFTER every hook
   // call in this component, otherwise the moment a thread arrives the
@@ -622,6 +666,10 @@ function ThreadView({
         onRename={(name) => renameContact.mutate(name)}
         renameSaving={renameContact.isPending}
         onBotReplyModeChange={(m) => setBotReplyMode.mutate(m)}
+        onDelete={() => deleteThread.mutate()}
+        onReset={() => resetThread.mutate()}
+        deletePending={deleteThread.isPending}
+        resetPending={resetThread.isPending}
       />
       <TagBar thread={thread} onAdd={(t) => addTag.mutate(t)} onRemove={(t) => removeTag.mutate(t)} />
       <AiStatusBanner thread={thread} botDeployed={botDeployed} />
@@ -673,6 +721,10 @@ function ThreadHeader({
   onRename,
   renameSaving,
   onBotReplyModeChange,
+  onDelete,
+  onReset,
+  deletePending,
+  resetPending,
 }: {
   thread: Thread;
   onStatusChange: (s: ThreadStatus) => void;
@@ -682,9 +734,20 @@ function ThreadHeader({
   onRename: (name: string | null) => void;
   renameSaving: boolean;
   onBotReplyModeChange: (m: 'text' | 'voice' | 'match_customer' | null) => void;
+  // Destructive actions on the thread. Both are confirmed via dialog
+  // before firing because both wipe message history.
+  onDelete: () => void;
+  onReset: () => void;
+  deletePending: boolean;
+  resetPending: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(thread.customerName ?? '');
+  // Confirmation modal state for the two destructive actions. Separate
+  // booleans (not a single enum) so the modal type can't get out of sync
+  // with which button was clicked.
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
   useEffect(() => {
     setDraft(thread.customerName ?? '');
     setEditing(false);
@@ -842,6 +905,32 @@ function ThreadHeader({
               <AlertTriangle className="size-3.5" /> Handoff
             </Button>
           </div>
+          {/* Destructive actions — separate group so they read as
+              distinct from the ownership controls. Reset clears the
+              chat in-place; Delete removes the conversation entirely. */}
+          <div className="flex items-center overflow-hidden rounded-md border border-border bg-surface">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="rounded-none border-0 text-foreground-muted hover:text-foreground"
+              onClick={() => setConfirmReset(true)}
+              title="Clear all messages in this conversation — keeps the contact + name, starts a fresh chat"
+              aria-label="Reset conversation"
+            >
+              <RotateCcw className="size-3.5" />
+            </Button>
+            <span className="h-5 w-px bg-border" aria-hidden />
+            <Button
+              size="sm"
+              variant="ghost"
+              className="rounded-none border-0 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+              onClick={() => setConfirmDelete(true)}
+              title="Delete this conversation. The contact will reappear in the inbox only after they send a new message."
+              aria-label="Delete conversation"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -880,6 +969,67 @@ function ThreadHeader({
           </select>
         </span>
       </div>
+
+      <Dialog open={confirmReset} onOpenChange={(open) => !resetPending && setConfirmReset(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reset this conversation?</DialogTitle>
+            <DialogDescription>
+              All messages with{' '}
+              <span className="font-semibold text-foreground">
+                {thread.customerName ?? thread.customerWhatsappName ?? thread.customerPhone}
+              </span>{' '}
+              will be permanently deleted. The contact stays in the inbox and keeps their name +
+              tags, so you can start a fresh conversation with them.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setConfirmReset(false)} disabled={resetPending}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                onReset();
+                setConfirmReset(false);
+              }}
+              loading={resetPending}
+            >
+              Reset conversation
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmDelete} onOpenChange={(open) => !deletePending && setConfirmDelete(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this conversation?</DialogTitle>
+            <DialogDescription>
+              The chat with{' '}
+              <span className="font-semibold text-foreground">
+                {thread.customerName ?? thread.customerWhatsappName ?? thread.customerPhone}
+              </span>{' '}
+              will be removed from the inbox along with every message, note, and tag. If they send a
+              new WhatsApp message later, a fresh conversation will appear here automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setConfirmDelete(false)} disabled={deletePending}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                onDelete();
+                setConfirmDelete(false);
+              }}
+              loading={deletePending}
+            >
+              Delete conversation
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

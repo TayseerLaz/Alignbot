@@ -14,10 +14,11 @@ import { useSession } from '@/lib/session';
 
 type Step = 'credentials' | 'totp';
 
-// Shared input styles. Standard rounded rectangle, gray border, brand
-// focus ring. High-contrast oxblood text on white. Nothing fancy.
+// Shared input styles. White input on a Desert Sand page surface, so the
+// field reads as the active element. Border picks up the brand on focus
+// with a soft 2px ring.
 const INPUT =
-  'w-full rounded-lg border border-zinc-300 bg-white px-4 py-3 text-[15px] text-brand-500 placeholder:text-zinc-400 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/15';
+  'w-full rounded-lg border border-brand-500/15 bg-white px-4 py-3 text-[15px] text-brand-500 placeholder:text-brand-500/35 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/15';
 
 const PRIMARY_BTN =
   'w-full rounded-lg bg-brand-500 px-6 py-3 text-[15px] font-semibold text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60';
@@ -110,7 +111,7 @@ export default function LoginPage() {
         <h1 className="text-3xl font-semibold tracking-tight text-brand-500">
           Welcome back
         </h1>
-        <p className="mt-2 text-sm text-zinc-600">
+        <p className="mt-2 text-sm text-brand-500/75">
           Sign in to continue to your Hader workspace.
         </p>
 
@@ -153,7 +154,7 @@ export default function LoginPage() {
                 type="button"
                 onClick={() => setShowPassword((v) => !v)}
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 transition hover:text-brand-500"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-500/50 transition hover:text-brand-500"
               >
                 {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
               </button>
@@ -174,7 +175,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="mt-8 text-center text-sm text-zinc-600">
+        <p className="mt-8 text-center text-sm text-brand-500/75">
           New to Hader?{' '}
           <Link href="/signup" className="font-semibold text-brand-500 hover:underline">
             Create an account
@@ -193,10 +194,10 @@ export default function LoginPage() {
       <h1 className="text-3xl font-semibold tracking-tight text-brand-500">
         Two-factor code
       </h1>
-      <p className="mt-2 text-sm text-zinc-600">
+      <p className="mt-2 text-sm text-brand-500/75">
         Open your authenticator app and enter the 6-digit code.
       </p>
-      <p className="mt-1 text-xs text-zinc-500">
+      <p className="mt-1 text-xs text-brand-500/60">
         Signing in as <span className="font-medium text-brand-500">{stash.current?.email}</span>
       </p>
 
@@ -219,7 +220,7 @@ export default function LoginPage() {
         {totpError ? (
           <p className="text-center text-xs font-medium text-red-600">{totpError}</p>
         ) : (
-          <p className="text-center text-xs text-zinc-500">
+          <p className="text-center text-xs text-brand-500/60">
             Lost your authenticator? Type an 8-character recovery code.
           </p>
         )}
@@ -240,7 +241,7 @@ export default function LoginPage() {
             setTotpError(null);
             setStep('credentials');
           }}
-          className="flex w-full items-center justify-center gap-1.5 text-sm text-zinc-600 transition hover:text-brand-500"
+          className="flex w-full items-center justify-center gap-1.5 text-sm text-brand-500/75 transition hover:text-brand-500"
         >
           <ArrowLeft className="size-3.5" /> Use a different account
         </button>

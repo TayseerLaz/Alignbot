@@ -324,7 +324,17 @@ export async function refreshSession(refreshToken: string, meta: RequestMeta) {
   const membership = await prisma.membership.findUnique({
     where: { organizationId_userId: { organizationId: session.organizationId!, userId: session.userId } },
   });
-  if (!membership || !membership.isActive) {
+  // ALIGNED admins can hold a session for an org they don't belong to
+  // (via /aligned-admin/orgs/:id/impersonate). In that case there is no
+  // membership row — synthesise an 'admin' role for the refreshed token
+  // so the rest of the system treats them as a full admin within that
+  // org. Non-admin users still need a real active membership.
+  let effectiveRole: OrgRole;
+  if (membership && membership.isActive) {
+    effectiveRole = membership.role as OrgRole;
+  } else if (session.user.isAlignedAdmin) {
+    effectiveRole = 'admin' as OrgRole;
+  } else {
     throw forbidden(ApiErrorCode.AUTH_NO_MEMBERSHIP, 'No active membership for this session.');
   }
 
@@ -334,7 +344,7 @@ export async function refreshSession(refreshToken: string, meta: RequestMeta) {
   const access = await signAccessToken({
     sub: session.userId,
     org: session.organizationId!,
-    role: membership.role as OrgRole,
+    role: effectiveRole,
     aa: session.user.isAlignedAdmin,
     sid: session.id,
   });

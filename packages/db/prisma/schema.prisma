@@ -64,6 +64,8 @@ enum AuditAction {
   login_succeeded
   login_failed
   logout
+  // Sprint 1 M-2 — refresh-token reuse detection
+  refresh_token_reuse_detected
   // Catalog (Day 2)
   product_created
   product_updated
@@ -435,6 +437,16 @@ model Session {
   userId           String    @map("user_id") @db.Uuid
   organizationId   String?   @map("organization_id") @db.Uuid
   refreshTokenHash String    @unique @map("refresh_token_hash")
+  // Sprint 1 M-2 — previously-rotated refresh hash. On refresh we move the
+  // current hash here, then store the new hash in refreshTokenHash. If a
+  // refresh token whose hash matches previousTokenHash is presented, that
+  // means someone is replaying a rotated token: revoke the session.
+  previousTokenHash String? @unique @map("previous_token_hash")
+  // Sprint 1 H-3 — set to true only for ALIGNED-admin impersonation sessions
+  // (POST /aligned-admin/orgs/:id/impersonate). Regular logins / switch-org
+  // leave this false. The refresh handler uses this flag to decide whether
+  // the no-membership admin-role synthesis is legitimate.
+  isImpersonation  Boolean   @default(false) @map("is_impersonation")
   userAgent        String?   @map("user_agent")
   ipAddress        String?   @map("ip_address") @db.Inet
   expiresAt        DateTime  @map("expires_at")
@@ -515,6 +527,18 @@ model AuditLog {
   ipAddress      String?     @map("ip_address") @db.Inet
   userAgent      String?     @map("user_agent")
   createdAt      DateTime    @default(now()) @map("created_at")
+  // Sprint 4 — tamper-evident hash chain. Computed by a BEFORE INSERT
+  // trigger; the application never sets these directly.
+  //
+  //   prev_hash = the hash of the immediately-preceding row for this org
+  //               (NULL for the org's first row).
+  //   hash      = sha256(canonical(row) || prev_hash)
+  //
+  // Any retroactive edit to a row breaks its hash, AND every later row's
+  // prev_hash → cascades through the chain. The verifier in
+  // apps/api/scripts/verify-audit-chain.ts walks the chain quarterly.
+  prevHash       String?     @map("prev_hash")
+  hash           String?
 
   organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   actor        User?         @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
@@ -608,6 +632,15 @@ model Product {
   trackInventory   Boolean   @default(false) @map("track_inventory")
   attributes       Json? // freeform key/value
   searchText       String?   @map("search_text") // denormalised name+desc for trigram search
+  // Phase 2 Step 3 — text-embedding-3-small vector for top-K catalog
+  // injection in the bot pipeline. Stored as a Float[] of length 1536.
+  // Cleared whenever name/shortDescription changes (a trigger or the
+  // catalog write paths clear it); a backfill script + on-create hook
+  // re-populate. Nullable + soft-fallback: products with no embedding
+  // are always included in the candidate set so a missing embedding
+  // never silently hides a product from the bot.
+  embedding        Float[]   @default([]) @map("embedding")
+  embeddingHash    String?   @map("embedding_hash") // sha256 of name+desc when embedded; lets us skip re-embedding
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
   deletedAt        DateTime? @map("deleted_at") // soft-delete

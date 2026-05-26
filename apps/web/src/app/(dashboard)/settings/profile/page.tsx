@@ -333,18 +333,36 @@ function TwoFactorCard() {
   const enable = async () => {
     setBusy(true);
     try {
-      const res = await api.post<{ data: { recoveryCodes: string[] } }>(
-        '/api/v1/account/2fa/enable',
-        { code },
-      );
+      // Sprint 1 M-3 — two-step: this call STAGES the recovery codes; the
+      // user must confirm receipt before 2FA actually flips on. Until they
+      // click "I've saved them" we don't refresh status (it would still
+      // show enabled=false). No lock-out if the response drops here.
+      const res = await api.post<{
+        data: { recoveryCodes: string[]; pendingConfirmation: true };
+      }>('/api/v1/account/2fa/enable', { code });
       setRecoveryCodes(res.data.recoveryCodes);
       setSetupOtpUri(null);
       setSetupSecret(null);
       setCode('');
+      toast.success('Code verified — save your recovery codes to finish.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.payload.message : 'Could not verify code');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmRecoveryCodes = async () => {
+    setBusy(true);
+    try {
+      await api.post('/api/v1/account/2fa/confirm-recovery-codes');
+      setRecoveryCodes(null);
       toast.success('Two-factor authentication enabled');
       void refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.payload.message : 'Could not verify code');
+      toast.error(
+        err instanceof ApiError ? err.payload.message : 'Could not confirm recovery codes',
+      );
     } finally {
       setBusy(false);
     }
@@ -441,13 +459,14 @@ function TwoFactorCard() {
           <>
             <p className="text-sm">
               <strong>Save these recovery codes.</strong> Each can be used once if you lose your
-              authenticator. They won&apos;t be shown again.
+              authenticator. They won&apos;t be shown again. 2FA isn&apos;t active yet — click
+              the button below once you&apos;ve copied them somewhere safe.
             </p>
             <pre className="rounded bg-surface-muted p-3 font-mono text-sm">
               {recoveryCodes.join('\n')}
             </pre>
-            <Button variant="secondary" onClick={() => setRecoveryCodes(null)}>
-              I&apos;ve saved them
+            <Button onClick={confirmRecoveryCodes} loading={busy}>
+              I&apos;ve saved them — finish setup
             </Button>
           </>
         ) : (

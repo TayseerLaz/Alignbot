@@ -24,17 +24,28 @@ function client(): OpenAI {
   return _client;
 }
 
-// Phase 12 — Groq backend for chat completions only. Groq's /openai/v1
+// Groq is the only backend used for chat completions. Groq's /openai/v1
 // endpoint is OpenAI-API-compatible so the same SDK works with just a
-// baseURL + apiKey swap. Transcription stays on the OpenAI client
-// (gpt-4o-transcribe is better than Groq's Whisper for Arabic dialects).
+// baseURL + apiKey swap. Transcription stays on the OpenAI client below
+// (gpt-4o-transcribe is materially better than Groq's Whisper for Arabic
+// dialects + code-switched audio, which is most of our customer base).
 //
-// Active when GROQ_API_KEY is set. Falls back to the OpenAI client
-// otherwise — every deployment without the key behaves exactly as
-// before. Operators flip Groq on by adding the key to GH secrets.
+// We deliberately do NOT fall back to OpenAI for chat. The earlier silent
+// fallback hid a misconfig (GROQ_API_KEY missing) and the bot was running
+// on gpt-4o-mini at 22-26s/turn instead of llama-3.3-70b at 3-8s/turn.
+// If Groq is down, swap the key for an OpenAI-shaped key + base URL
+// pointing at another OpenAI-compatible host (Together, Fireworks, etc.).
 let _groqClient: OpenAI | null = null;
-function groqClient(): OpenAI | null {
-  if (!env.GROQ_API_KEY) return null;
+function groqClient(): OpenAI {
+  if (!env.GROQ_API_KEY) {
+    const err = new Error(
+      'GROQ_API_KEY is not configured. Chat completions require Groq — ' +
+        'add the key to .env / .env.production and restart. (Transcription ' +
+        'still uses OPENAI_API_KEY; that key is separate.)',
+    );
+    (err as Error & { code?: string }).code = 'NO_KEY';
+    throw err;
+  }
   if (_groqClient) return _groqClient;
   _groqClient = new OpenAI({
     apiKey: env.GROQ_API_KEY,
@@ -43,16 +54,11 @@ function groqClient(): OpenAI | null {
   return _groqClient;
 }
 
-// Returns the client + model + a label that should be used for chat
-// completions, picking Groq when configured. Each call site stays
-// provider-agnostic; provenance + logs include the label so an operator
-// can see which provider actually ran for any given message.
+// Returns the client + model + a label for chat completions. Always Groq.
+// Each call site stays provider-agnostic; provenance + logs include the
+// label so an operator can see which provider/model actually ran.
 function chatClientAndModel(): { client: OpenAI; model: string; provider: 'openai' | 'groq' } {
-  const groq = groqClient();
-  if (groq) {
-    return { client: groq, model: env.GROQ_MODEL, provider: 'groq' };
-  }
-  return { client: client(), model: env.OPENAI_MODEL, provider: 'openai' };
+  return { client: groqClient(), model: env.GROQ_MODEL, provider: 'groq' };
 }
 
 export function isOpenAIConfigured(): boolean {

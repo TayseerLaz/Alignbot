@@ -41,7 +41,7 @@ describe('auth flow', () => {
     expect(session.accessToken).toMatch(/^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$/);
   });
 
-  it('refresh rotates tokens', async () => {
+  it('refresh rotates the cookie and yields a fresh access token', async () => {
     const app = getApp();
     const session = await seedOrgAndLogin(app, 'refreshtest');
     const res = await app.inject({
@@ -50,7 +50,43 @@ describe('auth flow', () => {
       headers: { cookie: session.refreshCookie },
     });
     expect(res.statusCode).toBe(200);
+
+    // The rotation guarantee under test is structural: a fresh access token is
+    // issued AND a new refresh cookie is set. We deliberately do not assert on
+    // string-inequality of the access token because login + refresh may share
+    // the same iat-second (a JWT with the same claims encodes identically).
+    // The reuse-detection test below proves the *security* property —
+    // re-presenting the old refresh token must now fail.
     const body = res.json() as { accessToken: string };
-    expect(body.accessToken).not.toBe(session.accessToken);
+    expect(body.accessToken).toMatch(/^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$/);
+    const setCookie = res.headers['set-cookie'];
+    const newRefreshHeader = Array.isArray(setCookie)
+      ? setCookie.find((c) => c.startsWith('aligned_refresh='))
+      : setCookie?.startsWith('aligned_refresh=')
+        ? setCookie
+        : undefined;
+    expect(newRefreshHeader).toBeTruthy();
+  });
+
+  it('Sprint 1 M-2 — replaying the rotated refresh token revokes the session', async () => {
+    const app = getApp();
+    const session = await seedOrgAndLogin(app, 'rotrefreshtest');
+
+    // First refresh rotates the cookie. The OLD cookie should now be invalid.
+    const r1 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/refresh',
+      headers: { cookie: session.refreshCookie },
+    });
+    expect(r1.statusCode).toBe(200);
+
+    // Re-present the original (now rotated) refresh cookie. Reuse detection
+    // should trip and the response should be 401.
+    const replay = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/refresh',
+      headers: { cookie: session.refreshCookie },
+    });
+    expect(replay.statusCode).toBe(401);
   });
 });

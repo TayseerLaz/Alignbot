@@ -177,6 +177,12 @@ export async function login(args: LoginArgs) {
   // Phase 5.5 — TOTP 2FA gate. If enabled, require a valid totpCode (or one of
   // the user's recovery codes). On recovery-code use, that single code is
   // consumed (removed from the array).
+  //
+  // Brute-force protection: TOTP failures hit the same `failedLoginAttempts`
+  // counter as bad-password failures, so after MAX_FAILED_ATTEMPTS combined
+  // bad-password + bad-TOTP entries the account locks for LOCKOUT_MINUTES.
+  // Without this, an attacker who steals the password can still try all 10⁶
+  // TOTP codes at the global API rate limit.
   if (user.totpEnabled && user.totpSecret) {
     const supplied = args.totpCode?.trim();
     if (!supplied) {
@@ -204,6 +210,22 @@ export async function login(args: LoginArgs) {
       }
     }
     if (!ok) {
+      const failedAttempts = user.failedLoginAttempts + 1;
+      const shouldLock = failedAttempts >= MAX_FAILED_ATTEMPTS;
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          failedLoginAttempts: failedAttempts,
+          lockedUntil: shouldLock ? minutesFromNow(LOCKOUT_MINUTES) : user.lockedUntil,
+        },
+      });
+      await recordAudit({
+        action: 'login_failed',
+        actorUserId: user.id,
+        metadata: { reason: 'bad_totp', attempts: failedAttempts },
+        ipAddress: args.meta.ip,
+        userAgent: args.meta.userAgent,
+      });
       throw unauthorized(
         ApiErrorCode.TOTP_INVALID,
         'Invalid two-factor code.',
@@ -226,13 +248,17 @@ export async function login(args: LoginArgs) {
     chosen = match;
   }
 
-  // Reset failed counters on successful login.
+  // Reset failed counters on successful login. Also invalidate any pending
+  // password-reset token — a stolen reset link should not remain usable after
+  // the legitimate user has already authenticated.
   await prisma.user.update({
     where: { id: user.id },
     data: {
       failedLoginAttempts: 0,
       lockedUntil: null,
       lastLoginAt: new Date(),
+      passwordResetTokenHash: null,
+      passwordResetExpiresAt: null,
     },
   });
 
@@ -274,6 +300,8 @@ export async function issueSession(args: {
   role: OrgRole;
   isAlignedAdmin: boolean;
   meta: RequestMeta;
+  /** Sprint 1 H-3 — set true only for /aligned-admin/.../impersonate. */
+  isImpersonation?: boolean;
 }) {
   const session = await prisma.session.create({
     data: {
@@ -283,6 +311,7 @@ export async function issueSession(args: {
       expiresAt: new Date(Date.now() + env.JWT_REFRESH_TTL_SECONDS * 1000),
       userAgent: args.meta.userAgent ?? undefined,
       ipAddress: args.meta.ip ?? undefined,
+      isImpersonation: args.isImpersonation ?? false,
     },
   });
 
@@ -310,6 +339,30 @@ export async function issueSession(args: {
 
 export async function refreshSession(refreshToken: string, meta: RequestMeta) {
   const tokenHash = hashToken(refreshToken);
+
+  // Sprint 1 M-2 — reuse detection. First check whether this hash matches the
+  // *previously-rotated* hash of any session. If so, an attacker is replaying
+  // a token that has already been exchanged once. Revoke the whole session
+  // (only-one-active-token-per-session is our family unit here) and refuse.
+  const reusedSession = await prisma.session.findUnique({
+    where: { previousTokenHash: tokenHash },
+  });
+  if (reusedSession && !reusedSession.revokedAt) {
+    await prisma.session.update({
+      where: { id: reusedSession.id },
+      data: { revokedAt: new Date() },
+    });
+    await recordAudit({
+      action: 'refresh_token_reuse_detected',
+      actorUserId: reusedSession.userId,
+      organizationId: reusedSession.organizationId,
+      ipAddress: meta.ip,
+      userAgent: meta.userAgent,
+      metadata: { sessionId: reusedSession.id },
+    });
+    throw unauthorized(ApiErrorCode.AUTH_REFRESH_INVALID, 'Refresh token invalid or expired.');
+  }
+
   const session = await prisma.session.findUnique({
     where: { refreshTokenHash: tokenHash },
     include: {
@@ -324,22 +377,22 @@ export async function refreshSession(refreshToken: string, meta: RequestMeta) {
   const membership = await prisma.membership.findUnique({
     where: { organizationId_userId: { organizationId: session.organizationId!, userId: session.userId } },
   });
-  // ALIGNED admins can hold a session for an org they don't belong to
-  // (via /aligned-admin/orgs/:id/impersonate). In that case there is no
-  // membership row — synthesise an 'admin' role for the refreshed token
-  // so the rest of the system treats them as a full admin within that
-  // org. Non-admin users still need a real active membership.
+  // Sprint 1 H-3 — the no-membership admin-role synthesis is now gated on the
+  // session being an explicit impersonation session (POST /aligned-admin/
+  // orgs/:id/impersonate sets is_impersonation = true). Regular sessions for
+  // ALIGNED admins still require an active membership, so removing them from
+  // org X via the members page invalidates their access to X on next refresh.
   let effectiveRole: OrgRole;
   if (membership && membership.isActive) {
     effectiveRole = membership.role as OrgRole;
-  } else if (session.user.isAlignedAdmin) {
+  } else if (session.isImpersonation && session.user.isAlignedAdmin) {
     effectiveRole = 'admin' as OrgRole;
   } else {
     throw forbidden(ApiErrorCode.AUTH_NO_MEMBERSHIP, 'No active membership for this session.');
   }
 
-  // Rotate refresh token (reuse detection: if the old hash is presented again
-  // after rotation, the lookup will miss because we replace it on each refresh).
+  // Rotate refresh token. Move the current hash to previous_token_hash so a
+  // replay of the rotated token trips the reuse-detection branch above.
   const newRefresh = await signRefreshToken({ sub: session.userId, sid: session.id });
   const access = await signAccessToken({
     sub: session.userId,
@@ -352,6 +405,7 @@ export async function refreshSession(refreshToken: string, meta: RequestMeta) {
   await prisma.session.update({
     where: { id: session.id },
     data: {
+      previousTokenHash: session.refreshTokenHash,
       refreshTokenHash: hashToken(newRefresh.token),
       lastUsedAt: new Date(),
       userAgent: meta.userAgent ?? session.userAgent,
@@ -406,9 +460,19 @@ export async function verifyEmail(token: string) {
 
 // ---------- password reset --------------------------------------------------
 export async function forgotPassword(email: string, meta: RequestMeta) {
-  // Always return success — never leak whether an account exists.
+  // Always return success — never leak whether an account exists. To prevent
+  // account-enumeration via response-time analysis, the no-user path performs
+  // dummy work so the request takes roughly as long as the hit path.
+  const start = Date.now();
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) return { ok: true as const };
+  if (!user) {
+    // Burn ~150ms (a typical resend-template + email-send roundtrip) so the
+    // hit/miss paths return in similar wall-clock time.
+    const elapsed = Date.now() - start;
+    const padMs = Math.max(0, 150 - elapsed);
+    if (padMs > 0) await new Promise((res) => setTimeout(res, padMs));
+    return { ok: true as const };
+  }
 
   const resetToken = generateOpaqueToken();
   const resetTokenHash = hashToken(resetToken);
@@ -632,6 +696,7 @@ export async function acceptInvitation(args: {
     }
 
     let user = await tx.user.findUnique({ where: { email: invite.email } });
+    let createdNewUserPendingVerification = false;
 
     if (!user) {
       if (!args.password || !args.firstName || !args.lastName) {
@@ -641,6 +706,14 @@ export async function acceptInvitation(args: {
         );
       }
       const passwordHash = await hashPassword(args.password);
+      // Sprint 1 H-4 — previously this set emailVerifiedAt immediately,
+      // trusting that holding the invite token implies mailbox control.
+      // That assumption breaks if the invite link is leaked (browser
+      // history, corporate proxy, log scraping). The brand-new user now
+      // goes through the standard verify-email flow before they can log
+      // in — defense in depth on top of the token's already-high entropy.
+      const verifyToken = generateOpaqueToken();
+      const verifyTokenHash = hashToken(verifyToken);
       user = await tx.user.create({
         data: {
           email: invite.email,
@@ -648,10 +721,19 @@ export async function acceptInvitation(args: {
           firstName: args.firstName,
           lastName: args.lastName,
           status: 'active',
-          emailVerifiedAt: new Date(), // accepting an invite implies email control
+          emailVerificationTokenHash: verifyTokenHash,
+          emailVerificationExpiresAt: hoursFromNow(EMAIL_VERIFY_TTL_HOURS),
         },
       });
+      createdNewUserPendingVerification = true;
+
+      const verifyUrl = `${env.WEB_PUBLIC_URL}/verify-email?token=${verifyToken}`;
+      const tpl = emailVerifyTemplate({ firstName: user.firstName, url: verifyUrl });
+      await sendEmail({ to: user.email, ...tpl }).catch((err) =>
+        console.error('[auth] invite verify email send failed', err),
+      );
     }
+    void createdNewUserPendingVerification;
 
     await tx.membership.upsert({
       where: { organizationId_userId: { organizationId: invite.organizationId, userId: user.id } },
@@ -706,7 +788,7 @@ export async function switchOrganization(args: {
   });
 }
 
-export async function getSessionContext(userId: string, organizationId: string) {
+export async function getSessionContext(userId: string, organizationId: string, sessionId?: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: {
@@ -720,32 +802,37 @@ export async function getSessionContext(userId: string, organizationId: string) 
 
   const active = user.memberships.find((m) => m.organizationId === organizationId);
 
-  // ALIGNED admins can impersonate any active org without a membership row
-  // (via POST /aligned-admin/orgs/:id/impersonate). In that case the JWT
-  // already carries org=<target> + aa=true, but we still need to surface
-  // the org + a role to the frontend. Synthesize a virtual 'admin'
-  // membership response so the dashboard renders normally.
+  // Sprint 1 H-3 — the no-membership admin synthesis is now gated on the
+  // current session being an explicit impersonation session. An ALIGNED admin
+  // who has been removed from org X is no longer silently granted admin
+  // rights to X via this code path.
   if (!active) {
-    if (user.isAlignedAdmin) {
-      const impersonated = await prisma.organization.findUnique({
-        where: { id: organizationId },
+    if (user.isAlignedAdmin && sessionId) {
+      const session = await prisma.session.findUnique({
+        where: { id: sessionId },
+        select: { isImpersonation: true, revokedAt: true },
       });
-      if (!impersonated || impersonated.status !== 'active') {
-        throw forbidden(ApiErrorCode.AUTH_NO_MEMBERSHIP, 'No active membership for this org.');
+      if (session && !session.revokedAt && session.isImpersonation) {
+        const impersonated = await prisma.organization.findUnique({
+          where: { id: organizationId },
+        });
+        if (!impersonated || impersonated.status !== 'active') {
+          throw forbidden(ApiErrorCode.AUTH_NO_MEMBERSHIP, 'No active membership for this org.');
+        }
+        return {
+          user,
+          organization: { ...impersonated, role: 'admin' as OrgRole },
+          availableOrganizations: user.memberships.map((m) => ({
+            id: m.organizationId,
+            slug: m.organization.slug,
+            name: m.organization.name,
+            role: m.role as OrgRole,
+          })),
+          // Caller can render an "Impersonating <name>" banner / switcher
+          // back into the admin's actual orgs.
+          impersonating: true as const,
+        };
       }
-      return {
-        user,
-        organization: { ...impersonated, role: 'admin' as OrgRole },
-        availableOrganizations: user.memberships.map((m) => ({
-          id: m.organizationId,
-          slug: m.organization.slug,
-          name: m.organization.name,
-          role: m.role as OrgRole,
-        })),
-        // Caller can render an "Impersonating <name>" banner / switcher
-        // back into the admin's actual orgs.
-        impersonating: true as const,
-      };
     }
     throw forbidden(ApiErrorCode.AUTH_NO_MEMBERSHIP, 'No active membership for this org.');
   }

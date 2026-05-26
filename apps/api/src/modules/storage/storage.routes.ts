@@ -1,6 +1,8 @@
 import {
   ApiErrorCode,
   AssetKind,
+  CSV_UPLOAD_MIME_TYPES,
+  DOCUMENT_MIME_TYPES,
   finalizeUploadBodySchema,
   IMAGE_MIME_TYPES,
   itemEnvelopeSchema,
@@ -11,6 +13,8 @@ import {
   presignUploadResponseSchema,
   successSchema,
   uuidSchema,
+  type CsvUploadMime,
+  type DocumentMime,
   type ImageMime,
 } from '@aligned/shared';
 import type { FastifyInstance } from 'fastify';
@@ -28,14 +32,29 @@ import {
 } from '../../lib/storage.js';
 
 function checkLimits(kind: AssetKind, contentType: string, byteSize: number) {
+  if (byteSize <= 0) {
+    throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'byteSize must be positive.');
+  }
   if (kind === 'image') {
     if (!IMAGE_MIME_TYPES.includes(contentType as ImageMime)) {
       throw badRequest(ApiErrorCode.VALIDATION_ERROR, `Image content-type "${contentType}" not allowed.`);
     }
     if (byteSize > MAX_IMAGE_BYTES) throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'Image too large (max 10 MB).');
   } else if (kind === 'document') {
+    if (!DOCUMENT_MIME_TYPES.includes(contentType as DocumentMime)) {
+      throw badRequest(
+        ApiErrorCode.VALIDATION_ERROR,
+        `Document content-type "${contentType}" not allowed.`,
+      );
+    }
     if (byteSize > MAX_DOCUMENT_BYTES) throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'Document too large (max 25 MB).');
   } else if (kind === 'csv_upload') {
+    if (!CSV_UPLOAD_MIME_TYPES.includes(contentType as CsvUploadMime)) {
+      throw badRequest(
+        ApiErrorCode.VALIDATION_ERROR,
+        `CSV content-type "${contentType}" not allowed.`,
+      );
+    }
     if (byteSize > MAX_CSV_UPLOAD_BYTES) throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'Upload too large (max 50 MB).');
   }
 }

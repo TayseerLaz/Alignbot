@@ -2183,13 +2183,44 @@ async function maybeReplyAsBot(args: {
         return null;
       }
 
-      // Pull recent thread history (last 10 msgs) for short-term memory.
-      const history = await tx.whatsAppMessage.findMany({
+      // Pull recent thread history. Phase 2 Step 4 cut this from 10 to 8
+      // messages and applied a hard per-message body cap (400 chars) so a
+      // single noisy turn (paste, long voice transcript) doesn't blow up
+      // the input-token budget. 8 messages = ~4 customer/bot turn pairs,
+      // which covers the short-term-memory window that actually drives
+      // reply quality in practice.
+      const RAW_HISTORY_LIMIT = 8;
+      const PER_MESSAGE_BODY_CAP = 400;
+      const rawHistory = await tx.whatsAppMessage.findMany({
         where: { threadId: thread.id, body: { not: null } },
         orderBy: { receivedAt: 'desc' },
-        take: 10,
+        take: RAW_HISTORY_LIMIT,
       });
+      const history = rawHistory.map((m) => ({
+        ...m,
+        body: m.body && m.body.length > PER_MESSAGE_BODY_CAP
+          ? m.body.slice(0, PER_MESSAGE_BODY_CAP - 1) + '…'
+          : m.body,
+      }));
       const data = await gatherBotData(tx as never, args.organizationId);
+
+      // Phase 2 Step 5 — fast-path inputs. Locations + contacts aren't
+      // currently fed to the LLM prompt (we kept the static prompt lean),
+      // but the fast-path templater needs them to answer hours / location
+      // / contact questions deterministically. Both tables are tiny
+      // (1-5 rows per org) so the cost is negligible.
+      const [locations, contacts] = await Promise.all([
+        tx.location.findMany({
+          where: { organizationId: args.organizationId },
+          orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+          select: { name: true, addressLine1: true, city: true, region: true, country: true, isPrimary: true },
+        }),
+        tx.contactChannel.findMany({
+          where: { organizationId: args.organizationId },
+          orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+          select: { kind: true, label: true, value: true, isPrimary: true },
+        }),
+      ]);
 
       // Phase 6 — per-thread override beats org-wide default. NULL on
       // the thread means "inherit BotConfig.replyMode".
@@ -2202,8 +2233,11 @@ async function maybeReplyAsBot(args: {
       return {
         history: history.reverse(),
         data,
+        locations,
+        contacts,
         channel: ch,
         threadId: thread.id,
+        threadOutboundCount: thread.outboundCount ?? 0,
         replyMode: effectiveReplyMode,
         ttsProvider:
           ((config as { ttsProvider?: string | null }).ttsProvider as string | null) ?? 'google',
@@ -2232,6 +2266,33 @@ async function maybeReplyAsBot(args: {
     }
     if (!m.bodyText || !m.from) continue;
     if (!ctx) continue;
+
+    // Show typing indicator the moment we know a reply is coming. Meta's
+    // /messages endpoint accepts a combined read-receipt + typing marker
+    // that the customer sees as "..." in WhatsApp. It expires automatically
+    // when our real reply lands (or 25s, whichever comes first), so it
+    // requires no explicit teardown. Fire-and-forget — a typing-indicator
+    // failure must NEVER block the actual bot reply.
+    if (m.metaId) {
+      void fetch(
+        `https://graph.facebook.com/v20.0/${encodeURIComponent(ctx.channel.phoneNumberId!)}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${ctx.channel.accessToken!}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            status: 'read',
+            message_id: m.metaId,
+            typing_indicator: { type: 'text' },
+          }),
+        },
+      ).catch((err) =>
+        args.log.warn({ err: err instanceof Error ? err.message : err }, '[whatsapp] typing indicator failed'),
+      );
+    }
 
     // Escalation short-circuit: if the bot's most recent reply asked
     // whether the customer wants to talk to a human, and this inbound
@@ -2318,6 +2379,106 @@ async function maybeReplyAsBot(args: {
         args.log.warn({ err }, '[whatsapp] handoff-confirm send failed');
       }
       continue;
+    }
+
+    // Phase 2 Step 5 — deterministic intent fast-path. Catches the most
+    // common WhatsApp customer-service intents (hours / location /
+    // contact / "I want a human") with regex + the existing business-
+    // info data, skipping the LLM entirely. Latency drops from 3-8s
+    // (Groq) or 22s (legacy) to ~80 ms total. Conservative detection:
+    // returns null and falls through to the LLM on any ambiguity.
+    {
+      const { detectFastPath } = await import('../../lib/bot-fastpath.js');
+      const { formatOperatingHours } = await import('../../lib/bot-engine.js');
+      const fp = detectFastPath({
+        message: m.bodyText!,
+        // "First message in thread" = no prior outbound. If the bot has
+        // already replied, the customer's current message is likely
+        // context-coupled and we should let the LLM read history.
+        isFirstMessageInThread: ctx.threadOutboundCount === 0,
+        businessInfo: ctx.data.biz
+          ? { operatingHours: ctx.data.biz.operatingHours, timezone: ctx.data.biz.timezone ?? null }
+          : null,
+        locations: ctx.locations,
+        contacts: ctx.contacts,
+        formatOperatingHours,
+      });
+
+      if (fp) {
+        stopwatch.lap('fast_path_match');
+        try {
+          const sendRes = await fetch(
+            `https://graph.facebook.com/v20.0/${encodeURIComponent(ctx.channel.phoneNumberId!)}/messages`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${ctx.channel.accessToken!}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                messaging_product: 'whatsapp',
+                recipient_type: 'individual',
+                to: m.from,
+                type: 'text',
+                text: { preview_url: false, body: fp.reply.replace(/\n\[HANDOFF\]\s*$/, '').trim() },
+              }),
+              signal: AbortSignal.timeout(10_000),
+            },
+          );
+          const sendText = await sendRes.text();
+          let metaMessageId: string | null = null;
+          try {
+            metaMessageId = (JSON.parse(sendText) as { messages?: { id?: string }[] }).messages?.[0]?.id ?? null;
+          } catch { /* noop */ }
+          stopwatch.lap('meta_messages_send');
+
+          await withRlsBypass(async (tx) => {
+            await tx.whatsAppMessage.create({
+              data: {
+                threadId: ctx.threadId,
+                organizationId: args.organizationId,
+                direction: 'outbound',
+                metaMessageId,
+                toNumber: m.from,
+                messageType: 'text',
+                body: fp.reply,
+                rawPayload: { sentBy: 'bot', reason: 'fast_path', intent: fp.intent } as never,
+              },
+            });
+            await tx.whatsAppThread.update({
+              where: { id: ctx.threadId },
+              data: {
+                status: fp.handoffMarker ? 'escalated' : undefined,
+                lastMessageAt: new Date(),
+                lastMessagePreview: fp.reply.slice(0, 200),
+                outboundCount: { increment: 1 },
+              },
+            });
+            if (fp.handoffMarker) {
+              await tx.whatsAppNote.create({
+                data: {
+                  threadId: ctx.threadId,
+                  organizationId: args.organizationId,
+                  authorUserId: null,
+                  body: '🤖 → 👤 Bot escalated to human (fast-path: explicit handoff request).',
+                },
+              });
+            }
+          });
+          stopwatch.lap('persist');
+          args.log.info(
+            {
+              intent: fp.intent,
+              threadId: ctx.threadId,
+              totalMs: stopwatch.snapshot().totalMs,
+            },
+            '[whatsapp] bot reply via fast-path (no LLM)',
+          );
+        } catch (err) {
+          args.log.error({ err }, '[whatsapp] fast-path send failed');
+        }
+        continue;
+      }
     }
 
     // Did the customer's CURRENT inbound arrive as a voice note? Affects

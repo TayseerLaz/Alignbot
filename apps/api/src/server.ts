@@ -17,6 +17,7 @@ import {
 import { env } from './lib/env.js';
 import { getRedis } from './lib/redis.js';
 import { initSentry } from './lib/sentry.js';
+import { resolveTrustProxy, trustCfConnectingIp } from './lib/trust-proxy.js';
 import accountRoutes from './modules/account/account.routes.js';
 import twoFactorRoutes from './modules/account/2fa.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
@@ -111,11 +112,32 @@ export async function buildServer() {
         remove: true,
       },
     },
-    trustProxy: true,
+    // Sprint 4 — WAF readiness. Default 'true' preserves backward-compat with
+    // the Caddy-only deployment; set TRUST_PROXY=cloudflare (or a CIDR list)
+    // to lock down which upstreams can set X-Forwarded-For without being
+    // overridden by a malicious public client.
+    trustProxy: resolveTrustProxy(),
     disableRequestLogging: false,
     bodyLimit: 5 * 1024 * 1024, // 5 MB. CSV/Excel imports use the multipart route (10 MB capped there).
     genReqId: () => crypto.randomUUID(),
   });
+
+  // Sprint 4 — when TRUST_CF_CONNECTING_IP=true, prefer the single-value
+  // CF-Connecting-IP header (set ONLY by Cloudflare) over the X-Forwarded-For
+  // chain. Cloudflare strips inbound copies of this header at its edge, so it
+  // is forge-resistant once we trust their IP ranges. We mutate the
+  // (privately-typed) `ip` getter via Object.defineProperty so downstream
+  // rate-limit + audit-log consumers see the real client.
+  if (trustCfConnectingIp()) {
+    app.addHook('onRequest', (req, _reply, done) => {
+      const cf = req.headers['cf-connecting-ip'];
+      const ip = Array.isArray(cf) ? cf[0] : cf;
+      if (ip && typeof ip === 'string' && ip.length > 0) {
+        Object.defineProperty(req, 'ip', { value: ip, configurable: true });
+      }
+      done();
+    });
+  }
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -142,8 +164,37 @@ export async function buildServer() {
     },
   );
 
-  // Security & basics
-  await app.register(helmet, { contentSecurityPolicy: false });
+  // Security & basics.
+  //
+  // CSP is enabled for the API surface to keep first-party UIs (Swagger UI at
+  // /docs and /docs/chatbot) safe from script injection. Inline styles are
+  // allowed because swagger-ui-dist relies on them. JSON API responses are
+  // not script contexts, so CSP only matters for those embedded UIs and
+  // anything that ever renders user input as HTML.
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        'default-src': ["'self'"],
+        'script-src': ["'self'"],
+        'style-src': ["'self'", "'unsafe-inline'"],
+        'img-src': ["'self'", 'data:', 'https://*.wasabisys.com'],
+        'connect-src': ["'self'"],
+        'frame-ancestors': ["'none'"],
+        'object-src': ["'none'"],
+        'base-uri': ["'self'"],
+        'form-action': ["'self'"],
+        'upgrade-insecure-requests': [],
+      },
+    },
+    crossOriginEmbedderPolicy: false, // Swagger UI assets break under require-corp
+    crossOriginOpenerPolicy: { policy: 'same-origin' },
+    crossOriginResourcePolicy: { policy: 'same-site' },
+    hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    permittedCrossDomainPolicies: { permittedPolicies: 'none' },
+    xssFilter: false, // deprecated; CSP supersedes
+  });
   await app.register(sensible);
   await app.register(cors, {
     origin: env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean),

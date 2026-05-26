@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Fraunces, JetBrains_Mono, Plus_Jakarta_Sans } from 'next/font/google';
+import { headers } from 'next/headers';
 
 import { Providers } from '@/components/providers';
 import '@/styles/globals.css';
@@ -58,7 +59,11 @@ const themeBootstrap = `
 })();
 `;
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Sprint 2 #17 — CSP nonce flows from the middleware. The inline theme
+  // bootstrap script below must carry it so the browser doesn't block it
+  // under the no-`unsafe-inline` policy.
+  const nonce = (await headers()).get('x-nonce') ?? undefined;
   return (
     <html
       lang="en"
@@ -66,7 +71,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       suppressHydrationWarning
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
       </head>
       <body className="min-h-dvh antialiased">
         <Providers>{children}</Providers>

@@ -4,6 +4,7 @@ import fp from 'fastify-plugin';
 
 import { forbidden, unauthorized } from '../lib/errors.js';
 import { verifyAccessToken } from '../lib/jwt.js';
+import { consumeSseNonce } from '../lib/sse-nonce.js';
 
 const ROLE_RANK: Record<OrgRole, number> = { viewer: 1, editor: 2, admin: 3 };
 
@@ -24,10 +25,12 @@ function bearerFrom(req: FastifyRequest): string | null {
     const [scheme, token] = header.split(' ');
     if (scheme?.toLowerCase() === 'bearer' && token) return token;
   }
-  // EventSource (SSE) doesn't support setting headers, so accept the
-  // access token via ?token= query string. Used by the inbox SSE stream.
-  const q = req.query as { token?: string } | undefined;
-  if (q?.token && typeof q.token === 'string') return q.token;
+  return null;
+}
+
+function sseNonceFrom(req: FastifyRequest): string | null {
+  const q = req.query as { nonce?: string } | undefined;
+  if (q?.nonce && typeof q.nonce === 'string') return q.nonce;
   return null;
 }
 
@@ -35,15 +38,29 @@ export default fp(async function authPlugin(app: FastifyInstance) {
   app.decorate('requireAuth', async (req: FastifyRequest) => {
     if (req.auth) return;
     const token = bearerFrom(req);
-    if (!token) throw unauthorized(ApiErrorCode.AUTH_REQUIRED);
-    const claims = await verifyAccessToken(token);
-    req.auth = {
-      userId: claims.sub,
-      organizationId: claims.org,
-      role: claims.role,
-      isAlignedAdmin: claims.aa,
-      sessionId: claims.sid,
-    };
+    if (token) {
+      const claims = await verifyAccessToken(token);
+      req.auth = {
+        userId: claims.sub,
+        organizationId: claims.org,
+        role: claims.role,
+        isAlignedAdmin: claims.aa,
+        sessionId: claims.sid,
+      };
+      return;
+    }
+    // EventSource (SSE) can't set Authorization headers, so it presents a
+    // short-lived single-use nonce (issued via POST /auth/sse-nonce) on the
+    // query string. The nonce is GETDEL'd from Redis so even a leaked URL
+    // is worthless after the connection is established.
+    const nonce = sseNonceFrom(req);
+    if (nonce) {
+      const claims = await consumeSseNonce(nonce);
+      if (!claims) throw unauthorized(ApiErrorCode.AUTH_REQUIRED);
+      req.auth = claims;
+      return;
+    }
+    throw unauthorized(ApiErrorCode.AUTH_REQUIRED);
   });
 
   app.decorate('requireRole', (minRole: OrgRole) => async (req: FastifyRequest) => {

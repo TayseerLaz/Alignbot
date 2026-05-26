@@ -68,6 +68,16 @@ export default async function multipartUploadRoutes(app: FastifyInstance) {
         },
       },
       preHandler: [app.requireRole('editor')],
+      // Per-user cap on heavyweight uploads. A compromised editor account
+      // shouldn't be able to pin Wasabi + worker capacity by queuing 50 MB
+      // imports back-to-back. 5/minute is generous for genuine usage.
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: '1 minute',
+          keyGenerator: (req) => `upload-csv:${req.auth?.userId ?? req.ip}`,
+        },
+      },
     },
     async (req, reply) => {
       if (!isStorageConfigured()) {

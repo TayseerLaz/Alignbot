@@ -28,6 +28,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api, ApiError, getAccessToken } from '@/lib/api';
+import { connectSse } from '@/lib/sse';
 
 const STATUS_CLASS: Record<RecipientStatus, string> = {
   pending: 'bg-slate-100 text-slate-600',
@@ -53,30 +54,19 @@ export default function BroadcastDetailPage() {
     refetchInterval: 15_000,
   });
 
-  // SSE: tick every 2s → invalidate counters/recipients/timeline.
+  // SSE: tick every 2s → invalidate counters/recipients/timeline. Auth is via
+  // single-use nonce; `connectSse` handles reconnect-with-backoff itself
+  // because a leaked-and-reused nonce would otherwise 401 on each retry.
   useEffect(() => {
-    const url =
-      `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}` +
-      `/api/v1/broadcasts/${id}/sse?token=${encodeURIComponent(getAccessToken() ?? '')}`;
-    // EventSource doesn't allow custom headers, so we pass the token in the
-    // query string. The api accepts both — see plugins/auth.ts.
-    let es: EventSource | null = null;
-    try {
-      es = new EventSource(url, { withCredentials: true });
-      es.addEventListener('tick', () => {
+    if (!getAccessToken()) return;
+    const dispose = connectSse(`/api/v1/broadcasts/${id}/sse`, {
+      onTick: () => {
         qc.invalidateQueries({ queryKey: ['broadcast', id] });
         qc.invalidateQueries({ queryKey: ['broadcast-recipients', id] });
         qc.invalidateQueries({ queryKey: ['broadcast-timeline', id] });
-      });
-      es.addEventListener('error', () => {
-        // Browser auto-reconnects with backoff; nothing to do.
-      });
-    } catch {
-      // SSE unsupported / blocked — slow-poll keeps it usable.
-    }
-    return () => {
-      es?.close();
-    };
+      },
+    });
+    return dispose;
   }, [id, qc]);
 
   const recipientsQuery = useQuery({

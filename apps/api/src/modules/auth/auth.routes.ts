@@ -22,6 +22,7 @@ import { z } from 'zod';
 import { clearRefreshCookieOptions, REFRESH_COOKIE_NAME, refreshCookieOptions } from '../../lib/cookies.js';
 import { env } from '../../lib/env.js';
 import { unauthorized } from '../../lib/errors.js';
+import { issueSseNonce } from '../../lib/sse-nonce.js';
 import {
   acceptInvitation,
   changePassword,
@@ -57,6 +58,21 @@ export default async function authRoutes(app: FastifyInstance) {
       max: env.RATE_LIMIT_AUTH_PER_MINUTE,
       timeWindow: '1 minute',
       keyGenerator: (req: FastifyRequest) => `${req.ip}:${req.routeOptions.url ?? ''}`,
+    },
+  };
+
+  // Tighter per-email cap for password reset. Caps enumeration via response
+  // timing (paired with the equalised timing in forgotPassword itself) and
+  // limits how often an attacker can spray reset emails at a known address.
+  const forgotPasswordLimit: { rateLimit: import('@fastify/rate-limit').RateLimitOptions } = {
+    rateLimit: {
+      max: 3,
+      timeWindow: '15 minutes',
+      keyGenerator: (req: FastifyRequest) => {
+        const body = req.body as { email?: string } | undefined;
+        const email = body?.email?.toLowerCase().trim();
+        return email ? `forgot:${email}` : `forgot-ip:${req.ip}`;
+      },
     },
   };
 
@@ -186,7 +202,7 @@ export default async function authRoutes(app: FastifyInstance) {
         body: forgotPasswordBodySchema,
         response: { 200: successSchema },
       },
-      config: authLimit,
+      config: forgotPasswordLimit,
     },
     async (req) => forgotPassword(req.body.email, meta(req)),
   );
@@ -225,6 +241,33 @@ export default async function authRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- POST /auth/sse-nonce -----------------------------------------
+  // Issues a short-lived (30s) single-use nonce so the SPA can open an
+  // EventSource (which can't set Authorization headers) without leaking the
+  // access token through URL access logs, browser history, or Referer.
+  r.post(
+    '/auth/sse-nonce',
+    {
+      schema: {
+        tags: ['auth'],
+        summary: 'Issue a 30s single-use nonce for EventSource (SSE) authentication.',
+        response: { 200: z.object({ nonce: z.string(), ttlSeconds: z.number() }) },
+      },
+      config: authLimit,
+      preHandler: [app.requireAuth],
+    },
+    async (req) => {
+      const nonce = await issueSseNonce({
+        userId: req.auth!.userId,
+        organizationId: req.auth!.organizationId,
+        role: req.auth!.role,
+        isAlignedAdmin: req.auth!.isAlignedAdmin,
+        sessionId: req.auth!.sessionId,
+      });
+      return { nonce, ttlSeconds: 30 };
+    },
+  );
+
   // ---------- GET /auth/session --------------------------------------------
   r.get(
     '/auth/session',
@@ -237,7 +280,11 @@ export default async function authRoutes(app: FastifyInstance) {
       preHandler: [app.requireAuth],
     },
     async (req) => {
-      const ctx = await getSessionContext(req.auth!.userId, req.auth!.organizationId);
+      const ctx = await getSessionContext(
+        req.auth!.userId,
+        req.auth!.organizationId,
+        req.auth!.sessionId,
+      );
       return {
         user: {
           id: ctx.user.id,

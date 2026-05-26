@@ -17,7 +17,9 @@ const envSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().positive().default(900),
-  JWT_REFRESH_TTL_SECONDS: z.coerce.number().int().positive().default(60 * 60 * 24 * 30),
+  // 7 days. Combined with refresh-token rotation, this caps the silent
+  // damage window if a refresh token leaks. Ops can override per-env.
+  JWT_REFRESH_TTL_SECONDS: z.coerce.number().int().positive().default(60 * 60 * 24 * 7),
   COOKIE_DOMAIN: z.string().default('localhost'),
   COOKIE_SECURE: z
     .string()
@@ -97,15 +99,17 @@ const envSchema = z.object({
   // exists so ops can roll back to "whisper-1" without a code push if
   // gpt-4o-transcribe has an outage.
   OPENAI_TRANSCRIBE_MODEL: z.string().default('gpt-4o-transcribe'),
-  // Phase 12 — optional Groq backend for chat completions. Groq's LPU
-  // inference runs Llama 3.3 70B at ~500 tokens/sec (vs OpenAI's ~50-100
-  // tok/sec) — every bot reply lands ~1.5-3s faster. The /openai/v1
-  // base URL is OpenAI-API-compatible so we use the same SDK. When
-  // GROQ_API_KEY is unset (default), every chat call goes to OpenAI
-  // exactly as before — no behaviour change for existing deployments.
+  // Groq is the sole chat-completion backend. Llama 3.3 70B on Groq's
+  // LPU runs at ~500 tok/sec vs OpenAI's ~50-100 tok/sec, so bot replies
+  // land in 3-8s instead of 22-26s. The /openai/v1 endpoint is OpenAI-
+  // API-compatible so the existing SDK works unchanged. When this key
+  // is missing the API throws on the first chat call with a clear
+  // "GROQ_API_KEY is not configured" message (no silent fallback to
+  // OpenAI — that previously hid misconfig + latency regressions).
   //
-  // Transcription stays on OpenAI (gpt-4o-transcribe is meaningfully
-  // better on Arabic dialects than Groq's Whisper Large v3).
+  // Transcription stays on the OPENAI_* config above (gpt-4o-transcribe
+  // is materially better on Arabic dialects than Groq's Whisper Large v3,
+  // and most of our customer base is Gulf/Levant Arabic).
   GROQ_API_KEY: z.string().optional(),
   GROQ_MODEL: z.string().default('llama-3.3-70b-versatile'),
   GROQ_BASE_URL: z.string().url().default('https://api.groq.com/openai/v1'),
@@ -122,6 +126,27 @@ const envSchema = z.object({
   // we verify with `dns.promises.resolveCname` before the row goes
   // 'verified' (which is the gate for Caddy on-demand TLS).
   CUSTOM_CNAME_TARGET: z.string().default('hader.ai'),
+
+  // Sprint 4 — WAF readiness. Controls which upstream proxies we trust
+  // when reading X-Forwarded-For and CF-Connecting-IP. Three modes:
+  //   • "true"  (default)  → trust any proxy (current behaviour; safe ONLY
+  //                          when the API is exposed exclusively to Caddy /
+  //                          a private network, never the public internet).
+  //   • "false"            → don't trust any proxy. req.ip = socket peer.
+  //   • "cloudflare"       → preset: trust the Cloudflare IPv4 + IPv6
+  //                          ranges plus the LAN/loopback so Caddy works.
+  //   • CIDR list (csv)    → trust exactly those CIDRs, e.g.
+  //                          "10.0.0.0/8,2606:4700::/32".
+  // Pair with TRUST_CF_CONNECTING_IP when the request flows through
+  // Cloudflare so req.ip resolves to the original client.
+  TRUST_PROXY: z.string().default('true'),
+  // When 'true', the api prefers CF-Connecting-IP over X-Forwarded-For when
+  // the request arrived from a trusted upstream. Required if you sit
+  // behind Cloudflare; harmless otherwise.
+  TRUST_CF_CONNECTING_IP: z
+    .string()
+    .default('false')
+    .transform((s) => s === 'true'),
 });
 
 export type Env = z.infer<typeof envSchema>;

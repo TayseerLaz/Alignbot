@@ -26,9 +26,18 @@ const envSchema = z.object({
   EMAIL_CONCURRENCY: z.coerce.number().int().positive().default(4),
   CRAWL_CONCURRENCY: z.coerce.number().int().positive().default(2),
 
-  // Phase 2 — OpenAI for crawl analysis. Worker no-ops AI step if missing.
+  // OpenAI is kept ONLY for any future worker-side transcription work.
+  // Crawl analysis (the worker's chat-completion path) routes through
+  // Groq via the GROQ_* vars below, matching the API.
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-4o-mini'),
+
+  // Groq — chat completions for the worker (currently crawl analysis).
+  // Worker no-ops AI step if both GROQ_API_KEY and OPENAI_API_KEY are
+  // unset; otherwise Groq is preferred to keep latency low.
+  GROQ_API_KEY: z.string().optional(),
+  GROQ_MODEL: z.string().default('llama-3.3-70b-versatile'),
+  GROQ_BASE_URL: z.string().url().default('https://api.groq.com/openai/v1'),
 
   // SMTP — used by the data-export worker to email the recipient a signed
   // download link. Same env var shape as the API. Falls back to Mailpit/Mailhog

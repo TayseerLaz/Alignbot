@@ -1,19 +1,26 @@
 // Phase 5.5 — TOTP 2FA self-service endpoints.
 //
-// Flow:
+// Flow (Sprint 1 M-3 hardening — two-step recovery-code persistence):
 //   1. POST /account/2fa/setup → server generates a secret, stores it in
 //      Redis under a short-lived key tied to userId, returns the
 //      `otpauth://` URI for QR display in the UI. NOT persisted to the
-//      user row yet — that happens on enable, after the user has
-//      successfully scanned + entered a code.
-//   2. POST /account/2fa/enable {code} → verify the code against the
-//      pending secret. On success: persist secret to user.totpSecret,
-//      set totpEnabled=true, generate 10 recovery codes, return the
-//      plaintext codes ONCE so the user can save them.
-//   3. POST /account/2fa/disable {password|code} → either path-of-truth
-//      works. Clears all 2FA fields.
-//   4. POST /account/2fa/regenerate-recovery → must supply a current
-//      TOTP code; returns 10 new codes (old ones invalidated).
+//      user row yet.
+//   2. POST /account/2fa/enable {code} → verifies the code against the
+//      pending secret. On success: GENERATES 10 recovery codes, STASHES
+//      the secret + hashed codes in Redis under another key, and returns
+//      the plaintext codes. **2FA is NOT yet enabled on the user record.**
+//      This prevents the lock-out failure mode where the API committed
+//      `totpEnabled=true` but the response carrying the recovery codes
+//      never reached the client.
+//   3. POST /account/2fa/confirm-recovery-codes → the user has saved the
+//      codes; persist the stashed secret + hashes to the user record and
+//      flip `totpEnabled=true`. Until this lands, the user can retry
+//      step 2 to regenerate a fresh pending set.
+//   4. POST /account/2fa/disable {password|code} → clears all 2FA fields.
+//   5. POST /account/2fa/regenerate-recovery {code} → generates new codes
+//      + stashes pending; the existing codes remain valid until step 6.
+//   6. POST /account/2fa/confirm-regenerate-recovery → swaps the live
+//      hashes for the freshly stashed ones.
 import { ApiErrorCode, itemEnvelopeSchema, successSchema } from '@aligned/shared';
 import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
@@ -34,6 +41,16 @@ import {
 
 const PENDING_KEY = (userId: string) => `2fa:pending:${userId}`;
 const PENDING_TTL = 600; // 10 minutes to scan + verify
+
+// Sprint 1 M-3 — pending recovery-code / secret payload key. Holds the data
+// the user must "confirm receipt" of before the 2FA state actually flips on
+// their account record.
+const PENDING_RECOVERY_KEY = (userId: string) => `2fa:pending-recovery:${userId}`;
+const PENDING_RECOVERY_TTL = 900; // 15 minutes
+
+type PendingRecoveryPayload =
+  | { kind: 'enable'; totpSecret: string; recoveryCodesHashed: string[] }
+  | { kind: 'regenerate-recovery'; recoveryCodesHashed: string[] };
 
 function hashRecovery(code: string): string {
   return createHash('sha256').update(code.toUpperCase()).digest('hex');
@@ -120,17 +137,22 @@ export default async function twoFactorRoutes(app: FastifyInstance) {
   );
 
   // ---------- POST /account/2fa/enable -------------------------------------
+  // Sprint 1 M-3 — STAGES recovery codes; does NOT yet enable 2FA. The
+  // client must follow up with POST /account/2fa/confirm-recovery-codes to
+  // commit. Until that lands, the user's account is in its original state.
   r.post(
     '/account/2fa/enable',
     {
       schema: {
         tags: ['account'],
-        summary: 'Confirm the TOTP code to enable 2FA. Returns 10 recovery codes ONCE.',
+        summary: 'Verify TOTP code; stage recovery codes; client must confirm to commit.',
         body: z.object({ code: z.string().trim().regex(/^\d{6}$/) }),
         response: {
           200: itemEnvelopeSchema(
             z.object({
               recoveryCodes: z.array(z.string()),
+              pendingConfirmation: z.literal(true),
+              expiresInSeconds: z.number().int().positive(),
             }),
           ),
         },
@@ -152,24 +174,100 @@ export default async function twoFactorRoutes(app: FastifyInstance) {
       }
       const recoveryCodes = generateRecoveryCodes();
       const recoveryCodesHashed = recoveryCodes.map(hashRecovery);
-      await withRlsBypass((tx) =>
-        tx.user.update({
-          where: { id: userId },
-          data: {
-            totpEnabled: true,
-            totpSecret: pending,
-            totpEnrolledAt: new Date(),
-            recoveryCodesHashed,
-          },
-        }),
+      const payload: PendingRecoveryPayload = {
+        kind: 'enable',
+        totpSecret: pending,
+        recoveryCodesHashed,
+      };
+      await redis.set(
+        PENDING_RECOVERY_KEY(userId),
+        JSON.stringify(payload),
+        'EX',
+        PENDING_RECOVERY_TTL,
       );
-      await redis.del(PENDING_KEY(userId));
-      await recordAudit({
-        action: 'password_changed', // closest existing action; new enum value would need migration
-        actorUserId: userId,
-        metadata: { event: '2fa_enabled' },
-      });
-      return { data: { recoveryCodes } };
+      // Note: PENDING_KEY (the un-confirmed secret) is NOT deleted yet. If
+      // the user re-calls /enable they get a fresh pending recovery batch.
+      // The setup key is GC'd by confirm-recovery-codes on success.
+      return {
+        data: {
+          recoveryCodes,
+          pendingConfirmation: true as const,
+          expiresInSeconds: PENDING_RECOVERY_TTL,
+        },
+      };
+    },
+  );
+
+  // ---------- POST /account/2fa/confirm-recovery-codes ---------------------
+  // Sprint 1 M-3 — the user has saved the recovery codes returned by the
+  // previous /enable or /regenerate-recovery call. NOW we commit the change
+  // to the user record. If the user never confirms (browser closed, network
+  // drop), the pending payload expires and the account remains in its
+  // original state — no permanent lock-out.
+  r.post(
+    '/account/2fa/confirm-recovery-codes',
+    {
+      schema: {
+        tags: ['account'],
+        summary: 'Confirm receipt of staged recovery codes; commit 2FA state.',
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireAuth],
+    },
+    async (req) => {
+      const userId = req.auth!.userId;
+      const redis = getRedis();
+      const raw = await redis.get(PENDING_RECOVERY_KEY(userId));
+      if (!raw) {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'No pending recovery codes to confirm — start enrolment again.',
+        );
+      }
+      let payload: PendingRecoveryPayload;
+      try {
+        payload = JSON.parse(raw) as PendingRecoveryPayload;
+      } catch {
+        await redis.del(PENDING_RECOVERY_KEY(userId));
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'Pending payload corrupted — start enrolment again.',
+        );
+      }
+
+      if (payload.kind === 'enable') {
+        await withRlsBypass((tx) =>
+          tx.user.update({
+            where: { id: userId },
+            data: {
+              totpEnabled: true,
+              totpSecret: payload.totpSecret,
+              totpEnrolledAt: new Date(),
+              recoveryCodesHashed: payload.recoveryCodesHashed,
+            },
+          }),
+        );
+        await redis.del(PENDING_KEY(userId));
+        await recordAudit({
+          action: 'password_changed', // closest existing audit action
+          actorUserId: userId,
+          metadata: { event: '2fa_enabled' },
+        });
+      } else if (payload.kind === 'regenerate-recovery') {
+        await withRlsBypass((tx) =>
+          tx.user.update({
+            where: { id: userId },
+            data: { recoveryCodesHashed: payload.recoveryCodesHashed },
+          }),
+        );
+        await recordAudit({
+          action: 'password_changed',
+          actorUserId: userId,
+          metadata: { event: '2fa_recovery_codes_regenerated' },
+        });
+      }
+      await redis.del(PENDING_RECOVERY_KEY(userId));
+      return { ok: true as const };
     },
   );
 
@@ -229,14 +327,24 @@ export default async function twoFactorRoutes(app: FastifyInstance) {
   );
 
   // ---------- POST /account/2fa/regenerate-recovery ------------------------
+  // Sprint 1 M-3 — stages a new batch of recovery codes; the existing codes
+  // stay live until the client confirms receipt via /confirm-recovery-codes.
   r.post(
     '/account/2fa/regenerate-recovery',
     {
       schema: {
         tags: ['account'],
-        summary: 'Regenerate 10 recovery codes (old ones become invalid). Requires current code.',
+        summary: 'Regenerate 10 recovery codes. Requires current code; client must confirm to commit.',
         body: z.object({ code: z.string().trim().regex(/^\d{6}$/) }),
-        response: { 200: itemEnvelopeSchema(z.object({ recoveryCodes: z.array(z.string()) })) },
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              recoveryCodes: z.array(z.string()),
+              pendingConfirmation: z.literal(true),
+              expiresInSeconds: z.number().int().positive(),
+            }),
+          ),
+        },
       },
       preHandler: [app.requireAuth],
     },
@@ -252,13 +360,24 @@ export default async function twoFactorRoutes(app: FastifyInstance) {
         throw unauthorized(ApiErrorCode.TOTP_INVALID, 'Invalid code.');
       }
       const recoveryCodes = generateRecoveryCodes();
-      await withRlsBypass((tx) =>
-        tx.user.update({
-          where: { id: userId },
-          data: { recoveryCodesHashed: recoveryCodes.map(hashRecovery) },
-        }),
+      const payload: PendingRecoveryPayload = {
+        kind: 'regenerate-recovery',
+        recoveryCodesHashed: recoveryCodes.map(hashRecovery),
+      };
+      const redis = getRedis();
+      await redis.set(
+        PENDING_RECOVERY_KEY(userId),
+        JSON.stringify(payload),
+        'EX',
+        PENDING_RECOVERY_TTL,
       );
-      return { data: { recoveryCodes } };
+      return {
+        data: {
+          recoveryCodes,
+          pendingConfirmation: true as const,
+          expiresInSeconds: PENDING_RECOVERY_TTL,
+        },
+      };
     },
   );
 }

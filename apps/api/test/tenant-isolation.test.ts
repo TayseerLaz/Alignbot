@@ -98,4 +98,70 @@ describe('tenant isolation', () => {
     });
     expect(fetchSegA.statusCode).toBe(404);
   });
+
+  // Sprint 3 #26 — deeper, post-route RLS checks. The route gates above
+  // confirm 401/403/404 but a regression that bypassed the route handler
+  // (e.g. a future feature using raw SQL) would still be caught by the
+  // policy. These tests INSERT a row in org B as the bypass role, then
+  // re-bind the session to org A's role + current_org_id and confirm the
+  // row is invisible. They prove the Postgres-level isolation directly.
+  async function probeRls(table: string, rowId: string, orgIdForContext: string): Promise<number> {
+    // Run inside an interactive Prisma transaction so all the SET LOCAL +
+    // SELECT statements share a single Postgres connection and the policy
+    // evaluation sees the tenant context we just bound.
+    const count = await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe('SET LOCAL ROLE aligned_app');
+      await tx.$executeRawUnsafe(
+        `SELECT set_config('app.current_org_id', $1, true)`,
+        orgIdForContext,
+      );
+      await tx.$executeRawUnsafe(`SELECT set_config('app.bypass_rls', 'off', true)`);
+      const rows = (await tx.$queryRawUnsafe(
+        `SELECT id FROM ${table} WHERE id = $1::uuid`,
+        rowId,
+      )) as { id: string }[];
+      return rows.length;
+    });
+    // Restore bypass for the next beforeEach truncate (which the setup.ts
+    // beforeEach hook expects to be on so it can wipe tables).
+    await prisma.$executeRawUnsafe(`SET app.bypass_rls = 'on'`);
+    return count;
+  }
+
+  it('Postgres RLS hides org B contact rows from a tenant query bound to org A', async () => {
+    const a = await seedOrgAndLogin(getApp(), 'rls-contact-a');
+    const b = await seedOrgAndLogin(getApp(), 'rls-contact-b');
+
+    await prisma.$executeRawUnsafe(`SET app.bypass_rls = 'on'`);
+    const bContact = await prisma.contact.create({
+      data: { organizationId: b.orgId, phoneE164: '+15555550456', displayName: 'leak-test' },
+    });
+
+    // Sanity: the row exists when querying with bypass (control case).
+    const sanity = await probeRls('contacts', bContact.id, b.orgId);
+    expect(sanity).toBe(1);
+
+    // The probe: bind to org A's id — RLS must hide org B's row.
+    const visible = await probeRls('contacts', bContact.id, a.orgId);
+    expect(visible).toBe(0);
+  });
+
+  it('Postgres RLS hides org B api_connector rows from org A', async () => {
+    const app = getApp();
+    const a = await seedOrgAndLogin(app, 'rls-conn-a');
+    const b = await seedOrgAndLogin(app, 'rls-conn-b');
+
+    // Create a connector in org B via the API (real path).
+    const createB = await app.inject({
+      method: 'POST',
+      url: '/api/v1/connectors',
+      headers: { authorization: `Bearer ${b.accessToken}` },
+      payload: { name: 'B Inbound', entityKind: 'product', enableInboundWebhook: true },
+    });
+    expect(createB.statusCode).toBe(201);
+    const bConnectorId = (createB.json() as { data: { id: string } }).data.id;
+
+    const visibleToA = await probeRls('api_connectors', bConnectorId, a.orgId);
+    expect(visibleToA).toBe(0);
+  });
 });

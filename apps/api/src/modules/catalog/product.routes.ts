@@ -22,6 +22,8 @@ import { z } from 'zod';
 import type { Prisma } from '../../lib/db.js';
 import { recordAudit } from '../../lib/audit.js';
 import { capCheck } from '../../lib/billing.js';
+import { prisma as rootPrisma } from '../../lib/db.js';
+import { embedProductAndStore } from '../../lib/embedding.js';
 import { conflict, notFound } from '../../lib/errors.js';
 import { recordRevision } from '../../lib/versioning.js';
 import { emitWebhookEvent } from '../../lib/webhooks.js';
@@ -200,6 +202,13 @@ export default async function productRoutes(app: FastifyInstance) {
           actorUserId: req.auth!.userId,
           summary: `Created "${created.name}"`,
         });
+        // Phase 2 Step 3 — fire-and-forget embed so the new product is
+        // discoverable by the bot pipeline immediately. Failure here is
+        // benign: the bot-engine top-K ranker treats missing embeddings
+        // as "include as filler" so nothing is silently hidden.
+        void embedProductAndStore(rootPrisma, created.id).catch((err) =>
+          req.log.warn({ err: err instanceof Error ? err.message : err, productId: created.id }, '[embed] product embed-on-create failed'),
+        );
         reply.code(201);
         return { data: await loadProduct(tx, created.id) };
       });
@@ -288,6 +297,15 @@ export default async function productRoutes(app: FastifyInstance) {
           snapshot: updated as unknown as Record<string, unknown>,
           actorUserId: req.auth!.userId,
         });
+        // Phase 2 Step 3 — re-embed if name or shortDescription changed.
+        // embedProductAndStore() compares the canonical hash internally
+        // and no-ops when the row is unchanged, so this is safe even for
+        // patches that only touch price / stock / availability.
+        if (req.body.name !== undefined || req.body.shortDescription !== undefined) {
+          void embedProductAndStore(rootPrisma, existing.id).catch((err) =>
+            req.log.warn({ err: err instanceof Error ? err.message : err, productId: existing.id }, '[embed] product embed-on-update failed'),
+          );
+        }
         return { data: await loadProduct(tx, existing.id) };
       });
     },

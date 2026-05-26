@@ -44,6 +44,17 @@ export default async function inboundWebhookRoutes(app: FastifyInstance) {
       },
       // No preHandler — this is public (HMAC-verified).
       // No auth, no tenant context — we look the connector up directly.
+      //
+      // Per-connector rate limit: an attacker rotating source IPs can bypass
+      // the global per-IP limit. Keying on connectorId caps the blast radius
+      // of HMAC-failed flood attempts to ~30/sec per connector.
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: '1 second',
+          keyGenerator: (req) => `inbound-webhook:${(req.params as { connectorId?: string }).connectorId ?? req.ip}`,
+        },
+      },
     },
     async (req, reply) => {
       const sigHeader = req.headers['x-aligned-signature'];

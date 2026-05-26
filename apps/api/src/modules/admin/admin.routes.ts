@@ -378,6 +378,9 @@ export default async function adminRoutes(app: FastifyInstance) {
         role: 'admin',
         isAlignedAdmin: true,
         meta,
+        // Sprint 1 H-3 — mark the session as impersonation so refreshSession
+        // allows the no-membership admin-role synthesis to continue working.
+        isImpersonation: true,
       });
 
       reply.setCookie(REFRESH_COOKIE_NAME, tokens.refreshToken, refreshCookieOptions());

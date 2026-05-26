@@ -9,19 +9,31 @@
     on_demand_tls {
         ask http://api:4000/api/v1/caddy/ask
     }
+
+    # Globally pin TLS to 1.2 / 1.3. TLS 1.0 / 1.1 are deprecated; pinning
+    # explicitly avoids surprises if the upstream Caddy defaults ever soften.
+    servers {
+        protocols h1 h2 h3
+    }
 }
 
 # Portal
 {$WEB_DOMAIN:app.aligned.example} {
+    tls {
+        protocols tls1.2 tls1.3
+    }
     encode zstd gzip
     header {
         Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
+        Cross-Origin-Opener-Policy "same-origin"
+        Cross-Origin-Resource-Policy "same-site"
         # Allow same-origin microphone so the inbox can record voice
         # notes via MediaRecorder. Camera/geolocation stay disabled.
         Permissions-Policy "geolocation=(), camera=(), microphone=(self)"
         -Server
+        -X-Powered-By
     }
     # Belt-and-braces MIME fix for Next.js static assets. Next.js itself
     # serves these with the right Content-Type, but if the upstream ever
@@ -47,12 +59,21 @@
 
 # API + chatbot read API
 {$API_DOMAIN:api.aligned.example} {
+    tls {
+        protocols tls1.2 tls1.3
+    }
     encode zstd gzip
     header {
         Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
-        Referrer-Policy "no-referrer"
+        # Unified across portal + API for consistency. Strict cross-origin
+        # but still emits a same-origin referrer so internal navigations
+        # work for analytics / audit trails.
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Cross-Origin-Opener-Policy "same-origin"
+        Cross-Origin-Resource-Policy "same-site"
         -Server
+        -X-Powered-By
     }
     @health path /health /health/ready
     handle @health {
@@ -73,13 +94,17 @@
 :443 {
     tls {
         on_demand
+        protocols tls1.2 tls1.3
     }
     encode zstd gzip
     header {
         Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
+        Cross-Origin-Opener-Policy "same-origin"
+        Cross-Origin-Resource-Policy "same-site"
         -Server
+        -X-Powered-By
     }
     reverse_proxy web:3000 {
         health_uri /

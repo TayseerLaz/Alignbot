@@ -45,6 +45,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError, getAccessToken } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 import { useSession } from '@/lib/session';
+import { connectSse } from '@/lib/sse';
 import { cn } from '@/lib/utils';
 
 type ThreadStatus = 'open' | 'pending' | 'resolved' | 'escalated';
@@ -2784,27 +2785,22 @@ function TemplateSendDialog({
 }
 
 // ---------- SSE realtime hook ---------------------------------------------
-// EventSource doesn't support setting Authorization headers, so we pass
-// the access token as a query string. The server treats `?token=` the same
-// way it treats the bearer header for SSE-only routes (added in inbox.routes).
+// Auth happens via a single-use nonce exchanged for the active session;
+// `connectSse` owns the lifecycle (nonce → connect → reconnect-with-backoff).
 function useInboxSSE() {
   const qc = useQueryClient();
   useEffect(() => {
-    const token = getAccessToken();
-    if (!token) return;
-    const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/inbox/sse?token=${encodeURIComponent(token)}`;
-    const es = new EventSource(url, { withCredentials: true });
-    es.addEventListener('tick', () => {
-      qc.invalidateQueries({ queryKey: ['inbox-threads'] });
-      qc.invalidateQueries({ queryKey: ['inbox-thread'] });
-      // Drive the sidebar Inbox badge in real time. When the bot
-      // escalates a chat or the operator un-escalates one, the count
-      // should flip without waiting for the 10s sidebar poll.
-      qc.invalidateQueries({ queryKey: ['sidebar-inbox-counts'] });
+    if (!getAccessToken()) return;
+    const dispose = connectSse('/api/v1/inbox/sse', {
+      onTick: () => {
+        qc.invalidateQueries({ queryKey: ['inbox-threads'] });
+        qc.invalidateQueries({ queryKey: ['inbox-thread'] });
+        // Drive the sidebar Inbox badge in real time. When the bot
+        // escalates a chat or the operator un-escalates one, the count
+        // should flip without waiting for the 10s sidebar poll.
+        qc.invalidateQueries({ queryKey: ['sidebar-inbox-counts'] });
+      },
     });
-    es.onerror = () => {
-      // EventSource auto-reconnects per `retry: 5000` from the server.
-    };
-    return () => es.close();
+    return dispose;
   }, [qc]);
 }

@@ -55,3 +55,21 @@ jobs:
         continue-on-error: true
       - run: pnpm test
         continue-on-error: true
+
+      # HARD DEPLOY GATE — tenant isolation must hold. This includes the
+      # multi-org cross-read test (Phase 1), the Phase 4 broadcasts +
+      # segments + contacts checks, and the Sprint 3 #26 deep RLS probes
+      # that bypass the route layer entirely. Any failure here means a
+      # cross-tenant data leak is possible — block the build, do not deploy.
+      - name: Tenant isolation deploy gate (HARD)
+        run: pnpm --filter @aligned/api test -- test/tenant-isolation.test.ts
+
+      # Sprint 3 — secondary security gates. Each runs the focused vitest
+      # files that exercise a tenant-isolation-adjacent boundary so a
+      # regression in any of them surfaces with a specific failure name.
+      - name: Provenance access gate
+        run: pnpm --filter @aligned/api test -- test/provenance-access.test.ts
+      - name: Webhook signature gate
+        run: pnpm --filter @aligned/api test -- test/webhook-signature.test.ts
+      - name: Read API key auth gate
+        run: pnpm --filter @aligned/api test -- test/read-api.test.ts

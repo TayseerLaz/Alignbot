@@ -20,6 +20,8 @@ const config: NextConfig = {
     optimizePackageImports: ['lucide-react'],
   },
   async headers() {
+    // CSP is built per-request in src/middleware.ts so the nonce can change
+    // each render. Static headers below cover the framework-wide constants.
     return [
       {
         source: '/(.*)',
@@ -30,6 +32,9 @@ const config: NextConfig = {
           // Allow same-origin microphone so MediaRecorder works in the
           // inbox voice-note composer. Camera/geolocation stay denied.
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(self), geolocation=()' },
+          { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+          { key: 'Cross-Origin-Resource-Policy', value: 'same-site' },
+          { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains; preload' },
         ],
       },
     ];

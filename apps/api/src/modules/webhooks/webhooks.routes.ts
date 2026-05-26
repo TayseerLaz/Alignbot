@@ -1,11 +1,13 @@
 import {
   ApiErrorCode,
+  assertSafeOutboundUrl,
   createWebhookEndpointBodySchema,
   createWebhookResponseSchema,
   itemEnvelopeSchema,
   listEnvelopeSchema,
   successSchema,
   updateWebhookEndpointBodySchema,
+  UrlGuardError,
   uuidSchema,
   webhookDeliverySchema,
   webhookEndpointSchema,
@@ -16,8 +18,19 @@ import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
 import { generateOpaqueToken } from '../../lib/crypto.js';
-import { notFound } from '../../lib/errors.js';
+import { badRequest, notFound } from '../../lib/errors.js';
 import { getWebhookQueue } from '../../lib/queues.js';
+
+function assertWebhookUrlOrThrow(url: string): void {
+  try {
+    assertSafeOutboundUrl(url);
+  } catch (err) {
+    throw badRequest(
+      ApiErrorCode.VALIDATION_ERROR,
+      err instanceof UrlGuardError ? err.message : 'Refusing that webhook URL.',
+    );
+  }
+}
 
 export default async function webhookEndpointRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -68,6 +81,7 @@ export default async function webhookEndpointRoutes(app: FastifyInstance) {
     },
     async (req, reply) => {
       const orgId = req.auth!.organizationId;
+      assertWebhookUrlOrThrow(req.body.url);
       const signingSecret = `whsec_${generateOpaqueToken(24)}`;
       return app.tenant(req, async (tx) => {
         const created = await tx.webhookEndpoint.create({
@@ -120,8 +134,11 @@ export default async function webhookEndpointRoutes(app: FastifyInstance) {
       },
       preHandler: [app.requireRole('admin')],
     },
-    async (req) =>
-      app.tenant(req, async (tx) => {
+    async (req) => {
+      if (req.body.url !== undefined && req.body.url !== null) {
+        assertWebhookUrlOrThrow(req.body.url);
+      }
+      return app.tenant(req, async (tx) => {
         const existing = await tx.webhookEndpoint.findUnique({ where: { id: req.params.id } });
         if (!existing) throw notFound('Webhook endpoint not found.');
         const updated = await tx.webhookEndpoint.update({
@@ -150,7 +167,8 @@ export default async function webhookEndpointRoutes(app: FastifyInstance) {
             updatedAt: updated.updatedAt.toISOString(),
           },
         };
-      }),
+      });
+    },
   );
 
   // ---------- DELETE /webhook-endpoints/:id -------------------------------

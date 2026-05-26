@@ -709,7 +709,36 @@ export async function getSessionContext(userId: string, organizationId: string) 
   if (!user) throw notFound('User not found.');
 
   const active = user.memberships.find((m) => m.organizationId === organizationId);
-  if (!active) throw forbidden(ApiErrorCode.AUTH_NO_MEMBERSHIP, 'No active membership for this org.');
+
+  // ALIGNED admins can impersonate any active org without a membership row
+  // (via POST /aligned-admin/orgs/:id/impersonate). In that case the JWT
+  // already carries org=<target> + aa=true, but we still need to surface
+  // the org + a role to the frontend. Synthesize a virtual 'admin'
+  // membership response so the dashboard renders normally.
+  if (!active) {
+    if (user.isAlignedAdmin) {
+      const impersonated = await prisma.organization.findUnique({
+        where: { id: organizationId },
+      });
+      if (!impersonated || impersonated.status !== 'active') {
+        throw forbidden(ApiErrorCode.AUTH_NO_MEMBERSHIP, 'No active membership for this org.');
+      }
+      return {
+        user,
+        organization: { ...impersonated, role: 'admin' as OrgRole },
+        availableOrganizations: user.memberships.map((m) => ({
+          id: m.organizationId,
+          slug: m.organization.slug,
+          name: m.organization.name,
+          role: m.role as OrgRole,
+        })),
+        // Caller can render an "Impersonating <name>" banner / switcher
+        // back into the admin's actual orgs.
+        impersonating: true as const,
+      };
+    }
+    throw forbidden(ApiErrorCode.AUTH_NO_MEMBERSHIP, 'No active membership for this org.');
+  }
 
   return {
     user,
@@ -720,5 +749,6 @@ export async function getSessionContext(userId: string, organizationId: string) 
       name: m.organization.name,
       role: m.role as OrgRole,
     })),
+    impersonating: false as const,
   };
 }

@@ -1,8 +1,19 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, Building2, Pause, Play, Plus, Search, Trash2, Users } from 'lucide-react';
+import {
+  Activity,
+  ArrowRightToLine,
+  Building2,
+  Pause,
+  Play,
+  Plus,
+  Search,
+  Trash2,
+  Users,
+} from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -12,7 +23,7 @@ import { Button } from '@/components/ui/button';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, setAccessToken } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 import { useSession } from '@/lib/session';
 
@@ -81,6 +92,35 @@ export default function AlignedAdminPage() {
       queryClient.invalidateQueries({ queryKey: ['admin-orgs'] });
       toast.success('Organisation deleted');
     },
+  });
+
+  // Control: mint a session for the target org and land in their
+  // dashboard. The session switch is silent (no nav until tokens are
+  // in place) so the next request carries the new org-id JWT.
+  const router = useRouter();
+  const { refresh } = useSession();
+  const controlOrg = useMutation({
+    mutationFn: (o: OrgRow) =>
+      api.post<{
+        data: {
+          accessToken: string;
+          expiresAt: string;
+          organizationId: string;
+          organizationSlug: string;
+          organizationName: string;
+        };
+      }>(`/api/v1/aligned-admin/orgs/${o.id}/impersonate`, {}),
+    onSuccess: async (res, vars) => {
+      setAccessToken(res.data.accessToken, res.data.expiresAt);
+      await refresh();
+      // Drop every cached query so we don't show admin-org data
+      // inside the impersonated org's dashboard.
+      queryClient.clear();
+      toast.success(`Controlling ${vars.name} — you're now in their workspace.`);
+      router.push('/dashboard');
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Could not open this org.'),
   });
 
   if (!session?.user.isAlignedAdmin) {
@@ -252,6 +292,19 @@ export default function AlignedAdminPage() {
                             <Play className="size-4" /> Reactivate
                           </Button>
                         )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => controlOrg.mutate(o)}
+                          disabled={controlOrg.isPending || o.status !== 'active'}
+                          title={
+                            o.status === 'active'
+                              ? `Open ${o.name} as an admin so you can edit their data.`
+                              : 'Reactivate this organisation first to control it.'
+                          }
+                        >
+                          <ArrowRightToLine className="size-4" /> Control
+                        </Button>
                         <Button
                           size="icon"
                           variant="ghost"

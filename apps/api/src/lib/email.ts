@@ -46,14 +46,14 @@ export async function sendEmail({ to, subject, html, text }: SendArgs): Promise<
 
 const baseStyles = `
   <style>
-    body { margin: 0; padding: 0; background: #f5f7fa; font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; }
-    .wrap { max-width: 560px; margin: 32px auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(15,23,42,.08); }
-    .header { background: #1B4F72; padding: 24px 32px; }
-    .brand { color: #ffffff; font-size: 18px; font-weight: 600; letter-spacing: .02em; }
-    .body { padding: 32px; line-height: 1.55; font-size: 15px; }
-    .btn { display: inline-block; background: #1B4F72; color: #ffffff !important; text-decoration: none; padding: 12px 20px; border-radius: 8px; font-weight: 500; margin: 16px 0; }
-    .footer { padding: 16px 32px 24px; color: #64748b; font-size: 12px; }
-    .url { word-break: break-all; color: #475569; font-size: 12px; }
+    body { margin: 0; padding: 0; background: #faf9f5; font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #360516; }
+    .wrap { max-width: 560px; margin: 32px auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(54,5,22,.08); }
+    .header { background: #360516; padding: 24px 32px; }
+    .brand { color: #cfc0a9; font-size: 18px; font-weight: 600; letter-spacing: .02em; }
+    .body { padding: 32px; line-height: 1.55; font-size: 15px; color: #360516; }
+    .btn { display: inline-block; background: #360516; color: #ffffff !important; text-decoration: none; padding: 12px 20px; border-radius: 8px; font-weight: 600; margin: 16px 0; }
+    .footer { padding: 16px 32px 24px; color: #846872; font-size: 12px; background: #faf9f5; }
+    .url { word-break: break-all; color: #5c2b2e; font-size: 12px; }
   </style>
 `;
 
@@ -62,9 +62,9 @@ const wrap = (innerHtml: string) => `
   <html><head><meta charset="utf-8" />${baseStyles}</head>
   <body>
     <div class="wrap">
-      <div class="header"><div class="brand">ALIGNED</div></div>
+      <div class="header"><div class="brand">Hader AI</div></div>
       <div class="body">${innerHtml}</div>
-      <div class="footer">ALIGNED Business Platform · Aligning Technology with Your Business</div>
+      <div class="footer">Hader AI · Every WhatsApp, answered.</div>
     </div>
   </body></html>
 `;
@@ -73,13 +73,13 @@ export function emailVerifyTemplate(args: { firstName: string | null; url: strin
   const greeting = args.firstName ? `Hi ${args.firstName},` : 'Welcome,';
   const html = wrap(`
     <p>${greeting}</p>
-    <p>Confirm your email address to finish setting up your ALIGNED account.</p>
+    <p>Confirm your email address to finish setting up your Hader account.</p>
     <p><a class="btn" href="${args.url}">Verify email</a></p>
     <p class="url">Or copy and paste this URL: ${args.url}</p>
     <p>This link expires in 24 hours.</p>
   `);
   const text = `${greeting}\n\nConfirm your email address: ${args.url}\n\nThis link expires in 24 hours.`;
-  return { subject: 'Verify your ALIGNED email', html, text };
+  return { subject: 'Verify your Hader email', html, text };
 }
 
 export function welcomeTemplate(args: {
@@ -90,7 +90,7 @@ export function welcomeTemplate(args: {
   const greeting = args.firstName ? `Welcome ${args.firstName},` : 'Welcome,';
   const html = wrap(`
     <p>${greeting}</p>
-    <p>Your <strong>${args.organizationName}</strong> workspace on ALIGNED is ready. Here are the things most clients want to do first:</p>
+    <p>Your <strong>${args.organizationName}</strong> workspace on Hader is ready. Here are the things most clients want to do first:</p>
     <ol>
       <li><strong>Add your products and services</strong> — paste from a spreadsheet or import a CSV.</li>
       <li><strong>Fill business info</strong> — opening hours, contact channels, FAQs.</li>
@@ -98,24 +98,24 @@ export function welcomeTemplate(args: {
       <li><strong>Connect WhatsApp</strong> — paste your Meta credentials and verify.</li>
     </ol>
     <p><a class="btn" href="${args.portalUrl}/dashboard">Open your dashboard</a></p>
-    <p>Need a hand? Reply to this email and we'll help.</p>
+    <p>Need a hand? Reply to this email and the Hader team will help.</p>
   `);
-  const text = `${greeting}\n\nYour ${args.organizationName} workspace on ALIGNED is ready.\n\nFirst things to do:\n  1. Add products and services\n  2. Fill business info\n  3. Issue an API key for your chatbot\n  4. Connect WhatsApp\n\nDashboard: ${args.portalUrl}/dashboard\n\nReply to this email if you need help.`;
-  return { subject: `Welcome to ALIGNED, ${args.organizationName}`, html, text };
+  const text = `${greeting}\n\nYour ${args.organizationName} workspace on Hader is ready.\n\nFirst things to do:\n  1. Add products and services\n  2. Fill business info\n  3. Issue an API key for your chatbot\n  4. Connect WhatsApp\n\nDashboard: ${args.portalUrl}/dashboard\n\nReply to this email if you need help — the Hader team is here.`;
+  return { subject: `Welcome to Hader, ${args.organizationName}`, html, text };
 }
 
 export function passwordResetTemplate(args: { firstName: string | null; url: string }) {
   const greeting = args.firstName ? `Hi ${args.firstName},` : 'Hello,';
   const html = wrap(`
     <p>${greeting}</p>
-    <p>We received a request to reset your ALIGNED password. Click below to choose a new one.</p>
+    <p>We received a request to reset your Hader password. Click below to choose a new one.</p>
     <p><a class="btn" href="${args.url}">Reset password</a></p>
     <p class="url">Or copy and paste: ${args.url}</p>
     <p>If you didn't request this, you can ignore this email — your password won't change.</p>
     <p>This link expires in 1 hour.</p>
   `);
   const text = `${greeting}\n\nReset your password: ${args.url}\n\nIf you didn't request this, ignore this email.`;
-  return { subject: 'Reset your ALIGNED password', html, text };
+  return { subject: 'Reset your Hader password', html, text };
 }
 
 /**
@@ -134,18 +134,18 @@ export function tenantProvisionedTemplate(args: {
   const greeting = args.firstName ? `Hi ${args.firstName},` : 'Hello,';
   const html = wrap(`
     <p>${greeting}</p>
-    <p>The ALIGNED team has set up your <strong>${args.organizationName}</strong> workspace. You can log in right away with the credentials below.</p>
-    <p style="background:#f4f6f8;padding:14px;border-radius:6px;font-family:Menlo,Consolas,monospace;font-size:14px">
+    <p>The Hader team has set up your <strong>${args.organizationName}</strong> workspace. You can log in right away with the credentials below.</p>
+    <p style="background:#faf9f5;padding:14px;border-radius:6px;font-family:'JetBrains Mono',Menlo,Consolas,monospace;font-size:14px;color:#360516">
       <strong>Email:</strong> ${args.email}<br>
       <strong>Password:</strong> ${args.password}
     </p>
     <p><a class="btn" href="${args.loginUrl}">Log in</a></p>
     <p><strong>Please change your password</strong> on first login (Settings → Profile → Change password). The temporary password above is shared by email, so treat it as compromised once you're in.</p>
-    <p>Reply to this email if you need help getting started.</p>
+    <p>Reply to this email if you need help getting started — the Hader team is here.</p>
   `);
-  const text = `${greeting}\n\nYour ${args.organizationName} workspace on ALIGNED is ready.\n\nEmail:    ${args.email}\nPassword: ${args.password}\n\nLog in: ${args.loginUrl}\n\nPlease change your password on first login (Settings → Profile → Change password).`;
+  const text = `${greeting}\n\nThe Hader team has set up your ${args.organizationName} workspace.\n\nEmail:    ${args.email}\nPassword: ${args.password}\n\nLog in: ${args.loginUrl}\n\nPlease change your password on first login (Settings → Profile → Change password).`;
   return {
-    subject: `Your ${args.organizationName} workspace on ALIGNED is ready`,
+    subject: `Your ${args.organizationName} workspace on Hader is ready`,
     html,
     text,
   };
@@ -153,11 +153,11 @@ export function tenantProvisionedTemplate(args: {
 
 export function invitationTemplate(args: { orgName: string; inviterName: string; url: string }) {
   const html = wrap(`
-    <p><strong>${args.inviterName}</strong> has invited you to join <strong>${args.orgName}</strong> on ALIGNED.</p>
+    <p><strong>${args.inviterName}</strong> has invited you to join <strong>${args.orgName}</strong> on Hader.</p>
     <p><a class="btn" href="${args.url}">Accept invitation</a></p>
     <p class="url">Or copy and paste: ${args.url}</p>
     <p>This invitation expires in 7 days.</p>
   `);
-  const text = `${args.inviterName} invited you to join ${args.orgName} on ALIGNED.\n\nAccept: ${args.url}\n\nExpires in 7 days.`;
-  return { subject: `Join ${args.orgName} on ALIGNED`, html, text };
+  const text = `${args.inviterName} invited you to join ${args.orgName} on Hader.\n\nAccept: ${args.url}\n\nExpires in 7 days.`;
+  return { subject: `Join ${args.orgName} on Hader`, html, text };
 }

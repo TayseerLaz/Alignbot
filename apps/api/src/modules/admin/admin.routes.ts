@@ -17,13 +17,15 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
+import { REFRESH_COOKIE_NAME, refreshCookieOptions } from '../../lib/cookies.js';
 import { generateTempPassword, hashPassword } from '../../lib/crypto.js';
 import { withRlsBypass } from '../../lib/db.js';
 import { sendEmail, tenantProvisionedTemplate } from '../../lib/email.js';
 import { env } from '../../lib/env.js';
-import { conflict, notFound } from '../../lib/errors.js';
+import { badRequest, conflict, notFound } from '../../lib/errors.js';
 import { getImportQueue, getSyncQueue, getWebhookQueue } from '../../lib/queues.js';
 import { getRedis } from '../../lib/redis.js';
+import { issueSession } from '../auth/auth.service.js';
 
 // Derives a URL-safe slug from a human org name. Strips diacritics,
 // non-ASCII letters, collapses whitespace + punctuation into hyphens,
@@ -309,6 +311,103 @@ export default async function adminRoutes(app: FastifyInstance) {
       if (!target) throw notFound('Organisation not found.');
       await withRlsBypass((tx) => tx.organization.delete({ where: { id: target.id } }));
       return { ok: true as const };
+    },
+  );
+
+  // ---------- POST /aligned-admin/orgs/:id/impersonate --------------------
+  // ALIGNED-admin "Control" action: issue a brand-new session bound to
+  // the target org so the admin can browse + edit the tenant's data
+  // exactly as one of its own admins would. The previous session is
+  // revoked so navigation is unambiguous, and the action is recorded in
+  // the audit log on the target org.
+  //
+  // Membership is NOT required — that's the whole point. getSessionContext
+  // synthesises a virtual 'admin' role for ALIGNED admins that don't have
+  // a membership row, so the rest of the app behaves normally.
+  r.post(
+    '/aligned-admin/orgs/:id/impersonate',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Mint a session for the target org so the admin can control it.',
+        params: z.object({ id: uuidSchema }),
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              accessToken: z.string(),
+              expiresAt: z.string().datetime(),
+              organizationId: uuidSchema,
+              organizationSlug: z.string(),
+              organizationName: z.string(),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req, reply) => {
+      const target = await withRlsBypass((tx) =>
+        tx.organization.findUnique({ where: { id: req.params.id } }),
+      );
+      if (!target) throw notFound('Organisation not found.');
+      if (target.status !== 'active') {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'This organisation is not active. Reactivate it first, then try Control again.',
+        );
+      }
+
+      // Revoke the current session so the admin never has two open at
+      // once (the new one is for the target org, so the old is stale).
+      if (req.auth?.sessionId) {
+        await withRlsBypass((tx) =>
+          tx.session.update({
+            where: { id: req.auth!.sessionId },
+            data: { revokedAt: new Date() },
+          }),
+        );
+      }
+
+      const meta = {
+        ip: req.ip ?? null,
+        userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+      };
+      const tokens = await issueSession({
+        userId: req.auth!.userId,
+        organizationId: target.id,
+        role: 'admin',
+        isAlignedAdmin: true,
+        meta,
+      });
+
+      reply.setCookie(REFRESH_COOKIE_NAME, tokens.refreshToken, refreshCookieOptions());
+
+      await recordAudit({
+        action: 'business_info_updated',
+        organizationId: target.id,
+        actorUserId: req.auth!.userId,
+        entityType: 'organization',
+        entityId: target.id,
+        metadata: {
+          event: 'aligned_admin_impersonate',
+          target_org_slug: target.slug,
+          target_org_name: target.name,
+        },
+      });
+
+      return {
+        data: {
+          accessToken: tokens.accessToken,
+          // issueSession returns a Date; the Zod schema expects ISO string.
+          expiresAt:
+            tokens.expiresAt instanceof Date
+              ? tokens.expiresAt.toISOString()
+              : (tokens.expiresAt as unknown as string),
+          organizationId: target.id,
+          organizationSlug: target.slug,
+          organizationName: target.name,
+        },
+      };
     },
   );
 

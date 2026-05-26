@@ -196,7 +196,9 @@ export interface TranscribeArgs {
   mimeType?: string;
 }
 
-export async function transcribeAudio(args: TranscribeArgs): Promise<{
+export type TranscribeProvider = 'openai' | 'groq';
+
+export async function transcribeAudio(args: TranscribeArgs & { provider?: TranscribeProvider }): Promise<{
   text: string;
   // Detected language (ISO code). gpt-4o-transcribe doesn't return this
   // — only whisper-1 with response_format='verbose_json' did. Kept on
@@ -205,6 +207,9 @@ export async function transcribeAudio(args: TranscribeArgs): Promise<{
   // gpt-4o-transcribe, populated only when the env var is set to
   // 'whisper-1'.
   language: string | null;
+  // Which provider actually ran the transcription — recorded in logs +
+  // provenance so we can monitor the routing decision in production.
+  provider: TranscribeProvider;
 }> {
   const ok = await consumeDailyTokens(args.organizationId, 600);
   if (!ok) {
@@ -212,6 +217,31 @@ export async function transcribeAudio(args: TranscribeArgs): Promise<{
     (err as Error & { code?: string }).code = 'TOKEN_BUDGET_EXCEEDED';
     throw err;
   }
+
+  const provider: TranscribeProvider = args.provider === 'groq' && env.GROQ_API_KEY ? 'groq' : 'openai';
+
+  if (provider === 'groq') {
+    // Groq's Whisper Large v3 (Turbo by default) runs at ~10× OpenAI's
+    // speed on the same audio. Good on English + reasonable on European
+    // languages; weaker on Gulf/Levant Arabic dialect than OpenAI's
+    // gpt-4o-transcribe. Callers route by language signal — Arabic gets
+    // OpenAI, English/French/Spanish gets Groq.
+    const groq = groqClient();
+    const blob = new Blob([new Uint8Array(args.bytes)], { type: args.mimeType ?? 'audio/ogg' });
+    const file = new File([blob], args.filename, { type: args.mimeType ?? 'audio/ogg' });
+    const res = (await groq.audio.transcriptions.create({
+      file,
+      model: env.GROQ_WHISPER_MODEL,
+      response_format: 'json',
+      prompt: 'Customer-service voice note. English / French / Spanish.',
+    })) as { text?: string; language?: string };
+    return {
+      text: (res.text ?? '').trim(),
+      language: res.language ?? null,
+      provider: 'groq',
+    };
+  }
+
   const c = client();
   const blob = new Blob([new Uint8Array(args.bytes)], { type: args.mimeType ?? 'audio/ogg' });
   const file = new File([blob], args.filename, { type: args.mimeType ?? 'audio/ogg' });
@@ -235,6 +265,7 @@ export async function transcribeAudio(args: TranscribeArgs): Promise<{
   return {
     text: (res.text ?? '').trim(),
     language: res.language ?? null,
+    provider: 'openai',
   };
 }
 

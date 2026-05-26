@@ -113,6 +113,12 @@ const envSchema = z.object({
   GROQ_API_KEY: z.string().optional(),
   GROQ_MODEL: z.string().default('llama-3.3-70b-versatile'),
   GROQ_BASE_URL: z.string().url().default('https://api.groq.com/openai/v1'),
+  // Phase 2 follow-up — Groq's Whisper transcription endpoint. Used for
+  // English-language voice notes (cuts transcription from ~2.5s on OpenAI
+  // gpt-4o-transcribe to ~250-400ms on Groq). Arabic / dialectal voice
+  // notes still go through OpenAI because gpt-4o-transcribe handles Gulf
+  // + Levant Arabic noticeably better.
+  GROQ_WHISPER_MODEL: z.string().default('whisper-large-v3-turbo'),
 
   // Phase 3 §5.1.3 — Stripe billing. Empty values disable billing surfaces:
   // /billing/checkout 503s, /webhooks/stripe rejects, cap middleware

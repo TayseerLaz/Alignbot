@@ -520,6 +520,7 @@ function stripCatalogSkus(reply: string, ctx: ValidationContext): {
   const sanitized = parts.map((segment, idx) => {
     if (idx % 2 === 1) return segment; // odd indices are the markers themselves
     let s = segment;
+    let segmentStripped = false;
     for (const sku of productSkus) {
       // Match the SKU optionally surrounded by parens / sku-ref: prefix /
       // commas, case-insensitive. \b boundaries don't always work on
@@ -537,11 +538,15 @@ function stripCatalogSkus(reply: string, ctx: ValidationContext): {
         const next = s.replace(re, '');
         if (next !== s) {
           stripped = true;
+          segmentStripped = true;
           s = next;
         }
       }
     }
-    // Tidy double-spaces / orphan punctuation left behind.
+    // Only tidy if we ACTUALLY removed something. The previous version
+    // ran the tidy-up unconditionally, which collapsed legitimate
+    // whitespace like "Time !!" → "Time!!" on every reply.
+    if (!segmentStripped) return s;
     return s.replace(/[ \t]{2,}/g, ' ').replace(/\(\s*\)/g, '').replace(/\s+([.,!?])/g, '$1');
   });
 

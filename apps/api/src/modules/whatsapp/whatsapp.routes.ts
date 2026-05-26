@@ -123,17 +123,45 @@ async function transcribeInboundVoice(args: {
   mediaId: string;
   mediaMime: string | null;
   wamid: string | null;
+  // Customer's E.164 phone — used to look up the last outbound bot reply
+  // in this thread so we can route English voice notes to Groq Whisper
+  // (~250-400 ms) and Arabic to OpenAI gpt-4o-transcribe (~2.5 s but
+  // materially better on Gulf/Levant dialects). First-message-in-thread
+  // (no prior outbound) defaults to OpenAI — safer for an Arabic-leaning
+  // customer base.
+  customerPhone: string;
   log: { warn: (...args: unknown[]) => void; info: (...args: unknown[]) => void };
 }): Promise<string | null> {
   try {
     const { withRlsBypass } = await import('../../lib/db.js');
-    // Get the access token for this org's primary channel.
-    const channel = await withRlsBypass((tx) =>
-      tx.whatsAppChannel.findFirst({
-        where: { organizationId: args.organizationId, isPrimary: true },
-      }),
-    );
+    // Run both DB lookups in parallel — channel (for media token) +
+    // last-bot-language (for transcribe provider).
+    const [channel, prevBotMessage] = await Promise.all([
+      withRlsBypass((tx) =>
+        tx.whatsAppChannel.findFirst({
+          where: { organizationId: args.organizationId, isPrimary: true },
+        }),
+      ),
+      withRlsBypass((tx) =>
+        tx.whatsAppMessage.findFirst({
+          where: {
+            organizationId: args.organizationId,
+            direction: 'outbound',
+            body: { not: null },
+            thread: { customerPhone: args.customerPhone },
+          },
+          orderBy: { receivedAt: 'desc' },
+          select: { body: true },
+        }),
+      ),
+    ]);
     if (!channel?.accessToken) return null;
+
+    // Language signal: does the last bot reply contain Arabic codepoints?
+    // No → likely an English/Latin conversation → Groq Whisper. Yes → Arabic →
+    // OpenAI. No prior reply → null → OpenAI default.
+    const transcribeProvider: 'openai' | 'groq' =
+      prevBotMessage?.body && !/[؀-ۿ]/.test(prevBotMessage.body) ? 'groq' : 'openai';
 
     // Step 1: Meta returns a download URL for the media id.
     const metaUrl = `https://graph.facebook.com/v20.0/${encodeURIComponent(args.mediaId)}`;
@@ -169,14 +197,23 @@ async function transcribeInboundVoice(args: {
     const { transcribeAudio } = await import('../../lib/openai.js');
     const mime = (args.mediaMime ?? urlJson.mime_type ?? 'audio/ogg').split(';')[0]!.trim();
     const ext = mime === 'audio/ogg' ? 'ogg' : mime === 'audio/mp4' ? 'm4a' : 'webm';
-    const { text, language } = await transcribeAudio({
+    const transcribeStart = Date.now();
+    const { text, language, provider: transcribeProviderActual } = await transcribeAudio({
       organizationId: args.organizationId,
       bytes: buf,
       filename: `inbound-${args.mediaId}.${ext}`,
       mimeType: mime,
+      provider: transcribeProvider,
     });
     args.log.info(
-      { mediaId: args.mediaId, language, chars: text.length, preview: text.slice(0, 200) },
+      {
+        mediaId: args.mediaId,
+        language,
+        chars: text.length,
+        preview: text.slice(0, 200),
+        provider: transcribeProviderActual,
+        transcribeMs: Date.now() - transcribeStart,
+      },
       '[whatsapp] Whisper transcript',
     );
     if (!text) return null;
@@ -2131,6 +2168,7 @@ async function maybeReplyAsBot(args: {
           mediaId: m.mediaId!,
           mediaMime: m.mediaMime,
           wamid: m.metaId,
+          customerPhone: m.from,
           log: args.log,
         })
       : Promise.resolve(null);
@@ -3119,6 +3157,155 @@ async function maybeReplyAsBot(args: {
     let metaMessageId: string | null = null;
     let sendOk = false;
 
+    // Phase 2 follow-up — kick off image sends in PARALLEL with the
+    // voice/text path. Pre-this change, images sent serially AFTER the
+    // voice send completed, adding 1-2s per image (even with media-cache
+    // hits!) to total latency. Image sends are independent — only the
+    // caption-suppression flag was stateful, and we pre-compute it now
+    // so the loop body can run via Promise.all.
+    const seenSkusForCaption = new Set<string>();
+    const dedupedSendsWithCaption = dedupedImageSends.map((send) => {
+      const isFirstOfGroup = !seenSkusForCaption.has(send.sku);
+      seenSkusForCaption.add(send.sku);
+      return {
+        ...send,
+        shouldCaption: send.kind !== 'greeting' && isFirstOfGroup && send.name.length > 0,
+      };
+    });
+
+    let imagesParallelStats: { cacheHits: number; cacheMisses: number; durationMs: number } | null = null;
+    const imagesPromise = dedupedSendsWithCaption.length === 0
+      ? Promise.resolve()
+      : (async () => {
+          const t0 = Date.now();
+          let cacheHits = 0;
+          let cacheMisses = 0;
+          const { getOrUploadMetaMediaId } = await import('../../lib/meta-media-cache.js');
+          const { presignGetUrl, publicUrlFor } = await import('../../lib/storage.js');
+          await Promise.all(
+            dedupedSendsWithCaption.map(async (send) => {
+              try {
+                let mediaId: string | null = null;
+                if (send.productImageId) {
+                  mediaId = await getOrUploadMetaMediaId({
+                    productImageId: send.productImageId,
+                    storageKey: send.storageKey,
+                    channel: {
+                      id: channel.id,
+                      phoneNumberId: channel.phoneNumberId,
+                      accessToken: channel.accessToken,
+                    },
+                    log: args.log,
+                  });
+                  if (mediaId) cacheHits += 1;
+                }
+                if (!mediaId) {
+                  cacheMisses += 1;
+                  const fileUrl = publicUrlFor(send.storageKey) ?? (await presignGetUrl(send.storageKey));
+                  const fr = await fetch(fileUrl, { signal: AbortSignal.timeout(15_000) });
+                  if (!fr.ok) {
+                    args.log.warn(
+                      { status: fr.status, key: send.storageKey },
+                      '[whatsapp] bot image fetch from Wasabi failed (parallel)',
+                    );
+                    return;
+                  }
+                  const fileBytes = Buffer.from(await fr.arrayBuffer());
+                  const fd = new FormData();
+                  fd.append('messaging_product', 'whatsapp');
+                  fd.append(
+                    'file',
+                    new Blob([new Uint8Array(fileBytes)], { type: 'image/jpeg' }),
+                    `${send.sku}.jpg`,
+                  );
+                  const mediaRes = await fetch(
+                    `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/media`,
+                    {
+                      method: 'POST',
+                      headers: { Authorization: `Bearer ${channel.accessToken!}` },
+                      body: fd,
+                      signal: AbortSignal.timeout(20_000),
+                    },
+                  );
+                  const mediaJson = (await mediaRes.json().catch(() => ({}))) as { id?: string };
+                  if (!mediaRes.ok || !mediaJson.id) {
+                    args.log.warn(
+                      { status: mediaRes.status, mediaJson },
+                      '[whatsapp] bot image upload to Meta failed (parallel)',
+                    );
+                    return;
+                  }
+                  mediaId = mediaJson.id;
+                }
+                const imgPayload = {
+                  messaging_product: 'whatsapp',
+                  recipient_type: 'individual',
+                  to: m.from,
+                  type: 'image',
+                  image: {
+                    id: mediaId!,
+                    ...(send.shouldCaption ? { caption: send.name.slice(0, 1024) } : {}),
+                  },
+                };
+                const imgRes = await fetch(
+                  `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/messages`,
+                  {
+                    method: 'POST',
+                    headers: {
+                      Authorization: `Bearer ${channel.accessToken!}`,
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(imgPayload),
+                    signal: AbortSignal.timeout(10_000),
+                  },
+                );
+                if (!imgRes.ok) {
+                  args.log.warn(
+                    { status: imgRes.status, sku: send.sku },
+                    '[whatsapp] bot image send failed (parallel)',
+                  );
+                  return;
+                }
+                const imgJson = (await imgRes.json().catch(() => ({}))) as {
+                  messages?: { id?: string }[];
+                };
+                const isGreeting = send.kind === 'greeting';
+                const previewName = isGreeting ? 'Welcome' : send.name;
+                await withRlsBypass(async (tx) => {
+                  await tx.whatsAppMessage.create({
+                    data: {
+                      threadId: ctx.threadId,
+                      organizationId: args.organizationId,
+                      direction: 'outbound',
+                      metaMessageId: imgJson.messages?.[0]?.id ?? null,
+                      toNumber: m.from,
+                      messageType: 'image',
+                      body: `[image] ${previewName}`,
+                      rawPayload: isGreeting
+                        ? ({ sentBy: 'bot', kind: 'greeting' } as never)
+                        : ({ sentBy: 'bot', sku: send.sku } as never),
+                    },
+                  });
+                  await tx.whatsAppThread.update({
+                    where: { id: ctx.threadId },
+                    data: {
+                      lastMessageAt: new Date(),
+                      lastMessagePreview: `[image] ${previewName}`.slice(0, 200),
+                      outboundCount: { increment: 1 },
+                    },
+                  });
+                });
+              } catch (err) {
+                args.log.warn(
+                  { err, sku: send.sku },
+                  '[whatsapp] bot image attach failed (parallel)',
+                );
+              }
+            }),
+          );
+          imagesParallelStats = { cacheHits, cacheMisses, durationMs: Date.now() - t0 };
+        })();
+
     if (wantsVoice && reply) {
       const { transcodeToOggOpus } = await import('../../lib/audio-transcode.js');
       // Dispatch based on org's chosen provider. ElevenLabs uses voice
@@ -3313,154 +3500,20 @@ async function maybeReplyAsBot(args: {
     // and continues with image-followup, audit, etc. We keep that flow.
     try {
 
-      // Follow-up: send EVERY image emitted by the LLM as separate
-      // WhatsApp media messages. Caption only the first image of each
-      // product (subsequent images are implicitly part of the same
-      // gallery). Failures here log but DON'T fail the whole reply
-      // path — the text reply already landed.
-      if (dedupedImageSends.length > 0) {
-        const imagesStartedAt = Date.now();
-        let cacheHits = 0;
-        let cacheMisses = 0;
-        const { getOrUploadMetaMediaId } = await import('../../lib/meta-media-cache.js');
-        const { presignGetUrl, publicUrlFor } = await import('../../lib/storage.js');
-        let prevSkuForGroup: string | null = null;
-        for (const send of dedupedImageSends) {
-          try {
-            // Phase 11.3 — try the cached Meta media_id first; falls
-            // back to the per-message upload when not cached, stale,
-            // greeting image (no row), or any failure inside the helper.
-            let mediaId: string | null = null;
-            if (send.productImageId) {
-              mediaId = await getOrUploadMetaMediaId({
-                productImageId: send.productImageId,
-                storageKey: send.storageKey,
-                channel: {
-                  id: channel.id,
-                  phoneNumberId: channel.phoneNumberId,
-                  accessToken: channel.accessToken,
-                },
-                log: args.log,
-              });
-              if (mediaId) cacheHits += 1;
-            }
-            if (!mediaId) {
-              cacheMisses += 1;
-              // Cache miss / greeting image / failure — upload bytes
-              // inline as before. ~1-2 s slower, but still functional.
-              const fileUrl = publicUrlFor(send.storageKey) ?? (await presignGetUrl(send.storageKey));
-              const fr = await fetch(fileUrl, { signal: AbortSignal.timeout(15_000) });
-              if (!fr.ok) {
-                args.log.warn(
-                  { status: fr.status, key: send.storageKey },
-                  '[whatsapp] bot image fetch from Wasabi failed',
-                );
-                continue;
-              }
-              const fileBytes = Buffer.from(await fr.arrayBuffer());
-              const fd = new FormData();
-              fd.append('messaging_product', 'whatsapp');
-              fd.append(
-                'file',
-                new Blob([new Uint8Array(fileBytes)], { type: 'image/jpeg' }),
-                `${send.sku}.jpg`,
-              );
-              const mediaRes = await fetch(
-                `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/media`,
-                {
-                  method: 'POST',
-                  headers: { Authorization: `Bearer ${channel.accessToken!}` },
-                  body: fd,
-                  signal: AbortSignal.timeout(20_000),
-                },
-              );
-              const mediaJson = (await mediaRes.json().catch(() => ({}))) as { id?: string };
-              if (!mediaRes.ok || !mediaJson.id) {
-                args.log.warn(
-                  { status: mediaRes.status, mediaJson },
-                  '[whatsapp] bot image upload to Meta failed',
-                );
-                continue;
-              }
-              mediaId = mediaJson.id;
-            }
-            // Reuse the variable name the downstream code expects.
-            const mediaJson: { id: string } = { id: mediaId! };
-            // Greeting images are captionless (the bot's greeting text
-            // is the caption). For product images, only caption the
-            // first image of each group — subsequent gallery shots
-            // shouldn't repeat the product name.
-            const isFirstOfGroup = prevSkuForGroup !== send.sku;
-            prevSkuForGroup = send.sku;
-            const shouldCaption =
-              send.kind !== 'greeting' && isFirstOfGroup && send.name.length > 0;
-            const imgPayload = {
-              messaging_product: 'whatsapp',
-              recipient_type: 'individual',
-              to: m.from,
-              type: 'image',
-              image: {
-                id: mediaJson.id,
-                ...(shouldCaption ? { caption: send.name.slice(0, 1024) } : {}),
-              },
-            };
-            const imgRes = await fetch(
-              `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/messages`,
-              {
-                method: 'POST',
-                headers: {
-                  Authorization: `Bearer ${channel.accessToken!}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(imgPayload),
-                signal: AbortSignal.timeout(10_000),
-              },
-            );
-            if (!imgRes.ok) {
-              args.log.warn(
-                { status: imgRes.status, sku: send.sku },
-                '[whatsapp] bot image send failed',
-              );
-              continue;
-            }
-            const imgJson = (await imgRes.json().catch(() => ({}))) as {
-              messages?: { id?: string }[];
-            };
-            const isGreeting = send.kind === 'greeting';
-            const previewName = isGreeting ? 'Welcome' : send.name;
-            await withRlsBypass(async (tx) => {
-              await tx.whatsAppMessage.create({
-                data: {
-                  threadId: ctx.threadId,
-                  organizationId: args.organizationId,
-                  direction: 'outbound',
-                  metaMessageId: imgJson.messages?.[0]?.id ?? null,
-                  toNumber: m.from,
-                  messageType: 'image',
-                  body: `[image] ${previewName}`,
-                  rawPayload: isGreeting
-                    ? ({ sentBy: 'bot', kind: 'greeting' } as never)
-                    : ({ sentBy: 'bot', sku: send.sku } as never),
-                },
-              });
-              await tx.whatsAppThread.update({
-                where: { id: ctx.threadId },
-                data: {
-                  lastMessageAt: new Date(),
-                  lastMessagePreview: `[image] ${previewName}`.slice(0, 200),
-                  outboundCount: { increment: 1 },
-                },
-              });
-            });
-          } catch (err) {
-            args.log.warn({ err, sku: send.sku }, '[whatsapp] bot image attach failed');
-          }
-        }
+      // Phase 2 follow-up — images already kicked off in parallel with
+      // the voice/text path. Just collect the result here. By the time
+      // we reach this point, the voice path has already awaited its
+      // upload+send; concurrent images have typically finished too
+      // (cache hits are ~50ms each). Net win: ~1.5-2 s off the typical
+      // voice-with-image reply.
+      if (dedupedSendsWithCaption.length > 0) {
+        await imagesPromise;
+        const stats = imagesParallelStats ?? { cacheHits: 0, cacheMisses: 0, durationMs: 0 };
         stopwatch.lap('image_attach', {
-          count: dedupedImageSends.length,
-          cacheHits,
-          cacheMisses,
-          totalMsThisStation: Date.now() - imagesStartedAt,
+          count: dedupedSendsWithCaption.length,
+          cacheHits: stats.cacheHits,
+          cacheMisses: stats.cacheMisses,
+          totalMsThisStation: stats.durationMs,
         });
       }
       // Persist outbound + bump thread.

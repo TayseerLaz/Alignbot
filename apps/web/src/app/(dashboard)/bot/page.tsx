@@ -161,7 +161,7 @@ function LanguagePicker({
             className={cn(
               'rounded-full border px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
               on
-                ? 'border-brand-500 bg-brand-500 text-white'
+                ? 'border-brand-500 bg-brand-500 text-on-brand'
                 : 'border-border bg-surface text-foreground hover:bg-surface-muted',
             )}
           >
@@ -1089,7 +1089,7 @@ function Simulator() {
                     className={cn(
                       'inline-block max-w-[85%] whitespace-pre-wrap break-words rounded-lg px-3 py-2',
                       t.role === 'user'
-                        ? 'bg-brand-500 text-white'
+                        ? 'bg-brand-500 text-on-brand'
                         : 'bg-surface text-foreground border border-border',
                     )}
                   >

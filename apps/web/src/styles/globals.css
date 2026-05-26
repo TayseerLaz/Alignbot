@@ -20,6 +20,12 @@
   --font-serif: var(--font-fraunces), ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
   --font-mono:  var(--font-mono-jb), ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
+  /* "On-brand" — the text/icon colour to use ON TOP of bg-brand-500.
+     Light mode: white (over oxblood). Dark mode flips this to oxblood
+     in the .dark block below (over white). Use text-on-brand wherever
+     you have bg-brand-500. */
+  --color-on-brand: #ffffff;
+
   /* Brand — Oxblood ramp (anchored at 500 = #360516). Top half desaturates
      into dusty rose so light surfaces, hover tints, and focus rings have
      enough contrast against the cream background. */
@@ -101,6 +107,10 @@
    are overridden in @theme so every Tailwind utility re-themes automatically.
    ============================================================================ */
 .dark {
+  /* "On-brand" flips to oxblood in dark mode — brand-500 is white here,
+     so text/icons sitting on it need to be dark to stay legible. */
+  --color-on-brand: #360516;
+
   /* Brand — anchors on pure white (#ffffff) in dark mode. Oxblood at
      500 was invisible on a near-black surface, so the action color
      inverts to white instead. Lower stops are progressively darker

@@ -166,7 +166,7 @@ export function Sidebar({
           'relative flex items-center rounded-full text-sm font-medium transition-all duration-150',
           collapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-4 py-2.5',
           active
-            ? 'bg-brand-500 text-white shadow-brand'
+            ? 'bg-brand-500 text-on-brand shadow-brand'
             : 'text-foreground-muted hover:bg-surface-muted hover:text-foreground',
         )}
       >

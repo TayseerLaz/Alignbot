@@ -1241,7 +1241,7 @@ function Bubble({
       <div
         className={cn(
           'max-w-[80%] rounded-lg px-3 py-2 text-sm',
-          isOut ? 'bg-brand-500 text-white' : 'bg-surface-muted text-foreground',
+          isOut ? 'bg-brand-500 text-on-brand' : 'bg-surface-muted text-foreground',
           // Subtle red ring when the scanner flagged hallucinations.
           canAudit && flaggedCount > 0 ? 'ring-2 ring-rose-400/70' : '',
         )}
@@ -1434,7 +1434,7 @@ function ProvTab({
         active
           ? accent === 'rose'
             ? 'bg-rose-500 text-white'
-            : 'bg-brand-500 text-white'
+            : 'bg-brand-500 text-on-brand'
           : accent === 'rose'
             ? 'text-rose-700 hover:bg-rose-100'
             : 'text-foreground-muted hover:bg-surface-muted',

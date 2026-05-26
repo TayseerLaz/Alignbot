@@ -62,10 +62,13 @@
   --color-border:           #e8e4d8;
   --color-border-strong:    #cfc0a9;
 
-  /* Foreground — near-black + warm grays. */
-  --color-foreground:        #0a0b0e;
-  --color-foreground-muted:  #4a4842;
-  --color-foreground-subtle: #75726a;
+  /* Foreground — Oxblood-tinted instead of near-black. The brand-book
+     pair is body text in oxblood, not literal black; the muted +
+     subtle variants step toward warm gray with the oxblood undertone
+     preserved. */
+  --color-foreground:        #360516;
+  --color-foreground-muted:  #5c2b2e;
+  --color-foreground-subtle: #846872;
 
   /* Semantic — warmth-matched. */
   --color-success: #2e8849;
@@ -98,21 +101,22 @@
    are overridden in @theme so every Tailwind utility re-themes automatically.
    ============================================================================ */
 .dark {
-  /* Brand — Oxblood doesn't have enough light to fire on near-black
-     surfaces, so dark mode anchors on Signal Red #E53E34 (brand-book
-     PMS 485 C). Deep stops keep the dark-oxblood family for brand-tinted
-     backgrounds + hover states; upper half lightens toward soft signal-
-     pink for text-on-brand + focus-ring contrast on the dark floor. */
-  --color-brand-50:  #1c0908;
-  --color-brand-100: #2c100c;
-  --color-brand-200: #4a1a14;
-  --color-brand-300: #7a261d;
-  --color-brand-400: #b03128;
-  --color-brand-500: #e53e34;
-  --color-brand-600: #ed5751;
-  --color-brand-700: #f17b78;
-  --color-brand-800: #f7adab;
-  --color-brand-900: #fdecea;
+  /* Brand — Oxblood (#360516, PMS 490 C) anchors at 500 in dark mode
+     too, replacing the previous Signal Red. Oxblood is dark on its own,
+     so the lower stops compress toward the surface (deep brand-tinted
+     fills) and the upper half lifts toward a dusty rose so anything
+     that uses brand-700+ (text-on-brand, focus rings, lifted hover
+     states) still reads against the near-black floor. */
+  --color-brand-50:  #150108;
+  --color-brand-100: #1c020c;
+  --color-brand-200: #25030f;
+  --color-brand-300: #2c0412;
+  --color-brand-400: #2f0413;
+  --color-brand-500: #360516;
+  --color-brand-600: #5c2b2e;
+  --color-brand-700: #844758;
+  --color-brand-800: #b87a8d;
+  --color-brand-900: #d9aebb;
 
   /* Surfaces — near-black with a hint of oxblood depth. */
   --color-surface:          #161013;
@@ -144,11 +148,11 @@
   --color-info: #60a5fa;
   --color-info-100: #112338;
 
-  /* Shadows — black with a signal-red undertone matching the brand. */
+  /* Shadows — black with an oxblood undertone matching the brand. */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-brand: 0 10px 26px rgba(229, 62, 52, 0.35);
+  --shadow-brand: 0 10px 26px rgba(54, 5, 22, 0.55);
 }
 
 /* ----------------------------------------------------------------------------

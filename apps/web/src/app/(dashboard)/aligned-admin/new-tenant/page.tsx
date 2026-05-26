@@ -149,7 +149,17 @@ export default function NewTenantPage() {
               <Input
                 id="org-slug"
                 value={organizationSlug}
-                onChange={(e) => setOrgSlug(e.target.value)}
+                onChange={(e) => {
+                  // Server regex only accepts [a-z0-9-]. Sanitize as the
+                  // operator types so an upper-case letter / space /
+                  // underscore / unicode char can't survive to submit
+                  // and trigger a 400 validation error.
+                  const cleaned = e.target.value
+                    .toLowerCase()
+                    .replace(/[^a-z0-9-]+/g, '-')
+                    .replace(/-{2,}/g, '-');
+                  setOrgSlug(cleaned);
+                }}
                 placeholder="Auto-derived from name if blank (e.g. acme-trading-llc)"
                 className="font-mono text-xs"
               />

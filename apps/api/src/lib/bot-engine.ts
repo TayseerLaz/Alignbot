@@ -250,7 +250,15 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
     // path attaches them when the LLM emits an [IMAGE: <sku>] marker
     // (multiple images → gallery send).
     tx.product.findMany({
-      where: { deletedAt: null, isAvailable: true },
+      // organizationId is REQUIRED even when running under withTenant.
+      // maybeReplyAsBot in whatsapp.routes.ts calls this via
+      // `withRlsBypass(...)` — that intentionally turns RLS off because
+      // the webhook has no JWT, so the WHERE clause is the only thing
+      // keeping us scoped to a single tenant. Pre-2026-05-26 these
+      // queries omitted the org filter, which would leak products
+      // across tenants in a multi-tenant deployment. Defense-in-depth
+      // gives us correct behaviour under EITHER call style.
+      where: { organizationId: orgId, deletedAt: null, isAvailable: true },
       select: {
         id: true,
         name: true,
@@ -271,18 +279,18 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
       take: 30,
     }),
     tx.service.findMany({
-      where: { deletedAt: null, isAvailable: true },
+      where: { organizationId: orgId, deletedAt: null, isAvailable: true },
       select: { id: true, name: true, basePriceMinor: true, currency: true, durationMinutes: true, shortDescription: true },
       take: 30,
     }),
     tx.businessInfo.findFirst({ where: { organizationId: orgId } }),
     tx.fAQ.findMany({
-      where: { isPublished: true, visibility: 'public' },
+      where: { organizationId: orgId, isPublished: true, visibility: 'public' },
       select: { id: true, question: true, answer: true },
       take: 30,
     }),
     tx.policy.findMany({
-      where: { isPublished: true },
+      where: { organizationId: orgId, isPublished: true },
       select: { kind: true, title: true, content: true },
       take: 10,
     }),

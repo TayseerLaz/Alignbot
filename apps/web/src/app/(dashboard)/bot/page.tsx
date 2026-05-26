@@ -18,7 +18,7 @@ import {
   Upload,
   XCircle,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { FlowEditor } from '@/components/bot/flow-editor';
@@ -442,10 +442,161 @@ function AnalyzeCard() {
             {job.errorMessage ? (
               <p className="mt-1 text-xs text-amber-700">{job.errorMessage}</p>
             ) : null}
+            {(job.status === 'succeeded' || job.status === 'failed') &&
+              job.pagesCrawled > 0 ? (
+                <CrawlResultsViewer jobId={job.id} />
+              ) : null}
           </div>
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+// ---------- Crawl results viewer ---------------------------------------------
+// Shows the actual pages a crawl touched: URL, title, fetch status, the size
+// of the extracted body text, plus a 500-char preview on demand. Heavy lift:
+// flags pages whose body matches the first page's body verbatim — that's the
+// "SPA gave us the same skeleton for every URL" signal that an operator can
+// otherwise spend hours debugging. Lazy-loads the page list on first expand
+// so a successful crawl with 200 rows doesn't fetch them eagerly.
+type CrawlPageRow = {
+  id: string;
+  url: string;
+  title: string | null;
+  fetchStatus: number | null;
+  chars: number;
+  errorMessage: string | null;
+  bodyPreview: string;
+  identicalToFirst: boolean;
+  createdAt: string;
+};
+
+function CrawlResultsViewer({ jobId }: { jobId: string }) {
+  const [open, setOpen] = useState(false);
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+  const query = useQuery({
+    queryKey: ['crawl-pages', jobId],
+    queryFn: async () =>
+      api.get<{ data: CrawlPageRow[] }>(`/api/v1/bot/analyze/${jobId}/pages`),
+    enabled: open,
+    staleTime: 60_000,
+  });
+
+  const pages = query.data?.data ?? [];
+  const identicalCount = pages.filter((p) => p.identicalToFirst).length;
+  const spaWarning = pages.length >= 3 && identicalCount >= pages.length - 1;
+
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1 text-xs font-medium text-foreground-subtle hover:text-foreground"
+      >
+        {open ? '▾' : '▸'} {open ? 'Hide' : 'View'} crawled pages
+      </button>
+
+      {open ? (
+        <div className="mt-2 space-y-2">
+          {query.isLoading ? (
+            <div className="flex items-center gap-2 text-xs text-foreground-subtle">
+              <Loader2 className="size-3 animate-spin" /> Loading pages…
+            </div>
+          ) : query.isError ? (
+            <p className="text-xs text-amber-700">Could not load pages.</p>
+          ) : pages.length === 0 ? (
+            <p className="text-xs text-foreground-subtle">No pages recorded for this crawl.</p>
+          ) : (
+            <>
+              {spaWarning ? (
+                <div className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800">
+                  <strong>Heads up:</strong> {identicalCount} of {pages.length} pages returned
+                  identical body text. The site is likely a single-page app (React / Vue /
+                  similar) that renders content client-side via JavaScript. Our crawler reads
+                  HTML only — for SPAs, the bot will see only the homepage skeleton.
+                  Consider asking the site owner for a sitemap.xml, or feed the FAQs / business
+                  info manually under <code className="rounded bg-amber-100 px-1">/faqs</code>.
+                </div>
+              ) : null}
+              <div className="overflow-hidden rounded border border-border">
+                <table className="w-full text-xs">
+                  <thead className="bg-surface-muted text-foreground-subtle">
+                    <tr>
+                      <th className="px-2 py-1 text-left font-medium">URL</th>
+                      <th className="px-2 py-1 text-left font-medium">Title</th>
+                      <th className="px-2 py-1 text-right font-medium">Status</th>
+                      <th className="px-2 py-1 text-right font-medium">Chars</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pages.map((p) => {
+                      const isExpanded = expandedRowId === p.id;
+                      const isFailed =
+                        !!p.errorMessage ||
+                        (p.fetchStatus !== null && (p.fetchStatus < 200 || p.fetchStatus >= 400));
+                      return (
+                        <Fragment key={p.id}>
+                          <tr
+                            className="cursor-pointer border-t border-border hover:bg-surface-muted/40"
+                            onClick={() => setExpandedRowId(isExpanded ? null : p.id)}
+                          >
+                            <td className="max-w-[24rem] truncate px-2 py-1 font-mono text-[11px]">
+                              {p.url}
+                              {p.identicalToFirst && pages.indexOf(p) > 0 ? (
+                                <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800">
+                                  same body as 1st
+                                </span>
+                              ) : null}
+                            </td>
+                            <td className="max-w-[16rem] truncate px-2 py-1">
+                              {p.title ?? <span className="text-foreground-subtle">—</span>}
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              <span
+                                className={cn(
+                                  'rounded px-1 text-[10px]',
+                                  isFailed
+                                    ? 'bg-rose-100 text-rose-800'
+                                    : 'bg-emerald-100 text-emerald-800',
+                                )}
+                              >
+                                {p.fetchStatus ?? 'err'}
+                              </span>
+                            </td>
+                            <td className="px-2 py-1 text-right tabular-nums">
+                              {p.chars.toLocaleString()}
+                            </td>
+                          </tr>
+                          {isExpanded ? (
+                            <tr className="border-t border-border bg-surface-muted/30">
+                              <td colSpan={4} className="px-2 py-2">
+                                {p.errorMessage ? (
+                                  <p className="text-rose-700">
+                                    Error: {p.errorMessage}
+                                  </p>
+                                ) : p.bodyPreview ? (
+                                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-surface p-2 text-[11px] text-foreground">
+                                    {p.bodyPreview}
+                                    {p.chars > p.bodyPreview.length ? '\n…' : ''}
+                                  </pre>
+                                ) : (
+                                  <p className="text-foreground-subtle">No body text extracted.</p>
+                                )}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

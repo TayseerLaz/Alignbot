@@ -626,6 +626,68 @@ export default async function botRoutes(app: FastifyInstance) {
       }),
   );
 
+  // ---------- GET /bot/analyze/:id/pages ----------
+  // The actual list of pages this crawl visited — URL, title, fetch
+  // status, the size of the extracted body text, plus a short preview.
+  // Operators use this to verify the crawler actually got real content
+  // (e.g. SPA sites that return the same skeleton HTML for every URL
+  // would show identical body_text + identical chars across all rows).
+  r.get(
+    '/bot/analyze/:id/pages',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'List the pages a crawl job touched (URL + extracted text preview).',
+        params: z.object({ id: uuidSchema }),
+        response: {
+          200: listEnvelopeSchema(
+            z.object({
+              id: uuidSchema,
+              url: z.string(),
+              title: z.string().nullable(),
+              fetchStatus: z.number().int().nullable(),
+              chars: z.number().int().nonnegative(),
+              errorMessage: z.string().nullable(),
+              bodyPreview: z.string(),
+              identicalToFirst: z.boolean(),
+              createdAt: z.string().datetime(),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const job = await tx.crawlJob.findUnique({ where: { id: req.params.id } });
+        if (!job) throw notFound('Crawl job not found.');
+        const pages = await tx.crawlPage.findMany({
+          where: { crawlJobId: job.id },
+          orderBy: { createdAt: 'asc' },
+        });
+        // Flag pages whose body text matches the FIRST crawled page's body
+        // text exactly — a strong "this is an SPA, we got nothing" signal.
+        // Compares the trimmed prose only so trailing whitespace doesn't
+        // hide a real-but-identical render.
+        const firstBody = pages[0]?.bodyText?.trim() ?? '';
+        const data = pages.map((p) => ({
+          id: p.id,
+          url: p.url,
+          title: p.title,
+          fetchStatus: p.fetchStatus,
+          chars: (p.bodyText ?? '').length,
+          errorMessage: p.errorMessage,
+          // 500-char preview is enough to see what the LLM saw without
+          // pulling 100 KB of HTML over the wire on every page load.
+          bodyPreview: (p.bodyText ?? '').slice(0, 500),
+          identicalToFirst:
+            !!firstBody && p.bodyText !== null && p.bodyText.trim() === firstBody,
+          createdAt: p.createdAt.toISOString(),
+        }));
+        return { data, nextCursor: null };
+      }),
+  );
+
   // ---------- GET /bot/knowledge-base ----------
   r.get(
     '/bot/knowledge-base',

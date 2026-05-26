@@ -101,22 +101,23 @@
    are overridden in @theme so every Tailwind utility re-themes automatically.
    ============================================================================ */
 .dark {
-  /* Brand — Oxblood (#360516, PMS 490 C) anchors at 500 in dark mode
-     too, replacing the previous Signal Red. Oxblood is dark on its own,
-     so the lower stops compress toward the surface (deep brand-tinted
-     fills) and the upper half lifts toward a dusty rose so anything
-     that uses brand-700+ (text-on-brand, focus rings, lifted hover
-     states) still reads against the near-black floor. */
-  --color-brand-50:  #150108;
-  --color-brand-100: #1c020c;
-  --color-brand-200: #25030f;
-  --color-brand-300: #2c0412;
-  --color-brand-400: #2f0413;
-  --color-brand-500: #360516;
-  --color-brand-600: #5c2b2e;
-  --color-brand-700: #844758;
-  --color-brand-800: #b87a8d;
-  --color-brand-900: #d9aebb;
+  /* Brand — anchors on pure white (#ffffff) in dark mode. Oxblood at
+     500 was invisible on a near-black surface, so the action color
+     inverts to white instead. Lower stops are progressively darker
+     neutrals so brand-tinted backgrounds + hover fills still feel like
+     "brand chrome" against the dark floor; upper stops stay near-white
+     so anything that uses brand-600+ as a text or focus colour also
+     reads cleanly. */
+  --color-brand-50:  #1a1818;
+  --color-brand-100: #2a2528;
+  --color-brand-200: #3d3539;
+  --color-brand-300: #5a4f54;
+  --color-brand-400: #8a7d82;
+  --color-brand-500: #ffffff;
+  --color-brand-600: #f5f5f5;
+  --color-brand-700: #ebebeb;
+  --color-brand-800: #dedede;
+  --color-brand-900: #c8c8c8;
 
   /* Surfaces — near-black with a hint of oxblood depth. */
   --color-surface:          #161013;
@@ -148,11 +149,12 @@
   --color-info: #60a5fa;
   --color-info-100: #112338;
 
-  /* Shadows — black with an oxblood undertone matching the brand. */
+  /* Shadows — black with a soft white halo for brand-tinted lifts
+     (the dark-mode brand is white, so the glow follows). */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-brand: 0 10px 26px rgba(54, 5, 22, 0.55);
+  --shadow-brand: 0 10px 26px rgba(255, 255, 255, 0.18);
 }
 
 /* ----------------------------------------------------------------------------

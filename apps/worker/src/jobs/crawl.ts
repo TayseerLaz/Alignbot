@@ -38,8 +38,14 @@ interface CrawlPayload {
 }
 
 const MAX_BODY_BYTES = 100_000; // 100 KB per page
-const PAGE_TIMEOUT_MS = 30_000; // SPAs need time for JS + network idle
-const NETWORK_IDLE_MS = 1_500;   // shortened — many SPAs poll continuously
+const NAV_TIMEOUT_MS = 15_000;  // DOMContentLoaded should fire well within this
+const RENDER_DELAY_MS = 3_000;  // post-DCL wait so React/Vue can mount + render
+// Why not 'networkidle': many real sites keep a persistent connection open
+// (analytics beacons, chat widgets, live-data poll). networkidle never fires,
+// the timeout trips, and the navigation throws BEFORE we can extract anything.
+// DOMContentLoaded + a generous render delay is reliable across SPA frameworks
+// without depending on quiescent network behaviour that the site may never
+// actually reach.
 
 // Lazy-initialised, lifecycle-managed Chromium. ONE browser process per
 // worker (cold start ~1s; subsequent pages share it). Each page gets its
@@ -111,19 +117,18 @@ async function fetchOnePage(url: string): Promise<{
       return route.continue();
     });
 
+    // Wait for the document to parse — fires quickly + reliably even
+    // when the page keeps long-running network connections open.
     const response = await page.goto(url, {
-      waitUntil: 'networkidle',
-      timeout: PAGE_TIMEOUT_MS,
+      waitUntil: 'domcontentloaded',
+      timeout: NAV_TIMEOUT_MS,
     });
 
-    // Some SPAs (alinia is one) keep a long-poll / websocket open, so
-    // 'networkidle' never fires within the timeout. Fall back to
-    // 'domcontentloaded' + a fixed wait — typically catches the
-    // post-mount render that we actually care about.
-    if (!response) {
-      await page.waitForLoadState('domcontentloaded', { timeout: PAGE_TIMEOUT_MS });
-      await page.waitForTimeout(NETWORK_IDLE_MS);
-    }
+    // Give React / Vue / Next-app-router time to mount + render after
+    // DCL. Most SPAs render their main content within 1-3s of DCL once
+    // their hydration script runs. We pay this delay per page (~3s),
+    // which is the dominant per-page cost.
+    await page.waitForTimeout(RENDER_DELAY_MS);
 
     const status = response?.status() ?? 0;
     const ctypeHeader = response?.headers()['content-type'] ?? null;
@@ -200,6 +205,29 @@ export function startCrawlWorker() {
         const cleanCorpus: { url: string; title: string | null; text: string }[] = [];
 
         while (queue.length > 0 && crawled + failed < meta.maxPages) {
+          // Cancellation check. The operator can flip the job's status to
+          // 'cancelled' from /bot at any time; the worker picks it up at
+          // each page boundary and exits cleanly. We don't re-read the
+          // row on every loop — once every 3 pages is plenty (~9s at the
+          // new ~3s/page pace) and keeps DB chatter bounded.
+          if ((crawled + failed) % 3 === 0) {
+            const current = await prisma.crawlJob.findUnique({
+              where: { id: crawlJobId },
+              select: { status: true },
+            });
+            if (current?.status === 'cancelled') {
+              await prisma.crawlJob.update({
+                where: { id: crawlJobId },
+                data: {
+                  pagesCrawled: crawled,
+                  pagesFailed: failed,
+                  finishedAt: new Date(),
+                  errorMessage: 'Crawl stopped by operator.',
+                },
+              });
+              return; // exit the worker handler — BullMQ marks the job done
+            }
+          }
           const next = queue.shift()!;
           const r = await fetchOnePage(next.url.toString());
           if (r.error || !r.html) {

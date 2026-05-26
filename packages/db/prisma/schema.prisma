@@ -1495,6 +1495,7 @@ enum CrawlJobStatus {
   succeeded
   partial
   failed
+  cancelled
 }
 
 model BotConfig {

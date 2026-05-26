@@ -594,6 +594,88 @@ export default async function botRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- GET /bot/analyze/latest ----------
+  // The /bot page calls this on mount so it can pick up an already-
+  // running crawl after the operator navigated away and back. Returns
+  // the most recently created crawl job for the active org, regardless
+  // of status — the client only restores the activeJobId for pending /
+  // running rows.
+  r.get(
+    '/bot/analyze/latest',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Most recent crawl job for the active org (any status). 404 if none.',
+        response: { 200: itemEnvelopeSchema(crawlJobDto) },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const job = await tx.crawlJob.findFirst({
+          orderBy: { createdAt: 'desc' },
+        });
+        if (!job) throw notFound('No crawl jobs.');
+        return {
+          data: {
+            id: job.id,
+            rootUrl: job.rootUrl,
+            status: job.status,
+            pagesCrawled: job.pagesCrawled,
+            pagesFailed: job.pagesFailed,
+            errorMessage: job.errorMessage,
+            startedAt: job.startedAt?.toISOString() ?? null,
+            finishedAt: job.finishedAt?.toISOString() ?? null,
+            createdAt: job.createdAt.toISOString(),
+          },
+        };
+      }),
+  );
+
+  // ---------- POST /bot/analyze/:id/cancel ----------
+  // Operator-initiated stop. We only flip the row status — the worker
+  // polls it at each page boundary and exits cleanly. Idempotent: a
+  // second cancel on an already-terminal job is a no-op.
+  r.post(
+    '/bot/analyze/:id/cancel',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Request cancellation of a running crawl. Worker checks between pages.',
+        params: z.object({ id: uuidSchema }),
+        response: { 200: itemEnvelopeSchema(crawlJobDto) },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const job = await tx.crawlJob.findUnique({ where: { id: req.params.id } });
+        if (!job) throw notFound('Crawl job not found.');
+        // Only running / pending jobs need to be cancelled. Anything
+        // terminal is left alone so the UI shows the real outcome.
+        const isLive = job.status === 'pending' || job.status === 'running';
+        const updated = isLive
+          ? await tx.crawlJob.update({
+              where: { id: job.id },
+              data: { status: 'cancelled' },
+            })
+          : job;
+        return {
+          data: {
+            id: updated.id,
+            rootUrl: updated.rootUrl,
+            status: updated.status,
+            pagesCrawled: updated.pagesCrawled,
+            pagesFailed: updated.pagesFailed,
+            errorMessage: updated.errorMessage,
+            startedAt: updated.startedAt?.toISOString() ?? null,
+            finishedAt: updated.finishedAt?.toISOString() ?? null,
+            createdAt: updated.createdAt.toISOString(),
+          },
+        };
+      }),
+  );
+
   // ---------- GET /bot/analyze/:id ----------
   r.get(
     '/bot/analyze/:id',

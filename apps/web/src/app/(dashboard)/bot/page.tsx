@@ -323,6 +323,32 @@ function AnalyzeCard() {
   const [maxDepth, setMaxDepth] = useState(6);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
+  // On mount, fetch the most recent crawl job for this org. The crawl
+  // runs in the worker process — it keeps running even when the
+  // operator navigates away. Without this, the /bot page would forget
+  // there's an active crawl every time the component unmounts. We
+  // restore the activeJobId only for live (pending / running) jobs;
+  // terminal jobs are shown via the explicit re-fetch below.
+  useQuery({
+    queryKey: ['bot-analyze-latest'],
+    queryFn: async () => {
+      try {
+        const res = await api.get<{ data: CrawlJob }>('/api/v1/bot/analyze/latest');
+        if (
+          (res.data.status === 'pending' || res.data.status === 'running') &&
+          !activeJobId
+        ) {
+          setActiveJobId(res.data.id);
+        }
+        return res.data;
+      } catch {
+        // 404 — no crawl jobs yet. Normal first-time state.
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+
   const start = useMutation({
     mutationFn: () =>
       api.post<{ data: CrawlJob }>('/api/v1/bot/analyze', {
@@ -331,10 +357,19 @@ function AnalyzeCard() {
         maxDepth,
       }),
     onSuccess: (res) => {
-      toast.success('Crawl started');
+      toast.success('Crawl started — runs in the background. Safe to navigate away.');
       setActiveJobId(res.data.id);
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Failed'),
+  });
+
+  const cancel = useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ data: CrawlJob }>(`/api/v1/bot/analyze/${id}/cancel`),
+    onSuccess: () => {
+      toast.success('Stop requested — the worker will exit at the next page boundary.');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Cancel failed'),
   });
 
   const status = useQuery({
@@ -343,13 +378,20 @@ function AnalyzeCard() {
     enabled: !!activeJobId,
     refetchInterval: (q) => {
       const s = q.state.data?.data.status;
+      // Keep polling while the crawl is alive. 2s is responsive without
+      // flooding the API; the worker page boundary is ~3s on average.
       return s === 'pending' || s === 'running' ? 2000 : false;
     },
   });
 
   const job = status.data?.data;
+  const isLive = job && (job.status === 'pending' || job.status === 'running');
   const done =
-    job && (job.status === 'succeeded' || job.status === 'failed' || job.status === 'partial');
+    job &&
+    (job.status === 'succeeded' ||
+      job.status === 'failed' ||
+      job.status === 'partial' ||
+      job.status === 'cancelled');
 
   useEffect(() => {
     if (done) qc.invalidateQueries({ queryKey: ['bot-kb'] });
@@ -438,14 +480,33 @@ function AnalyzeCard() {
                 · {job.pagesCrawled} crawled
                 {job.pagesFailed > 0 ? <> · {job.pagesFailed} failed</> : null}
               </span>
+              {isLive ? (
+                <>
+                  <span className="ml-auto text-[11px] text-foreground-subtle">
+                    Safe to navigate away
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => cancel.mutate(job.id)}
+                    loading={cancel.isPending}
+                    className="h-7 px-2 text-xs"
+                  >
+                    Stop
+                  </Button>
+                </>
+              ) : null}
             </div>
             {job.errorMessage ? (
               <p className="mt-1 text-xs text-amber-700">{job.errorMessage}</p>
             ) : null}
-            {(job.status === 'succeeded' || job.status === 'failed') &&
-              job.pagesCrawled > 0 ? (
-                <CrawlResultsViewer jobId={job.id} />
-              ) : null}
+            {(job.status === 'succeeded' ||
+              job.status === 'failed' ||
+              job.status === 'cancelled' ||
+              job.status === 'partial') &&
+            job.pagesCrawled > 0 ? (
+              <CrawlResultsViewer jobId={job.id} />
+            ) : null}
           </div>
         ) : null}
       </CardContent>

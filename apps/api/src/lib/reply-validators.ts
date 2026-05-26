@@ -23,7 +23,9 @@ export type ValidatorCategory =
   | 'handoff_false_positive'
   | 'welcome_repeat'
   | 'cart_marker_missing'
-  | 'currency_subunit_conversion';
+  | 'currency_subunit_conversion'
+  | 'em_dash_stripped'
+  | 'sku_stripped';
 
 export interface ValidatorWarning {
   category: ValidatorCategory;
@@ -453,6 +455,105 @@ type Validator = (
   ctx: ValidationContext,
 ) => { reply: string; warnings: ValidatorWarning[] };
 
+// --------------------------------------------------------------------------
+// Em-dash / en-dash strip.
+//
+// The system prompt says "no em-dashes" but gpt-4o-mini routinely ignores
+// soft style rules. This validator replaces any em-dash (—) or en-dash (–)
+// in the reply with a comma + space, OR a period + space when it sits
+// between two sentence-shaped clauses. Hyphen-minus (-) inside words is
+// preserved (e.g. "self-service").
+// --------------------------------------------------------------------------
+function stripEmDashes(reply: string, _ctx: ValidationContext): {
+  reply: string;
+  warnings: ValidatorWarning[];
+} {
+  if (!/[—–]/.test(reply)) return { reply, warnings: [] };
+  const before = reply;
+  // Pattern: optional whitespace, dash, optional whitespace → ", "
+  // Then collapse any double-comma artefacts and tighten end-of-sentence.
+  const out = reply
+    .replace(/\s*[—–]\s*/g, ', ')
+    .replace(/,\s*,/g, ',')
+    .replace(/,\s*\./g, '.')
+    .replace(/,\s*$/gm, '');
+  return {
+    reply: out,
+    warnings: out !== before
+      ? [{ category: 'em_dash_stripped', detail: 'Replaced em/en dash with comma+space.' }]
+      : [],
+  };
+}
+
+// --------------------------------------------------------------------------
+// SKU strip.
+//
+// Customer wants SKUs (internal identifiers) never to appear in visible
+// replies. The prompt has an explicit rule but we belt-and-brace it: for
+// each in-scope catalog product/service SKU, scan the reply text for an
+// occurrence — case-insensitive, word-boundary-aware — and remove it
+// along with any surrounding parentheses / "sku:"-style prefix.
+//
+// Important: do NOT strip the SKU INSIDE [IMAGE: <SKU>] markers — the
+// marker is a load-bearing instruction the image-attach station needs.
+// We split the reply on markers, only sanitize the prose chunks, and
+// re-join.
+// --------------------------------------------------------------------------
+function stripCatalogSkus(reply: string, ctx: ValidationContext): {
+  reply: string;
+  warnings: ValidatorWarning[];
+} {
+  // Build the SKU set from in-scope candidates. ctx.kb.products is the
+  // product set the LLM saw; that's exactly the right scope.
+  const productSkus = (ctx.kb.products ?? [])
+    .map((p) => p.sku)
+    .filter((s): s is string => typeof s === 'string' && s.length >= 3);
+  if (productSkus.length === 0) return { reply, warnings: [] };
+
+  // Split reply on the [IMAGE: ...] marker so we never touch its contents.
+  // The split keeps capture groups in the result array so we can re-join
+  // verbatim. Result alternates: [text, marker, text, marker, ..., text]
+  const MARKER_RE = /(\[IMAGE:\s*[^\]]+\])/gi;
+  const parts = reply.split(MARKER_RE);
+
+  let stripped = false;
+  const sanitized = parts.map((segment, idx) => {
+    if (idx % 2 === 1) return segment; // odd indices are the markers themselves
+    let s = segment;
+    for (const sku of productSkus) {
+      // Match the SKU optionally surrounded by parens / sku-ref: prefix /
+      // commas, case-insensitive. \b boundaries don't always work on
+      // identifiers with hyphens, so we anchor on character classes.
+      const escaped = sku.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const patterns = [
+        // "(SKU)"  or  " (SKU) "
+        new RegExp(`\\s*\\(\\s*${escaped}\\s*\\)`, 'gi'),
+        // "sku-ref:SKU" or "sku:SKU" / ", sku-ref:SKU"
+        new RegExp(`\\s*[·,]?\\s*(?:sku[- ]?ref|sku|ref)\\s*:?\\s*${escaped}`, 'gi'),
+        // bare " SKU " or end-of-sentence " SKU."
+        new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, 'gi'),
+      ];
+      for (const re of patterns) {
+        const next = s.replace(re, '');
+        if (next !== s) {
+          stripped = true;
+          s = next;
+        }
+      }
+    }
+    // Tidy double-spaces / orphan punctuation left behind.
+    return s.replace(/[ \t]{2,}/g, ' ').replace(/\(\s*\)/g, '').replace(/\s+([.,!?])/g, '$1');
+  });
+
+  const out = sanitized.join('');
+  return {
+    reply: out,
+    warnings: stripped
+      ? [{ category: 'sku_stripped', detail: 'Removed catalog SKU(s) from visible reply.' }]
+      : [],
+  };
+}
+
 export function validateReply(ctx: ValidationContext): ValidationResult {
   const allWarnings: ValidatorWarning[] = [];
   let reply = ctx.reply;
@@ -472,6 +573,11 @@ export function validateReply(ctx: ValidationContext): ValidationResult {
     validateBookingFidelity,
     validateHandoffMarker,
     validateCurrencySubunits,
+    // Operator-requested style enforcement. Both run AFTER image-marker
+    // validation so the [IMAGE: <SKU>] marker is in known shape — the SKU
+    // strip skips marker contents specifically.
+    stripCatalogSkus,
+    stripEmDashes,
     dedupWelcomeText,
   ];
 

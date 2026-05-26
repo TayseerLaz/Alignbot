@@ -1,10 +1,12 @@
 // Phase 2 §4.1.1 — website crawler + LLM analysis worker.
 //
-// Strategy (MVP, fetch-based, not Playwright):
+// Strategy (Playwright-rendered):
 //   1. BFS-walk pages within the same origin starting at root_url.
 //   2. Up to maxPages, up to maxDepth links deep.
-//   3. For each page: GET (5s timeout), parse with Cheerio, strip
-//      script/style/nav/footer/header, extract title + body text.
+//   3. For each page: launch a headless Chromium context, navigate with
+//      `waitUntil: 'networkidle'` so React / Vue / Next-rendered SPA
+//      content has time to mount, then extract page.content() and feed
+//      it to cheerio for prose extraction.
 //   4. Persist to crawl_pages.
 //   5. Once crawl is done, fan out a single LLM analyze call that turns the
 //      cleaned corpus into KnowledgeBaseEntry rows + detected_tone, which
@@ -13,12 +15,16 @@
 // SSRF: we route every fetch through assertSafeOutboundUrl so a tenant
 // can't aim the crawler at internal services.
 //
-// SPA limitation (documented): pages that render content via JS won't be
-// covered. Add Playwright in a follow-up if pilots need it.
+// Why Playwright vs the old plain HTTP fetcher: SPAs (alinia, most modern
+// estate / e-commerce / SaaS marketing sites) return only a minimal HTML
+// shell over HTTP — the actual property cards / product cards / FAQs
+// don't exist until JavaScript runs in the browser and renders them. The
+// HTTP-only crawler captured the shell on every URL (same 277-char skeleton
+// across the entire site), which made the KB extraction nearly empty.
 import { assertSafeOutboundUrl, UrlGuardError } from '@aligned/shared';
 import { Worker } from 'bullmq';
 import * as cheerio from 'cheerio';
-import { request as undiciRequest } from 'undici';
+import type { Browser, BrowserContext, Page } from 'playwright';
 
 import { isOpenAIConfigured, workerComplete } from '../lib/openai.js';
 import { env } from '../lib/env.js';
@@ -32,7 +38,30 @@ interface CrawlPayload {
 }
 
 const MAX_BODY_BYTES = 100_000; // 100 KB per page
-const FETCH_TIMEOUT_MS = 5_000;
+const PAGE_TIMEOUT_MS = 30_000; // SPAs need time for JS + network idle
+const NETWORK_IDLE_MS = 1_500;   // shortened — many SPAs poll continuously
+
+// Lazy-initialised, lifecycle-managed Chromium. ONE browser process per
+// worker (cold start ~1s; subsequent pages share it). Each page gets its
+// own incognito-style context so cookies / localStorage don't bleed
+// between sites. The browser is never explicitly closed during the
+// worker's lifetime — the process restart on each deploy bounds the
+// memory footprint.
+let _browser: Browser | null = null;
+async function getBrowser(): Promise<Browser> {
+  if (_browser && _browser.isConnected()) return _browser;
+  const { chromium } = await import('playwright');
+  _browser = await chromium.launch({
+    headless: true,
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+    ],
+  });
+  return _browser;
+}
 
 function sameOrigin(a: URL, b: URL): boolean {
   return a.origin === b.origin;
@@ -52,23 +81,70 @@ async function fetchOnePage(url: string): Promise<{
   html: string | null;
   error?: string;
 }> {
+  let context: BrowserContext | null = null;
+  let page: Page | null = null;
   try {
-    const res = await undiciRequest(url, {
-      method: 'GET',
-      headers: {
-        'user-agent': 'HaderBot/1.0 (+https://hader.ai/bot)',
-        accept: 'text/html,application/xhtml+xml',
-      },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    const browser = await getBrowser();
+    // Fresh context per page: isolated cookies / storage so cross-site
+    // tracking + previous-page side effects can't influence this fetch.
+    context = await browser.newContext({
+      userAgent:
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)' +
+        ' Chrome/120.0.0.0 Safari/537.36 HaderBot/1.0 (+https://hader.ai/bot)',
+      viewport: { width: 1280, height: 800 },
+      javaScriptEnabled: true,
+      // Most public marketing sites don't gate on locale; defaulting to
+      // en-US is the safest baseline. The bot itself handles whatever
+      // language the rendered content arrives in.
+      locale: 'en-US',
     });
-    const ctype = (res.headers['content-type'] as string | undefined) ?? null;
-    if (!ctype || !ctype.includes('text/html')) {
-      return { status: res.statusCode, contentType: ctype, html: null };
+    page = await context.newPage();
+
+    // Block images / media / fonts so the crawler isn't pulling MBs of
+    // assets it'll never use. Stylesheets stay enabled because some
+    // sites render content only when CSS resolves (rare but real).
+    // Documents / scripts / xhr / fetch all proceed normally — the
+    // whole point of using Playwright is to let the JS run.
+    await page.route('**/*', (route) => {
+      const t = route.request().resourceType();
+      if (t === 'image' || t === 'media' || t === 'font') return route.abort();
+      return route.continue();
+    });
+
+    const response = await page.goto(url, {
+      waitUntil: 'networkidle',
+      timeout: PAGE_TIMEOUT_MS,
+    });
+
+    // Some SPAs (alinia is one) keep a long-poll / websocket open, so
+    // 'networkidle' never fires within the timeout. Fall back to
+    // 'domcontentloaded' + a fixed wait — typically catches the
+    // post-mount render that we actually care about.
+    if (!response) {
+      await page.waitForLoadState('domcontentloaded', { timeout: PAGE_TIMEOUT_MS });
+      await page.waitForTimeout(NETWORK_IDLE_MS);
     }
-    const html = await res.body.text();
-    return { status: res.statusCode, contentType: ctype, html };
+
+    const status = response?.status() ?? 0;
+    const ctypeHeader = response?.headers()['content-type'] ?? null;
+    // Always grab page.content() — that's the FULLY RENDERED HTML, not
+    // the original document.
+    const html = await page.content();
+    return { status, contentType: ctypeHeader, html };
   } catch (err) {
-    return { status: 0, contentType: null, html: null, error: err instanceof Error ? err.message : String(err) };
+    return {
+      status: 0,
+      contentType: null,
+      html: null,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    try {
+      if (page) await page.close({ runBeforeUnload: false });
+    } catch { /* noop */ }
+    try {
+      if (context) await context.close();
+    } catch { /* noop */ }
   }
 }
 

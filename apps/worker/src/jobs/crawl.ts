@@ -245,6 +245,16 @@ export function startCrawlWorker() {
           }
           const $ = cheerio.load(r.html);
           const title = $('title').first().text().trim() || null;
+          // Order matters here. extractLinks reads <a href> across the
+          // whole document; cleanText calls .remove() on header/nav/
+          // footer/script/style which would DESTROY the navigation
+          // anchors that extractLinks needs to walk. Pre-2026-05-27
+          // these ran in the wrong order and the crawler queued zero
+          // children on any site whose nav was wrapped in proper
+          // <header><nav>...</nav></header> (most modern frameworks).
+          const childLinks = next.depth < meta.maxDepth
+            ? extractLinks($, next.url)
+            : [];
           const text = cleanText($);
           await prisma.crawlPage.create({
             data: {
@@ -262,9 +272,10 @@ export function startCrawlWorker() {
             where: { id: crawlJobId },
             data: { pagesCrawled: crawled, pagesFailed: failed },
           });
-          // Enqueue children if we still have budget + depth.
+          // Enqueue children we just collected (before cleanText nuked
+          // the source elements).
           if (next.depth < meta.maxDepth) {
-            for (const link of extractLinks($, next.url)) {
+            for (const link of childLinks) {
               const key = link.toString().split('#')[0]!;
               if (!seen.has(key)) {
                 seen.add(key);

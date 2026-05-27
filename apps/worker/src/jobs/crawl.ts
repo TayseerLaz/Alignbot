@@ -322,11 +322,27 @@ export function startCrawlWorker() {
 
         // Run LLM analysis if configured. Otherwise mark partial.
         let analysisOK = false;
+        let listingsCreated = 0;
         if (isOpenAIConfigured() && cleanCorpus.length > 0) {
           analysisOK = await analyzeAndPersist(organizationId, cleanCorpus).catch((err) => {
             console.error('[crawl] analysis failed', err);
             return false;
           });
+          // Second pass: extract per-listing structured products from any
+          // listing-shaped page (multiple price patterns + repeating card
+          // structure). Lands as DRAFT products (isAvailable=false) so
+          // the operator reviews before they go live in the bot.
+          listingsCreated = await extractAndPersistListings(
+            organizationId,
+            crawlJobId,
+            cleanCorpus,
+          ).catch((err) => {
+            console.error('[crawl] listings extract failed', err);
+            return 0;
+          });
+          if (listingsCreated > 0) {
+            console.info(`[crawl] extracted ${listingsCreated} draft Product rows from listing pages`);
+          }
         }
 
         const status = failed > 0 && crawled === 0 ? 'failed' : analysisOK ? 'succeeded' : 'partial';
@@ -500,4 +516,231 @@ Rules:
   });
 
   return true;
+}
+
+// ----------------------------------------------------------------------------
+// Listings → Products extractor
+// ----------------------------------------------------------------------------
+// Many tenant sites are catalogues at heart — real-estate listing pages,
+// restaurant menus, dealership inventories, service directories. The
+// crawler captures the listing PAGE (one URL, many cards inside) but
+// individual detail pages are usually behind JS onClick handlers with
+// no <a href> the BFS can follow.
+//
+// This extractor takes the rendered prose of each listing-shaped page
+// and asks the LLM to return STRUCTURED products. Each product becomes
+// a Product row in the tenant's catalog as a DRAFT (isAvailable=false)
+// — the operator reviews + publishes via /products.
+//
+// Idempotency: SKU is a deterministic hash of name+location, so a
+// re-crawl picking up the same listings upserts rather than duplicates.
+// We only update existing rows that are STILL drafts; operator-edited
+// or operator-published rows are left alone so manual fixes survive.
+
+const PRICE_LIKE_RE = /(?:\$|€|£|USD|EUR|GBP|KWD|AED|SAR|BHD|OMR|JOD|LBP|EGP)[\s\d.,/-]{1,30}|[\d.,]{1,12}\s*(?:USD|EUR|GBP|KWD|AED|SAR|BHD|OMR|JOD|LBP|EGP|\$|€|£)/gi;
+
+function looksLikeListingPage(text: string): boolean {
+  if (!text) return false;
+  // 8+ price-shaped tokens = "this page has a list of things with prices".
+  const prices = text.match(PRICE_LIKE_RE);
+  return (prices?.length ?? 0) >= 8;
+}
+
+function slugifyName(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60);
+}
+
+async function extractAndPersistListings(
+  organizationId: string,
+  crawlJobId: string,
+  corpus: { url: string; title: string | null; text: string }[],
+): Promise<number> {
+  // Filter to listing-shaped pages only. For most tenants this will be
+  // 1-3 pages out of a 10-30 page crawl.
+  const listingPages = corpus.filter((p) => looksLikeListingPage(p.text));
+  if (listingPages.length === 0) return 0;
+
+  const systemPrompt = `You extract individual product listings from a category / inventory / directory page.
+Return STRICT JSON in this shape, nothing else:
+
+{
+  "products": [
+    {
+      "name": "<exact name from the page>",
+      "shortDescription": "<one or two sentences summarizing key features, max 200 chars>",
+      "priceMajor": <number, the price as a normal decimal e.g. 550000 or 1.250 or null if unclear>,
+      "currency": "<ISO 4217 code e.g. USD, KWD, EUR>",
+      "location": "<location/region string from the listing, or empty string>",
+      "category": "<best one-word category: 'Apartment', 'Villa', 'Land', 'Office', 'Commercial', 'Service', 'Product', etc.>",
+      "attributes": {"bedrooms": <int or null>, "bathrooms": <int or null>, "sqm": <int or null>}
+    }
+  ]
+}
+
+Rules:
+- Extract every distinct listing you can confidently identify. Cap at 60 per response.
+- name + currency are required. Skip cards missing either.
+- Use the EXACT name and price text as shown — do not paraphrase or round.
+- priceMajor is the human-readable number (not minor units): 550000 for $550,000; 1.250 for 1.250 KWD.
+- attributes keys may be empty when the listing doesn't say. Don't invent values.
+- Skip duplicates within the same response.`;
+
+  let totalCreated = 0;
+  for (const page of listingPages) {
+    // Cap each page's text at ~40 KB so the LLM call stays well under
+    // any context-window or rate-limit edge case.
+    const userPrompt = `# Source URL\n${page.url}\n\n# Page content\n\n${page.text.slice(0, 40_000)}`;
+
+    let llm: Awaited<ReturnType<typeof workerComplete>>;
+    try {
+      llm = await workerComplete({
+        systemPrompt,
+        userPrompt,
+        maxTokens: 4_000,
+        temperature: 0.2,
+        jsonMode: true,
+      });
+    } catch (err) {
+      console.error('[crawl] listings LLM call failed for', page.url, err instanceof Error ? err.message : err);
+      continue;
+    }
+
+    type ExtractedProduct = {
+      name?: string;
+      shortDescription?: string;
+      priceMajor?: number | string | null;
+      currency?: string;
+      location?: string;
+      category?: string;
+      attributes?: Record<string, unknown>;
+    };
+    type ExtractedShape = { products?: ExtractedProduct[] };
+
+    function extractJsonBlock(s: string): string {
+      const trimmed = s.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+      if (trimmed.startsWith('{')) return trimmed;
+      const f = trimmed.indexOf('{');
+      const l = trimmed.lastIndexOf('}');
+      return f >= 0 && l > f ? trimmed.slice(f, l + 1) : trimmed;
+    }
+    let extracted: ExtractedShape | null = null;
+    try {
+      extracted = JSON.parse(extractJsonBlock(llm.text)) as ExtractedShape;
+    } catch (err) {
+      console.warn(
+        '[crawl] listings JSON parse failed for', page.url,
+        err instanceof Error ? err.message : err,
+        '— first 400 chars:', llm.text.slice(0, 400),
+      );
+      continue;
+    }
+    const products = (extracted?.products ?? []).slice(0, 60);
+    if (products.length === 0) continue;
+
+    const { createHash } = await import('node:crypto');
+    await withRlsBypass(async (tx) => {
+      // Look up the org's default currency once for fallback / price
+      // conversion (KWD/BHD/OMR/JOD use 1000, others use 100).
+      const biz = await tx.businessInfo.findFirst({
+        where: { organizationId },
+        select: { currency: true },
+      });
+      const orgCurrency = (biz?.currency ?? 'USD').toUpperCase();
+
+      for (const p of products) {
+        if (!p.name || p.name.trim().length === 0) continue;
+        const name = p.name.trim().slice(0, 200);
+        const currency = (p.currency ?? orgCurrency).toUpperCase().slice(0, 3);
+        // Convert priceMajor to minor units. Handle string + number inputs.
+        let priceMinor: number | null = null;
+        if (p.priceMajor != null && p.priceMajor !== '') {
+          const major = typeof p.priceMajor === 'string'
+            ? Number(p.priceMajor.replace(/[^0-9.]/g, ''))
+            : Number(p.priceMajor);
+          if (Number.isFinite(major) && major > 0) {
+            const multiplier = ['KWD', 'BHD', 'OMR', 'JOD'].includes(currency) ? 1000 : 100;
+            priceMinor = Math.round(major * multiplier);
+          }
+        }
+
+        // Deterministic SKU per (name, location) — same listing across
+        // re-crawls produces the same SKU so upsert is idempotent.
+        const skuBase = createHash('sha256')
+          .update(`${name}|${p.location ?? ''}`.toLowerCase())
+          .digest('hex')
+          .slice(0, 10)
+          .toUpperCase();
+        const sku = `CRAWL-${skuBase}`;
+        const slug = `crawl-${skuBase.toLowerCase()}-${slugifyName(name).slice(0, 40)}` || `crawl-${skuBase.toLowerCase()}`;
+
+        const attributes: Record<string, unknown> = {
+          ...(p.attributes ?? {}),
+          source: 'crawl',
+          crawlJobId,
+          sourceUrl: page.url,
+        };
+        if (p.location) attributes.location = String(p.location).slice(0, 200);
+        if (p.category) attributes.category = String(p.category).slice(0, 60);
+
+        // Only touch existing rows that are STILL drafts. If the operator
+        // has published or edited a row, the re-crawl leaves it alone so
+        // manual fixes survive.
+        const existing = await tx.product.findUnique({
+          where: { organizationId_sku: { organizationId, sku } },
+          select: { id: true, isAvailable: true, attributes: true },
+        });
+        const stillDraft =
+          existing && !existing.isAvailable &&
+          (existing.attributes as Record<string, unknown> | null)?.source === 'crawl';
+
+        if (existing && !stillDraft) {
+          // Operator-managed row — skip silently.
+          continue;
+        }
+
+        if (existing && stillDraft) {
+          await tx.product.update({
+            where: { id: existing.id },
+            data: {
+              name,
+              shortDescription: p.shortDescription?.slice(0, 200) ?? null,
+              priceMinor,
+              currency,
+              attributes: attributes as never,
+            },
+          });
+          totalCreated += 1; // count as touched
+        } else {
+          try {
+            await tx.product.create({
+              data: {
+                organizationId,
+                sku,
+                name,
+                slug,
+                shortDescription: p.shortDescription?.slice(0, 200) ?? null,
+                priceMinor,
+                currency,
+                isAvailable: false, // DRAFT — operator must publish via /products
+                attributes: attributes as never,
+              },
+            });
+            totalCreated += 1;
+          } catch (err) {
+            // Slug collision is the most likely cause — another draft
+            // with a near-identical name. Skip and move on.
+            console.warn('[crawl] product create failed for', name, err instanceof Error ? err.message : err);
+          }
+        }
+      }
+    });
+  }
+
+  return totalCreated;
 }

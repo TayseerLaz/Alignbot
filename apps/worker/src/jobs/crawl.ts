@@ -202,7 +202,20 @@ export function startCrawlWorker() {
         const queue: { url: URL; depth: number }[] = [{ url: rootUrl, depth: 0 }];
         let crawled = 0;
         let failed = 0;
+        let dedupSkipped = 0;
         const cleanCorpus: { url: string; title: string | null; text: string }[] = [];
+        // Body-hash dedup. SPAs typically render the same shell for any
+        // URL whose JS reads ?param=… and filters client-side — alinia's
+        // /properties?location=beirut etc. all return the identical
+        // 22,904-char body. Without this, the crawl wastes ~3s per dupe
+        // page AND ships duplicate content to the LLM analyse step,
+        // both bloating tokens and skewing the KB toward whatever the
+        // SPA happens to dump on every URL. We hash the cleaned body
+        // text after extraction; if a hash collides with one we've
+        // already stored, we drop the row + don't enqueue any links
+        // from it (its links are by definition the same as the dupe).
+        const { createHash } = await import('node:crypto');
+        const seenBodyHashes = new Set<string>();
 
         while (queue.length > 0 && crawled + failed < meta.maxPages) {
           // Cancellation check. The operator can flip the job's status to
@@ -256,6 +269,22 @@ export function startCrawlWorker() {
             ? extractLinks($, next.url)
             : [];
           const text = cleanText($);
+
+          // Body-hash dedup. Skip pages whose extracted prose matches a
+          // page we've already crawled — typically client-side filter
+          // variants (e.g. /properties?location=beirut returning the
+          // identical shell as /properties). We DON'T enqueue children
+          // from a dupe page either: they'd be the same children as
+          // the page we already have.
+          const bodyHash = createHash('sha256').update(text).digest('hex');
+          if (text.length > 0 && seenBodyHashes.has(bodyHash)) {
+            dedupSkipped += 1;
+            // Continue without persisting / enqueuing. Don't count as
+            // a failure either — it's a deliberate skip.
+            continue;
+          }
+          seenBodyHashes.add(bodyHash);
+
           await prisma.crawlPage.create({
             data: {
               organizationId,
@@ -284,6 +313,12 @@ export function startCrawlWorker() {
             }
           }
         }
+
+        console.info(
+          `[crawl] BFS finished: crawled=${crawled} failed=${failed} ` +
+            `dedup_skipped=${dedupSkipped} unique_bodies=${seenBodyHashes.size} ` +
+            `corpus_chars=${cleanCorpus.reduce((s, p) => s + p.text.length, 0)}`,
+        );
 
         // Run LLM analysis if configured. Otherwise mark partial.
         let analysisOK = false;
@@ -379,30 +414,47 @@ Rules:
       userPrompt,
       maxTokens: 4_000,
       temperature: 0.2,
+      // JSON mode — Groq returns only a valid JSON object, no preamble,
+      // no code fences. Eliminates the entire class of "model wrapped
+      // its output in ```json or added 'Here you go:' before it" parse
+      // failures that the regex-strip below used to swallow silently.
+      jsonMode: true,
     });
   } catch (err) {
-    console.error('[crawl] LLM call failed', err);
+    console.error('[crawl] LLM call failed', err instanceof Error ? err.message : err);
     return false;
   }
 
-  // Try to parse JSON — strip any leading/trailing crap the model might
-  // produce despite the instruction.
-  const trimmed = llm.text.trim().replace(/^```json/i, '').replace(/```$/i, '').trim();
   type Parsed = {
     tone?: string;
     summary?: string;
     entries?: { kind: string; question: string; answer: string; sourceUrl?: string }[];
   };
+  // Robust JSON extraction: prefer the whole text (jsonMode should make
+  // it pure JSON), but fall back to a `{ ... }` slice if the model snuck
+  // in any wrapping prose anyway.
+  function extractJsonBlock(s: string): string {
+    const trimmed = s.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+    if (trimmed.startsWith('{')) return trimmed;
+    const first = trimmed.indexOf('{');
+    const last = trimmed.lastIndexOf('}');
+    if (first >= 0 && last > first) return trimmed.slice(first, last + 1);
+    return trimmed;
+  }
+
   let parsed: Parsed | null = null;
   try {
-    parsed = JSON.parse(trimmed) as Parsed;
-  } catch {
+    parsed = JSON.parse(extractJsonBlock(llm.text)) as Parsed;
+  } catch (err) {
     parsed = null;
+    console.warn(
+      '[crawl] could not parse LLM output as JSON',
+      err instanceof Error ? err.message : err,
+      '— first 400 chars of output:',
+      llm.text.slice(0, 400),
+    );
   }
-  if (!parsed) {
-    console.warn('[crawl] could not parse LLM output as JSON');
-    return false;
-  }
+  if (!parsed) return false;
 
   await withRlsBypass(async (tx) => {
     // Upsert detected tone onto the bot config (create the row if missing).

@@ -34,12 +34,17 @@ export async function workerComplete(args: {
   userPrompt: string;
   maxTokens?: number;
   temperature?: number;
+  // When true, the model is asked to return STRICT JSON (no prose, no
+  // code fences). Used by the crawl-analyze step so we don't have to
+  // guess at fence markers in the output.
+  jsonMode?: boolean;
 }): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
   const c = client();
   const res = await c.chat.completions.create({
     model: env.GROQ_MODEL,
     max_tokens: args.maxTokens ?? 2048,
     temperature: args.temperature ?? 0.3,
+    ...(args.jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
     messages: [
       { role: 'system', content: args.systemPrompt },
       { role: 'user', content: args.userPrompt },

@@ -69,8 +69,29 @@ async function getBrowser(): Promise<Browser> {
   return _browser;
 }
 
-function sameOrigin(a: URL, b: URL): boolean {
-  return a.origin === b.origin;
+// Strip a leading "www." from a hostname so the apex of legabarit.com and
+// www.legabarit.com (and any subdomain off either) all evaluate as the
+// same business. Doesn't claim public-suffix-list accuracy — for the
+// common case (.com / .org / .net + most country TLDs operators use)
+// the apex is the rightmost two labels after the trim.
+function apexOf(hostname: string): string {
+  const cleaned = hostname.replace(/^www\./i, '').toLowerCase();
+  return cleaned;
+}
+
+// Two URLs share a base domain when the candidate's hostname equals the
+// root's apex hostname, OR is a subdomain of it. Allows the crawler to
+// follow legabarit.com → store.legabarit.com → shop.legabarit.com (the
+// canonical pattern for a marketing site + separate e-commerce store)
+// without wandering onto Facebook / Instagram / partner sites.
+function sameBaseDomain(candidate: URL, root: URL): boolean {
+  const candidateHost = candidate.hostname.toLowerCase();
+  const rootApex = apexOf(root.hostname);
+  if (candidateHost === rootApex) return true;
+  if (candidateHost.endsWith('.' + rootApex)) return true;
+  // Also accept candidate-with-www if the root was the apex.
+  if (candidateHost === 'www.' + rootApex) return true;
+  return false;
 }
 
 function cleanText($: cheerio.CheerioAPI): string {
@@ -160,7 +181,7 @@ function extractLinks($: cheerio.CheerioAPI, base: URL): URL[] {
     if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
     try {
       const u = new URL(href, base);
-      if (sameOrigin(u, base)) out.push(u);
+      if (sameBaseDomain(u, base)) out.push(u);
     } catch {
       /* ignore */
     }

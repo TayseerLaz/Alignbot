@@ -5,6 +5,9 @@ import {
   Activity,
   ArrowRightToLine,
   Building2,
+  Copy,
+  Eye,
+  KeyRound,
   Pause,
   Play,
   Plus,
@@ -22,6 +25,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { api, ApiError, setAccessToken } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
@@ -122,6 +132,10 @@ export default function AlignedAdminPage() {
     onError: (err) =>
       toast.error(err instanceof ApiError ? err.payload.message : 'Could not open this org.'),
   });
+
+  // Org details dialog state. Null = closed. We track the row that
+  // opened it so the dialog can show the org name in its header.
+  const [detailsOpenFor, setDetailsOpenFor] = useState<OrgRow | null>(null);
 
   if (!session?.user.isAlignedAdmin) {
     return (
@@ -295,6 +309,14 @@ export default function AlignedAdminPage() {
                         <Button
                           size="sm"
                           variant="ghost"
+                          onClick={() => setDetailsOpenFor(o)}
+                          title="See members, emails, last logins, audit log."
+                        >
+                          <Eye className="size-4" /> Details
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
                           onClick={() => controlOrg.mutate(o)}
                           disabled={controlOrg.isPending || o.status !== 'active'}
                           title={
@@ -333,7 +355,272 @@ export default function AlignedAdminPage() {
           )}
         </CardContent>
       </Card>
+      <OrgDetailsDialog
+        org={detailsOpenFor}
+        onClose={() => setDetailsOpenFor(null)}
+      />
     </>
+  );
+}
+
+// ---------- Org details dialog --------------------------------------------
+// Lazy-fetches /aligned-admin/orgs/:id/details only when opened. Shows
+// the admin email, full member list with last-login + 2FA + lock status,
+// WhatsApp channel health, recent audit log. Per-member "Send reset
+// link" generates a one-hour reset URL the operator can DM to the
+// customer — the platform never stores or shows plaintext passwords.
+interface OrgDetailsResponse {
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+  createdAt: string;
+  members: Array<{
+    userId: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+    role: string;
+    isActive: boolean;
+    status: string;
+    emailVerified: boolean;
+    totpEnabled: boolean;
+    lastLoginAt: string | null;
+    failedLoginAttempts: number;
+    lockedUntil: string | null;
+    joinedAt: string;
+  }>;
+  whatsappChannel: {
+    displayPhoneNumber: string | null;
+    phoneNumberId: string | null;
+    isActive: boolean;
+    isPrimary: boolean;
+  } | null;
+  counts: {
+    products: number;
+    services: number;
+    faqs: number;
+    apiKeys: number;
+    webhooks: number;
+  };
+  recentAuditLog: Array<{
+    action: string;
+    actorEmail: string | null;
+    ipAddress: string | null;
+    createdAt: string;
+  }>;
+}
+
+function OrgDetailsDialog({ org, onClose }: { org: OrgRow | null; onClose: () => void }) {
+  const enabled = !!org;
+  const details = useQuery({
+    queryKey: ['admin-org-details', org?.id],
+    queryFn: () =>
+      api.get<{ data: OrgDetailsResponse }>(`/api/v1/aligned-admin/orgs/${org!.id}/details`),
+    enabled,
+    staleTime: 15_000,
+  });
+
+  const [resetLink, setResetLink] = useState<{
+    email: string;
+    url: string;
+    expiresAt: string;
+  } | null>(null);
+
+  const sendReset = useMutation({
+    mutationFn: (userId: string) =>
+      api.post<{ data: { userEmail: string; resetUrl: string; expiresAt: string } }>(
+        `/api/v1/aligned-admin/users/${userId}/reset-link`,
+        {},
+      ),
+    onSuccess: (res) =>
+      setResetLink({ email: res.data.userEmail, url: res.data.resetUrl, expiresAt: res.data.expiresAt }),
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Could not issue reset link.'),
+  });
+
+  const d = details.data?.data;
+
+  return (
+    <Dialog open={enabled} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>{org?.name ?? 'Organisation details'}</DialogTitle>
+          <DialogDescription>
+            Slug: <code>{org?.slug}</code> · Status: {org?.status}
+          </DialogDescription>
+        </DialogHeader>
+        {details.isLoading ? (
+          <p className="text-sm text-foreground-muted">Loading…</p>
+        ) : details.isError || !d ? (
+          <p className="text-sm text-amber-700">Could not load details.</p>
+        ) : (
+          <div className="space-y-5 text-sm">
+            {/* ---------- Counts strip ------------------------------- */}
+            <div className="flex flex-wrap gap-2 text-xs">
+              <Badge>{d.counts.products} products</Badge>
+              <Badge>{d.counts.services} services</Badge>
+              <Badge>{d.counts.faqs} FAQs</Badge>
+              <Badge>{d.counts.apiKeys} API keys</Badge>
+              <Badge>{d.counts.webhooks} webhooks</Badge>
+              {d.whatsappChannel ? (
+                <Badge
+                  className={
+                    d.whatsappChannel.isActive
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-rose-100 text-rose-800'
+                  }
+                >
+                  WhatsApp: {d.whatsappChannel.displayPhoneNumber ?? '—'}{' '}
+                  {d.whatsappChannel.isActive ? '✓' : '✗'}
+                </Badge>
+              ) : (
+                <Badge className="bg-amber-100 text-amber-800">No WhatsApp channel</Badge>
+              )}
+            </div>
+
+            {/* ---------- Members table ------------------------------ */}
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-foreground-subtle">
+                Members ({d.members.length})
+              </h3>
+              <div className="overflow-hidden rounded border border-border">
+                <table className="w-full text-xs">
+                  <thead className="bg-surface-muted text-foreground-subtle">
+                    <tr>
+                      <th className="px-2 py-1 text-left font-medium">Email</th>
+                      <th className="px-2 py-1 text-left font-medium">Role</th>
+                      <th className="px-2 py-1 text-left font-medium">Status</th>
+                      <th className="px-2 py-1 text-left font-medium">Last login</th>
+                      <th className="px-2 py-1 text-right font-medium">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.members.map((m) => (
+                      <tr key={m.userId} className="border-t border-border">
+                        <td className="px-2 py-1.5">
+                          <div className="font-medium">{m.email}</div>
+                          {(m.firstName || m.lastName) ? (
+                            <div className="text-[11px] text-foreground-muted">
+                              {[m.firstName, m.lastName].filter(Boolean).join(' ')}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="px-2 py-1.5 capitalize">{m.role}</td>
+                        <td className="px-2 py-1.5">
+                          <div className="flex flex-wrap gap-1">
+                            {m.isActive ? (
+                              <span className="rounded bg-emerald-100 px-1 text-[10px] text-emerald-800">
+                                active
+                              </span>
+                            ) : (
+                              <span className="rounded bg-zinc-200 px-1 text-[10px] text-zinc-700">
+                                inactive
+                              </span>
+                            )}
+                            {m.emailVerified ? (
+                              <span className="rounded bg-emerald-100 px-1 text-[10px] text-emerald-800">
+                                verified
+                              </span>
+                            ) : (
+                              <span className="rounded bg-amber-100 px-1 text-[10px] text-amber-800">
+                                unverified
+                              </span>
+                            )}
+                            {m.totpEnabled ? (
+                              <span className="rounded bg-sky-100 px-1 text-[10px] text-sky-800">
+                                2FA
+                              </span>
+                            ) : null}
+                            {m.lockedUntil ? (
+                              <span className="rounded bg-rose-100 px-1 text-[10px] text-rose-800">
+                                locked
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="px-2 py-1.5 text-foreground-muted">
+                          {m.lastLoginAt ? formatRelative(m.lastLoginAt) : '—'}
+                        </td>
+                        <td className="px-2 py-1.5 text-right">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => sendReset.mutate(m.userId)}
+                            disabled={sendReset.isPending}
+                            title="Generate a one-hour password reset URL for this user."
+                            className="h-7 px-2 text-[11px]"
+                          >
+                            <KeyRound className="size-3" /> Reset link
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* ---------- Reset link surfaced inline ----------------- */}
+            {resetLink ? (
+              <div className="rounded border border-amber-300 bg-amber-50 p-3">
+                <p className="mb-2 text-xs font-medium text-amber-900">
+                  One-hour reset link for <strong>{resetLink.email}</strong> — copy + DM to the
+                  customer. The link is single-use and expires{' '}
+                  {formatRelative(resetLink.expiresAt)}.
+                </p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 truncate rounded bg-white px-2 py-1.5 font-mono text-[11px]">
+                    {resetLink.url}
+                  </code>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(resetLink.url);
+                      toast.success('Copied');
+                    }}
+                  >
+                    <Copy className="size-3" /> Copy
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {/* ---------- Recent audit log --------------------------- */}
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-foreground-subtle">
+                Recent activity ({d.recentAuditLog.length})
+              </h3>
+              <div className="max-h-48 overflow-auto rounded border border-border bg-surface-muted/30 p-2 text-[11px]">
+                {d.recentAuditLog.length === 0 ? (
+                  <p className="text-foreground-muted">No audit entries.</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {d.recentAuditLog.map((a, i) => (
+                      <li key={i} className="flex items-baseline gap-2">
+                        <span className="text-foreground-muted">{formatRelative(a.createdAt)}</span>
+                        <span className="font-mono">{a.action}</span>
+                        {a.actorEmail ? (
+                          <span className="text-foreground-muted">by {a.actorEmail}</span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+
+            {/* ---------- Reminder about passwords ------------------- */}
+            <p className="rounded border border-border bg-surface-muted/40 p-2 text-[11px] text-foreground-muted">
+              Plaintext passwords are never stored or shown — they're bcrypt-hashed at signup. For
+              a locked-out customer, click "Reset link" on their row to issue a one-hour
+              single-use reset URL.
+            </p>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

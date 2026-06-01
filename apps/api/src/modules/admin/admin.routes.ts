@@ -314,6 +314,232 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- GET /aligned-admin/orgs/:id/details -------------------------
+  // Drill-down for a single tenant. Returns the metadata an ALIGNED
+  // admin needs to understand or troubleshoot the account — members
+  // with email + role + last-login + 2FA status, WhatsApp channel
+  // health, custom-domain status, recent audit log. Passwords are
+  // bcrypt-hashed at rest by design — they are NOT recoverable here
+  // (or anywhere). For lockouts, use /users/:id/reset-link below.
+  r.get(
+    '/aligned-admin/orgs/:id/details',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Full details for one organisation: members + channel + recent activity.',
+        params: z.object({ id: uuidSchema }),
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              id: uuidSchema,
+              name: z.string(),
+              slug: z.string(),
+              status: z.string(),
+              createdAt: z.string().datetime(),
+              members: z.array(
+                z.object({
+                  userId: uuidSchema,
+                  email: z.string(),
+                  firstName: z.string().nullable(),
+                  lastName: z.string().nullable(),
+                  role: z.string(),
+                  isActive: z.boolean(),
+                  status: z.string(),
+                  emailVerified: z.boolean(),
+                  totpEnabled: z.boolean(),
+                  lastLoginAt: z.string().datetime().nullable(),
+                  failedLoginAttempts: z.number().int(),
+                  lockedUntil: z.string().datetime().nullable(),
+                  joinedAt: z.string().datetime(),
+                }),
+              ),
+              whatsappChannel: z
+                .object({
+                  displayPhoneNumber: z.string().nullable(),
+                  phoneNumberId: z.string().nullable(),
+                  isActive: z.boolean(),
+                  isPrimary: z.boolean(),
+                })
+                .nullable(),
+              counts: z.object({
+                products: z.number().int(),
+                services: z.number().int(),
+                faqs: z.number().int(),
+                apiKeys: z.number().int(),
+                webhooks: z.number().int(),
+              }),
+              recentAuditLog: z.array(
+                z.object({
+                  action: z.string(),
+                  actorEmail: z.string().nullable(),
+                  ipAddress: z.string().nullable(),
+                  createdAt: z.string().datetime(),
+                }),
+              ),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) =>
+      withRlsBypass(async (tx) => {
+        const org = await tx.organization.findUnique({ where: { id: req.params.id } });
+        if (!org) throw notFound('Organisation not found.');
+
+        const memberships = await tx.membership.findMany({
+          where: { organizationId: org.id },
+          orderBy: [{ role: 'asc' }, { createdAt: 'asc' }],
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                status: true,
+                emailVerifiedAt: true,
+                totpEnabled: true,
+                lastLoginAt: true,
+                failedLoginAttempts: true,
+                lockedUntil: true,
+              },
+            },
+          },
+        });
+
+        const channel = await tx.whatsAppChannel.findFirst({
+          where: { organizationId: org.id, isPrimary: true },
+          select: {
+            displayPhoneNumber: true,
+            phoneNumberId: true,
+            isActive: true,
+            isPrimary: true,
+          },
+        });
+
+        const [productCount, serviceCount, faqCount, apiKeyCount, webhookCount] = await Promise.all([
+          tx.product.count({ where: { organizationId: org.id, deletedAt: null } }),
+          tx.service.count({ where: { organizationId: org.id, deletedAt: null } }),
+          tx.fAQ.count({ where: { organizationId: org.id } }),
+          tx.apiKey.count({ where: { organizationId: org.id, revokedAt: null } }),
+          tx.webhookEndpoint.count({ where: { organizationId: org.id } }),
+        ]);
+
+        const audit = await tx.auditLog.findMany({
+          where: { organizationId: org.id },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+          include: {
+            actor: { select: { email: true } },
+          },
+        });
+
+        return {
+          data: {
+            id: org.id,
+            name: org.name,
+            slug: org.slug,
+            status: org.status,
+            createdAt: org.createdAt.toISOString(),
+            members: memberships.map((m) => ({
+              userId: m.user.id,
+              email: m.user.email,
+              firstName: m.user.firstName,
+              lastName: m.user.lastName,
+              role: m.role,
+              isActive: m.isActive,
+              status: m.user.status,
+              emailVerified: !!m.user.emailVerifiedAt,
+              totpEnabled: m.user.totpEnabled,
+              lastLoginAt: m.user.lastLoginAt?.toISOString() ?? null,
+              failedLoginAttempts: m.user.failedLoginAttempts,
+              lockedUntil: m.user.lockedUntil?.toISOString() ?? null,
+              joinedAt: m.createdAt.toISOString(),
+            })),
+            whatsappChannel: channel,
+            counts: {
+              products: productCount,
+              services: serviceCount,
+              faqs: faqCount,
+              apiKeys: apiKeyCount,
+              webhooks: webhookCount,
+            },
+            recentAuditLog: audit.map((a) => ({
+              action: String(a.action),
+              actorEmail: a.actor?.email ?? null,
+              ipAddress: a.ipAddress ? String(a.ipAddress) : null,
+              createdAt: a.createdAt.toISOString(),
+            })),
+          },
+        };
+      }),
+  );
+
+  // ---------- POST /aligned-admin/users/:id/reset-link ---------------------
+  // ALIGNED-admin convenience: generate a one-time, hour-long password
+  // reset link for any tenant member and return the URL. The admin then
+  // DMs it to the customer (Slack / WhatsApp / email).
+  //
+  // We use the EXACT same token shape as /auth/forgot-password — the
+  // /reset-password page on the portal already validates these. Token
+  // is hashed at rest; only the plaintext URL returned here can
+  // actually reset the password.
+  //
+  // We do NOT show the customer's current password. Passwords are
+  // bcrypt-hashed; the platform never has the plaintext.
+  r.post(
+    '/aligned-admin/users/:id/reset-link',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Generate a one-hour password-reset URL for any user (admin convenience).',
+        params: z.object({ id: uuidSchema }),
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              userEmail: z.string(),
+              resetUrl: z.string().url(),
+              expiresAt: z.string().datetime(),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const { generateOpaqueToken, hashToken } = await import('../../lib/crypto.js');
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+      const result = await withRlsBypass(async (tx) => {
+        const user = await tx.user.findUnique({ where: { id: req.params.id } });
+        if (!user) throw notFound('User not found.');
+        const token = generateOpaqueToken();
+        await tx.user.update({
+          where: { id: user.id },
+          data: {
+            passwordResetTokenHash: hashToken(token),
+            passwordResetExpiresAt: expiresAt,
+          },
+        });
+        return { email: user.email, token };
+      });
+      await recordAudit({
+        action: 'password_reset_requested',
+        actorUserId: req.auth!.userId,
+        entityType: 'user',
+        entityId: req.params.id,
+        metadata: { event: 'aligned_admin_issued_reset_link', userEmail: result.email },
+      });
+      return {
+        data: {
+          userEmail: result.email,
+          resetUrl: `${env.WEB_PUBLIC_URL}/reset-password?token=${result.token}`,
+          expiresAt: expiresAt.toISOString(),
+        },
+      };
+    },
+  );
+
   // ---------- POST /aligned-admin/orgs/:id/impersonate --------------------
   // ALIGNED-admin "Control" action: issue a brand-new session bound to
   // the target org so the admin can browse + edit the tenant's data

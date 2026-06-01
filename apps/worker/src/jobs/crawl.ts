@@ -156,17 +156,37 @@ async function fetchOnePage(url: string): Promise<{
     });
 
     // Wait for the document to parse — fires quickly + reliably even
-    // when the page keeps long-running network connections open.
-    const response = await page.goto(url, {
-      waitUntil: 'domcontentloaded',
-      timeout: NAV_TIMEOUT_MS,
-    });
-
-    // Give React / Vue / Next-app-router time to mount + render after
-    // DCL. Most SPAs render their main content within 1-3s of DCL once
-    // their hydration script runs. We pay this delay per page (~3s),
-    // which is the dominant per-page cost.
-    await page.waitForTimeout(RENDER_DELAY_MS);
+    // when the page keeps long-running network connections open. If
+    // DCL doesn't fire within the budget (heavy CF challenge, hung
+    // analytics script, infinite-redirect-loop guard), fall back to
+    // 'commit' which resolves as soon as the response starts
+    // streaming. We then sit for a longer render delay and take
+    // whatever HTML the page produced. Better than a hard fail —
+    // for static-rendered sites we still get the full HTML; for
+    // SPAs we get the shell + whatever rendered before the timeout.
+    let response;
+    try {
+      response = await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: NAV_TIMEOUT_MS,
+      });
+      // Give React / Vue / Next-app-router time to mount + render
+      // after DCL. Most SPAs render their main content within 1-3s
+      // of DCL once their hydration script runs.
+      await page.waitForTimeout(RENDER_DELAY_MS);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/timeout|exceeded/i.test(msg)) throw err;
+      // Retry with 'commit' — fires as soon as the response begins
+      // arriving, no wait for DCL. Use a fresh nav-timeout budget,
+      // then sit for 2x render delay so most static HTML appears
+      // before we read page.content().
+      response = await page.goto(url, {
+        waitUntil: 'commit',
+        timeout: NAV_TIMEOUT_MS,
+      });
+      await page.waitForTimeout(RENDER_DELAY_MS * 2);
+    }
 
     const status = response?.status() ?? 0;
     const ctypeHeader = response?.headers()['content-type'] ?? null;

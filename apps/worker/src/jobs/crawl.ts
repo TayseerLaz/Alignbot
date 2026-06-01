@@ -49,7 +49,13 @@ interface CorpusPage {
 }
 
 const MAX_BODY_BYTES = 100_000; // 100 KB per page
-const NAV_TIMEOUT_MS = 15_000;  // DOMContentLoaded should fire well within this
+// Bumped 15s → 30s on 2026-06-01 after legabarit + several WooCommerce
+// sites hit 15s timeouts on their heavier templates (CF + analytics
+// + product-grid hydration + ~20 ad pixels). 30s is generous enough
+// to absorb cold cache + slow CDN edges; the trade-off is at most
+// ~30s wasted per truly-dead page, which BFS just counts as failed
+// and moves on from.
+const NAV_TIMEOUT_MS = 30_000;
 const RENDER_DELAY_MS = 3_000;  // post-DCL wait so React/Vue can mount + render
 // Why not 'networkidle': many real sites keep a persistent connection open
 // (analytics beacons, chat widgets, live-data poll). networkidle never fires,

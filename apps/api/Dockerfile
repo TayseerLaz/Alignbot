@@ -1,6 +1,6 @@
 # Multi-stage Dockerfile for the Fastify API.
 # Build stage installs all deps + Prisma client, then prunes to prod-only.
-FROM node:20-alpine AS deps
+FROM node:26-alpine AS deps
 RUN apk add --no-cache openssl libc6-compat
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /repo
@@ -26,7 +26,7 @@ RUN pnpm --filter @aligned/api build
 RUN pnpm --filter @aligned/api deploy /out --prod --legacy
 
 # ---------- runtime ----------
-FROM node:20-alpine AS runtime
+FROM node:26-alpine AS runtime
 # ffmpeg: required for TTS voice-note transcoding. The npm ffmpeg-static
 # package ships a glibc binary that silently fails on alpine's musl libc
 # even with libc6-compat — bot voice replies fell back to text. System

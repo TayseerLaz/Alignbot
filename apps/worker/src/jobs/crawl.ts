@@ -29,12 +29,23 @@ import type { Browser, BrowserContext, Page } from 'playwright';
 import { isOpenAIConfigured, workerComplete } from '../lib/openai.js';
 import { env } from '../lib/env.js';
 import { getConnection } from '../lib/redis.js';
+import { putObject } from '../lib/storage.js';
 
 import { prisma, withRlsBypass } from './db.js';
 
 interface CrawlPayload {
   organizationId: string;
   crawlJobId: string;
+}
+
+// One BFS-fetched page. `images` carries every <img src> we observed
+// alongside its alt text so the listing-extraction LLM can pair products
+// with their card-level thumbnails on the same prompt that names them.
+interface CorpusPage {
+  url: string;
+  title: string | null;
+  text: string;
+  images: { url: string; alt: string }[];
 }
 
 const MAX_BODY_BYTES = 100_000; // 100 KB per page
@@ -189,6 +200,45 @@ function extractLinks($: cheerio.CheerioAPI, base: URL): URL[] {
   return out;
 }
 
+// Pull every <img> URL from the page (rendered by Playwright before this
+// runs, so JS-injected images are included). Returns absolute URLs with
+// the alt text — both useful to the LLM when it pairs an image to a
+// product card. Skips data: URIs, tracking pixels (≤2x2 effective), and
+// SVG-spritesheet refs. Capped at 200 entries per page to keep the LLM
+// prompt under any context limits.
+function extractImages(
+  $: cheerio.CheerioAPI,
+  base: URL,
+): { url: string; alt: string }[] {
+  const out: { url: string; alt: string }[] = [];
+  const seen = new Set<string>();
+  $('img').each((_i, el) => {
+    if (out.length >= 200) return;
+    const $el = $(el);
+    // Real sites stash the actual src on data-src / srcset for lazy-load.
+    // Prefer the first explicit src; fall back to data-src / data-original
+    // / first entry of srcset.
+    const raw =
+      ($el.attr('src') ?? '').trim() ||
+      ($el.attr('data-src') ?? '').trim() ||
+      ($el.attr('data-original') ?? '').trim() ||
+      (($el.attr('srcset') ?? '').split(',')[0] ?? '').trim().split(' ')[0] ||
+      '';
+    if (!raw || raw.startsWith('data:') || raw.startsWith('blob:')) return;
+    try {
+      const u = new URL(raw, base);
+      const key = u.toString();
+      if (seen.has(key)) return;
+      seen.add(key);
+      const alt = ($el.attr('alt') ?? '').trim().slice(0, 120);
+      out.push({ url: key, alt });
+    } catch {
+      /* malformed src — ignore */
+    }
+  });
+  return out;
+}
+
 export function startCrawlWorker() {
   return new Worker<CrawlPayload>(
     'crawl',
@@ -224,7 +274,7 @@ export function startCrawlWorker() {
         let crawled = 0;
         let failed = 0;
         let dedupSkipped = 0;
-        const cleanCorpus: { url: string; title: string | null; text: string }[] = [];
+        const cleanCorpus: CorpusPage[] = [];
         // Body-hash dedup. SPAs typically render the same shell for any
         // URL whose JS reads ?param=… and filters client-side — alinia's
         // /properties?location=beirut etc. all return the identical
@@ -316,12 +366,40 @@ export function startCrawlWorker() {
               bodyText: text || null,
             },
           });
-          cleanCorpus.push({ url: next.url.toString(), title, text });
+          // Extract <img> URLs alongside the prose. Listing-page LLM
+          // extraction uses them to attach a thumbnail to each product
+          // it surfaces. We capture from the cheerio handle BEFORE the
+          // next iteration discards it.
+          const pageImages = extractImages($, next.url);
+          cleanCorpus.push({ url: next.url.toString(), title, text, images: pageImages });
           crawled += 1;
           await prisma.crawlJob.update({
             where: { id: crawlJobId },
             data: { pagesCrawled: crawled, pagesFailed: failed },
           });
+          // Inline listing extraction. If this page LOOKS like a listing
+          // page (multiple price patterns + repeating card structure) AND
+          // an LLM is configured, kick off the extraction immediately so
+          // the operator's review panel populates LIVE during BFS — they
+          // don't have to wait for the whole site to finish crawling
+          // before seeing the first product. Errors swallowed; BFS keeps
+          // going. The post-BFS pass below catches anything that slipped
+          // through (e.g. a transient LLM timeout on this iteration).
+          if (isOpenAIConfigured() && text && looksLikeListingPage(text)) {
+            try {
+              await extractListingsFromPage(
+                organizationId,
+                crawlJobId,
+                { url: next.url.toString(), title, text, images: pageImages },
+              );
+            } catch (err) {
+              console.warn(
+                '[crawl] inline listing extraction failed for',
+                next.url.toString(),
+                err instanceof Error ? err.message : err,
+              );
+            }
+          }
           // Enqueue children we just collected (before cleanText nuked
           // the source elements).
           if (next.depth < meta.maxDepth) {
@@ -415,7 +493,7 @@ export function startCrawlWorker() {
 // ----- LLM step ------------------------------------------------------------
 async function analyzeAndPersist(
   organizationId: string,
-  corpus: { url: string; title: string | null; text: string }[],
+  corpus: CorpusPage[],
 ): Promise<boolean> {
   // Compose a compact corpus string. Trim each page's body to keep total
   // under ~30 KB so we don't blow the model context unnecessarily.
@@ -577,17 +655,28 @@ function slugifyName(name: string): string {
     .slice(0, 60);
 }
 
-async function extractAndPersistListings(
-  organizationId: string,
-  crawlJobId: string,
-  corpus: { url: string; title: string | null; text: string }[],
-): Promise<number> {
-  // Filter to listing-shaped pages only. For most tenants this will be
-  // 1-3 pages out of a 10-30 page crawl.
-  const listingPages = corpus.filter((p) => looksLikeListingPage(p.text));
-  if (listingPages.length === 0) return 0;
+type ExtractedProduct = {
+  name?: string;
+  shortDescription?: string;
+  description?: string;
+  priceMajor?: number | string | null;
+  currency?: string;
+  location?: string;
+  category?: string;
+  attributes?: Record<string, unknown>;
+  imageIndex?: number | null;
+};
+type ExtractedShape = { products?: ExtractedProduct[] };
 
-  const systemPrompt = `You extract individual product listings from a category / inventory / directory page.
+function extractJsonBlock(s: string): string {
+  const trimmed = s.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+  if (trimmed.startsWith('{')) return trimmed;
+  const f = trimmed.indexOf('{');
+  const l = trimmed.lastIndexOf('}');
+  return f >= 0 && l > f ? trimmed.slice(f, l + 1) : trimmed;
+}
+
+const LISTINGS_SYSTEM_PROMPT = `You extract individual product listings from a category / inventory / directory page.
 Return STRICT JSON in this shape, nothing else:
 
 {
@@ -595,11 +684,13 @@ Return STRICT JSON in this shape, nothing else:
     {
       "name": "<exact name from the page>",
       "shortDescription": "<one or two sentences summarizing key features, max 200 chars>",
+      "description": "<longer-form description, every relevant detail from the listing card or its detail link: features, amenities, condition, included items, dimensions, finishes, terms. Plain prose, max 1500 chars. Empty string when the page only shows a title and a price.>",
       "priceMajor": <number, the price as a normal decimal e.g. 550000 or 1.250 or null if unclear>,
       "currency": "<ISO 4217 code e.g. USD, KWD, EUR>",
       "location": "<location/region string from the listing, or empty string>",
       "category": "<best one-word category: 'Apartment', 'Villa', 'Land', 'Office', 'Commercial', 'Service', 'Product', etc.>",
-      "attributes": {"bedrooms": <int or null>, "bathrooms": <int or null>, "sqm": <int or null>}
+      "attributes": {"bedrooms": <int or null>, "bathrooms": <int or null>, "sqm": <int or null>},
+      "imageIndex": <integer — the 1-based index of the best matching image URL from the "Image URLs" section below, or 0 if none of them belong to this listing>
     }
   ]
 }
@@ -610,158 +701,412 @@ Rules:
 - Use the EXACT name and price text as shown — do not paraphrase or round.
 - priceMajor is the human-readable number (not minor units): 550000 for $550,000; 1.250 for 1.250 KWD.
 - attributes keys may be empty when the listing doesn't say. Don't invent values.
+- description should pull EVERY descriptive sentence the listing exposes — don't summarise it down to one line. The chatbot will quote from it directly.
+- imageIndex: pick the image whose URL filename or alt text matches the listing (e.g. matches the product name, SKU, or has alt text describing it). If no image clearly belongs to this listing, return 0. NEVER guess — wrong image is worse than no image.
 - Skip duplicates within the same response.`;
 
-  let totalCreated = 0;
-  for (const page of listingPages) {
-    // Cap each page's text at ~40 KB so the LLM call stays well under
-    // any context-window or rate-limit edge case.
-    const userPrompt = `# Source URL\n${page.url}\n\n# Page content\n\n${page.text.slice(0, 40_000)}`;
+// Run the listing LLM extraction for ONE page and persist any products
+// it produces. Called inline from the BFS so rows appear in the operator's
+// review panel the moment the worker finishes a listing-shaped page,
+// instead of all-at-once after the entire crawl completes. Returns the
+// number of products created or updated. Errors are swallowed and logged
+// — a failed extraction must never break BFS progress.
+export async function extractListingsFromPage(
+  organizationId: string,
+  crawlJobId: string,
+  page: CorpusPage,
+): Promise<number> {
+  // Build the indexed image list the LLM uses to pair products to
+  // thumbnails. Cap at 80 entries so even image-heavy listing pages
+  // don't blow the prompt — most cards we care about appear in the
+  // first ~30 anyway. Index is 1-based so 0 can mean "no image".
+  const promptImages = page.images.slice(0, 80);
+  const imagesBlock = promptImages.length
+    ? promptImages
+        .map((img, i) => {
+          const altPart = img.alt ? ` (alt: "${img.alt.slice(0, 80)}")` : '';
+          return `${i + 1}. ${img.url}${altPart}`;
+        })
+        .join('\n')
+    : '(none on this page)';
 
-    let llm: Awaited<ReturnType<typeof workerComplete>>;
-    try {
-      llm = await workerComplete({
-        systemPrompt,
-        userPrompt,
-        maxTokens: 4_000,
-        temperature: 0.2,
-        jsonMode: true,
-      });
-    } catch (err) {
-      console.error('[crawl] listings LLM call failed for', page.url, err instanceof Error ? err.message : err);
-      continue;
-    }
+  // Cap each page's text at ~40 KB so the LLM call stays well under
+  // any context-window or rate-limit edge case.
+  const userPrompt =
+    `# Source URL\n${page.url}\n\n` +
+    `# Page content\n\n${page.text.slice(0, 40_000)}\n\n` +
+    `# Image URLs available on this page\n${imagesBlock}`;
 
-    type ExtractedProduct = {
-      name?: string;
-      shortDescription?: string;
-      priceMajor?: number | string | null;
-      currency?: string;
-      location?: string;
-      category?: string;
-      attributes?: Record<string, unknown>;
-    };
-    type ExtractedShape = { products?: ExtractedProduct[] };
-
-    function extractJsonBlock(s: string): string {
-      const trimmed = s.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
-      if (trimmed.startsWith('{')) return trimmed;
-      const f = trimmed.indexOf('{');
-      const l = trimmed.lastIndexOf('}');
-      return f >= 0 && l > f ? trimmed.slice(f, l + 1) : trimmed;
-    }
-    let extracted: ExtractedShape | null = null;
-    try {
-      extracted = JSON.parse(extractJsonBlock(llm.text)) as ExtractedShape;
-    } catch (err) {
-      console.warn(
-        '[crawl] listings JSON parse failed for', page.url,
-        err instanceof Error ? err.message : err,
-        '— first 400 chars:', llm.text.slice(0, 400),
-      );
-      continue;
-    }
-    const products = (extracted?.products ?? []).slice(0, 60);
-    if (products.length === 0) continue;
-
-    const { createHash } = await import('node:crypto');
-    await withRlsBypass(async (tx) => {
-      // Look up the org's default currency once for fallback / price
-      // conversion (KWD/BHD/OMR/JOD use 1000, others use 100).
-      const biz = await tx.businessInfo.findFirst({
-        where: { organizationId },
-        select: { currency: true },
-      });
-      const orgCurrency = (biz?.currency ?? 'USD').toUpperCase();
-
-      for (const p of products) {
-        if (!p.name || p.name.trim().length === 0) continue;
-        const name = p.name.trim().slice(0, 200);
-        const currency = (p.currency ?? orgCurrency).toUpperCase().slice(0, 3);
-        // Convert priceMajor to minor units. Handle string + number inputs.
-        let priceMinor: number | null = null;
-        if (p.priceMajor != null && p.priceMajor !== '') {
-          const major = typeof p.priceMajor === 'string'
-            ? Number(p.priceMajor.replace(/[^0-9.]/g, ''))
-            : Number(p.priceMajor);
-          if (Number.isFinite(major) && major > 0) {
-            const multiplier = ['KWD', 'BHD', 'OMR', 'JOD'].includes(currency) ? 1000 : 100;
-            priceMinor = Math.round(major * multiplier);
-          }
-        }
-
-        // Deterministic SKU per (name, location) — same listing across
-        // re-crawls produces the same SKU so upsert is idempotent.
-        const skuBase = createHash('sha256')
-          .update(`${name}|${p.location ?? ''}`.toLowerCase())
-          .digest('hex')
-          .slice(0, 10)
-          .toUpperCase();
-        const sku = `CRAWL-${skuBase}`;
-        const slug = `crawl-${skuBase.toLowerCase()}-${slugifyName(name).slice(0, 40)}` || `crawl-${skuBase.toLowerCase()}`;
-
-        const attributes: Record<string, unknown> = {
-          ...(p.attributes ?? {}),
-          source: 'crawl',
-          crawlJobId,
-          sourceUrl: page.url,
-        };
-        if (p.location) attributes.location = String(p.location).slice(0, 200);
-        if (p.category) attributes.category = String(p.category).slice(0, 60);
-
-        // Only touch existing rows that are STILL drafts. If the operator
-        // has published or edited a row, the re-crawl leaves it alone so
-        // manual fixes survive.
-        const existing = await tx.product.findUnique({
-          where: { organizationId_sku: { organizationId, sku } },
-          select: { id: true, isAvailable: true, attributes: true },
-        });
-        const stillDraft =
-          existing && !existing.isAvailable &&
-          (existing.attributes as Record<string, unknown> | null)?.source === 'crawl';
-
-        if (existing && !stillDraft) {
-          // Operator-managed row — skip silently.
-          continue;
-        }
-
-        if (existing && stillDraft) {
-          await tx.product.update({
-            where: { id: existing.id },
-            data: {
-              name,
-              shortDescription: p.shortDescription?.slice(0, 200) ?? null,
-              priceMinor,
-              currency,
-              attributes: attributes as never,
-            },
-          });
-          totalCreated += 1; // count as touched
-        } else {
-          try {
-            await tx.product.create({
-              data: {
-                organizationId,
-                sku,
-                name,
-                slug,
-                shortDescription: p.shortDescription?.slice(0, 200) ?? null,
-                priceMinor,
-                currency,
-                isAvailable: false, // DRAFT — operator must publish via /products
-                attributes: attributes as never,
-              },
-            });
-            totalCreated += 1;
-          } catch (err) {
-            // Slug collision is the most likely cause — another draft
-            // with a near-identical name. Skip and move on.
-            console.warn('[crawl] product create failed for', name, err instanceof Error ? err.message : err);
-          }
-        }
-      }
+  let llm: Awaited<ReturnType<typeof workerComplete>>;
+  try {
+    llm = await workerComplete({
+      systemPrompt: LISTINGS_SYSTEM_PROMPT,
+      userPrompt,
+      maxTokens: 4_000,
+      temperature: 0.2,
+      jsonMode: true,
     });
+  } catch (err) {
+    console.error('[crawl] listings LLM call failed for', page.url, err instanceof Error ? err.message : err);
+    return 0;
   }
 
-  return totalCreated;
+  let extracted: ExtractedShape | null = null;
+  try {
+    extracted = JSON.parse(extractJsonBlock(llm.text)) as ExtractedShape;
+  } catch (err) {
+    console.warn(
+      '[crawl] listings JSON parse failed for', page.url,
+      err instanceof Error ? err.message : err,
+      '— first 400 chars:', llm.text.slice(0, 400),
+    );
+    return 0;
+  }
+  const products = (extracted?.products ?? []).slice(0, 60);
+  if (products.length === 0) return 0;
+
+  const { createHash } = await import('node:crypto');
+  let created = 0;
+  // Image jobs collected during the persist txn and run AFTER it commits.
+  // Each download is 1-10 s of remote network IO; doing it inside the txn
+  // would hold the row locks open and bloat the connection pool. We also
+  // skip the work entirely on rows the operator has already touched.
+  const imageJobs: { productId: string; imageUrl: string; alt: string }[] = [];
+  await withRlsBypass(async (tx) => {
+    // Look up the org's default currency once for fallback / price
+    // conversion (KWD/BHD/OMR/JOD use 1000, others use 100).
+    const biz = await tx.businessInfo.findFirst({
+      where: { organizationId },
+      select: { currency: true },
+    });
+    const orgCurrency = (biz?.currency ?? 'USD').toUpperCase();
+
+    for (const p of products) {
+      if (!p.name || p.name.trim().length === 0) continue;
+      const name = p.name.trim().slice(0, 200);
+      const currency = (p.currency ?? orgCurrency).toUpperCase().slice(0, 3);
+      // Convert priceMajor to minor units. Handle string + number inputs.
+      let priceMinor: number | null = null;
+      if (p.priceMajor != null && p.priceMajor !== '') {
+        const major = typeof p.priceMajor === 'string'
+          ? Number(p.priceMajor.replace(/[^0-9.]/g, ''))
+          : Number(p.priceMajor);
+        if (Number.isFinite(major) && major > 0) {
+          const multiplier = ['KWD', 'BHD', 'OMR', 'JOD'].includes(currency) ? 1000 : 100;
+          priceMinor = Math.round(major * multiplier);
+        }
+      }
+
+      // Deterministic SKU per (name, location) — same listing across
+      // re-crawls produces the same SKU so upsert is idempotent.
+      const skuBase = createHash('sha256')
+        .update(`${name}|${p.location ?? ''}`.toLowerCase())
+        .digest('hex')
+        .slice(0, 10)
+        .toUpperCase();
+      const sku = `CRAWL-${skuBase}`;
+      // Slug shape: `crawl-<10-char hash>-<name-suffix>`.
+      // shared/slugSchema caps slugs at 48 chars and forbids a trailing
+      // hyphen. `crawl-` (6) + hash (10) + `-` (1) = 17 chars of
+      // prefix, so the suffix must stay <= 31. Then strip any trailing
+      // `-` that survives the slice so the regex passes. Without this
+      // the response schema rejects the row and the whole products
+      // list 500s — see crawler import bug 2026-06-01.
+      const namePart = slugifyName(name).slice(0, 31).replace(/-+$/, '');
+      const slug = namePart
+        ? `crawl-${skuBase.toLowerCase()}-${namePart}`
+        : `crawl-${skuBase.toLowerCase()}`;
+
+      const attributes: Record<string, unknown> = {
+        ...(p.attributes ?? {}),
+        source: 'crawl',
+        crawlJobId,
+        sourceUrl: page.url,
+      };
+      if (p.location) attributes.location = String(p.location).slice(0, 200);
+      if (p.category) attributes.category = String(p.category).slice(0, 60);
+
+      // Only touch existing rows that are STILL drafts. If the operator
+      // has published or edited a row, the re-crawl leaves it alone so
+      // manual fixes survive.
+      const existing = await tx.product.findUnique({
+        where: { organizationId_sku: { organizationId, sku } },
+        select: { id: true, isAvailable: true, attributes: true },
+      });
+      const stillDraft =
+        existing && !existing.isAvailable &&
+        (existing.attributes as Record<string, unknown> | null)?.source === 'crawl';
+
+      if (existing && !stillDraft) {
+        // Operator-managed row — skip silently.
+        continue;
+      }
+
+      const shortDescription = p.shortDescription?.trim().slice(0, 200) || null;
+      const description = p.description?.trim().slice(0, 1500) || null;
+
+      // Resolve the image the LLM picked for this listing. 1-based
+      // index into `promptImages`; 0 / null / out-of-range = no image.
+      const idx = Number(p.imageIndex);
+      const chosenImage =
+        Number.isFinite(idx) && idx >= 1 && idx <= promptImages.length
+          ? promptImages[idx - 1]!
+          : null;
+
+      let persistedProductId: string | null = null;
+      if (existing && stillDraft) {
+        await tx.product.update({
+          where: { id: existing.id },
+          data: {
+            name,
+            shortDescription,
+            description,
+            priceMinor,
+            currency,
+            attributes: attributes as never,
+          },
+        });
+        persistedProductId = existing.id;
+        created += 1;
+      } else {
+        try {
+          const fresh = await tx.product.create({
+            data: {
+              organizationId,
+              sku,
+              name,
+              slug,
+              shortDescription,
+              description,
+              priceMinor,
+              currency,
+              isAvailable: false, // DRAFT — operator must publish via /products
+              attributes: attributes as never,
+            },
+            select: { id: true },
+          });
+          persistedProductId = fresh.id;
+          created += 1;
+        } catch (err) {
+          // Slug collision is the most likely cause — another draft
+          // with a near-identical name. Skip and move on.
+          console.warn('[crawl] product create failed for', name, err instanceof Error ? err.message : err);
+        }
+      }
+
+      if (persistedProductId && chosenImage) {
+        // Skip if we already have an image attached — re-crawls shouldn't
+        // duplicate. A single image per product is the v1 contract; the
+        // operator can add more manually.
+        const existingImage = await tx.productImage.findFirst({
+          where: { productId: persistedProductId },
+          select: { id: true },
+        });
+        if (!existingImage) {
+          imageJobs.push({
+            productId: persistedProductId,
+            imageUrl: chosenImage.url,
+            alt: chosenImage.alt,
+          });
+        }
+      }
+    }
+  });
+
+  // Image downloads run AFTER the persist txn so a stalled remote host
+  // can't hold a DB connection open. Each job is wrapped so one bad URL
+  // doesn't sink the rest.
+  for (const job of imageJobs) {
+    try {
+      await downloadAndAttachImage(organizationId, job);
+    } catch (err) {
+      console.warn(
+        '[crawl] image download failed for', job.imageUrl,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  return created;
+}
+
+// Per-image hard caps. Anything outside these is rejected without
+// hitting the DB. Numbers chosen to cover product photography on typical
+// e-commerce / real-estate sites (Unsplash hero shots, ~2-4 MB JPEGs)
+// without giving a malicious server a 100-MB SSRF amplifier.
+const IMAGE_MAX_BYTES = 8 * 1024 * 1024; // 8 MB
+const IMAGE_FETCH_TIMEOUT_MS = 15_000;
+const ALLOWED_IMAGE_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/avif',
+]);
+
+// Fetch the chosen image, upload it to Wasabi, and attach it to the
+// product as the primary ProductImage. Bails out cleanly on any
+// validation failure (bad URL, wrong content-type, too large, network
+// timeout). Storage / DB writes are atomic-enough: if the Asset row
+// commits but the Wasabi PUT fails, we already PUT before the row.
+async function downloadAndAttachImage(
+  organizationId: string,
+  job: { productId: string; imageUrl: string; alt: string },
+): Promise<void> {
+  if (!env.WASABI_ACCESS_KEY_ID || !env.WASABI_SECRET_ACCESS_KEY) {
+    // Object storage isn't wired up — skip silently so dev-mode crawls
+    // still produce products, just without thumbnails.
+    return;
+  }
+
+  // SSRF guard. The image URL came from a third-party page, so re-validate
+  // before we make ANOTHER outbound request.
+  let safeUrl: URL;
+  try {
+    safeUrl = assertSafeOutboundUrl(job.imageUrl);
+  } catch (err) {
+    if (err instanceof UrlGuardError) return;
+    throw err;
+  }
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), IMAGE_FETCH_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(safeUrl.toString(), {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)' +
+          ' Chrome/120.0.0.0 Safari/537.36 HaderBot/1.0 (+https://hader.ai/bot)',
+        Accept: 'image/*',
+      },
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok || !res.body) return;
+
+  // Trust Content-Type when present; otherwise fall back to a tiny
+  // magic-number sniff after we have the bytes.
+  const headerType = (res.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
+  if (headerType && !ALLOWED_IMAGE_TYPES.has(headerType)) return;
+
+  // Stream the body with a hard byte cap so a 5-GB pseudo-image can't
+  // OOM the worker.
+  const chunks: Buffer[] = [];
+  let total = 0;
+  const reader = res.body.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    const buf = Buffer.from(value);
+    total += buf.byteLength;
+    if (total > IMAGE_MAX_BYTES) {
+      try { await reader.cancel(); } catch { /* noop */ }
+      return;
+    }
+    chunks.push(buf);
+  }
+  const body = Buffer.concat(chunks, total);
+  if (body.byteLength < 1024) return; // skip 1x1 pixels / icons
+
+  // Sniff magic-number if Content-Type was missing.
+  const contentType = headerType || sniffImageContentType(body);
+  if (!contentType || !ALLOWED_IMAGE_TYPES.has(contentType)) return;
+
+  // Build the same storage-key shape the API uses: org/<orgId>/image/<yyyy>/<mm>/<assetId>.<ext>
+  const { randomUUID } = await import('node:crypto');
+  const assetId = randomUUID();
+  const now = new Date();
+  const yyyy = now.getUTCFullYear();
+  const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const ext = extensionForContentType(contentType);
+  const storageKey = `org/${organizationId}/image/${yyyy}/${mm}/${assetId}${ext}`;
+
+  await putObject({ storageKey, body, contentType });
+
+  await withRlsBypass(async (tx) => {
+    // Re-check the product wasn't deleted or already picked up an image
+    // in the seconds since we queued this download.
+    const product = await tx.product.findUnique({
+      where: { id: job.productId },
+      select: { id: true, deletedAt: true },
+    });
+    if (!product || product.deletedAt) return;
+    const existing = await tx.productImage.findFirst({
+      where: { productId: product.id },
+      select: { id: true },
+    });
+    if (existing) return;
+
+    const asset = await tx.asset.create({
+      data: {
+        id: assetId,
+        organizationId,
+        kind: 'image',
+        storageKey,
+        contentType,
+        byteSize: body.byteLength,
+        metadata: { source: 'crawl', sourceUrl: job.imageUrl },
+      },
+      select: { id: true },
+    });
+    await tx.productImage.create({
+      data: {
+        organizationId,
+        productId: product.id,
+        assetId: asset.id,
+        altText: job.alt || null,
+        sortOrder: 0,
+        isPrimary: true,
+      },
+    });
+  });
+}
+
+function sniffImageContentType(buf: Buffer): string | null {
+  if (buf.length < 12) return null;
+  // JPEG: FF D8 FF
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  // PNG: 89 50 4E 47
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
+  // GIF: 47 49 46 38
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return 'image/gif';
+  // WEBP: RIFF....WEBP
+  if (
+    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+  ) return 'image/webp';
+  return null;
+}
+
+function extensionForContentType(contentType: string): string {
+  switch (contentType) {
+    case 'image/jpeg': return '.jpg';
+    case 'image/png':  return '.png';
+    case 'image/webp': return '.webp';
+    case 'image/gif':  return '.gif';
+    case 'image/avif': return '.avif';
+    default: return '';
+  }
+}
+
+// Wrapper kept so the second-pass (post-BFS) call can still operate on
+// the full corpus in case any listing-shaped pages slipped through the
+// inline path (e.g. an LLM blip at the moment we crawled the page).
+async function extractAndPersistListings(
+  organizationId: string,
+  crawlJobId: string,
+  corpus: CorpusPage[],
+): Promise<number> {
+  const listingPages = corpus.filter((p) => looksLikeListingPage(p.text));
+  if (listingPages.length === 0) return 0;
+  let total = 0;
+  for (const page of listingPages) {
+    total += await extractListingsFromPage(organizationId, crawlJobId, page);
+  }
+  return total;
 }

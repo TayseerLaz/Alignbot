@@ -30,6 +30,7 @@ import { buildBotResponse, gatherBotData } from '../../lib/bot-engine.js';
 import { withTenant } from '../../lib/db.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 import { getCrawlQueue } from '../../lib/queues.js';
+import { resolveAssetUrl } from '../catalog/shared.js';
 
 // ----- DTO schemas (registered for Swagger; keep flat) -----
 
@@ -767,6 +768,196 @@ export default async function botRoutes(app: FastifyInstance) {
           createdAt: p.createdAt.toISOString(),
         }));
         return { data, nextCursor: null };
+      }),
+  );
+
+  // ---------- GET /bot/analyze/:id/listings -------------------------------
+  // Products this crawl job created (as DRAFTs with isAvailable=false).
+  // The /bot page polls this so the operator sees each listing materialise
+  // live while the LLM extraction is still iterating page-by-page. Includes
+  // the bare-minimum fields the review card needs — name, price, short
+  // description, source URL, status — to keep the response small.
+  r.get(
+    '/bot/analyze/:id/listings',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'List draft products created by this crawl job for operator review.',
+        params: z.object({ id: uuidSchema }),
+        response: {
+          200: listEnvelopeSchema(
+            z.object({
+              id: uuidSchema,
+              name: z.string(),
+              sku: z.string(),
+              priceMinor: z.number().int().nullable(),
+              currency: z.string(),
+              shortDescription: z.string().nullable(),
+              description: z.string().nullable(),
+              isAvailable: z.boolean(),
+              sourceUrl: z.string().nullable(),
+              primaryImageUrl: z.string().nullable(),
+              createdAt: z.string().datetime(),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const job = await tx.crawlJob.findUnique({ where: { id: req.params.id } });
+        if (!job) throw notFound('Crawl job not found.');
+        const rows = await tx.product.findMany({
+          where: {
+            deletedAt: null,
+            // Match products whose attributes.crawlJobId == this job. Postgres
+            // JSONB equality is fine because the worker writes the id as a
+            // string in the same encoding the query emits.
+            attributes: { path: ['crawlJobId'], equals: job.id },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 500,
+          include: {
+            images: { take: 1, orderBy: { sortOrder: 'asc' }, include: { asset: true } },
+          },
+        });
+        const data = await Promise.all(
+          rows.map(async (p) => {
+            const attrs = (p.attributes as Record<string, unknown> | null) ?? {};
+            const sourceUrl =
+              typeof attrs.sourceUrl === 'string' ? (attrs.sourceUrl as string) : null;
+            return {
+              id: p.id,
+              name: p.name,
+              sku: p.sku,
+              priceMinor: p.priceMinor,
+              currency: p.currency,
+              shortDescription: p.shortDescription,
+              description: p.description,
+              isAvailable: p.isAvailable,
+              sourceUrl,
+              primaryImageUrl: p.images[0]
+                ? await resolveAssetUrl(p.images[0].asset.storageKey)
+                : null,
+              createdAt: p.createdAt.toISOString(),
+            };
+          }),
+        );
+        return { data, nextCursor: null };
+      }),
+  );
+
+  // ---------- POST /bot/analyze/:id/listings/approve-all ------------------
+  // Publishes EVERY remaining draft from this crawl in one round trip. Skips
+  // anything the operator already touched (isAvailable=true OR an attribute
+  // mutation that broke the `source==='crawl'` invariant) so we never
+  // overwrite a manual edit. Returns the publish count for the UI toast.
+  r.post(
+    '/bot/analyze/:id/listings/approve-all',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Publish every remaining draft listing from this crawl (isAvailable=true).',
+        params: z.object({ id: uuidSchema }),
+        response: { 200: itemEnvelopeSchema(z.object({ approved: z.number().int() })) },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const job = await tx.crawlJob.findUnique({ where: { id: req.params.id } });
+        if (!job) throw notFound('Crawl job not found.');
+        const result = await tx.product.updateMany({
+          where: {
+            deletedAt: null,
+            isAvailable: false,
+            attributes: { path: ['crawlJobId'], equals: job.id },
+          },
+          data: { isAvailable: true },
+        });
+        return { data: { approved: result.count } };
+      }),
+  );
+
+  // ---------- POST /bot/analyze/:id/listings/deny-all ---------------------
+  // Soft-delete every remaining draft from this crawl. Like approve-all,
+  // skips published rows so an operator's "this one is good" survives.
+  r.post(
+    '/bot/analyze/:id/listings/deny-all',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Soft-delete every remaining draft listing from this crawl.',
+        params: z.object({ id: uuidSchema }),
+        response: { 200: itemEnvelopeSchema(z.object({ denied: z.number().int() })) },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const job = await tx.crawlJob.findUnique({ where: { id: req.params.id } });
+        if (!job) throw notFound('Crawl job not found.');
+        const result = await tx.product.updateMany({
+          where: {
+            deletedAt: null,
+            isAvailable: false,
+            attributes: { path: ['crawlJobId'], equals: job.id },
+          },
+          data: { deletedAt: new Date() },
+        });
+        return { data: { denied: result.count } };
+      }),
+  );
+
+  // ---------- POST /bot/analyze/:id/listings/:productId/approve -----------
+  // Per-row approve. Equivalent to PATCH /products/:id isAvailable=true but
+  // namespaced under the crawl so the UI doesn't need to know the products
+  // module exists.
+  r.post(
+    '/bot/analyze/:id/listings/:productId/approve',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Publish a single draft listing (isAvailable=true).',
+        params: z.object({ id: uuidSchema, productId: uuidSchema }),
+        response: { 200: itemEnvelopeSchema(z.object({ ok: z.boolean() })) },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const product = await tx.product.findUnique({ where: { id: req.params.productId } });
+        if (!product || product.deletedAt) throw notFound('Product not found.');
+        await tx.product.update({
+          where: { id: product.id },
+          data: { isAvailable: true },
+        });
+        return { data: { ok: true } };
+      }),
+  );
+
+  // ---------- POST /bot/analyze/:id/listings/:productId/deny --------------
+  r.post(
+    '/bot/analyze/:id/listings/:productId/deny',
+    {
+      schema: {
+        tags: ['bot'],
+        summary: 'Soft-delete a single draft listing.',
+        params: z.object({ id: uuidSchema, productId: uuidSchema }),
+        response: { 200: itemEnvelopeSchema(z.object({ ok: z.boolean() })) },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const product = await tx.product.findUnique({ where: { id: req.params.productId } });
+        if (!product || product.deletedAt) throw notFound('Product not found.');
+        await tx.product.update({
+          where: { id: product.id },
+          data: { deletedAt: new Date() },
+        });
+        return { data: { ok: true } };
       }),
   );
 

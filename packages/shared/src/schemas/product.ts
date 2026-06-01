@@ -4,6 +4,11 @@ import { slugSchema, uuidSchema } from './common.js';
 
 const moneyMinor = z.number().int().nonnegative().nullable();
 const currency3 = z.string().length(3).regex(/^[A-Z]{3}$/);
+// Read responses serialize whatever is in the DB. Historic crawler /
+// import paths produced slugs that violate the strict slugSchema (too
+// long, trailing hyphen). Strict validation belongs on user input
+// (create / update); the read path must not reject existing rows.
+const slugRead = z.string();
 
 export const productImageSchema = z.object({
   id: uuidSchema,
@@ -31,7 +36,7 @@ export const productSchema = z.object({
   id: uuidSchema,
   sku: z.string(),
   name: z.string(),
-  slug: slugSchema,
+  slug: slugRead,
   description: z.string().nullable(),
   shortDescription: z.string().nullable(),
   priceMinor: moneyMinor,
@@ -54,7 +59,7 @@ export const productListItemSchema = z.object({
   id: uuidSchema,
   sku: z.string(),
   name: z.string(),
-  slug: slugSchema,
+  slug: slugRead,
   shortDescription: z.string().nullable(),
   priceMinor: moneyMinor,
   currency: currency3,

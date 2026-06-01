@@ -24,6 +24,21 @@ export function getAccessToken() {
   return accessToken;
 }
 
+// Event the API client emits when the refresh cookie is dead and the
+// session can no longer be revived without a fresh login. Used by the
+// SessionProvider to flip state → 'unauthenticated' which triggers the
+// dashboard layout's redirect to /login. Without this, every polling
+// useQuery on the page would keep firing every refetchInterval forever,
+// each hitting 401 → silent refresh failure → 401 again, producing the
+// console-wall the operator saw on 2026-06-01.
+export const SESSION_EXPIRED_EVENT = 'aligned:session-expired';
+
+function notifySessionExpired() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
+  }
+}
+
 async function tryRefresh(): Promise<void> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
@@ -34,6 +49,7 @@ async function tryRefresh(): Promise<void> {
       });
       if (!res.ok) {
         clearAccessToken();
+        notifySessionExpired();
         return;
       }
       const json = (await res.json()) as { accessToken: string; expiresAt: string };

@@ -4,7 +4,7 @@ import type { OrgRole } from '@aligned/shared';
 import { useRouter } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
-import { api, ApiError, clearAccessToken, setAccessToken } from './api';
+import { api, ApiError, clearAccessToken, setAccessToken, SESSION_EXPIRED_EVENT } from './api';
 
 export interface SessionUser {
   id: string;
@@ -84,6 +84,23 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Listen for the SESSION_EXPIRED_EVENT emitted by api.ts when /auth/refresh
+  // returns 401 from inside a non-session-manager code path (any polling
+  // useQuery, the SSE helper, etc). Without this, those queries keep firing
+  // every refetchInterval, each one hitting 401, producing an unbounded
+  // refresh-loop in the browser console. Flipping status here triggers the
+  // dashboard layout's existing redirect to /login.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handler = () => {
+      clearAccessToken();
+      setSession(null);
+      setStatus('unauthenticated');
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, handler);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handler);
+  }, []);
 
   const signOut = useCallback(async () => {
     try {

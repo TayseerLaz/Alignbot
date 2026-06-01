@@ -500,6 +500,9 @@ function AnalyzeCard() {
             {job.errorMessage ? (
               <p className="mt-1 text-xs text-amber-700">{job.errorMessage}</p>
             ) : null}
+            {job.pagesCrawled > 0 ? (
+              <CrawlListingsReview jobId={job.id} jobIsLive={!!isLive} />
+            ) : null}
             {(job.status === 'succeeded' ||
               job.status === 'failed' ||
               job.status === 'cancelled' ||
@@ -657,6 +660,232 @@ function CrawlResultsViewer({ jobId }: { jobId: string }) {
           )}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// ---------- Crawl listings review -------------------------------------------
+// Listings the LLM extraction has materialised as DRAFT products on this
+// crawl job. Polls live every 2 s while the crawl is running so the operator
+// sees rows show up the moment the worker writes them. Bulk approve / deny
+// flip every remaining draft from this crawl; per-row approve / deny act on
+// one product. Approve = isAvailable=true (listing goes live and the bot
+// can quote it). Deny = soft-delete.
+type CrawlListingRow = {
+  id: string;
+  name: string;
+  sku: string;
+  priceMinor: number | null;
+  currency: string;
+  shortDescription: string | null;
+  description: string | null;
+  isAvailable: boolean;
+  sourceUrl: string | null;
+  primaryImageUrl: string | null;
+  createdAt: string;
+};
+
+function formatPrice(priceMinor: number | null, currency: string): string | null {
+  if (priceMinor == null) return null;
+  const divisor = ['KWD', 'BHD', 'OMR', 'JOD'].includes(currency.toUpperCase()) ? 1000 : 100;
+  const major = priceMinor / divisor;
+  // Match the divisor's fractional precision (3 for KWD-family, 2 otherwise).
+  const fractionDigits = divisor === 1000 ? 3 : 2;
+  return `${major.toFixed(fractionDigits)} ${currency.toUpperCase()}`;
+}
+
+function CrawlListingsReview({ jobId, jobIsLive }: { jobId: string; jobIsLive: boolean }) {
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState<'approve-all' | 'deny-all' | null>(null);
+
+  const listings = useQuery({
+    queryKey: ['crawl-listings', jobId],
+    queryFn: async () =>
+      api.get<{ data: CrawlListingRow[] }>(`/api/v1/bot/analyze/${jobId}/listings`),
+    // Live during crawl (2s); idle after it ends so the panel stops polling
+    // once the listing set is stable.
+    refetchInterval: jobIsLive ? 2000 : false,
+    placeholderData: keepPreviousData,
+  });
+
+  const rows = listings.data?.data ?? [];
+  const pendingCount = rows.filter((r) => !r.isAvailable).length;
+  const liveCount = rows.filter((r) => r.isAvailable).length;
+
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ['crawl-listings', jobId] });
+    // Catalog count on the dashboard depends on these — refresh it too.
+    void qc.invalidateQueries({ queryKey: ['dashboard-summary'] });
+  };
+
+  const approveAll = async () => {
+    setBusy('approve-all');
+    try {
+      const res = await api.post<{ data: { approved: number } }>(
+        `/api/v1/bot/analyze/${jobId}/listings/approve-all`,
+      );
+      toast.success(`Published ${res.data.approved} listing${res.data.approved === 1 ? '' : 's'}`);
+      invalidate();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.payload.message : 'Approve all failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const denyAll = async () => {
+    const ok = await confirmDialog({
+      title: `Deny ${pendingCount} draft${pendingCount === 1 ? '' : 's'}?`,
+      description: 'They will be soft-deleted and won’t appear in your catalog.',
+      confirmText: 'Deny all',
+      destructive: true,
+    });
+    if (!ok) return;
+    setBusy('deny-all');
+    try {
+      const res = await api.post<{ data: { denied: number } }>(
+        `/api/v1/bot/analyze/${jobId}/listings/deny-all`,
+      );
+      toast.success(`Denied ${res.data.denied} listing${res.data.denied === 1 ? '' : 's'}`);
+      invalidate();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.payload.message : 'Deny all failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const approveOne = async (id: string) => {
+    try {
+      await api.post(`/api/v1/bot/analyze/${jobId}/listings/${id}/approve`);
+      invalidate();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.payload.message : 'Approve failed');
+    }
+  };
+  const denyOne = async (id: string) => {
+    try {
+      await api.post(`/api/v1/bot/analyze/${jobId}/listings/${id}/deny`);
+      invalidate();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.payload.message : 'Deny failed');
+    }
+  };
+
+  if (!listings.isLoading && rows.length === 0) {
+    // While the crawl is still running, suggest the operator wait. After it
+    // ends, this is a real "no listings detected" signal (homepage-only
+    // crawl, KB-only content, etc).
+    return (
+      <div className="mt-3 rounded border border-border bg-surface p-3 text-xs text-foreground-subtle">
+        {jobIsLive
+          ? 'Listings will appear here as the LLM extracts them from each page. Drafts can be approved one-by-one or all at once.'
+          : 'No product listings detected on this site. The KB and tone were still extracted from the crawl.'}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded border border-border bg-surface">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-3">
+        <div>
+          <p className="text-sm font-medium">Review crawled listings</p>
+          <p className="text-xs text-foreground-subtle">
+            {rows.length} extracted · {pendingCount} pending · {liveCount} published
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={denyAll}
+            disabled={pendingCount === 0 || !!busy}
+            loading={busy === 'deny-all'}
+          >
+            <XCircle className="size-4" /> Deny all
+          </Button>
+          <Button
+            size="sm"
+            onClick={approveAll}
+            disabled={pendingCount === 0 || !!busy}
+            loading={busy === 'approve-all'}
+          >
+            <CheckCircle2 className="size-4" /> Approve all ({pendingCount})
+          </Button>
+        </div>
+      </div>
+      <ul className="divide-y divide-border">
+        {rows.map((r) => {
+          const price = formatPrice(r.priceMinor, r.currency);
+          return (
+            <li key={r.id} className="flex items-start gap-3 p-3">
+              <div className="size-14 flex-none overflow-hidden rounded border border-border bg-surface-muted">
+                {r.primaryImageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={r.primaryImageUrl}
+                    alt=""
+                    className="size-full object-cover"
+                  />
+                ) : (
+                  <div className="flex size-full items-center justify-center text-foreground-subtle">
+                    <ImageIcon className="size-5" />
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="truncate text-sm font-medium">{r.name}</p>
+                  {price ? (
+                    <Badge variant="secondary" className="font-mono text-[11px]">
+                      {price}
+                    </Badge>
+                  ) : null}
+                  {r.isAvailable ? (
+                    <Badge className="bg-emerald-100 text-emerald-800">Live</Badge>
+                  ) : (
+                    <Badge variant="outline">Draft</Badge>
+                  )}
+                </div>
+                {r.shortDescription || r.description ? (
+                  <p className="mt-1 line-clamp-2 text-xs text-foreground-subtle">
+                    {r.shortDescription || r.description}
+                  </p>
+                ) : null}
+                {r.sourceUrl ? (
+                  <a
+                    href={r.sourceUrl}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="mt-1 inline-block truncate text-[11px] text-foreground-subtle hover:text-foreground"
+                  >
+                    {r.sourceUrl}
+                  </a>
+                ) : null}
+              </div>
+              <div className="flex flex-none items-center gap-1.5">
+                {!r.isAvailable ? (
+                  <>
+                    <Button size="sm" variant="ghost" onClick={() => denyOne(r.id)}>
+                      <XCircle className="size-4" />
+                    </Button>
+                    <Button size="sm" onClick={() => approveOne(r.id)}>
+                      <CheckCircle2 className="size-4" /> Approve
+                    </Button>
+                  </>
+                ) : (
+                  <Link
+                    href={`/products/${r.id}`}
+                    className="text-xs text-foreground-subtle hover:text-foreground"
+                  >
+                    Open
+                  </Link>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

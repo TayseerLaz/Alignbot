@@ -287,6 +287,13 @@ export function startCrawlWorker() {
         // from it (its links are by definition the same as the dupe).
         const { createHash } = await import('node:crypto');
         const seenBodyHashes = new Set<string>();
+        // URLs the inline per-page extractor already handled successfully
+        // (no thrown error). The post-BFS extractAndPersistListings sweep
+        // skips these so we don't double-bill OpenAI gpt-4o-mini for the
+        // same listing pages during a Groq quota burn. Per the 2026-06-01
+        // review: without this, a 30-page listings crawl on fallback
+        // costs ~$0.30 instead of ~$0.10.
+        const inlineExtractedUrls = new Set<string>();
 
         while (queue.length > 0 && crawled + failed < meta.maxPages) {
           // Cancellation check. The operator can flip the job's status to
@@ -395,6 +402,7 @@ export function startCrawlWorker() {
             if (looksLikeListingPage(text)) {
               try {
                 await extractListingsFromPage(organizationId, crawlJobId, pageCorpus);
+                inlineExtractedUrls.add(next.url.toString());
               } catch (err) {
                 console.warn(
                   '[crawl] inline listing extraction failed for',
@@ -456,6 +464,7 @@ export function startCrawlWorker() {
             organizationId,
             crawlJobId,
             cleanCorpus,
+            inlineExtractedUrls,
           ).catch((err) => {
             console.error('[crawl] listings extract failed', err);
             return 0;
@@ -479,7 +488,8 @@ export function startCrawlWorker() {
             ? `Fetch failed: ${firstFailure.errorMessage} (${firstFailure.url}, status ${firstFailure.fetchStatus})`
             : 'Crawl failed before any page was fetched.';
         } else if (!isOpenAIConfigured()) {
-          errorMessage = 'OPENAI_API_KEY not configured — pages crawled but no KB generated.';
+          errorMessage =
+            'No LLM provider configured (set GROQ_API_KEY and/or OPENAI_API_KEY) — pages crawled but no KB generated.';
         }
 
         await prisma.crawlJob.update({
@@ -1398,12 +1408,19 @@ function extensionForContentType(contentType: string): string {
 // Wrapper kept so the second-pass (post-BFS) call can still operate on
 // the full corpus in case any listing-shaped pages slipped through the
 // inline path (e.g. an LLM blip at the moment we crawled the page).
+// Pages whose URL is in `alreadyHandled` are skipped — the inline pass
+// already succeeded for them, so re-running the LLM would just double-
+// bill the fallback provider for an idempotent upsert. Drop the set to
+// process every listing-shaped page (the historical behaviour).
 async function extractAndPersistListings(
   organizationId: string,
   crawlJobId: string,
   corpus: CorpusPage[],
+  alreadyHandled?: Set<string>,
 ): Promise<number> {
-  const listingPages = corpus.filter((p) => looksLikeListingPage(p.text));
+  const listingPages = corpus.filter(
+    (p) => looksLikeListingPage(p.text) && !alreadyHandled?.has(p.url),
+  );
   if (listingPages.length === 0) return 0;
   let total = 0;
   for (const page of listingPages) {

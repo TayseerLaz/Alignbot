@@ -26,11 +26,22 @@ const envSchema = z.object({
   EMAIL_CONCURRENCY: z.coerce.number().int().positive().default(4),
   CRAWL_CONCURRENCY: z.coerce.number().int().positive().default(2),
 
-  // OpenAI is kept ONLY for any future worker-side transcription work.
-  // Crawl analysis (the worker's chat-completion path) routes through
-  // Groq via the GROQ_* vars below, matching the API.
+  // OpenAI is used as a fallback when Groq returns 429/503/empty.
+  // (Re-added 2026-06-01 — explicit operator decision after the daily-
+  // token-cap incident that zeroed crawl extraction.) Crawl analysis
+  // (the worker's chat-completion path) routes through Groq first;
+  // gpt-4o-mini handles spillover.
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-4o-mini'),
+  // Operator-facing kill switch. Set to false to disable the OpenAI
+  // spillover without redeploying (e.g. if the OpenAI account spend
+  // is approaching its monthly cap and you'd rather have a degraded
+  // crawl than a surprise bill). Default true so the fallback is on
+  // unless explicitly turned off.
+  OPENAI_FALLBACK_ENABLED: z
+    .union([z.boolean(), z.string()])
+    .transform((v) => (typeof v === 'boolean' ? v : v.toLowerCase() !== 'false' && v !== '0'))
+    .default(true),
 
   // Groq — chat completions for the worker (currently crawl analysis).
   // Worker no-ops AI step if both GROQ_API_KEY and OPENAI_API_KEY are

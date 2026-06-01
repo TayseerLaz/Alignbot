@@ -385,19 +385,40 @@ export function startCrawlWorker() {
           // before seeing the first product. Errors swallowed; BFS keeps
           // going. The post-BFS pass below catches anything that slipped
           // through (e.g. a transient LLM timeout on this iteration).
-          if (isOpenAIConfigured() && text && looksLikeListingPage(text)) {
-            try {
-              await extractListingsFromPage(
-                organizationId,
-                crawlJobId,
-                { url: next.url.toString(), title, text, images: pageImages },
-              );
-            } catch (err) {
-              console.warn(
-                '[crawl] inline listing extraction failed for',
-                next.url.toString(),
-                err instanceof Error ? err.message : err,
-              );
+          if (isOpenAIConfigured() && text) {
+            const pageCorpus: CorpusPage = {
+              url: next.url.toString(),
+              title,
+              text,
+              images: pageImages,
+            };
+            if (looksLikeListingPage(text)) {
+              try {
+                await extractListingsFromPage(organizationId, crawlJobId, pageCorpus);
+              } catch (err) {
+                console.warn(
+                  '[crawl] inline listing extraction failed for',
+                  next.url.toString(),
+                  err instanceof Error ? err.message : err,
+                );
+              }
+            } else if (looksLikeBusinessContentPage(next.url.toString(), title, meta.rootUrl)) {
+              // Non-listing page that smells like contact / about / FAQ /
+              // policy / hours. One LLM call returns ALL of these in one
+              // shot and we persist into the right tables. So the
+              // operator sees FAQs, contact channels, locations and the
+              // business description populate LIVE as the crawl walks
+              // the site instead of having to wait for a single post-BFS
+              // sweep that they might miss.
+              try {
+                await extractAndPersistBusinessContent(organizationId, crawlJobId, pageCorpus);
+              } catch (err) {
+                console.warn(
+                  '[crawl] inline business-content extraction failed for',
+                  next.url.toString(),
+                  err instanceof Error ? err.message : err,
+                );
+              }
             }
           }
           // Enqueue children we just collected (before cleanText nuked
@@ -928,6 +949,286 @@ export async function extractListingsFromPage(
   }
 
   return created;
+}
+
+// ---------- per-page business-content extractor ----------------------------
+// Routes the prose on non-listing pages (about / contact / FAQ / policy /
+// hours / location pages) into the correct tenant tables in real time
+// during BFS. Without this step the crawl ended with a fully populated
+// product catalog but BusinessInfo / ContactChannels / FAQs / Policies
+// still empty — operator had to copy-paste from the site by hand.
+//
+// Operator-protection rule: we ONLY insert rows that don't already exist
+// AND only overwrite BusinessInfo fields that are currently null/empty.
+// A re-crawl never silently destroys a manual edit.
+
+// Pages we send to the unified extractor. Cheap regex on URL + title
+// keeps the per-page LLM fan-out bounded — random product/blog/category
+// pages are routed to the listing extractor or skipped, not double-billed.
+function looksLikeBusinessContentPage(
+  url: string,
+  title: string | null,
+  rootUrl: string,
+): boolean {
+  const haystack = `${url.toLowerCase()} ${(title ?? '').toLowerCase()}`;
+  // The home page nearly always carries the tagline + contact strip + a
+  // location block — worth one LLM call.
+  try {
+    const u = new URL(url);
+    const r = new URL(rootUrl);
+    if ((u.pathname === '/' || u.pathname === '') && u.host === r.host) return true;
+  } catch {
+    /* malformed URL — fall through to the regex check */
+  }
+  return /contact|reach[-_ ]?us|get[-_ ]?in[-_ ]?touch|about|our[-_ ]?story|who[-_ ]?we[-_ ]?are|mission|\bfaq\b|frequently[-_ ]?asked|policy|privacy|terms|refund|\breturn[s]?\b|shipping|delivery|hours|opening|location[s]?\b|branches?\b|info\b/i.test(
+    haystack,
+  );
+}
+
+type ExtractedBusinessContent = {
+  contacts?: {
+    kind?: string;
+    label?: string | null;
+    value?: string;
+    isPrimary?: boolean | null;
+  }[];
+  locations?: {
+    name?: string;
+    addressLine1?: string | null;
+    addressLine2?: string | null;
+    city?: string | null;
+    region?: string | null;
+    postalCode?: string | null;
+    country?: string | null;
+    phone?: string | null;
+  }[];
+  faqs?: { question?: string; answer?: string }[];
+  policies?: {
+    kind?: string;
+    title?: string;
+    content?: string;
+  }[];
+  businessInfo?: {
+    about?: string | null;
+    legalName?: string | null;
+    tagline?: string | null;
+    websiteUrl?: string | null;
+    timezone?: string | null;
+    currency?: string | null;
+  };
+  operatingHours?: {
+    day?: string;
+    open?: string | null;
+    close?: string | null;
+    closed?: boolean | null;
+  }[];
+};
+
+const BUSINESS_CONTENT_SYSTEM_PROMPT = `You are extracting structured business data from a single website page.
+Read the page and return STRICT JSON in this shape. Leave any field empty when the page doesn't say.
+
+{
+  "contacts": [{"kind": "phone|email|whatsapp|instagram|facebook|x|tiktok|youtube|linkedin|address|other", "value": "<the literal value>", "label": "<optional friendly label or empty>"}],
+  "locations": [{"name": "<branch / store name, or 'Main' if unnamed>", "addressLine1": "<street + number>", "addressLine2": "<unit/floor>", "city": "<city>", "region": "<state/governorate>", "postalCode": "<postal code>", "country": "<ISO 3166-1 alpha-2 like KW, US, AE>", "phone": "<phone if separate>"}],
+  "faqs": [{"question": "<exact question text>", "answer": "<exact answer text, plain prose, max 1500 chars>"}],
+  "policies": [{"kind": "return|shipping|privacy|terms|refund|other", "title": "<heading text>", "content": "<full policy body, plain prose, max 4000 chars>"}],
+  "businessInfo": {"about": "<2-6 sentences describing the business, ONLY from an explicit 'About us' / 'Our story' / mission section. Empty otherwise.>", "legalName": "<legal entity name like 'Le Gabarit S.A.L.', empty otherwise>", "tagline": "<short marketing tagline if shown, empty otherwise>", "websiteUrl": "<canonical site url if present>", "timezone": "<IANA timezone if discernible>", "currency": "<ISO 4217 code if discernible>"},
+  "operatingHours": [{"day": "monday|tuesday|wednesday|thursday|friday|saturday|sunday", "open": "HH:MM 24h or null when closed", "close": "HH:MM 24h or null when closed", "closed": <true if the day is explicitly listed as closed>}]
+}
+
+Rules:
+- Extract only what the page actually says. Don't invent.
+- Contacts: values must look real (phone numbers with digits, email with @, social handles with platform handle). Skip otherwise.
+- Locations: skip when the page only has a phone, no address.
+- FAQs: only the literal Q&A pairs. Don't paraphrase. Empty array on a non-FAQ page.
+- Policies: pick the single kind that best matches the page (one page typically = one policy).
+- businessInfo.about: ONLY when the page is clearly an "About us" / "Our story" / mission page. Otherwise empty string.
+- operatingHours: only when an explicit weekly schedule is shown.
+- Return all-empty arrays / nulls when the page is generic (a blog post, navigation page, etc.) — that's the normal case.`;
+
+async function extractAndPersistBusinessContent(
+  organizationId: string,
+  _crawlJobId: string,
+  page: CorpusPage,
+): Promise<void> {
+  // Cap each page's text at ~30 KB so the prompt stays small. Most pages
+  // we route here are short anyway (contact, about, FAQ are typically
+  // under 5 KB).
+  const userPrompt = `# Source URL\n${page.url}\n\n# Page content\n\n${page.text.slice(0, 30_000)}`;
+
+  let llm: Awaited<ReturnType<typeof workerComplete>>;
+  try {
+    llm = await workerComplete({
+      systemPrompt: BUSINESS_CONTENT_SYSTEM_PROMPT,
+      userPrompt,
+      maxTokens: 4_000,
+      temperature: 0.1,
+      jsonMode: true,
+    });
+  } catch (err) {
+    console.error('[crawl] business-content LLM call failed for', page.url, err instanceof Error ? err.message : err);
+    return;
+  }
+
+  let extracted: ExtractedBusinessContent | null = null;
+  try {
+    extracted = JSON.parse(extractJsonBlock(llm.text)) as ExtractedBusinessContent;
+  } catch (err) {
+    console.warn(
+      '[crawl] business-content JSON parse failed for', page.url,
+      err instanceof Error ? err.message : err,
+      '— first 400 chars:', llm.text.slice(0, 400),
+    );
+    return;
+  }
+  if (!extracted) return;
+
+  await withRlsBypass(async (tx) => {
+    // ----- BusinessInfo (fill-only-when-empty) -----
+    const bi = extracted!.businessInfo ?? {};
+    const hours = (extracted!.operatingHours ?? []).filter(
+      (h) => h && typeof h.day === 'string' && /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday)$/i.test(h.day),
+    );
+    const haveBiUpdate =
+      (bi.about && bi.about.trim()) ||
+      (bi.legalName && bi.legalName.trim()) ||
+      (bi.tagline && bi.tagline.trim()) ||
+      (bi.websiteUrl && bi.websiteUrl.trim()) ||
+      (bi.timezone && bi.timezone.trim()) ||
+      (bi.currency && bi.currency.trim()) ||
+      hours.length > 0;
+    if (haveBiUpdate) {
+      const existing = await tx.businessInfo.findUnique({ where: { organizationId } });
+      const data: Record<string, unknown> = {};
+      // Only fill fields that are currently null / empty so an operator
+      // edit always wins.
+      if (bi.about && (!existing || !existing.about)) data.about = bi.about.trim().slice(0, 8000);
+      if (bi.legalName && (!existing || !existing.legalName)) data.legalName = bi.legalName.trim().slice(0, 200);
+      if (bi.tagline && (!existing || !existing.tagline)) data.tagline = bi.tagline.trim().slice(0, 200);
+      if (bi.websiteUrl && (!existing || !existing.websiteUrl)) data.websiteUrl = bi.websiteUrl.trim().slice(0, 500);
+      // timezone and currency have non-null defaults so only overwrite the
+      // schema's default 'UTC' / 'USD' — never an operator's choice.
+      if (bi.timezone && (!existing || existing.timezone === 'UTC')) data.timezone = bi.timezone.trim().slice(0, 64);
+      if (bi.currency && (!existing || existing.currency === 'USD')) {
+        const c = bi.currency.trim().toUpperCase().slice(0, 3);
+        if (/^[A-Z]{3}$/.test(c)) data.currency = c;
+      }
+      if (hours.length > 0 && (!existing || existing.operatingHours == null)) {
+        const grouped: Record<string, { open: string; close: string }[]> = {};
+        for (const h of hours) {
+          const day = h.day!.toLowerCase();
+          if (h.closed === true) {
+            grouped[day] = [];
+            continue;
+          }
+          if (h.open && h.close && /^\d{1,2}:\d{2}$/.test(h.open) && /^\d{1,2}:\d{2}$/.test(h.close)) {
+            (grouped[day] ??= []).push({ open: h.open, close: h.close });
+          }
+        }
+        if (Object.keys(grouped).length > 0) {
+          data.operatingHours = grouped as never;
+        }
+      }
+      if (Object.keys(data).length > 0) {
+        if (existing) {
+          await tx.businessInfo.update({ where: { organizationId }, data });
+        } else {
+          await tx.businessInfo.create({
+            data: { organizationId, ...(data as Record<string, never>) },
+          });
+        }
+      }
+    }
+
+    // ----- ContactChannels (insert-if-not-exists by (kind, value)) -----
+    for (const c of (extracted!.contacts ?? []).slice(0, 20)) {
+      if (!c.kind || !c.value) continue;
+      const kind = c.kind.toLowerCase().trim().slice(0, 32);
+      const value = c.value.trim().slice(0, 500);
+      if (!value) continue;
+      const dupe = await tx.contactChannel.findFirst({
+        where: { organizationId, kind, value },
+        select: { id: true },
+      });
+      if (dupe) continue;
+      await tx.contactChannel.create({
+        data: {
+          organizationId,
+          kind,
+          value,
+          label: c.label?.trim().slice(0, 100) || null,
+          isPrimary: !!c.isPrimary,
+        },
+      });
+    }
+
+    // ----- Locations (insert-if-not-exists by (name, city)) -----
+    for (const l of (extracted!.locations ?? []).slice(0, 20)) {
+      if (!l.name) continue;
+      const name = l.name.trim().slice(0, 200);
+      const city = l.city?.trim().slice(0, 100) || null;
+      if (!name) continue;
+      const dupe = await tx.location.findFirst({
+        where: {
+          organizationId,
+          name: { equals: name, mode: 'insensitive' },
+          ...(city ? { city: { equals: city, mode: 'insensitive' } } : {}),
+        },
+        select: { id: true },
+      });
+      if (dupe) continue;
+      const country = l.country?.trim().toUpperCase().slice(0, 2) || null;
+      await tx.location.create({
+        data: {
+          organizationId,
+          name,
+          addressLine1: l.addressLine1?.trim().slice(0, 200) || null,
+          addressLine2: l.addressLine2?.trim().slice(0, 200) || null,
+          city,
+          region: l.region?.trim().slice(0, 100) || null,
+          postalCode: l.postalCode?.trim().slice(0, 32) || null,
+          country: country && /^[A-Z]{2}$/.test(country) ? country : null,
+          phone: l.phone?.trim().slice(0, 64) || null,
+        },
+      });
+    }
+
+    // ----- FAQs (insert-if-not-exists by question, case-insensitive) -----
+    for (const f of (extracted!.faqs ?? []).slice(0, 60)) {
+      if (!f.question || !f.answer) continue;
+      const question = f.question.trim().slice(0, 500);
+      const answer = f.answer.trim().slice(0, 4000);
+      if (!question || !answer) continue;
+      const dupe = await tx.fAQ.findFirst({
+        where: {
+          organizationId,
+          question: { equals: question, mode: 'insensitive' },
+        },
+        select: { id: true },
+      });
+      if (dupe) continue;
+      await tx.fAQ.create({
+        data: { organizationId, question, answer },
+      });
+    }
+
+    // ----- Policies (one per kind — only insert if no row exists for that kind) -----
+    for (const p of (extracted!.policies ?? []).slice(0, 8)) {
+      if (!p.kind || !p.content) continue;
+      const kind = p.kind.toLowerCase().trim().slice(0, 32);
+      const content = p.content.trim().slice(0, 8000);
+      const title = p.title?.trim().slice(0, 200) || `${kind.charAt(0).toUpperCase() + kind.slice(1)} policy`;
+      if (!content) continue;
+      const dupe = await tx.policy.findFirst({
+        where: { organizationId, kind },
+        select: { id: true },
+      });
+      if (dupe) continue;
+      await tx.policy.create({
+        data: { organizationId, kind, title, content },
+      });
+    }
+  });
 }
 
 // Per-image hard caps. Anything outside these is rejected without

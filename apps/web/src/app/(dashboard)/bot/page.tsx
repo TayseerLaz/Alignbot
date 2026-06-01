@@ -67,6 +67,15 @@ interface CrawlJob {
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;
+  liveCounts?: {
+    products: number;
+    productsPending: number;
+    faqs: number;
+    contacts: number;
+    locations: number;
+    policies: number;
+    hasAbout: boolean;
+  };
 }
 
 interface QuestionnaireItem {
@@ -480,6 +489,37 @@ function AnalyzeCard() {
                 · {job.pagesCrawled} crawled
                 {job.pagesFailed > 0 ? <> · {job.pagesFailed} failed</> : null}
               </span>
+              {job.liveCounts ? (
+                <div className="flex flex-wrap items-center gap-1 text-[11px] text-foreground-subtle">
+                  {job.liveCounts.products > 0 ? (
+                    <Badge variant="secondary" className="font-medium">
+                      {job.liveCounts.products} product{job.liveCounts.products === 1 ? '' : 's'}
+                      {job.liveCounts.productsPending > 0
+                        ? ` · ${job.liveCounts.productsPending} pending`
+                        : ''}
+                    </Badge>
+                  ) : null}
+                  {job.liveCounts.faqs > 0 ? (
+                    <Badge variant="secondary">{job.liveCounts.faqs} FAQ{job.liveCounts.faqs === 1 ? '' : 's'}</Badge>
+                  ) : null}
+                  {job.liveCounts.contacts > 0 ? (
+                    <Badge variant="secondary">
+                      {job.liveCounts.contacts} contact{job.liveCounts.contacts === 1 ? '' : 's'}
+                    </Badge>
+                  ) : null}
+                  {job.liveCounts.locations > 0 ? (
+                    <Badge variant="secondary">
+                      {job.liveCounts.locations} location{job.liveCounts.locations === 1 ? '' : 's'}
+                    </Badge>
+                  ) : null}
+                  {job.liveCounts.policies > 0 ? (
+                    <Badge variant="secondary">
+                      {job.liveCounts.policies} polic{job.liveCounts.policies === 1 ? 'y' : 'ies'}
+                    </Badge>
+                  ) : null}
+                  {job.liveCounts.hasAbout ? <Badge variant="secondary">About added</Badge> : null}
+                </div>
+              ) : null}
               {isLive ? (
                 <>
                   <span className="ml-auto text-[11px] text-foreground-subtle">

@@ -62,6 +62,57 @@ const botConfigDto = z.object({
   updatedAt: z.string().datetime(),
 });
 
+// Counts surfaced alongside every crawl-job status payload so the bot
+// page can render a live "X products · Y FAQs · Z contacts" line that
+// ticks up as the worker walks the site. Products are filtered to the
+// rows this crawl produced (attributes.crawlJobId match); the others
+// are org-wide totals because the inline business-content extractor
+// upserts rather than tagging, and watching the total tick is enough
+// signal for the operator that something IS being extracted.
+async function buildCrawlLiveCounts(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  crawlJobId: string,
+): Promise<{
+  products: number;
+  productsPending: number;
+  faqs: number;
+  contacts: number;
+  locations: number;
+  policies: number;
+  hasAbout: boolean;
+}> {
+  const [products, productsPending, faqs, contacts, locations, policies, businessInfo] = await Promise.all([
+    tx.product.count({
+      where: {
+        deletedAt: null,
+        attributes: { path: ['crawlJobId'], equals: crawlJobId },
+      },
+    }),
+    tx.product.count({
+      where: {
+        deletedAt: null,
+        isAvailable: false,
+        attributes: { path: ['crawlJobId'], equals: crawlJobId },
+      },
+    }),
+    tx.fAQ.count(),
+    tx.contactChannel.count(),
+    tx.location.count(),
+    tx.policy.count(),
+    tx.businessInfo.findFirst({ select: { about: true } }),
+  ]);
+  return {
+    products,
+    productsPending,
+    faqs,
+    contacts,
+    locations,
+    policies,
+    hasAbout: !!(businessInfo?.about && businessInfo.about.trim()),
+  };
+}
+
 const crawlJobDto = z.object({
   id: uuidSchema,
   rootUrl: z.string(),
@@ -72,6 +123,21 @@ const crawlJobDto = z.object({
   startedAt: z.string().datetime().nullable(),
   finishedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
+  // Snapshot of how much the inline per-page extractors have written
+  // into the tenant's catalog so far. Lets the bot page show live
+  // ticking counts as the crawl walks the site instead of leaving
+  // every counter at zero until the BFS finishes.
+  liveCounts: z
+    .object({
+      products: z.number().int(),
+      productsPending: z.number().int(),
+      faqs: z.number().int(),
+      contacts: z.number().int(),
+      locations: z.number().int(),
+      policies: z.number().int(),
+      hasAbout: z.boolean(),
+    })
+    .optional(),
 });
 
 const kbEntryDto = z.object({
@@ -617,6 +683,7 @@ export default async function botRoutes(app: FastifyInstance) {
           orderBy: { createdAt: 'desc' },
         });
         if (!job) throw notFound('No crawl jobs.');
+        const liveCounts = await buildCrawlLiveCounts(tx, job.id);
         return {
           data: {
             id: job.id,
@@ -628,6 +695,7 @@ export default async function botRoutes(app: FastifyInstance) {
             startedAt: job.startedAt?.toISOString() ?? null,
             finishedAt: job.finishedAt?.toISOString() ?? null,
             createdAt: job.createdAt.toISOString(),
+            liveCounts,
           },
         };
       }),
@@ -661,6 +729,7 @@ export default async function botRoutes(app: FastifyInstance) {
               data: { status: 'cancelled' },
             })
           : job;
+        const liveCounts = await buildCrawlLiveCounts(tx, updated.id);
         return {
           data: {
             id: updated.id,
@@ -672,6 +741,7 @@ export default async function botRoutes(app: FastifyInstance) {
             startedAt: updated.startedAt?.toISOString() ?? null,
             finishedAt: updated.finishedAt?.toISOString() ?? null,
             createdAt: updated.createdAt.toISOString(),
+            liveCounts,
           },
         };
       }),
@@ -693,6 +763,7 @@ export default async function botRoutes(app: FastifyInstance) {
       app.tenant(req, async (tx) => {
         const job = await tx.crawlJob.findUnique({ where: { id: req.params.id } });
         if (!job) throw notFound('Crawl job not found.');
+        const liveCounts = await buildCrawlLiveCounts(tx, job.id);
         return {
           data: {
             id: job.id,
@@ -704,6 +775,7 @@ export default async function botRoutes(app: FastifyInstance) {
             startedAt: job.startedAt?.toISOString() ?? null,
             finishedAt: job.finishedAt?.toISOString() ?? null,
             createdAt: job.createdAt.toISOString(),
+            liveCounts,
           },
         };
       }),

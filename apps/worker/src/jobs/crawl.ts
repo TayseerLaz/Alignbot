@@ -28,6 +28,7 @@ import type { Browser, BrowserContext, Page } from 'playwright';
 
 import { isOpenAIConfigured, workerComplete } from '../lib/openai.js';
 import { env } from '../lib/env.js';
+import { isWorkerShuttingDown } from '../lib/lifecycle.js';
 import { getConnection } from '../lib/redis.js';
 import { putObject } from '../lib/storage.js';
 
@@ -266,7 +267,7 @@ function extractImages(
 }
 
 export function startCrawlWorker() {
-  return new Worker<CrawlPayload>(
+  const worker = new Worker<CrawlPayload>(
     'crawl',
     async (job) => {
       const { organizationId, crawlJobId } = job.data;
@@ -295,10 +296,32 @@ export function startCrawlWorker() {
           return;
         }
 
+        // Seed the BFS `seen` set from any crawl_pages already persisted
+        // for THIS crawl_job — happens when BullMQ retries us after a
+        // worker SIGTERM mid-job (attempts:3 on the queue). Without this
+        // seed, the retry would re-fetch every page we already have,
+        // burning quota + Playwright minutes for no benefit. URLs in the
+        // seed are added to `seen` (so we never enqueue them again) but
+        // NOT to the corpus — the prior attempt already ran extractors
+        // inline on each, and re-running would just double-bill.
+        const existingPages = await prisma.crawlPage.findMany({
+          where: { crawlJobId },
+          select: { url: true, fetchStatus: true },
+        });
         const seen = new Set<string>([rootUrl.toString()]);
+        for (const p of existingPages) {
+          seen.add(p.url);
+        }
+        // If we are resuming, log it so an operator looking at the worker
+        // log can see what happened.
+        if (existingPages.length > 0) {
+          console.info(`[crawl] resuming job ${crawlJobId} — ${existingPages.length} URLs already seen`);
+        }
         const queue: { url: URL; depth: number }[] = [{ url: rootUrl, depth: 0 }];
-        let crawled = 0;
-        let failed = 0;
+        // Pre-seed crawled / failed counts so the live status badge keeps
+        // climbing instead of jumping back to 0 on retry.
+        let crawled = existingPages.filter((p) => (p.fetchStatus ?? 0) >= 200 && (p.fetchStatus ?? 0) < 400).length;
+        let failed = existingPages.length - crawled;
         let dedupSkipped = 0;
         const cleanCorpus: CorpusPage[] = [];
         // Body-hash dedup. SPAs typically render the same shell for any
@@ -344,6 +367,16 @@ export function startCrawlWorker() {
               });
               return; // exit the worker handler — BullMQ marks the job done
             }
+          }
+          // Shutdown check. On every page boundary, peek at the
+          // worker-level shutdown flag — if a SIGTERM has arrived
+          // (deploy / OOM / systemd restart), throw a typed error so
+          // BullMQ marks this attempt failed and queues a retry. The
+          // crawl_job DB row stays at 'running'; the new worker boot
+          // picks the job back up (BullMQ persists active job IDs)
+          // and the BFS resumes via the seen-set seed above.
+          if (isWorkerShuttingDown()) {
+            throw new Error('Worker shutting down — crawl will resume on next worker boot.');
           }
           const next = queue.shift()!;
           const r = await fetchOnePage(next.url.toString());
@@ -545,6 +578,30 @@ export function startCrawlWorker() {
       concurrency: env.CRAWL_CONCURRENCY,
     },
   );
+  // BullMQ marks a job 'failed' on every thrown attempt. We only want
+  // to update the CrawlJob DB row to 'failed' when ALL attempts have
+  // been exhausted — otherwise an intermediate stall would prematurely
+  // flip status='failed' even though BullMQ is about to retry.
+  worker.on('failed', async (job, err) => {
+    if (!job) return;
+    const attempts = job.opts.attempts ?? 1;
+    if (job.attemptsMade < attempts) return;
+    try {
+      await prisma.crawlJob.update({
+        where: { id: job.data.crawlJobId },
+        data: {
+          status: 'failed',
+          errorMessage:
+            err.message ||
+            'Crawl failed after exhausting retry budget. Start a new crawl to try again.',
+          finishedAt: new Date(),
+        },
+      });
+    } catch {
+      /* row may already be terminal — ignore */
+    }
+  });
+  return worker;
 }
 
 // ----- LLM step ------------------------------------------------------------

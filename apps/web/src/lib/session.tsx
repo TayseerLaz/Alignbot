@@ -1,10 +1,19 @@
 'use client';
 
 import type { OrgRole } from '@aligned/shared';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
-import { api, ApiError, clearAccessToken, setAccessToken, SESSION_EXPIRED_EVENT } from './api';
+import {
+  api,
+  ApiError,
+  clearAccessToken,
+  getAccessToken,
+  setAccessToken,
+  SESSION_EXPIRED_EVENT,
+  tryRefresh,
+} from './api';
 
 export interface SessionUser {
   id: string;
@@ -40,78 +49,79 @@ const SessionContext = createContext<SessionContextValue | null>(null);
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [session, setSession] = useState<SessionState | null>(null);
   const [status, setStatus] = useState<SessionContextValue['status']>('loading');
-  const refreshInFlight = useRef<Promise<void> | null>(null);
 
+  // Bootstrap the session from the refresh cookie. CRITICAL: goes through
+  // api.ts's exported `tryRefresh` (the SAME single-flight lock that
+  // apiFetch's 401-retry uses) so we never end up with TWO concurrent
+  // POST /auth/refresh calls from the same browser. Two concurrent
+  // refreshes trip the server's reuse-detection (the second arrives
+  // with the just-rotated previous-token-hash), the session family is
+  // revoked, and the user lands on /login mid-session. That was the
+  // 'hard-refresh logs me out' bug surfaced on 2026-06-01.
   const refresh = useCallback(async () => {
-    if (refreshInFlight.current) return refreshInFlight.current;
-    refreshInFlight.current = (async () => {
-      try {
-        // Refresh access token from refresh cookie first.
-        try {
-          const tokenRes = await api.post<{ accessToken: string; expiresAt: string }>(
-            '/api/v1/auth/refresh',
-            undefined,
-            { anonymous: true },
-          );
-          setAccessToken(tokenRes.accessToken, tokenRes.expiresAt);
-        } catch {
-          clearAccessToken();
-          setSession(null);
-          setStatus('unauthenticated');
-          return;
-        }
-        // Now fetch session context.
-        const data = await api.get<SessionState>('/api/v1/auth/session');
-        setSession(data);
-        setStatus('authenticated');
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 401) {
-          clearAccessToken();
-          setSession(null);
-          setStatus('unauthenticated');
-          return;
-        }
-        throw err;
-      } finally {
-        refreshInFlight.current = null;
+    try {
+      await tryRefresh();
+      if (!getAccessToken()) {
+        clearAccessToken();
+        setSession(null);
+        setStatus('unauthenticated');
+        return;
       }
-    })();
-    return refreshInFlight.current;
+      const data = await api.get<SessionState>('/api/v1/auth/session');
+      setSession(data);
+      setStatus('authenticated');
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        clearAccessToken();
+        setSession(null);
+        setStatus('unauthenticated');
+        return;
+      }
+      throw err;
+    }
   }, []);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  // Listen for the SESSION_EXPIRED_EVENT emitted by api.ts when /auth/refresh
-  // returns 401 from inside a non-session-manager code path (any polling
-  // useQuery, the SSE helper, etc). Without this, those queries keep firing
-  // every refetchInterval, each one hitting 401, producing an unbounded
-  // refresh-loop in the browser console. Flipping status here triggers the
-  // dashboard layout's existing redirect to /login.
+  // Listen for the SESSION_EXPIRED_EVENT emitted by api.ts when
+  // /auth/refresh returns 401 from inside a non-session-manager code
+  // path (any polling useQuery, the SSE helper, etc). Cancel + clear
+  // all React Query state at the source so 401 storms can't outlast
+  // the redirect, then flip status — the dashboard layout's existing
+  // useEffect picks up 'unauthenticated' and replaces to /login.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const handler = () => {
+      // Drain everything in flight or scheduled. Without this, polling
+      // queries (crawl status, inbox counts, notifications) keep firing
+      // every refetchInterval, each one re-401s and fights the redirect.
+      void queryClient.cancelQueries();
+      queryClient.clear();
       clearAccessToken();
       setSession(null);
       setStatus('unauthenticated');
     };
     window.addEventListener(SESSION_EXPIRED_EVENT, handler);
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handler);
-  }, []);
+  }, [queryClient]);
 
   const signOut = useCallback(async () => {
     try {
       await api.post('/api/v1/auth/logout');
     } finally {
+      void queryClient.cancelQueries();
+      queryClient.clear();
       clearAccessToken();
       setSession(null);
       setStatus('unauthenticated');
       router.push('/login');
     }
-  }, [router]);
+  }, [router, queryClient]);
 
   const switchOrg = useCallback(
     async (organizationId: string) => {

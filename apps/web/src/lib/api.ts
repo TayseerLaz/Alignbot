@@ -39,7 +39,21 @@ function notifySessionExpired() {
   }
 }
 
-async function tryRefresh(): Promise<void> {
+/**
+ * Single-flight POST /auth/refresh. EVERY caller that needs the access
+ * token rotated MUST go through this function, never call `/auth/refresh`
+ * directly via api.post. Why: the server rotates the refresh-token family
+ * on every call AND runs reuse-detection — if two concurrent /refresh
+ * calls fire from the same browser (e.g. SessionProvider.bootstrap +
+ * any useQuery's 401-retry on a hard-refresh), the second arrives with
+ * the just-rotated previous-token-hash, gets flagged as REPLAY, and the
+ * whole session family is revoked. The user lands on /login mid-session.
+ *
+ * Exported so apps/web/src/lib/session.tsx can call THROUGH this lock
+ * instead of `api.post('/api/v1/auth/refresh', ...)` which would dodge
+ * the dedupe entirely.
+ */
+export async function tryRefresh(): Promise<void> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
     try {

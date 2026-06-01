@@ -337,17 +337,76 @@ export async function issueSession(args: {
   };
 }
 
+// 2026-06-01 — replay-grace window for the reuse-detection branch. A
+// legitimate concurrent same-tab refresh race (SessionProvider bootstrap
+// + a useQuery 401-retry firing on a hard reload before the new cookie
+// has been committed by the browser) will arrive carrying the
+// just-rotated token. Treating that as malicious replay revokes the
+// session and bounces the user to /login mid-session — the symptom the
+// user reported. Within this window we return success without rotating
+// again; the client gets a fresh access token and the family stays
+// intact. Outside the window: real replay → keep the strict behaviour.
+const REUSE_GRACE_WINDOW_MS = 10_000;
+
 export async function refreshSession(refreshToken: string, meta: RequestMeta) {
   const tokenHash = hashToken(refreshToken);
 
   // Sprint 1 M-2 — reuse detection. First check whether this hash matches the
-  // *previously-rotated* hash of any session. If so, an attacker is replaying
-  // a token that has already been exchanged once. Revoke the whole session
-  // (only-one-active-token-per-session is our family unit here) and refuse.
+  // *previously-rotated* hash of any session. If so, the caller is presenting
+  // a token that has already been exchanged once. Inside the grace window
+  // this is a concurrent same-tab refresh; outside it's an attacker replay.
   const reusedSession = await prisma.session.findUnique({
     where: { previousTokenHash: tokenHash },
+    include: { user: true, organization: true },
   });
   if (reusedSession && !reusedSession.revokedAt) {
+    const rotatedAt = reusedSession.previousTokenRotatedAt;
+    const withinGrace =
+      rotatedAt && Date.now() - rotatedAt.getTime() < REUSE_GRACE_WINDOW_MS;
+    if (withinGrace) {
+      // Re-issue a fresh access token against the SAME session row
+      // without rotating the refresh family again. The first refresh
+      // already moved hash(T1) → previous, hash(T2) → current; this
+      // second refresh just hands the client a new access token so
+      // the in-flight request can succeed. Crucially, do NOT rotate
+      // again — if we did, the legitimate first refresh's cookie
+      // (still in flight) would land third and trip reuse-detection.
+      let effectiveRole: OrgRole;
+      const membership = await prisma.membership.findUnique({
+        where: {
+          organizationId_userId: {
+            organizationId: reusedSession.organizationId!,
+            userId: reusedSession.userId,
+          },
+        },
+      });
+      if (membership && membership.isActive) {
+        effectiveRole = membership.role as OrgRole;
+      } else if (reusedSession.isImpersonation && reusedSession.user.isAlignedAdmin) {
+        effectiveRole = 'admin' as OrgRole;
+      } else {
+        throw forbidden(ApiErrorCode.AUTH_NO_MEMBERSHIP, 'No active membership for this session.');
+      }
+      const access = await signAccessToken({
+        sub: reusedSession.userId,
+        org: reusedSession.organizationId!,
+        role: effectiveRole,
+        aa: reusedSession.user.isAlignedAdmin,
+        sid: reusedSession.id,
+      });
+      // Don't return a new refresh token — the client's cookie is the
+      // already-rotated T2 (set by the first call which is currently
+      // in flight), so leaving the refresh cookie untouched is correct.
+      // Callers that want the cookie can read it from the response of
+      // the first refresh; this one only re-mints the bearer.
+      return {
+        accessToken: access.token,
+        refreshToken: null as string | null,
+        expiresAt: access.expiresAt,
+      };
+    }
+    // Outside the grace window OR no rotation timestamp recorded
+    // (pre-migration rows): treat as malicious replay.
     await prisma.session.update({
       where: { id: reusedSession.id },
       data: { revokedAt: new Date() },
@@ -406,6 +465,10 @@ export async function refreshSession(refreshToken: string, meta: RequestMeta) {
     where: { id: session.id },
     data: {
       previousTokenHash: session.refreshTokenHash,
+      // Stamped so the next /refresh that arrives carrying the
+      // just-rotated token can decide whether it's a concurrent-tab
+      // race (within REUSE_GRACE_WINDOW_MS) or a real attacker replay.
+      previousTokenRotatedAt: new Date(),
       refreshTokenHash: hashToken(newRefresh.token),
       lastUsedAt: new Date(),
       userAgent: meta.userAgent ?? session.userAgent,

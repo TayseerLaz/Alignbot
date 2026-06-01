@@ -642,7 +642,20 @@ export default async function botRoutes(app: FastifyInstance) {
       await getCrawlQueue().add(
         'crawl',
         { organizationId: orgId, crawlJobId: job.id },
-        { jobId: job.id, attempts: 1, removeOnComplete: { age: 7 * 24 * 60 * 60, count: 100 } },
+        {
+          jobId: job.id,
+          // attempts: 3 — without retries, a worker SIGTERM mid-crawl
+          // (every deploy, every OOM, every container restart) PERMANENTLY
+          // abandons the job and leaves the DB row stuck at status='running'
+          // with no worker processing it. The retry doesn't fully resume
+          // BFS (state is in-memory) but it re-runs the job-handler which
+          // seeds its `seen` set from existing crawl_pages so most of the
+          // first attempt's progress isn't wasted.
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 30_000 },
+          removeOnComplete: { age: 7 * 24 * 60 * 60, count: 100 },
+          removeOnFail: { age: 7 * 24 * 60 * 60, count: 100 },
+        },
       );
       reply.code(201);
       return {

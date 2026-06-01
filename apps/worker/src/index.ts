@@ -29,8 +29,39 @@ const log = pino({
       : undefined,
 });
 
+import { markShuttingDown } from './lib/lifecycle.js';
+
 async function main() {
   log.info('starting workers…');
+
+  // ----- Boot-time orphan reconciler -----------------------------------
+  // CrawlJobs with status='running' but no live BullMQ job (because the
+  // previous worker process was SIGKILLed mid-job and the BullMQ
+  // attempts budget exhausted, OR the queue's prior attempts:1 config
+  // never retried) get marked failed here so they don't sit "running"
+  // forever in the UI. The 10-minute floor protects an actually-live
+  // crawl in case a sibling worker is processing it RIGHT NOW; we'd
+  // rather a slightly slow recovery than collide with a healthy run.
+  try {
+    const orphans = await prisma.crawlJob.updateMany({
+      where: {
+        status: 'running',
+        finishedAt: null,
+        startedAt: { lt: new Date(Date.now() - 10 * 60_000) },
+      },
+      data: {
+        status: 'failed',
+        errorMessage:
+          'Worker restarted while this crawl was running. Click Start to retry — pages already fetched will not be re-crawled.',
+        finishedAt: new Date(),
+      },
+    });
+    if (orphans.count > 0) {
+      log.info({ count: orphans.count }, 'reconciled orphaned crawl jobs');
+    }
+  } catch (err) {
+    log.warn({ err }, 'orphan-reconciler skipped (DB unavailable)');
+  }
 
   if (process.env.SENTRY_DSN) {
     Sentry.init({
@@ -140,6 +171,10 @@ async function main() {
 
   const shutdown = async (sig: string) => {
     log.info(`${sig} received — closing workers…`);
+    // Flip the flag BEFORE the worker.close()s so the in-flight crawl
+    // handler can observe it on its next per-page poll and throw a
+    // typed retryable error (BullMQ retries the job on the next boot).
+    markShuttingDown();
     metricsServer.close();
     await Promise.all(workers.map((w) => w.close()));
     await prisma.$disconnect();

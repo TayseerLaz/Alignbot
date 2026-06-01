@@ -442,6 +442,14 @@ model Session {
   // refresh token whose hash matches previousTokenHash is presented, that
   // means someone is replaying a rotated token: revoke the session.
   previousTokenHash String? @unique @map("previous_token_hash")
+  // 2026-06-01 — timestamp the previous hash was rotated. The refresh
+  // handler uses this for a short replay-grace window: if a presented
+  // refresh token matches `previous_token_hash` and the rotation
+  // happened within the last few seconds, treat it as a concurrent
+  // same-tab refresh (race between SessionProvider bootstrap and any
+  // useQuery 401-retry on a hard reload) rather than malicious replay.
+  // Outside the window: keep the existing revoke-and-audit behaviour.
+  previousTokenRotatedAt DateTime? @map("previous_token_rotated_at")
   // Sprint 1 H-3 — set to true only for ALIGNED-admin impersonation sessions
   // (POST /aligned-admin/orgs/:id/impersonate). Regular logins / switch-org
   // leave this false. The refresh handler uses this flag to decide whether

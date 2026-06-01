@@ -330,33 +330,44 @@ function AnalyzeCard() {
   const [url, setUrl] = useState('');
   const [maxPages, setMaxPages] = useState(200);
   const [maxDepth, setMaxDepth] = useState(6);
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  // CRITICAL: activeJobId is DERIVED from the latest-crawl query data,
+  // NOT a useState set inside queryFn. Anti-pattern previously: a
+  // remount of /bot within React Query's staleTime returned cached
+  // data without re-running queryFn, so the setActiveJobId side
+  // effect didn't fire and the running crawl 'vanished' from the UI
+  // — the operator saw an empty Start form even though the worker
+  // was still crawling. Deriving from data means the same cached
+  // payload restores the same activeJobId on every remount.
+  // `manualJobId` covers the brief window between clicking Start
+  // and the next latest-refresh seeing the new job.
+  const [manualJobId, setManualJobId] = useState<string | null>(null);
 
-  // On mount, fetch the most recent crawl job for this org. The crawl
-  // runs in the worker process — it keeps running even when the
-  // operator navigates away. Without this, the /bot page would forget
-  // there's an active crawl every time the component unmounts. We
-  // restore the activeJobId only for live (pending / running) jobs;
-  // terminal jobs are shown via the explicit re-fetch below.
-  useQuery({
+  const latestQuery = useQuery({
     queryKey: ['bot-analyze-latest'],
     queryFn: async () => {
       try {
         const res = await api.get<{ data: CrawlJob }>('/api/v1/bot/analyze/latest');
-        if (
-          (res.data.status === 'pending' || res.data.status === 'running') &&
-          !activeJobId
-        ) {
-          setActiveJobId(res.data.id);
-        }
         return res.data;
       } catch {
         // 404 — no crawl jobs yet. Normal first-time state.
         return null;
       }
     },
-    staleTime: 30_000,
+    // Keep the latest fresh while the operator is on the page so the
+    // status badge live-ticks even when the user navigates away and
+    // back (status === 'running' polls every 5s anyway).
+    refetchInterval: (q) => {
+      const status = q.state.data?.status;
+      return status === 'pending' || status === 'running' ? 5_000 : false;
+    },
+    staleTime: 0,
   });
+  const latest = latestQuery.data ?? null;
+  const restoredJobId =
+    latest && (latest.status === 'pending' || latest.status === 'running')
+      ? latest.id
+      : null;
+  const activeJobId = manualJobId ?? restoredJobId;
 
   const start = useMutation({
     mutationFn: () =>
@@ -367,7 +378,10 @@ function AnalyzeCard() {
       }),
     onSuccess: (res) => {
       toast.success('Crawl started — runs in the background. Safe to navigate away.');
-      setActiveJobId(res.data.id);
+      setManualJobId(res.data.id);
+      // Refresh the latest query so the panel picks up the new job
+      // even faster than the 5s refetchInterval.
+      void qc.invalidateQueries({ queryKey: ['bot-analyze-latest'] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Failed'),
   });

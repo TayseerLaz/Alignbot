@@ -158,7 +158,15 @@ export default async function authRoutes(app: FastifyInstance) {
       const cookie = req.cookies[REFRESH_COOKIE_NAME];
       if (!cookie) throw unauthorized();
       const result = await refreshSession(cookie, meta(req));
-      reply.setCookie(REFRESH_COOKIE_NAME, result.refreshToken, refreshCookieOptions());
+      // Grace-window concurrent-refresh path returns refreshToken=null —
+      // the client's cookie is the already-rotated value (set by the
+      // first parallel /refresh that's still in flight), so we leave it
+      // untouched. Setting it again here with a different value would
+      // cause whichever response committed last to win the cookie, and
+      // we want the first call's T2 to stay.
+      if (result.refreshToken) {
+        reply.setCookie(REFRESH_COOKIE_NAME, result.refreshToken, refreshCookieOptions());
+      }
       return { accessToken: result.accessToken, expiresAt: result.expiresAt.toISOString() };
     },
   );

@@ -1,36 +1,19 @@
 import type { Metadata } from 'next';
-import { Fraunces, JetBrains_Mono, Plus_Jakarta_Sans } from 'next/font/google';
+import { Plus_Jakarta_Sans } from 'next/font/google';
 import { headers } from 'next/headers';
 
 import { Providers } from '@/components/providers';
 import '@/styles/globals.css';
 
-// Hader AI brand book — Fraunces (display + headlines) + Plus Jakarta Sans
-// (body + UI) + JetBrains Mono (SKUs, IDs, code, mono numerics).
+// Single-font system: Plus Jakarta Sans across the entire Hader panel
+// (body, UI, headings, SKUs, prices, code blocks). The Fraunces (display
+// serif) and JetBrains Mono (mono numerics) loaders that used to live
+// here were dropped — saves ~100 KB of woff2 on every page load and
+// gives every surface a consistent typographic feel.
 const jakarta = Plus_Jakarta_Sans({
   subsets: ['latin'],
   weight: ['300', '400', '500', '600', '700', '800'],
   variable: '--font-jakarta',
-  display: 'swap',
-});
-
-const fraunces = Fraunces({
-  subsets: ['latin'],
-  // next/font requires weight to be omitted (or `variable`) when axes are
-  // declared, since the file IS the variable font. Without weight we get
-  // the full 100-900 axis at runtime via `font-weight` — same effect as
-  // listing discrete weights but in one file.
-  variable: '--font-fraunces',
-  display: 'swap',
-  // Fraunces ships a variable optical-size axis — letting Next bake it in
-  // means headings render with the "Display" optical sizing automatically.
-  axes: ['opsz'],
-});
-
-const monoJb = JetBrains_Mono({
-  subsets: ['latin'],
-  weight: ['400', '500'],
-  variable: '--font-mono-jb',
   display: 'swap',
 });
 
@@ -67,7 +50,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html
       lang="en"
-      className={`${jakarta.variable} ${fraunces.variable} ${monoJb.variable}`}
+      className={jakarta.variable}
       suppressHydrationWarning
     >
       <head>

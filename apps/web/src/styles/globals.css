@@ -16,9 +16,13 @@
    ============================================================================ */
 
 @theme {
+  /* Single-font system. Every UI surface, every heading, every SKU /
+     price / code block uses Plus Jakarta Sans. The system stack only
+     kicks in if the woff2 fails to load. Tabular numerals are still
+     available through the `tabular-nums` utility for price columns. */
   --font-sans:  var(--font-jakarta), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-serif: var(--font-fraunces), ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
-  --font-mono:  var(--font-mono-jb), ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --font-serif: var(--font-jakarta), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono:  var(--font-jakarta), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 
   /* "On-brand" — the text/icon colour to use ON TOP of bg-brand-500.
      Light mode: white (over oxblood). Dark mode flips this to oxblood

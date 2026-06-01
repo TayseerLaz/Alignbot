@@ -555,7 +555,7 @@ function OrgDetailsDialog({ org, onClose }: { org: OrgRow | null; onClose: () =>
                             variant="ghost"
                             onClick={() => sendReset.mutate(m.userId)}
                             disabled={sendReset.isPending}
-                            title="Generate a one-hour password reset URL for this user."
+                            title="Generate a 10-minute password reset URL for this user. DM it right away."
                             className="h-7 px-2 text-[11px]"
                           >
                             <KeyRound className="size-3" /> Reset link
@@ -572,8 +572,8 @@ function OrgDetailsDialog({ org, onClose }: { org: OrgRow | null; onClose: () =>
             {resetLink ? (
               <div className="rounded border border-amber-300 bg-amber-50 p-3">
                 <p className="mb-2 text-xs font-medium text-amber-900">
-                  One-hour reset link for <strong>{resetLink.email}</strong> — copy + DM to the
-                  customer. The link is single-use and expires{' '}
+                  10-minute reset link for <strong>{resetLink.email}</strong> — copy + DM to the
+                  customer immediately. The link is single-use and expires{' '}
                   {formatRelative(resetLink.expiresAt)}.
                 </p>
                 <div className="flex items-center gap-2">

@@ -597,9 +597,14 @@ export default async function adminRoutes(app: FastifyInstance) {
   );
 
   // ---------- POST /aligned-admin/users/:id/reset-link ---------------------
-  // ALIGNED-admin convenience: generate a one-time, hour-long password
+  // ALIGNED-admin convenience: generate a one-time, short-TTL password
   // reset link for any tenant member and return the URL. The admin then
   // DMs it to the customer (Slack / WhatsApp / email).
+  //
+  // 10-minute TTL because the admin-issued path is high-touch — the
+  // operator generates the URL, sends it to a known customer over a
+  // synchronous channel, and the customer acts on it immediately. A
+  // longer window would just sit around as a credential to be leaked.
   //
   // We use the EXACT same token shape as /auth/forgot-password — the
   // /reset-password page on the portal already validates these. Token
@@ -608,12 +613,13 @@ export default async function adminRoutes(app: FastifyInstance) {
   //
   // We do NOT show the customer's current password. Passwords are
   // bcrypt-hashed; the platform never has the plaintext.
+  const ADMIN_RESET_TTL_MS = 10 * 60 * 1000;
   r.post(
     '/aligned-admin/users/:id/reset-link',
     {
       schema: {
         tags: ['admin'],
-        summary: 'Generate a one-hour password-reset URL for any user (admin convenience).',
+        summary: 'Generate a 10-minute password-reset URL for any user (admin convenience).',
         params: z.object({ id: uuidSchema }),
         response: {
           200: itemEnvelopeSchema(
@@ -629,7 +635,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
     async (req) => {
       const { generateOpaqueToken, hashToken } = await import('../../lib/crypto.js');
-      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+      const expiresAt = new Date(Date.now() + ADMIN_RESET_TTL_MS);
       const result = await withRlsBypass(async (tx) => {
         const user = await tx.user.findUnique({ where: { id: req.params.id } });
         if (!user) throw notFound('User not found.');

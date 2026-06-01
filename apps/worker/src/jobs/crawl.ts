@@ -1073,7 +1073,7 @@ function looksLikeBusinessContentPage(
   } catch {
     /* malformed URL — fall through to the regex check */
   }
-  return /contact|reach[-_ ]?us|get[-_ ]?in[-_ ]?touch|about|our[-_ ]?story|who[-_ ]?we[-_ ]?are|mission|\bfaq\b|frequently[-_ ]?asked|policy|privacy|terms|refund|\breturn[s]?\b|shipping|delivery|hours|opening|location[s]?\b|branches?\b|info\b/i.test(
+  return /contact|reach[-_ ]?us|get[-_ ]?in[-_ ]?touch|about|our[-_ ]?story|who[-_ ]?we[-_ ]?are|mission|\bfaq\b|frequently[-_ ]?asked|policy|privacy|terms|refund|\breturn[s]?\b|shipping|delivery|hours|opening|location[s]?\b|branches?\b|info\b|services?\b|treatments?\b|offerings?\b|packages?\b|\bmenu\b|booking|appointments?\b|consultations?\b|sessions?\b/i.test(
     haystack,
   );
 }
@@ -1115,6 +1115,40 @@ type ExtractedBusinessContent = {
     close?: string | null;
     closed?: boolean | null;
   }[];
+  // Holiday / special-day rules. Optional; rare on websites but cheap to
+  // ask the LLM and they're filled into BusinessInfo.hoursExceptions JSON.
+  hoursExceptions?: {
+    date?: string | null;
+    closed?: boolean | null;
+    open?: string | null;
+    close?: string | null;
+    note?: string | null;
+  }[];
+  // Services — extracted from /services, /treatments, /packages, /menu,
+  // /booking pages. Same shape as our Service / ServicePricingTier /
+  // AvailabilityWindow models. basePrice is a decimal string so the
+  // LLM doesn't have to do minor-unit math — we convert on persist.
+  services?: {
+    name?: string;
+    description?: string | null;
+    shortDescription?: string | null;
+    durationMinutes?: number | null;
+    basePrice?: string | number | null;
+    currency?: string | null;
+    priceUnit?: string | null;
+    tiers?: {
+      name?: string;
+      description?: string | null;
+      price?: string | number | null;
+      currency?: string | null;
+      features?: string[];
+    }[];
+    availability?: {
+      dayOfWeek?: string;
+      startTime?: string | null;
+      endTime?: string | null;
+    }[];
+  }[];
 };
 
 const BUSINESS_CONTENT_SYSTEM_PROMPT = `You are extracting structured business data from a single website page.
@@ -1126,7 +1160,9 @@ Read the page and return STRICT JSON in this shape. Leave any field empty when t
   "faqs": [{"question": "<exact question text>", "answer": "<exact answer text, plain prose, max 1500 chars>"}],
   "policies": [{"kind": "return|shipping|privacy|terms|refund|other", "title": "<heading text>", "content": "<full policy body, plain prose, max 4000 chars>"}],
   "businessInfo": {"about": "<2-6 sentences describing the business, ONLY from an explicit 'About us' / 'Our story' / mission section. Empty otherwise.>", "legalName": "<legal entity name like 'Le Gabarit S.A.L.', empty otherwise>", "tagline": "<short marketing tagline if shown, empty otherwise>", "websiteUrl": "<canonical site url if present>", "timezone": "<IANA timezone if discernible>", "currency": "<ISO 4217 code if discernible>"},
-  "operatingHours": [{"day": "monday|tuesday|wednesday|thursday|friday|saturday|sunday", "open": "HH:MM 24h or null when closed", "close": "HH:MM 24h or null when closed", "closed": <true if the day is explicitly listed as closed>}]
+  "operatingHours": [{"day": "monday|tuesday|wednesday|thursday|friday|saturday|sunday", "open": "HH:MM 24h or null when closed", "close": "HH:MM 24h or null when closed", "closed": <true if the day is explicitly listed as closed>}],
+  "hoursExceptions": [{"date": "YYYY-MM-DD", "closed": <true|false>, "open": "HH:MM 24h or null", "close": "HH:MM 24h or null", "note": "<short label like 'Christmas Day' or empty>"}],
+  "services": [{"name": "<service name as on the page>", "shortDescription": "<one-line summary, max 200 chars, empty if none>", "description": "<full prose description, plain text, max 4000 chars>", "durationMinutes": <minutes if stated, e.g. 60, else null>, "basePrice": "<decimal price like '50' or '49.99', null if not stated>", "currency": "<ISO 4217 like USD, EUR, KWD, AED — inferred from the price's symbol/code>", "priceUnit": "flat|per_hour|per_day|per_session|per_unit", "tiers": [{"name": "<tier name like 'Standard' / 'Premium' / 'VIP'>", "description": "<short prose>", "price": "<decimal>", "currency": "<ISO 4217>", "features": ["<bullet feature>", "<bullet feature>"]}], "availability": [{"dayOfWeek": "monday|tuesday|wednesday|thursday|friday|saturday|sunday", "startTime": "HH:MM 24h", "endTime": "HH:MM 24h"}]}]
 }
 
 Rules:
@@ -1137,6 +1173,10 @@ Rules:
 - Policies: pick the single kind that best matches the page (one page typically = one policy).
 - businessInfo.about: ONLY when the page is clearly an "About us" / "Our story" / mission page. Otherwise empty string.
 - operatingHours: only when an explicit weekly schedule is shown.
+- hoursExceptions: closed dates, special hours, holidays. Empty array when none.
+- services: anything the business OFFERS as a bookable / standalone service (consultations, treatments, classes, packages, plans, appointments). Each distinct named offering becomes a service row. Set priceUnit to "flat" when unclear. Empty array when the page lists physical products only — products are handled elsewhere.
+- service.tiers: only when the service has multiple price tiers / package levels on the same page (e.g. "Basic $50, Premium $100, VIP $200"). Otherwise empty array.
+- service.availability: only when the page shows a per-service weekly schedule. Skip when the business-wide operatingHours apply.
 - Return all-empty arrays / nulls when the page is generic (a blog post, navigation page, etc.) — that's the normal case.`;
 
 async function extractAndPersistBusinessContent(
@@ -1303,6 +1343,195 @@ async function extractAndPersistBusinessContent(
       await tx.fAQ.create({
         data: { organizationId, question, answer },
       });
+    }
+
+    // ----- hoursExceptions (fill-only-when-currently-empty) -----
+    {
+      const raw = extracted!.hoursExceptions ?? [];
+      const exceptions = raw
+        .map((h) => ({
+          date: h.date?.trim() ?? '',
+          closed: h.closed === true,
+          open: h.open?.trim() || null,
+          close: h.close?.trim() || null,
+          note: h.note?.trim() || null,
+        }))
+        .filter((h) => /^\d{4}-\d{2}-\d{2}$/.test(h.date))
+        .slice(0, 40);
+      if (exceptions.length > 0) {
+        const existing = await tx.businessInfo.findUnique({
+          where: { organizationId },
+          select: { hoursExceptions: true },
+        });
+        if (!existing || existing.hoursExceptions == null) {
+          if (existing) {
+            await tx.businessInfo.update({
+              where: { organizationId },
+              data: { hoursExceptions: exceptions as never },
+            });
+          } else {
+            await tx.businessInfo.create({
+              data: {
+                organizationId,
+                hoursExceptions: exceptions as never,
+              },
+            });
+          }
+        }
+      }
+    }
+
+    // ----- Services + ServicePricingTier + AvailabilityWindow -----
+    // Upsert by (organizationId, slug). On first insert we also seed tiers
+    // and per-service availability windows. On a re-crawl we never touch
+    // an existing service's tiers / windows so the operator's manual edits
+    // are preserved — the crawler is "fill the blanks", not "overwrite."
+    const VALID_PRICE_UNITS = new Set(['flat', 'per_hour', 'per_day', 'per_session', 'per_unit']);
+    const VALID_DAYS = new Set([
+      'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+    ]);
+    const parseMinor = (p: unknown): number | null => {
+      if (p == null) return null;
+      const n = typeof p === 'number' ? p : Number(String(p).replace(/[^0-9.\-]/g, ''));
+      if (!Number.isFinite(n) || n < 0) return null;
+      return Math.round(n * 100);
+    };
+    const parseTime = (t: string | null | undefined): number | null => {
+      if (!t) return null;
+      const m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
+      if (!m) return null;
+      const h = Number(m[1]);
+      const mn = Number(m[2]);
+      if (!Number.isFinite(h) || !Number.isFinite(mn)) return null;
+      if (h < 0 || h > 24 || mn < 0 || mn > 59) return null;
+      return h * 60 + mn;
+    };
+    const slugifyService = (s: string): string =>
+      s
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 100);
+
+    for (const svc of (extracted!.services ?? []).slice(0, 30)) {
+      const name = svc.name?.trim().slice(0, 200);
+      if (!name) continue;
+      const slug = slugifyService(name);
+      if (!slug) continue;
+
+      const baseCurrency =
+        svc.currency?.trim().toUpperCase().slice(0, 3) || null;
+      const currency = baseCurrency && /^[A-Z]{3}$/.test(baseCurrency) ? baseCurrency : 'USD';
+      const priceUnit =
+        svc.priceUnit && VALID_PRICE_UNITS.has(svc.priceUnit.toLowerCase())
+          ? (svc.priceUnit.toLowerCase() as 'flat' | 'per_hour' | 'per_day' | 'per_session' | 'per_unit')
+          : 'flat';
+      const basePriceMinor = parseMinor(svc.basePrice ?? null);
+      const durationMinutes =
+        typeof svc.durationMinutes === 'number' && svc.durationMinutes > 0 && svc.durationMinutes < 60 * 24
+          ? Math.round(svc.durationMinutes)
+          : null;
+      const description = svc.description?.trim().slice(0, 4000) || null;
+      const shortDescription = svc.shortDescription?.trim().slice(0, 200) || null;
+
+      // Upsert by slug. Existing row → only fill currently-null fields so
+      // operator edits win, matching the businessInfo policy above.
+      const existing = await tx.service.findFirst({
+        where: { organizationId, slug },
+        select: { id: true, description: true, shortDescription: true, durationMinutes: true, basePriceMinor: true },
+      });
+
+      let serviceId: string;
+      if (existing) {
+        const data: Record<string, unknown> = {};
+        if (description && !existing.description) data.description = description;
+        if (shortDescription && !existing.shortDescription) data.shortDescription = shortDescription;
+        if (durationMinutes && !existing.durationMinutes) data.durationMinutes = durationMinutes;
+        if (basePriceMinor != null && existing.basePriceMinor == null) {
+          data.basePriceMinor = basePriceMinor;
+          data.currency = currency;
+          data.priceUnit = priceUnit;
+        }
+        if (Object.keys(data).length > 0) {
+          await tx.service.update({ where: { id: existing.id }, data });
+        }
+        serviceId = existing.id;
+      } else {
+        const created = await tx.service.create({
+          data: {
+            organizationId,
+            slug,
+            name,
+            description,
+            shortDescription,
+            durationMinutes,
+            basePriceMinor,
+            currency,
+            priceUnit,
+          },
+          select: { id: true },
+        });
+        serviceId = created.id;
+      }
+
+      // Tiers + availability — only seed when this service has zero rows
+      // of each, so a re-crawl doesn't duplicate or clobber operator edits.
+      if (Array.isArray(svc.tiers) && svc.tiers.length > 0) {
+        const tierCount = await tx.servicePricingTier.count({ where: { serviceId } });
+        if (tierCount === 0) {
+          let sortOrder = 0;
+          for (const t of svc.tiers.slice(0, 10)) {
+            const tName = t.name?.trim().slice(0, 100);
+            const priceMinor = parseMinor(t.price ?? null);
+            if (!tName || priceMinor == null) continue;
+            const tCurrencyRaw = t.currency?.trim().toUpperCase().slice(0, 3) || null;
+            const tCurrency = tCurrencyRaw && /^[A-Z]{3}$/.test(tCurrencyRaw) ? tCurrencyRaw : currency;
+            const features = Array.isArray(t.features)
+              ? t.features
+                  .filter((f): f is string => typeof f === 'string')
+                  .map((f) => f.trim().slice(0, 200))
+                  .filter((f) => f.length > 0)
+                  .slice(0, 20)
+              : [];
+            await tx.servicePricingTier.create({
+              data: {
+                organizationId,
+                serviceId,
+                name: tName,
+                description: t.description?.trim().slice(0, 1000) || null,
+                priceMinor,
+                currency: tCurrency,
+                priceUnit,
+                sortOrder,
+                features,
+              },
+            });
+            sortOrder += 1;
+          }
+        }
+      }
+
+      if (Array.isArray(svc.availability) && svc.availability.length > 0) {
+        const windowCount = await tx.availabilityWindow.count({ where: { serviceId } });
+        if (windowCount === 0) {
+          for (const w of svc.availability.slice(0, 14)) {
+            const day = w.dayOfWeek?.toLowerCase().trim();
+            if (!day || !VALID_DAYS.has(day)) continue;
+            const startMinute = parseTime(w.startTime);
+            const endMinute = parseTime(w.endTime);
+            if (startMinute == null || endMinute == null || endMinute <= startMinute) continue;
+            await tx.availabilityWindow.create({
+              data: {
+                organizationId,
+                serviceId,
+                dayOfWeek: day as 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday',
+                startMinute,
+                endMinute,
+              },
+            });
+          }
+        }
+      }
     }
 
     // ----- Policies (one per kind — only insert if no row exists for that kind) -----

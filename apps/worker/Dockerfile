@@ -1,4 +1,4 @@
-FROM node:20-alpine AS deps
+FROM node:26-alpine AS deps
 RUN apk add --no-cache openssl libc6-compat
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /repo
@@ -22,7 +22,7 @@ RUN pnpm --filter @aligned/db build
 RUN pnpm --filter @aligned/worker build
 RUN pnpm --filter @aligned/worker deploy /out --prod --legacy
 
-FROM node:20-alpine AS runtime
+FROM node:26-alpine AS runtime
 RUN apk add --no-cache openssl libc6-compat tini
 WORKDIR /app
 ENV NODE_ENV=production

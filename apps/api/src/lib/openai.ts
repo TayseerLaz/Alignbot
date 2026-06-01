@@ -24,17 +24,19 @@ function client(): OpenAI {
   return _client;
 }
 
-// Groq is the only backend used for chat completions. Groq's /openai/v1
+// Groq is the primary backend for chat completions. Groq's /openai/v1
 // endpoint is OpenAI-API-compatible so the same SDK works with just a
 // baseURL + apiKey swap. Transcription stays on the OpenAI client below
 // (gpt-4o-transcribe is materially better than Groq's Whisper for Arabic
 // dialects + code-switched audio, which is most of our customer base).
 //
-// We deliberately do NOT fall back to OpenAI for chat. The earlier silent
-// fallback hid a misconfig (GROQ_API_KEY missing) and the bot was running
-// on gpt-4o-mini at 22-26s/turn instead of llama-3.3-70b at 3-8s/turn.
-// If Groq is down, swap the key for an OpenAI-shaped key + base URL
-// pointing at another OpenAI-compatible host (Together, Fireworks, etc.).
+// Fallback policy: when Groq returns a rate-limit / 5xx error AND
+// OPENAI_API_KEY is set, the bot retries the same prompt against
+// gpt-4o-mini on OpenAI. Groq's free tier has a 100K-tokens-per-day cap
+// on llama-3.3-70b-versatile that the live bot blows through in ~6 hours
+// of traffic; without the fallback every bot reply after that goes silent
+// until the cap resets. We don't have an env-flag to disable this — the
+// alternative is the silent-bot bug we are explicitly fixing.
 let _groqClient: OpenAI | null = null;
 function groqClient(): OpenAI {
   if (!env.GROQ_API_KEY) {
@@ -54,11 +56,40 @@ function groqClient(): OpenAI {
   return _groqClient;
 }
 
-// Returns the client + model + a label for chat completions. Always Groq.
-// Each call site stays provider-agnostic; provenance + logs include the
-// label so an operator can see which provider/model actually ran.
+// Returns the client + model + a label for chat completions. Primary Groq,
+// OpenAI used only as the 429 / 5xx fallback below. Each call site stays
+// provider-agnostic; provenance + logs include the label so an operator
+// can see which provider/model actually ran.
 function chatClientAndModel(): { client: OpenAI; model: string; provider: 'openai' | 'groq' } {
   return { client: groqClient(), model: env.GROQ_MODEL, provider: 'groq' };
+}
+
+// Treat 429 (rate-limit) and 502/503 (Groq load-shedding) as "fall back
+// to OpenAI." Matches every shape the OpenAI SDK uses across transports
+// — top-level .status, nested .response.status, the typed RateLimitError
+// constructor name, and the rate_limit_exceeded code. Mirrors the worker's
+// isRetryableError helper (apps/worker/src/lib/openai.ts) so the two
+// fallback policies stay aligned.
+function isGroqRetryableError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as Record<string, unknown>;
+  const status = (e.status as number | undefined) ?? (e.statusCode as number | undefined);
+  if (status === 429 || status === 502 || status === 503) return true;
+  const r = e.response as Record<string, unknown> | undefined;
+  if (r) {
+    const rs = r.status as number | undefined;
+    if (rs === 429 || rs === 502 || rs === 503) return true;
+  }
+  if (e.code === 'rate_limit_exceeded') return true;
+  const inner = e.error as Record<string, unknown> | undefined;
+  if (inner && inner.code === 'rate_limit_exceeded') return true;
+  const ctorName = (e.constructor as { name?: string } | undefined)?.name;
+  if (ctorName === 'RateLimitError') return true;
+  const msg = (e.message as string | undefined) ?? '';
+  if (typeof msg === 'string' && /rate.?limit|too many requests|service unavailable/i.test(msg)) {
+    return true;
+  }
+  return false;
 }
 
 export function isOpenAIConfigured(): boolean {
@@ -154,24 +185,50 @@ export async function complete(args: CompleteArgs): Promise<{ text: string; inpu
     throw err;
   }
 
-  const { client: c, model } = chatClientAndModel();
-  const res = await c.chat.completions.create({
-    model,
+  const payload = {
     max_tokens: args.maxTokens ?? 1024,
     temperature: args.temperature ?? 0.4,
     messages: [
-      { role: 'system', content: args.systemPrompt },
+      { role: 'system' as const, content: args.systemPrompt },
       ...args.messages,
     ],
-  });
-
-  const text = (res.choices[0]?.message.content ?? '').trim();
-
-  return {
-    text,
-    inputTokens: res.usage?.prompt_tokens ?? 0,
-    outputTokens: res.usage?.completion_tokens ?? 0,
   };
+
+  // Primary: Groq. On 429/5xx we fall back to OpenAI if a key is set.
+  // The fallback exists because Groq's free-tier daily cap is shallow
+  // enough that the bot goes silent for hours otherwise — see header
+  // comment on groqClient(). When OPENAI_API_KEY is unset, the Groq
+  // error propagates unchanged so the upstream warn log still fires.
+  try {
+    const { client: c, model } = chatClientAndModel();
+    const res = await c.chat.completions.create({ model, ...payload });
+    const text = (res.choices[0]?.message.content ?? '').trim();
+    return {
+      text,
+      inputTokens: res.usage?.prompt_tokens ?? 0,
+      outputTokens: res.usage?.completion_tokens ?? 0,
+    };
+  } catch (err) {
+    if (!isGroqRetryableError(err)) throw err;
+    if (!env.OPENAI_API_KEY) throw err;
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[chat] Groq retryable error — falling back to OpenAI',
+      env.OPENAI_MODEL,
+      ':',
+      err instanceof Error ? err.message.slice(0, 200) : String(err),
+    );
+    const res = await client().chat.completions.create({
+      model: env.OPENAI_MODEL,
+      ...payload,
+    });
+    const text = (res.choices[0]?.message.content ?? '').trim();
+    return {
+      text,
+      inputTokens: res.usage?.prompt_tokens ?? 0,
+      outputTokens: res.usage?.completion_tokens ?? 0,
+    };
+  }
 }
 
 // Speech-to-text. Used to transcribe inbound WhatsApp voice notes so

@@ -2702,7 +2702,13 @@ async function maybeReplyAsBot(args: {
     // image-marker SKU check, voice-apology strip, cart-total override,
     // booking-fidelity guard, handoff strictness, welcome dedup. Tenant-
     // agnostic — every tenant's bot replies pass through the same logic.
-    {
+    //
+    // Skipped entirely when `result` is null (LLM threw / fell through to
+    // the empty-reply fallback above). Validators sanity-check LLM output;
+    // a deterministic hardcoded "Sorry, rephrase?" string doesn't need to
+    // run that gauntlet — and the validation context wants the LLM's
+    // `inputs` blob, which doesn't exist on the fallback path.
+    if (result) {
       const { validateReply } = await import('../../lib/reply-validators.js');
       const previousBotReply =
         [...ctx.history]
@@ -2711,7 +2717,7 @@ async function maybeReplyAsBot(args: {
       const validation = validateReply({
         reply: rawReply,
         userMessage: m.bodyText!,
-        inputs: result!.inputs,
+        inputs: result.inputs,
         kb: {
           products: ctx.data.products.map((p) => ({
             id: p.id,

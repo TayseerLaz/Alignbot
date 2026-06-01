@@ -476,6 +476,126 @@ export default async function adminRoutes(app: FastifyInstance) {
       }),
   );
 
+  // ---------- PATCH /aligned-admin/users/:id ------------------------------
+  // ALIGNED-admin can update a tenant member's email after the fact —
+  // common ask when a customer changes jobs / email providers / asks for
+  // a typo to be fixed. Constraints:
+  //   • new email must be a syntactically valid address
+  //   • email is globally unique (citext) → 409 if it's already in use
+  //   • change forces re-verification: emailVerifiedAt is cleared and the
+  //     standard verify-email flow can fire from the portal. This stops
+  //     a typo'd email becoming a working login without the new mailbox
+  //     ever being proven.
+  //   • all sessions revoked so the OLD email stops working immediately
+  //   • audited on both the user and the org so the action is traceable
+  r.patch(
+    '/aligned-admin/users/:id',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: "Update a tenant member's email (admin convenience). Forces re-verification.",
+        params: z.object({ id: uuidSchema }),
+        body: z.object({
+          email: z.string().email().max(254),
+        }),
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              userId: uuidSchema,
+              email: z.string(),
+              emailVerifiedAt: z.string().datetime().nullable(),
+              sessionsRevoked: z.number().int(),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const newEmail = req.body.email.trim().toLowerCase();
+      const result = await withRlsBypass(async (tx) => {
+        const user = await tx.user.findUnique({ where: { id: req.params.id } });
+        if (!user) throw notFound('User not found.');
+        if (user.email.toLowerCase() === newEmail) {
+          return {
+            userId: user.id,
+            email: user.email,
+            emailVerifiedAt: user.emailVerifiedAt?.toISOString() ?? null,
+            sessionsRevoked: 0,
+            unchanged: true,
+            previousEmail: user.email,
+          };
+        }
+        const taken = await tx.user.findUnique({ where: { email: newEmail } });
+        if (taken) throw conflict('That email is already in use by another account.');
+        const previousEmail = user.email;
+        const updated = await tx.user.update({
+          where: { id: user.id },
+          data: {
+            email: newEmail,
+            // Force re-verification of the new mailbox. The user can
+            // request a fresh verify-email link from the portal, or the
+            // ALIGNED admin can issue a reset-link (which lets them in
+            // without email verification per the existing login gate
+            // logic — reset implies control of the new email).
+            emailVerifiedAt: null,
+            emailVerificationTokenHash: null,
+            emailVerificationExpiresAt: null,
+          },
+        });
+        // Revoke every live session so the OLD-email login stops working
+        // and any open browser tab gets bounced to /login on next refresh.
+        const sessions = await tx.session.updateMany({
+          where: { userId: user.id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        return {
+          userId: updated.id,
+          email: updated.email,
+          emailVerifiedAt: updated.emailVerifiedAt?.toISOString() ?? null,
+          sessionsRevoked: sessions.count,
+          unchanged: false,
+          previousEmail,
+        };
+      });
+
+      if (!result.unchanged) {
+        // Audit on the user. Find the user's primary org for the
+        // organizationId field (best-effort — if the user has no
+        // memberships, leave it null and the entry still lands).
+        const primaryMembership = await withRlsBypass((tx) =>
+          tx.membership.findFirst({
+            where: { userId: result.userId, isActive: true },
+            orderBy: { createdAt: 'asc' },
+            select: { organizationId: true },
+          }),
+        );
+        await recordAudit({
+          action: 'user_updated',
+          actorUserId: req.auth!.userId,
+          organizationId: primaryMembership?.organizationId,
+          entityType: 'user',
+          entityId: result.userId,
+          metadata: {
+            event: 'aligned_admin_email_change',
+            previousEmail: result.previousEmail,
+            newEmail: result.email,
+            sessionsRevoked: result.sessionsRevoked,
+          },
+        });
+      }
+
+      return {
+        data: {
+          userId: result.userId,
+          email: result.email,
+          emailVerifiedAt: result.emailVerifiedAt,
+          sessionsRevoked: result.sessionsRevoked,
+        },
+      };
+    },
+  );
+
   // ---------- POST /aligned-admin/users/:id/reset-link ---------------------
   // ALIGNED-admin convenience: generate a one-time, hour-long password
   // reset link for any tenant member and return the URL. The admin then

@@ -5,15 +5,18 @@ import {
   Activity,
   ArrowRightToLine,
   Building2,
+  Check,
   Copy,
   Eye,
   KeyRound,
   Pause,
+  Pencil,
   Play,
   Plus,
   Search,
   Trash2,
   Users,
+  X,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -499,7 +502,11 @@ function OrgDetailsDialog({ org, onClose }: { org: OrgRow | null; onClose: () =>
                     {d.members.map((m) => (
                       <tr key={m.userId} className="border-t border-border">
                         <td className="px-2 py-1.5">
-                          <div className="font-medium">{m.email}</div>
+                          <EditableEmail
+                            userId={m.userId}
+                            email={m.email}
+                            orgId={org!.id}
+                          />
                           {(m.firstName || m.lastName) ? (
                             <div className="text-[11px] text-foreground-muted">
                               {[m.firstName, m.lastName].filter(Boolean).join(' ')}
@@ -621,6 +628,92 @@ function OrgDetailsDialog({ org, onClose }: { org: OrgRow | null; onClose: () =>
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ---------- EditableEmail ---------------------------------------------------
+// Inline-edit a tenant member's email. Click pencil → input + save/cancel.
+// Save fires PATCH /aligned-admin/users/:id, on success invalidates the
+// org-details query so the row re-fetches the verified-state flags
+// (the change forces re-verification + revokes all sessions, so the
+// member is bounced to /login + verify-email on next attempt).
+function EditableEmail({ userId, email, orgId }: { userId: string; email: string; orgId: string }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(email);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.patch<{
+        data: { userId: string; email: string; emailVerifiedAt: string | null; sessionsRevoked: number };
+      }>(`/api/v1/aligned-admin/users/${userId}`, { email: draft.trim() }),
+    onSuccess: async (res) => {
+      toast.success(
+        `Email updated to ${res.data.email}. ${res.data.sessionsRevoked} session(s) revoked; the user must re-verify the new mailbox.`,
+      );
+      setEditing(false);
+      // Refresh the details dialog so verified/unverified chips update.
+      await qc.invalidateQueries({ queryKey: ['admin-org-details', orgId] });
+      // Refresh the outer org list too in case email is shown anywhere there.
+      await qc.invalidateQueries({ queryKey: ['admin-orgs'] });
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Email change failed.'),
+  });
+
+  if (!editing) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="font-medium">{email}</span>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-5"
+          aria-label="Edit email"
+          onClick={() => {
+            setDraft(email);
+            setEditing(true);
+          }}
+        >
+          <Pencil className="size-3" />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <Input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        type="email"
+        placeholder="new@example.com"
+        className="h-6 text-xs"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && draft.trim() && draft.trim() !== email) save.mutate();
+          if (e.key === 'Escape') setEditing(false);
+        }}
+      />
+      <Button
+        size="icon"
+        variant="ghost"
+        className="size-6"
+        aria-label="Save"
+        onClick={() => save.mutate()}
+        disabled={save.isPending || !draft.trim() || draft.trim() === email}
+      >
+        <Check className="size-3" />
+      </Button>
+      <Button
+        size="icon"
+        variant="ghost"
+        className="size-6"
+        aria-label="Cancel"
+        onClick={() => setEditing(false)}
+      >
+        <X className="size-3" />
+      </Button>
+    </div>
   );
 }
 

@@ -2113,6 +2113,29 @@ export default async function whatsappRoutes(app: FastifyInstance) {
   );
 }
 
+// "Noise" inbound = a message that's just punctuation / a single emoji /
+// whitespace. We never want to send a fallback "sorry, rephrase?" reply
+// for a "." or a thumbs-up — that would spam. Treats anything with fewer
+// than 2 substantive characters (letters/digits) as noise.
+function isNoisyInbound(s: string | null | undefined): boolean {
+  if (!s) return true;
+  // Keep only letters + digits across scripts (Arabic, Latin, etc.). If
+  // <2 remain, the message was essentially empty.
+  const substantive = s.replace(/[^\p{L}\p{N}]/gu, '');
+  return substantive.length < 2;
+}
+
+// Localised fallback when the LLM returns empty or the validators strip
+// the reply to nothing. Without this, the customer sees only a "..."
+// typing indicator and never gets an actual reply. We send this so the
+// bot stays responsive even when the LLM has nothing useful to say.
+function emptyReplyFallback(userMessage: string | null | undefined): string {
+  const isArabic = !!userMessage && /[؀-ۿ]/.test(userMessage);
+  return isArabic
+    ? 'عذراً، لم أفهم تماماً. هل يمكنك إعادة صياغة سؤالك؟'
+    : "Sorry, I didn't quite catch that. Could you rephrase?";
+}
+
 // Phase 2 — auto-reply hook called from the inbound webhook. Looks up the
 // bot config + thread, asks the LLM via bot-engine, sends through the
 // existing /whatsapp/send token-bucket. No-ops cleanly when:
@@ -2653,7 +2676,27 @@ async function maybeReplyAsBot(args: {
     stopwatch.lap('llm');
     let rawReply = result?.text ?? null;
     const channel = ctx.channel;
-    if (!rawReply) continue;
+    if (!rawReply) {
+      // Don't go silent on the customer. We already fired the typing
+      // indicator (Meta /messages with typing_indicator) at the top of
+      // this iteration — bailing here leaves "..." on the customer's
+      // screen until it expires ~25 s later, then nothing. For a real
+      // inbound we send a localised rephrase prompt instead so the bot
+      // stays responsive. For trivially noisy inbounds (".", "👍",
+      // single character) we still skip — replying to a stray punct
+      // would be worse than silence.
+      args.log.warn(
+        {
+          orgId: args.organizationId,
+          threadId: ctx.threadId,
+          inboundLen: m.bodyText?.length ?? 0,
+          inboundType: m.type,
+        },
+        '[whatsapp] bot reply: LLM returned no text — applying empty-reply fallback',
+      );
+      if (isNoisyInbound(m.bodyText)) continue;
+      rawReply = emptyReplyFallback(m.bodyText);
+    }
 
     // Phase 9 — universal reply validators. Runs the pre-send pipeline:
     // image-marker SKU check, voice-apology strip, cart-total override,
@@ -3103,7 +3146,24 @@ async function maybeReplyAsBot(args: {
         reply = 'All set — your request has been captured. A teammate will follow up shortly.';
       }
     }
-    if (!reply && dedupedImageSends.length === 0) continue;
+    if (!reply && dedupedImageSends.length === 0) {
+      // Same reasoning as the post-LLM bail above: the customer is
+      // staring at a "..." typing indicator that's about to evaporate
+      // with no reply. Send a rephrase prompt unless the inbound was
+      // noise. Logs the cause so we can tell "LLM gave us markers only"
+      // from "validators stripped everything" when we audit later.
+      args.log.warn(
+        {
+          orgId: args.organizationId,
+          threadId: ctx.threadId,
+          rawReplyLen: rawReply?.length ?? 0,
+          inboundLen: m.bodyText?.length ?? 0,
+        },
+        '[whatsapp] bot reply: empty after markers+validators — applying empty-reply fallback',
+      );
+      if (isNoisyInbound(m.bodyText)) continue;
+      reply = emptyReplyFallback(m.bodyText);
+    }
 
     // Phase 6 — decide text vs voice. `voice` always sends TTS. `match_customer`
     // only sends TTS when the customer's last inbound was itself a voice

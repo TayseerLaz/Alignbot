@@ -14,6 +14,10 @@ import { toast } from 'sonner';
 
 import SequencesManager from '@/components/sequences/sequences-manager';
 import { PageHeader } from '@/components/shell/page-header';
+// Templates page exports its own component as default — we reuse it
+// here in embedded mode (showHeader=false) so the sidebar's collapsed
+// "Templates & broadcasts" entry opens a single page with both as tabs.
+import TemplatesPage from '@/app/(dashboard)/whatsapp/templates/page';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -29,7 +33,7 @@ const STATUS_CLASS: Record<BroadcastStatus, string> = {
   failed: 'bg-red-50 text-red-700',
 };
 
-type TabValue = 'broadcasts' | 'sequences';
+type TabValue = 'broadcasts' | 'templates' | 'sequences';
 
 export default function BroadcastsPage() {
   const router = useRouter();
@@ -37,7 +41,8 @@ export default function BroadcastsPage() {
   // Segments tab was removed (audiences are now driven by contact tags).
   // Legacy ?tab=segments deep-links fall through to the broadcasts tab.
   const rawTab = searchParams.get('tab');
-  const initialTab: TabValue = rawTab === 'sequences' ? 'sequences' : 'broadcasts';
+  const initialTab: TabValue =
+    rawTab === 'sequences' ? 'sequences' : rawTab === 'templates' ? 'templates' : 'broadcasts';
   const [tab, setTab] = useState<TabValue>(initialTab);
 
   // Keep the URL in sync as the user clicks between tabs so deep-links
@@ -54,8 +59,8 @@ export default function BroadcastsPage() {
   return (
     <>
       <PageHeader
-        title="Broadcasts"
-        description="Send WhatsApp template messages to a list of contacts, and manage the saved segments you target with them."
+        title="Templates & broadcasts"
+        description="Build the WhatsApp templates that Meta approves, then use them to broadcast to a contact list or set up an automated sequence."
         actions={
           tab === 'broadcasts' ? (
             <Link href="/broadcasts/new">
@@ -67,15 +72,25 @@ export default function BroadcastsPage() {
         }
       />
 
-      {/* Segments tab removed — broadcast audiences are now driven by
-          contact tags. Keep the SegmentsManager import unused below
-          intentionally so the component stays compilable for the
+      {/* Three tabs:
+            - Templates  : the Meta-approved message templates (was its
+                           own /whatsapp/templates page; still resolves
+                           there for back-compat).
+            - Broadcasts : send-now / scheduled one-shot campaigns.
+            - Sequences  : drip / multi-step flows.
+          Segments tab removed earlier — audiences are driven by contact
+          tags. SegmentsManager import is intentionally unused for the
           /segments redirect route until segments are fully removed. */}
       <Tabs value={tab} onValueChange={(v) => setTab(v as TabValue)}>
         <TabsList>
+          <TabsTrigger value="templates">Templates</TabsTrigger>
           <TabsTrigger value="broadcasts">Broadcasts</TabsTrigger>
           <TabsTrigger value="sequences">Sequences</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="templates">
+          <TemplatesPage showHeader={false} />
+        </TabsContent>
 
         <TabsContent value="broadcasts">
           <BroadcastsTab />

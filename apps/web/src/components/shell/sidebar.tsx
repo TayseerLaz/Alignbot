@@ -3,7 +3,6 @@
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
-  BarChart3,
   Bot,
   Briefcase,
   Building2,
@@ -57,49 +56,62 @@ const groups: NavGroup[] = [
     label: 'Overview',
     items: [{ href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, exact: true }],
   },
-  {
-    label: 'Catalog',
-    items: [
-      { href: '/products', label: 'Products', icon: Package },
-      { href: '/services', label: 'Services', icon: Briefcase },
-      { href: '/categories', label: 'Categories', icon: Building2 },
-      { href: '/business-info', label: 'Business info', icon: Building2 },
-      { href: '/imports', label: 'Imports', icon: Upload },
-    ],
-  },
-  // Integrations section (API connectors / API keys / Webhooks) hidden
-  // from the sidebar — those routes still exist for direct-URL access,
-  // but normal operators don't need to see them. Re-add the group here
-  // to surface them again.
-  // WhatsApp section hidden from the sidebar — the channel connection
-  // lives under /settings → Integrations now, and Templates moved into
-  // the Engagement group below. Routes (/whatsapp, /whatsapp/templates,
-  // /whatsapp/onboarding) still resolve by direct URL.
-  {
-    label: 'Intelligence',
-    items: [
-      { href: '/bot', label: 'AI bot builder', icon: Bot },
-      { href: '/analytics', label: 'Analytics', icon: TrendingUp },
-    ],
-  },
+  // Engagement promoted directly under the Dashboard so day-to-day
+  // customer-facing work (inbox, broadcasts, contacts) is the first
+  // thing in reach. Bookings + Orders moved out into Operations since
+  // they live in their own queues. Templates + Broadcasts collapsed
+  // into a single sidebar entry that opens a tabbed page (the /broadcasts
+  // page now hosts both as tabs alongside Sequences).
   {
     label: 'Engagement',
     items: [
       { href: '/contacts', label: 'Contacts', icon: ContactIcon },
       { href: '/inbox', label: 'Inbox', icon: Inbox, badgeKey: 'inboxEscalated' },
       { href: '/inbox/canned', label: 'Canned replies', icon: Inbox },
-      { href: '/whatsapp/templates', label: 'Templates', icon: BarChart3 },
-      // Segments + Sequences live under /broadcasts as tabs. Their
-      // standalone URLs (/segments, /sequences) are kept as redirects
-      // so old bookmarks + intra-app links keep working.
-      { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone },
-      { href: '/bookings', label: 'Bookings', icon: CalendarCheck },
-      { href: '/cart', label: 'Orders', icon: ShoppingCart },
+      // Standalone /whatsapp/templates URL still resolves — operators
+      // who deep-linked into it before still get there. Sidebar only
+      // surfaces the unified entry.
+      { href: '/broadcasts', label: 'Templates & broadcasts', icon: Megaphone },
     ],
   },
   {
+    label: 'Catalog',
+    items: [
+      { href: '/products', label: 'Products', icon: Package },
+      { href: '/services', label: 'Services', icon: Briefcase },
+      { href: '/categories', label: 'Categories', icon: Building2 },
+    ],
+  },
+  // Operations — was "Intelligence". Renamed because the content is the
+  // operational queues operators check throughout the day (bookings,
+  // orders) plus the analytics that measure them, not "AI-flavoured"
+  // tools. The AI bot builder moved to Workspace as a one-time setup
+  // task; this group is for daily ops.
+  {
+    label: 'Operations',
+    items: [
+      { href: '/bookings', label: 'Bookings', icon: CalendarCheck },
+      { href: '/cart', label: 'Orders', icon: ShoppingCart },
+      { href: '/analytics', label: 'Analytics', icon: TrendingUp },
+    ],
+  },
+  // Integrations section (API connectors / API keys / Webhooks) hidden
+  // from the sidebar — those routes still exist for direct-URL access,
+  // but normal operators don't need to see them. Re-add a group here
+  // to surface them again.
+  // WhatsApp section hidden from the sidebar — the channel connection
+  // lives under /settings → Integrations now, and Templates moved into
+  // the Engagement group above. Routes (/whatsapp, /whatsapp/templates,
+  // /whatsapp/onboarding) still resolve by direct URL.
+  {
     label: 'Workspace',
     items: [
+      // Catalog metadata + the bot builder collapsed in here so the
+      // Catalog/Operations groups stay focused on tenant content vs.
+      // tenant configuration.
+      { href: '/business-info', label: 'Business info', icon: Building2 },
+      { href: '/imports', label: 'Imports', icon: Upload },
+      { href: '/bot', label: 'AI bot builder', icon: Bot },
       { href: '/members', label: 'Members', icon: Users },
       { href: '/audit-log', label: 'Activity log', icon: Activity },
       { href: '/settings', label: 'Settings', icon: Settings },

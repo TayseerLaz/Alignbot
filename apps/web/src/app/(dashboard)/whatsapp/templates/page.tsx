@@ -55,7 +55,12 @@ const STATUS_ICON: Record<string, typeof Clock> = {
   rejected: XCircle,
 };
 
-export default function TemplatesPage() {
+// `showHeader` exists so the same component can be rendered both as a
+// standalone /whatsapp/templates page (with its own PageHeader) and as
+// an embedded tab inside /broadcasts (which already supplies a parent
+// PageHeader — so we'd render a double header without this prop).
+// Same pattern as SequencesManager{showHeader} already in this codebase.
+export default function TemplatesPage({ showHeader = true }: { showHeader?: boolean } = {}) {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -99,30 +104,50 @@ export default function TemplatesPage() {
 
   return (
     <>
-      <PageHeader
-        title="Message templates"
-        description="Templates required to send messages outside the 24-hour customer session window."
-        actions={
-          <>
-            <Button variant="secondary" asChild>
-              <Link href="/whatsapp">
-                <ArrowLeft className="size-4" /> WhatsApp
-              </Link>
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => sync.mutate()}
-              loading={sync.isPending}
-              title="Pull every template from Meta and refresh statuses"
-            >
-              <RefreshCw className="size-4" /> Sync from Meta
-            </Button>
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus className="size-4" /> New template
-            </Button>
-          </>
-        }
-      />
+      {showHeader ? (
+        <PageHeader
+          title="Message templates"
+          description="Templates required to send messages outside the 24-hour customer session window."
+          actions={
+            <>
+              <Button variant="secondary" asChild>
+                <Link href="/whatsapp">
+                  <ArrowLeft className="size-4" /> WhatsApp
+                </Link>
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => sync.mutate()}
+                loading={sync.isPending}
+                title="Pull every template from Meta and refresh statuses"
+              >
+                <RefreshCw className="size-4" /> Sync from Meta
+              </Button>
+              <Button onClick={() => setCreateOpen(true)}>
+                <Plus className="size-4" /> New template
+              </Button>
+            </>
+          }
+        />
+      ) : (
+        // Embedded mode: the parent page owns the PageHeader so we render
+        // a compact action strip inline. Keeps Sync + New template
+        // reachable without forcing the operator to leave the broadcasts
+        // page.
+        <div className="mb-4 flex justify-end gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => sync.mutate()}
+            loading={sync.isPending}
+            title="Pull every template from Meta and refresh statuses"
+          >
+            <RefreshCw className="size-4" /> Sync from Meta
+          </Button>
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="size-4" /> New template
+          </Button>
+        </div>
+      )}
 
       <Card>
         <CardHeader>

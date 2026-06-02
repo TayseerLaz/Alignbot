@@ -27,7 +27,12 @@ function buildCsp(nonce: string): string {
     // Style sources stay inline-permissive for the framework's CSS-in-JS.
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://*.wasabisys.com",
-    `connect-src 'self' ${API_ORIGIN} https://*.sentry.io`,
+    // Wasabi is in connect-src AND in img-src/media-src below: the browser
+    // does a presigned PUT (fetch → connect-src) when uploading images +
+    // voice notes, then loads the resulting URL as <img>/<audio>
+    // (→ img-src/media-src). Without connect-src here, CSP blocks the
+    // upload itself even though the asset is allowed to render.
+    `connect-src 'self' ${API_ORIGIN} https://*.sentry.io https://*.wasabisys.com`,
     "media-src 'self' blob: https://*.wasabisys.com",
     "font-src 'self' data:",
     "frame-ancestors 'none'",

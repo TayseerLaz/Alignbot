@@ -74,16 +74,8 @@ export default function ServiceEditPage() {
           <BookingRulesCard service={service} />
         </div>
         <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Visibility</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Badge variant={service.isAvailable ? 'success' : 'muted'}>
-                {service.isAvailable ? 'Available' : 'Unavailable'}
-              </Badge>
-            </CardContent>
-          </Card>
+          <VisibilityCard service={service} />
+          {/* Sibling cards stay in this column. */}
           <Card>
             <CardHeader>
               <CardTitle>Danger zone</CardTitle>
@@ -457,6 +449,53 @@ interface WeeklyRow {
   open: boolean;
   start: string; // HH:MM
   end: string;
+}
+
+// Mirrors the products page's StatusCard: badge for the current state +
+// a single button that flips it. The previous services-page implementation
+// rendered only the badge — operators had no way to toggle a service from
+// Unavailable to Available without an API call. The crawler can also seed
+// services in either state, so this control needs to exist regardless of
+// who created the row.
+function VisibilityCard({ service }: { service: Service }) {
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: (isAvailable: boolean) =>
+      api.patch(`/api/v1/services/${service.id}`, { isAvailable }),
+    onSuccess: () => {
+      toast.success(service.isAvailable ? 'Marked unavailable' : 'Marked available');
+      queryClient.invalidateQueries({ queryKey: ['service', service.id] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Update failed'),
+  });
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Visibility</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium">Available to chatbot</p>
+            <p className="text-xs text-foreground-muted">
+              When off, the chatbot won&apos;t surface this service.
+            </p>
+          </div>
+          <Badge variant={service.isAvailable ? 'success' : 'muted'}>
+            {service.isAvailable ? 'Available' : 'Unavailable'}
+          </Badge>
+        </div>
+        <Button
+          variant="secondary"
+          className="w-full"
+          onClick={() => mutation.mutate(!service.isAvailable)}
+          loading={mutation.isPending}
+        >
+          {service.isAvailable ? 'Mark unavailable' : 'Mark available'}
+        </Button>
+      </CardContent>
+    </Card>
+  );
 }
 
 function AvailabilityCard({ service }: { service: Service }) {

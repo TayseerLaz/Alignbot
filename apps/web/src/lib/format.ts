@@ -87,3 +87,30 @@ export function formatRelative(iso: string | null | undefined, locale = 'en-US')
   if (Math.abs(days) < 30) return rtf.format(-days, 'day');
   return date.toLocaleDateString(locale);
 }
+
+/**
+ * "1,204" — locale-aware thousands separator. Used across dashboard
+ * widgets where readability of a count matters more than the exact
+ * number being typographically tight.
+ */
+export function formatThousands(n: number | null | undefined, locale = 'en-US'): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '—';
+  return new Intl.NumberFormat(locale).format(n);
+}
+
+/**
+ * Seconds → "Xm Ys" / "Ys" / "Xh Ym". Used by dashboard widgets that
+ * surface response times. Keeps the result terse so the metric fits
+ * inside a stat tile without wrapping.
+ */
+export function formatDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return '—';
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const remS = s % 60;
+  if (m < 60) return remS === 0 ? `${m}m` : `${m}m ${remS}s`;
+  const h = Math.floor(m / 60);
+  const remM = m % 60;
+  return remM === 0 ? `${h}h` : `${h}h ${remM}m`;
+}

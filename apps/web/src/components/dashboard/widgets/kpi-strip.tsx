@@ -5,7 +5,7 @@ import { ArrowUpRight, Plus, X } from 'lucide-react';
 import Link from 'next/link';
 
 import { Card, CardContent } from '@/components/ui/card';
-import { getKpiStrip, type KpiTile } from '@/lib/dashboard-mock';
+import { getKpiStrip, type KpiTile } from '@/lib/dashboard-api';
 import { formatThousands } from '@/lib/format';
 import { cn } from '@/lib/utils';
 

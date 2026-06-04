@@ -15,18 +15,27 @@ import {
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
-import { getRecentActivity, type ActivityKind } from '@/lib/dashboard-mock';
+import { getRecentActivity } from '@/lib/dashboard-api';
 import { formatRelative } from '@/lib/format';
 
 import { WidgetEmpty, WidgetError, WidgetFrame, WidgetSkeleton } from '../widget-frame';
 
-const ICON_BY_KIND: Record<ActivityKind, LucideIcon> = {
+// Wider than the ActivityKind union so the widget keeps working when
+// the API surfaces a new action type before this file gets updated —
+// unknown kinds fall through to the generic Activity icon below.
+const ICON_BY_KIND: Record<string, LucideIcon> = {
   product_updated: Package,
+  product_created: Package,
   service_updated: Briefcase,
+  service_created: Briefcase,
   login_succeeded: LogIn,
   business_info_updated: Building2,
   broadcast_sent: Megaphone,
   bot_deployed: Bot,
+  bot_undeployed: Bot,
+  faq_updated: Activity,
+  faq_created: Activity,
+  policy_updated: Activity,
 };
 
 export function RecentActivityWidget() {

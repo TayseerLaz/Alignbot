@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Sparkles } from 'lucide-react';
 
-import { getAiBudgetToday } from '@/lib/dashboard-mock';
+import { getAiBudgetToday } from '@/lib/dashboard-api';
 import { formatThousands } from '@/lib/format';
 import { cn } from '@/lib/utils';
 

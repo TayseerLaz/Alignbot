@@ -1,0 +1,229 @@
+// Real-data client for the dashboard widgets. One function per widget,
+// each calling its dedicated /api/v1/dashboard/widgets/* endpoint and
+// returning a view-model the matching widget renders directly.
+//
+// Subtext strings (e.g. "3 missing price/photo") + tone classification
+// live here, not on the server, so localisation + UX tweaks don't
+// require an API redeploy. The server returns raw numbers; this layer
+// turns them into the words the operator reads.
+
+import { api } from './api';
+
+// ---------- 1. KPI strip ---------------------------------------------------
+
+export type KpiTone = 'warning' | 'success' | 'neutral';
+
+export interface KpiTile {
+  id: string;
+  label: string;
+  value: number;
+  subtext: string;
+  subtextTone: KpiTone;
+  href: string;
+  action?: { label: string; href: string };
+}
+
+export interface KpiStripData {
+  tiles: KpiTile[];
+}
+
+interface KpiApiResponse {
+  products: { total: number; incomplete: number };
+  services: { total: number; incomplete: number };
+  faqs: { total: number };
+  contacts: { total: number; newThisWeek: number };
+}
+
+export async function getKpiStrip(): Promise<KpiStripData> {
+  const res = await api.get<{ data: KpiApiResponse }>('/api/v1/dashboard/widgets/kpi');
+  const d = res.data;
+  return {
+    tiles: [
+      {
+        id: 'products',
+        label: 'Products',
+        value: d.products.total,
+        subtext:
+          d.products.incomplete > 0
+            ? `${d.products.incomplete} missing price/photo`
+            : 'all complete',
+        subtextTone: d.products.incomplete > 0 ? 'warning' : 'success',
+        href: '/products',
+      },
+      {
+        id: 'services',
+        label: 'Services',
+        value: d.services.total,
+        subtext:
+          d.services.incomplete > 0
+            ? `${d.services.incomplete} missing details`
+            : 'all complete',
+        subtextTone: d.services.incomplete > 0 ? 'warning' : 'success',
+        href: '/services',
+      },
+      {
+        id: 'faqs',
+        label: 'FAQs',
+        value: d.faqs.total,
+        subtext: d.faqs.total === 0 ? 'none yet' : 'covers top topics',
+        subtextTone: d.faqs.total === 0 ? 'warning' : 'neutral',
+        href: '/business-info',
+      },
+      {
+        id: 'contacts',
+        label: 'Contacts',
+        value: d.contacts.total,
+        subtext:
+          d.contacts.newThisWeek > 0
+            ? `+${d.contacts.newThisWeek} this week`
+            : 'no new this week',
+        subtextTone: d.contacts.newThisWeek > 0 ? 'success' : 'neutral',
+        href: '/contacts',
+        action: { label: 'ADD', href: '/contacts?new=1' },
+      },
+    ],
+  };
+}
+
+// ---------- 2. Onboarding checklist ----------------------------------------
+
+export interface OnboardingStep {
+  id: string;
+  label: string;
+  href: string;
+  completed: boolean;
+}
+
+export interface OnboardingData {
+  steps: OnboardingStep[];
+  complete: boolean;
+}
+
+export async function getOnboardingChecklist(): Promise<OnboardingData> {
+  const res = await api.get<{ data: OnboardingData }>('/api/v1/dashboard/widgets/onboarding');
+  return res.data;
+}
+
+// ---------- 3. Inbox snapshot ----------------------------------------------
+
+export interface InboxSnapshot {
+  openThreads: number;
+  unassigned: number;
+  awaitingReply: number;
+  avgFirstResponseSeconds: number | null;
+}
+
+export async function getInboxSnapshot(): Promise<InboxSnapshot> {
+  const res = await api.get<{ data: InboxSnapshot }>('/api/v1/dashboard/widgets/inbox-snapshot');
+  return res.data;
+}
+
+// ---------- 4. Bot performance · today -------------------------------------
+
+export interface BotPerformanceToday {
+  autoResolvedPercent: number;
+  botHandledMessages: number;
+  handedToHuman: number;
+  topFaq: string | null;
+}
+
+export async function getBotPerformanceToday(): Promise<BotPerformanceToday> {
+  const res = await api.get<{ data: BotPerformanceToday }>('/api/v1/dashboard/widgets/bot-performance');
+  return res.data;
+}
+
+// ---------- 5. Outreach & campaigns ----------------------------------------
+
+export interface ActiveCampaign {
+  id: string;
+  name: string;
+  status: string;
+  sent: number;
+  delivered: number;
+  read: number;
+}
+
+export interface OutreachData {
+  active: ActiveCampaign | null;
+}
+
+export async function getOutreachCampaigns(): Promise<OutreachData> {
+  const res = await api.get<{ data: OutreachData }>('/api/v1/dashboard/widgets/outreach');
+  return res.data;
+}
+
+// ---------- 6. AI chatbot budget · today -----------------------------------
+// Reuses the long-standing /dashboard/ai-usage endpoint — no need for a
+// new route here. The response shape needs a small adapter so the widget
+// stays decoupled from the legacy field names.
+
+export interface AiBudgetToday {
+  plan: 'Unlimited' | 'Capped';
+  used: number;
+  limit: number;
+  estCostUsd: number;
+}
+
+interface AiUsageResponse {
+  used: number;
+  limit: number;
+  unlimited: boolean;
+  percentUsed: number;
+  estCostUsd: number;
+}
+
+export async function getAiBudgetToday(): Promise<AiBudgetToday> {
+  const res = await api.get<{ data: AiUsageResponse }>('/api/v1/dashboard/ai-usage');
+  const d = res.data;
+  return {
+    plan: d.unlimited ? 'Unlimited' : 'Capped',
+    used: d.used,
+    limit: d.limit,
+    estCostUsd: d.estCostUsd,
+  };
+}
+
+// ---------- 7. Connections & sync ------------------------------------------
+
+export type WebhookHealth = 'healthy' | 'degraded' | 'failing';
+
+export interface ConnectionsData {
+  lastSyncIso: string | null;
+  templates: { approved: number; pending: number };
+  webhooks: WebhookHealth;
+}
+
+export async function getConnectionsSync(): Promise<ConnectionsData> {
+  const res = await api.get<{ data: ConnectionsData }>('/api/v1/dashboard/widgets/connections-sync');
+  return res.data;
+}
+
+// ---------- 8. Recent activity ---------------------------------------------
+
+export type ActivityKind =
+  | 'product_updated'
+  | 'product_created'
+  | 'service_updated'
+  | 'service_created'
+  | 'login_succeeded'
+  | 'business_info_updated'
+  | 'broadcast_sent'
+  | 'bot_deployed'
+  | 'bot_undeployed'
+  | 'faq_updated'
+  | 'faq_created'
+  | 'policy_updated';
+
+export interface ActivityEvent {
+  id: string;
+  kind: string;
+  description: string;
+  at: string;
+}
+
+export async function getRecentActivity(): Promise<ActivityEvent[]> {
+  const res = await api.get<{ data: { events: ActivityEvent[] } }>(
+    '/api/v1/dashboard/widgets/recent-activity',
+  );
+  return res.data.events;
+}

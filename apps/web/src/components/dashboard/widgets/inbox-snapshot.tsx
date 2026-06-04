@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowUpRight, Inbox } from 'lucide-react';
 import Link from 'next/link';
 
-import { getInboxSnapshot } from '@/lib/dashboard-mock';
+import { getInboxSnapshot } from '@/lib/dashboard-api';
 import { formatDuration, formatThousands } from '@/lib/format';
 import { cn } from '@/lib/utils';
 

@@ -5,7 +5,7 @@ import { CheckCircle2, Circle, ListChecks, X } from 'lucide-react';
 import Link from 'next/link';
 
 import { cn } from '@/lib/utils';
-import { getOnboardingChecklist } from '@/lib/dashboard-mock';
+import { getOnboardingChecklist } from '@/lib/dashboard-api';
 
 import { useEditMode } from '../edit-mode-context';
 

@@ -384,6 +384,11 @@ model User {
   totpSecret                 String?    @map("totp_secret")
   totpEnrolledAt             DateTime?  @map("totp_enrolled_at")
   recoveryCodesHashed        String[]   @default([]) @map("recovery_codes_hashed")
+  // Dashboard widget layout — the ids of widgets the user currently
+  // has on their /dashboard, in render order. Persisted server-side
+  // so the layout follows the operator across devices / browsers /
+  // cleared cookies. NULL = "use the registry's defaults".
+  dashboardLayout            Json?      @map("dashboard_layout")
   createdAt                  DateTime   @default(now()) @map("created_at")
   updatedAt                  DateTime   @updatedAt @map("updated_at")
 

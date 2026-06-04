@@ -5,7 +5,7 @@ import { Send } from 'lucide-react';
 import Link from 'next/link';
 
 import { Button } from '@/components/ui/button';
-import { getOutreachCampaigns } from '@/lib/dashboard-mock';
+import { getOutreachCampaigns } from '@/lib/dashboard-api';
 import { formatThousands } from '@/lib/format';
 
 import { LiveDot, WidgetEmpty, WidgetError, WidgetFrame, WidgetSkeleton } from '../widget-frame';

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Bot, Info } from 'lucide-react';
 import Link from 'next/link';
 
-import { getBotPerformanceToday } from '@/lib/dashboard-mock';
+import { getBotPerformanceToday } from '@/lib/dashboard-api';
 import { formatThousands } from '@/lib/format';
 
 import { WidgetEmpty, WidgetError, WidgetFrame, WidgetSkeleton } from '../widget-frame';

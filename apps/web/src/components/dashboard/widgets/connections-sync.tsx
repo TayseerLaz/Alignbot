@@ -5,7 +5,7 @@ import { AlertTriangle, CheckCircle2, Plug, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 
 import { Button } from '@/components/ui/button';
-import { getConnectionsSync, type WebhookHealth } from '@/lib/dashboard-mock';
+import { getConnectionsSync, type WebhookHealth } from '@/lib/dashboard-api';
 import { formatRelative } from '@/lib/format';
 import { cn } from '@/lib/utils';
 

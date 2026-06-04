@@ -120,6 +120,14 @@ const envSchema = z.object({
   // + Levant Arabic noticeably better.
   GROQ_WHISPER_MODEL: z.string().default('whisper-large-v3-turbo'),
 
+  // MyFatoorah payment gateway — used by the bot to mint per-order
+  // invoice URLs at checkout. When MYFATOORAH_API_KEY is unset, the
+  // bot's payment-link request falls back to a generic gateway URL
+  // (so dev / staging tenants without merchant credentials still
+  // get a non-broken reply). Base URL toggles between sandbox + prod.
+  MYFATOORAH_API_KEY: z.string().optional(),
+  MYFATOORAH_BASE_URL: z.string().url().default('https://apitest.myfatoorah.com'),
+
   // Phase 3 §5.1.3 — Stripe billing. Empty values disable billing surfaces:
   // /billing/checkout 503s, /webhooks/stripe rejects, cap middleware
   // skips. Existing orgs stay on whatever subscription state they had.

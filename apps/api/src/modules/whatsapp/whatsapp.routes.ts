@@ -2644,6 +2644,41 @@ async function maybeReplyAsBot(args: {
         (s, it) => s + it.unitPriceMinor * it.quantity,
         0,
       );
+
+      // capturedFields: extracted shopForm answers we want the LLM to
+      // see on every subsequent turn so it stops re-asking. Two
+      // sources, in priority order:
+      //   1) Persistent fields[] JSON on the draft Cart row (set by
+      //      the form-collect path on confirm).
+      //   2) Heuristic regex sweep of the bot's prior outbound text —
+      //      catches the "Delivery address is Lusail Marina Twin
+      //      Tower B" line the bot speaks before persisting anything.
+      // (2) is the bandaid; (1) is the long-term home as we wire
+      // per-field capture into the form-collection state.
+      const capturedFields: Record<string, string> = {};
+      const draftFields = (draft.fields as unknown) as Array<{ key?: string; value?: string }> | null;
+      if (Array.isArray(draftFields)) {
+        for (const f of draftFields) {
+          if (f && typeof f.key === 'string' && typeof f.value === 'string' && f.value.trim()) {
+            capturedFields[f.key] = f.value.trim();
+          }
+        }
+      }
+      // Regex sweep across the last 8 outbound messages. Looks for
+      // address-shaped lines. Limited to outbound (the bot's own
+      // speech) so the customer's inbound chatter doesn't pollute.
+      const outboundRecent = ctx.history
+        .filter((h) => h.direction === 'outbound')
+        .slice(-8)
+        .map((h) => h.body ?? '')
+        .join('\n');
+      const addressMatch = outboundRecent.match(
+        /(?:delivery\s+address\s+is|delivery\s+address\s*:|address\s+is|address\s*:)\s+([^.\n]{6,120})/i,
+      );
+      if (addressMatch && !capturedFields['delivery_address']) {
+        capturedFields['delivery_address'] = addressMatch[1]!.trim().replace(/[,;]+$/, '');
+      }
+
       return {
         items: draft.items.map((it) => ({
           name: it.name,
@@ -2653,6 +2688,7 @@ async function maybeReplyAsBot(args: {
         })),
         subtotalMinor,
         currency,
+        capturedFields: Object.keys(capturedFields).length > 0 ? capturedFields : undefined,
       };
     });
 
@@ -2788,6 +2824,80 @@ async function maybeReplyAsBot(args: {
     }
     stopwatch.lap('validators');
 
+    // MyFatoorah payment-link swap. The LLM is trained to emit
+    // "https://myfatoorah.com" as a placeholder when the customer
+    // asks for a payment link — useless because it's the marketing
+    // homepage, not a payable invoice. Detect any such mention AND
+    // the explicit [PAYMENT_LINK] marker the prompt may emit, then
+    // call MyFatoorah to mint a real per-order invoice and substitute
+    // its URL. When the integration isn't configured OR creation
+    // fails, we leave the original text alone (the customer still
+    // sees a non-broken reply; the operator can intervene from the
+    // inbox).
+    if (
+      rawReply &&
+      cartStateForLLM &&
+      cartStateForLLM.items.length > 0 &&
+      (/\bhttps?:\/\/(?:[a-z0-9-]+\.)?myfatoorah\.com\S*/i.test(rawReply) ||
+        /\[PAYMENT_LINK\]/i.test(rawReply))
+    ) {
+      const { createInvoice, isMyFatoorahConfigured } = await import('../../lib/myfatoorah.js');
+      if (isMyFatoorahConfigured()) {
+        try {
+          const code = cartStateForLLM.currency.toUpperCase();
+          const dec =
+            code === 'KWD' || code === 'BHD' || code === 'OMR' || code === 'JOD' ? 3 : 2;
+          const div = Math.pow(10, dec);
+          const amountMajor = Number((cartStateForLLM.subtotalMinor / div).toFixed(dec));
+          // Surface the latest draft cart id so the invoice payload
+          // can carry it as UserDefinedField for the eventual
+          // payment-webhook → cart-paid linker.
+          const draftCart = await withRlsBypass((tx) =>
+            tx.cart.findFirst({
+              where: { organizationId: args.organizationId, threadId: ctx.threadId, status: 'draft' },
+              select: { id: true, customerName: true },
+            }),
+          );
+          if (draftCart) {
+            const invoice = await createInvoice(
+              {
+                organizationId: args.organizationId,
+                threadId: ctx.threadId,
+                cartId: draftCart.id,
+                customerName:
+                  draftCart.customerName ||
+                  (ctx as { customerName?: string | null }).customerName ||
+                  'Customer',
+                customerPhone: m.from,
+                amountMajor,
+                currency: code,
+                displayReference: draftCart.id.slice(0, 8),
+              },
+              args.log,
+            );
+            if (invoice) {
+              rawReply = rawReply
+                .replace(/\bhttps?:\/\/(?:[a-z0-9-]+\.)?myfatoorah\.com\S*/gi, invoice.invoiceUrl)
+                .replace(/\[PAYMENT_LINK\]/gi, invoice.invoiceUrl);
+              args.log.info(
+                { invoiceId: invoice.invoiceId, threadId: ctx.threadId, cartId: draftCart.id },
+                '[whatsapp] payment link swapped for live MyFatoorah invoice',
+              );
+            }
+          }
+        } catch (err) {
+          args.log.warn({ err }, '[whatsapp] payment-link swap failed');
+        }
+      } else if (/\[PAYMENT_LINK\]/i.test(rawReply)) {
+        // Marker emitted but no provider configured — strip the
+        // marker so the customer doesn't see literal "[PAYMENT_LINK]".
+        rawReply = rawReply.replace(
+          /\[PAYMENT_LINK\]/gi,
+          'We will send you a secure payment link shortly.',
+        );
+      }
+    }
+
     // Stateful cart — parse "added N× <product>" lines out of the bot's
     // reply and upsert each one into a draft Cart row for this thread.
     // The downstream [CART:] marker handler will read items from THIS
@@ -2799,6 +2909,16 @@ async function maybeReplyAsBot(args: {
         const { parseAddedItems, augmentReplyWithImageMarkers } = await import(
           '../../lib/cart-parser.js'
         );
+        // userMessage is forwarded so the parser can refuse adds the
+        // customer didn't explicitly request (defeats the "Done send" →
+        // hallucinated Mango Ice Cream class of failure). previousBotReply
+        // also goes in so the payment-turn detector sees the prior
+        // "send me a payment link" prompt and never matches a phonetic
+        // catalog cousin (e.g. "Fawran" → "Farouhah Frappe").
+        const previousBotReplyForParser =
+          [...ctx.history]
+            .reverse()
+            .find((h) => h.direction === 'outbound')?.body ?? '';
         const parsed = parseAddedItems(
           rawReply,
           ctx.data.products.map((p) => ({
@@ -2807,6 +2927,7 @@ async function maybeReplyAsBot(args: {
             name: p.name,
             priceMinor: p.priceMinor,
           })),
+          { userMessage: m.bodyText ?? '', previousBotReply: previousBotReplyForParser },
         );
         // Hallucination guard. Two passes:
         //   1. "added/removed N× X" lines (cart confirmations / removals)

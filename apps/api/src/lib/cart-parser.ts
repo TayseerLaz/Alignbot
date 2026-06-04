@@ -40,6 +40,93 @@ const ADD_PATTERNS = [
   /(?:أضفت|أَضَفْتُ|تمت\s+إضافة)\s+(\d{1,3})\s*[x×]?\s+([^\n.؛.]{2,80})/g,
 ];
 
+// Payment-method words customers say in response to "how would you
+// like to pay?". These must NEVER be matched as products even if the
+// catalog accidentally contains a phonetically-similar item — a real
+// failure-mode in prod: customer typed "fawran" (Kuwaiti instant-pay)
+// and the parser matched "Farouhah Frappe" as the product. We check
+// the customer's most-recent inbound message + the bot's reply BEFORE
+// running product extraction, and short-circuit when one of these
+// keywords is the dominant content.
+//
+// Country-agnostic by design — the platform serves merchants on every
+// continent. Adding a new market typically means adding one or two
+// rails here (e.g. PromptPay for Thailand, Yape for Peru). When in
+// doubt, add it: false positives here only mean "this turn doesn't
+// auto-add to cart", which fails closed — operators can still
+// intervene from the inbox.
+const PAYMENT_METHOD_WORDS: readonly string[] = [
+  // Card networks (global)
+  'visa', 'mastercard', 'master card', 'amex', 'american express',
+  'discover', 'jcb', 'unionpay', 'rupay', 'troy',
+  // Digital wallets (global)
+  'apple pay', 'applepay', 'google pay', 'googlepay', 'samsung pay',
+  'wechat pay', 'alipay', 'paypal', 'venmo', 'cash app', 'cashapp',
+  'zelle',
+  // Gulf / MENA instant-pay
+  'knet', 'k-net', 'knetpay', 'mada', 'benefit', 'benefitpay',
+  'fawran', 'sadad', 'stc pay', 'urpay',
+  // South / SE Asia
+  'upi', 'paytm', 'razorpay', 'phonepe', 'gpay', 'bhim',
+  'grabpay', 'gcash', 'dana', 'ovo', 'truemoney', 'promptpay',
+  // Europe
+  'ideal', 'sepa', 'sofort', 'klarna', 'bizum', 'blik',
+  'multibanco', 'mb way', 'swish', 'vipps', 'mobilepay',
+  // LATAM
+  'pix', 'oxxo', 'boleto', 'mercado pago', 'mercadopago',
+  'yape', 'plin',
+  // Africa
+  'm-pesa', 'mpesa', 'mtn momo', 'airtel money', 'flutterwave',
+  'paystack',
+  // Gateways / processors
+  'myfatoorah', 'tap', 'tabby', 'tamara', 'paymob', 'checkout.com',
+  'stripe', 'square', 'adyen', 'braintree',
+  // Generic (every market)
+  'cash', 'cod', 'cash on delivery', 'bank transfer', 'wire transfer',
+  'transfer', 'crypto', 'bitcoin', 'usdt',
+  // Arabic
+  'كاش', 'نقدا', 'نقداً', 'تحويل', 'كي نت', 'فوران', 'مدى', 'تابي', 'تمارا',
+];
+
+/**
+ * True iff the customer's message OR the bot's reply mostly looks like
+ * a payment-method exchange. When true the cart parser refuses to add
+ * any new line — payment-method words sometimes phonetically match
+ * frappe / shake / other catalog names and we never want that.
+ */
+export function isPaymentMethodTurn(userMessage: string, botReply: string): boolean {
+  const u = userMessage.toLowerCase().trim();
+  const r = botReply.toLowerCase().trim();
+  // Hit on the user's message — the affirmative answer to "how to pay?".
+  for (const w of PAYMENT_METHOD_WORDS) {
+    const pattern = new RegExp(`(^|[^a-z])${escapeRegExp(w)}([^a-z]|$)`, 'i');
+    if (pattern.test(u)) return true;
+  }
+  // Hit on the bot's reply — when the bot itself is talking payment
+  // methods (sending the payment link, confirming the choice) we
+  // never want to parse "Fawran" as an add either.
+  if (/payment\s+(link|method|option)|how would you like to pay|what payment/i.test(r)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * True iff the supplied catalog product name is also a payment-method
+ * keyword. Used by parseAddedItems as a last-line guard: even if the
+ * extracted line really did mention the catalog item by name, we
+ * refuse to add it when its name overlaps with a payment-channel word
+ * (e.g. a catalog entry literally called "Fawran").
+ */
+function isProductNameAlsoPayment(productName: string): boolean {
+  const n = productName.toLowerCase().trim();
+  return PAYMENT_METHOD_WORDS.some((w) => n === w || n.startsWith(`${w} `) || n.endsWith(` ${w}`));
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // Cancel / restart phrases the customer might use to wipe the cart
 // before confirming. Conservative — we only match clear intents so
 // "nevermind, what about the oreo" doesn't nuke the cart.
@@ -96,6 +183,20 @@ function findProduct(fragment: string, catalog: CatalogProduct[]): CatalogProduc
   return best?.product ?? null;
 }
 
+export interface ParseAddedItemsOptions {
+  /**
+   * The customer's most recent inbound message. When set, we only
+   * accept an "added X" line if the customer's message also mentions
+   * the matched product name — this stops the LLM hallucinating an
+   * "I've added Mango Ice Cream" line when the user only said
+   * "Done send". When unset (back-compat), the explicit-name check
+   * is skipped.
+   */
+  userMessage?: string;
+  /** The bot's previous outbound. Used only for context heuristics. */
+  previousBotReply?: string;
+}
+
 /**
  * Parse a single bot reply for all "added N× <name>" lines.
  * Returns one ParsedAdd per item that resolves against the catalog.
@@ -105,12 +206,34 @@ function findProduct(fragment: string, catalog: CatalogProduct[]): CatalogProduc
  * Multiple matches for the same SKU within one reply collapse to a
  * single entry — quantity is the LARGEST mentioned (bot saying "I've
  * added 1× X. Running total 1× X" shouldn't double-count).
+ *
+ * Three guards prevent the parser inventing items:
+ *   1. The PAYMENT_METHOD_WORDS short-circuit (no adds when the turn
+ *      is about payment channels).
+ *   2. Explicit-user-name guard: when options.userMessage is supplied,
+ *      we only accept the add if the user's message also references
+ *      the product name (or one of its tokens ≥4 chars). Stops the
+ *      LLM bolting an unrequested item onto an order.
+ *   3. Catalog-name-is-payment-method block: even a fully-explicit
+ *      "add Fawran" is refused if there's any catalog row literally
+ *      called Fawran — the customer almost certainly meant the
+ *      payment channel.
  */
 export function parseAddedItems(
   reply: string,
   catalog: CatalogProduct[],
+  options: ParseAddedItemsOptions = {},
 ): ParsedAdd[] {
   if (!reply || catalog.length === 0) return [];
+
+  // Guard 1: payment-method turn — never auto-add when the customer's
+  // message OR the bot's reply is clearly about payment channels.
+  if (options.userMessage != null) {
+    if (isPaymentMethodTurn(options.userMessage, reply)) return [];
+  }
+
+  const userTextNorm = options.userMessage ? normalise(options.userMessage) : null;
+
   const bySku = new Map<string, ParsedAdd>();
   for (const re of ADD_PATTERNS) {
     re.lastIndex = 0;
@@ -121,6 +244,24 @@ export function parseAddedItems(
       const fragment = match[2] ?? '';
       const product = findProduct(fragment, catalog);
       if (!product) continue;
+
+      // Guard 3: refuse to add a product whose own name is a payment
+      // word. Even an explicit ask ("add fawran") is more likely an
+      // operator catalog-naming accident than a genuine order.
+      if (isProductNameAlsoPayment(product.name)) continue;
+
+      // Guard 2: when we have the user's last message, the user must
+      // have actually mentioned the product (full name or a meaningful
+      // token from it). Otherwise the bot is inventing the add.
+      if (userTextNorm) {
+        const productNorm = normalise(product.name);
+        const productTokens = productNorm.split(/\s+/).filter((t) => t.length >= 4);
+        const userMentions =
+          userTextNorm.includes(productNorm) ||
+          productTokens.some((tok) => userTextNorm.includes(tok));
+        if (!userMentions) continue;
+      }
+
       const prev = bySku.get(product.sku);
       if (!prev || qty > prev.quantity) {
         bySku.set(product.sku, {

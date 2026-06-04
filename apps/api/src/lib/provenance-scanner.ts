@@ -416,44 +416,66 @@ export function scanReply(
   // FIRST TOKEN since the bot-engine only uses the first word (avoids
   // form-letter "Dear Mr. Surname" awkwardness). Confidence is 1.0 —
   // the bot-engine literally injected this token into the reply.
+  //
+  // The snippet captured here is intentionally NARROW (≤30 chars) so
+  // the admin UI doesn't display surrounding cart-add / price text as
+  // if it came from the customer profile. Pre-fix we used the default
+  // 60-char window which pulled "Hi Fadi, I've added Fawran to your
+  // cart" into the citation — visually implying the customer profile
+  // was the source of the Fawran add. Also: we suppress this citation
+  // entirely on replies whose first 80 chars are clearly a product /
+  // price line, so the name-detection doesn't dominate when the
+  // operator should be looking at the product source instead.
+  const replyLooksLikeProductOp = /(?:i(?:'ve)?\s+added|added|added to your cart|your order is|cart total|subtotal)/i.test(
+    reply.slice(0, 100),
+  );
+
+  const pushCustomerProfileCitation = (
+    label: 'WhatsApp display name' | 'Customer nickname (operator-set)',
+    first: string,
+    sourceDescription: string,
+  ) => {
+    if (first.length <= 1) return;
+    // Suppress when the reply is dominated by a product / price line —
+    // the real source for those phrases is a `product` citation that
+    // the scanner already adds elsewhere; the name match here is a
+    // spurious greeting-detector match and would mislead the operator.
+    if (replyLooksLikeProductOp) {
+      // Allow the citation ONLY when the name appears BEFORE any
+      // product/price text — e.g. "Hi Fadi, ..." → the name still
+      // earns its citation; the snippet stays tight.
+      const nameIdx = reply.toLowerCase().indexOf(first.toLowerCase());
+      const productIdx = reply.search(/(?:i(?:'ve)?\s+added|added\s+to|your order)/i);
+      if (nameIdx < 0 || (productIdx >= 0 && nameIdx >= productIdx)) return;
+    }
+    const m = findSnippet(reply, first, 30); // narrow window
+    if (!m) return;
+    citations.push({
+      type: 'customer_profile',
+      id: null,
+      label,
+      snippet: m.snippet,
+      confidence: 1.0,
+      meta: { value: first, sourceDescription },
+    });
+  };
+
   if (c.customer?.whatsappName) {
     const first = c.customer.whatsappName.trim().split(/\s+/)[0] ?? '';
-    if (first.length > 1) {
-      const m = findSnippet(reply, first);
-      if (m) {
-        citations.push({
-          type: 'customer_profile',
-          id: null,
-          label: 'WhatsApp display name',
-          snippet: m.snippet,
-          confidence: 1.0,
-          meta: {
-            value: first,
-            sourceDescription: "Customer's WhatsApp profile (Meta-provided, not editable)",
-          },
-        });
-      }
-    }
+    pushCustomerProfileCitation(
+      'WhatsApp display name',
+      first,
+      "Customer's WhatsApp profile (Meta-provided, not editable)",
+    );
   } else if (c.customer?.operatorNickname) {
     // Fallback: when the customer has no WhatsApp display name, the
     // bot uses the nickname the operator typed into the thread row.
     const first = c.customer.operatorNickname.trim().split(/\s+/)[0] ?? '';
-    if (first.length > 1) {
-      const m = findSnippet(reply, first);
-      if (m) {
-        citations.push({
-          type: 'customer_profile',
-          id: null,
-          label: 'Customer nickname (operator-set)',
-          snippet: m.snippet,
-          confidence: 1.0,
-          meta: {
-            value: first,
-            sourceDescription: 'Nickname an operator typed on this thread',
-          },
-        });
-      }
-    }
+    pushCustomerProfileCitation(
+      'Customer nickname (operator-set)',
+      first,
+      'Nickname an operator typed on this thread',
+    );
   }
 
   // ---- bot_config citations ----

@@ -487,6 +487,16 @@ interface BotResponseArgs {
     items: Array<{ name: string; quantity: number; unitPriceMinor: number; sku: string | null }>;
     subtotalMinor: number;
     currency: string;
+    /**
+     * Captured shopForm answers extracted from the prior conversation
+     * — typically the delivery address, customer phone, or any other
+     * shopForm field the operator collects. Surfaced in the prompt
+     * as "DO NOT ask again" so the bot stops re-prompting for fields
+     * it already captured (real prod failure mode: bot summarised the
+     * address one turn, then asked "delivery address?" the very next
+     * turn). Free-form so we can grow the set without prompt changes.
+     */
+    capturedFields?: Record<string, string>;
   } | null;
 }
 
@@ -723,6 +733,9 @@ export async function buildBotResponse(
       ? `# Cart flow (load-bearing)`
         + `\nTrigger on: ORDER / BUY / DELIVER intent or any of [${shopForm.intentKeywords.join(', ') || 'order, buy, delivery, menu'}].`
         + `\nCurrency: ${shopForm.currency} (${['KWD','BHD','OMR','JOD'].includes(shopForm.currency) ? '3 decimals, e.g. "1.250"' : '2 decimals, e.g. "1.25"'}). NEVER quote subunits.`
+        + `\n0. EXPLICIT-NAME RULE (most important): only "add" a product the customer EXPLICITLY NAMED in their LATEST message. If the user said "Done", "send it", "that's all", "اوكي", "تمام", or any closing/confirm phrase WITHOUT naming a product, DO NOT add anything — instead summarise the cart and ask for the next form field. Never invent an "I've added X" line when the user hasn't named X. Never bolt an unrequested item onto a confirmation.`
+        + `\n0b. PAYMENT-METHOD RULE: any payment-channel word the customer mentions is a PAYMENT CHOICE, not a product. This includes (but is not limited to) — card brands (Visa, Mastercard, Amex), digital wallets (Apple Pay, Google Pay, Samsung Pay), instant-pay rails (KNET, Mada, Benefit, Fawran, Pix, UPI, M-Pesa, iDEAL, BLIK, Bizum), gateways (MyFatoorah, Stripe, PayPal, Razorpay, Paytm), and generic terms (cash, COD, bank transfer). NEVER treat any payment-method word as a catalog item even if a phonetically-similar product exists. Acknowledge the customer's chosen payment method and continue to checkout.`
+        + `\n0c. PAYMENT-LINK RULE: when the customer asks for a payment link / asks how to pay / says "send me the link" / says "رابط الدفع" / says any equivalent in any language, DO NOT invent a URL. Reply with one short line confirming you're sending it (in the customer's language), then emit the literal token [PAYMENT_LINK] on its own line. The platform will replace [PAYMENT_LINK] with a real per-order invoice URL from whichever gateway the operator has configured. NEVER paste a generic gateway homepage URL (myfatoorah.com, stripe.com, paypal.me, etc.) — the customer can't actually pay through those.`
         + `\n1. Pick from CATALOG (EXACT names + SKUs). Never invent products.`
         + `\n2. On every add: confirm with description + unit price + running subtotal + [IMAGE: <SKU>] on its own line.`
         + `\n3. Upsell — suggest ONE specific catalog item by NAME + PRICE (warm, short, never pushy, no em-dashes). If no good pairing exists, just ask "anything else?". Pick a DIFFERENT suggestion each turn.`
@@ -851,13 +864,25 @@ export async function buildBotResponse(
                 `- ${it.quantity}× ${it.name}${it.sku ? ` (SKU ${it.sku})` : ''} @ ${fmt(it.unitPriceMinor)} each = ${fmt(it.quantity * it.unitPriceMinor)}`,
             )
             .join('\n');
+          const captured = args.cartState!.capturedFields ?? {};
+          const capturedKeys = Object.keys(captured).filter((k) => (captured[k] ?? '').trim().length > 0);
+          const capturedBlock =
+            capturedKeys.length > 0
+              ? [
+                  `🚚 Already captured from the customer in earlier turns (DO NOT ASK AGAIN — quote verbatim when summarising):`,
+                  ...capturedKeys.map((k) => `  - ${k}: ${captured[k]}`),
+                ].join('\n')
+              : '';
           return [
             `# 🛒 Running cart state for THIS conversation`,
             `Subtotal so far: ${fmt(args.cartState!.subtotalMinor)} (${args.cartState!.items.reduce((s, i) => s + i.quantity, 0)} items)`,
             `Items:`,
             lines,
+            capturedBlock,
             `When the customer asks "what's the total" / "how much" / "كم المجموع", quote the subtotal above VERBATIM. NEVER reply "I can't compute the total" or "I don't have that info" — you have the running total right here.`,
-          ].join('\n');
+          ]
+            .filter(Boolean)
+            .join('\n');
         })()
       : '',
   ]

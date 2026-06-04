@@ -14,7 +14,7 @@ import {
   FaqVisibility,
 } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, Building2, CalendarCheck, MapPin, MessageSquare, Phone, Plus, Save, ScrollText, ShoppingCart, Trash2 } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, Building2, CalendarCheck, ChevronDown, MessageSquare, Plus, Save, ScrollText, ShoppingCart, Trash2, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -44,18 +44,12 @@ export default function BusinessInfoPage() {
     <>
       <PageHeader
         title="Business info"
-        description="Hours, locations, FAQs, and policies that the chatbot uses to answer questions."
+        description="The profile, hours, FAQs, and policies the chatbot reads from. Team-only data lives in its own tab so operators can tell what the bot sees at a glance."
       />
       <Tabs defaultValue="profile">
         <TabsList>
           <TabsTrigger value="profile">
             <Building2 className="mr-2 size-4" /> Profile &amp; hours
-          </TabsTrigger>
-          <TabsTrigger value="locations">
-            <MapPin className="mr-2 size-4" /> Locations
-          </TabsTrigger>
-          <TabsTrigger value="contacts">
-            <Phone className="mr-2 size-4" /> Contacts
           </TabsTrigger>
           <TabsTrigger value="faqs">
             <MessageSquare className="mr-2 size-4" /> FAQs
@@ -69,15 +63,17 @@ export default function BusinessInfoPage() {
           <TabsTrigger value="shop">
             <ShoppingCart className="mr-2 size-4" /> Shop form
           </TabsTrigger>
+          {/* "Team info" combines Locations + Contacts — neither is fed
+              into the chatbot's prompt today (BotData omits both). We
+              keep the editor so operators have a single source of truth
+              for their own team's reference, but the banner inside the
+              panel makes the not-bot-facing nature explicit. */}
+          <TabsTrigger value="team">
+            <Users className="mr-2 size-4" /> Team info
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="profile">
           <ProfilePanel />
-        </TabsContent>
-        <TabsContent value="locations">
-          <LocationsPanel />
-        </TabsContent>
-        <TabsContent value="contacts">
-          <ContactsPanel />
         </TabsContent>
         <TabsContent value="faqs">
           <FaqsPanel />
@@ -90,6 +86,9 @@ export default function BusinessInfoPage() {
         </TabsContent>
         <TabsContent value="shop">
           <ShopFormPanel />
+        </TabsContent>
+        <TabsContent value="team">
+          <TeamInfoPanel />
         </TabsContent>
       </Tabs>
     </>
@@ -168,31 +167,20 @@ function ProfilePanel() {
       <Card className="lg:col-span-2">
         <CardHeader>
           <CardTitle>Profile</CardTitle>
-          <CardDescription>The chatbot uses this to introduce your business.</CardDescription>
+          <CardDescription>
+            The fields above the &ldquo;Internal info&rdquo; divider are read by the chatbot — keep
+            them accurate.
+          </CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="legalName">Legal name</Label>
-            <Input
-              id="legalName"
-              value={draft.legalName}
-              onChange={(e) => setDraft({ ...draft, legalName: e.target.value })}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="websiteUrl">Website</Label>
-            <Input
-              id="websiteUrl"
-              type="url"
-              placeholder="https://"
-              value={draft.websiteUrl}
-              onChange={(e) => setDraft({ ...draft, websiteUrl: e.target.value })}
-            />
-          </div>
+          {/* Bot-facing fields first — these are the rows actually sent
+              into the LLM prompt by bot-engine.ts (about, tagline,
+              timezone, currency, operatingHours). */}
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="tagline">Tagline</Label>
             <Input
               id="tagline"
+              placeholder="One short sentence the bot uses to describe the business."
               value={draft.tagline}
               onChange={(e) => setDraft({ ...draft, tagline: e.target.value })}
             />
@@ -202,6 +190,7 @@ function ProfilePanel() {
             <Textarea
               id="about"
               rows={5}
+              placeholder="2–6 sentences. The bot reads this when customers ask about you."
               value={draft.about}
               onChange={(e) => setDraft({ ...draft, about: e.target.value })}
             />
@@ -223,6 +212,42 @@ function ProfilePanel() {
               onChange={(e) => setDraft({ ...draft, currency: e.target.value.toUpperCase() })}
             />
           </div>
+
+          {/* Internal info: stored on BusinessInfo but NEVER pulled into
+              the bot prompt today. We keep the editor so operators have
+              one source of truth, but collapse it + flag it so they
+              stop expecting these fields to appear in chatbot replies. */}
+          <details className="sm:col-span-2 group rounded-md border border-border bg-surface-muted/30 px-3 py-2 [&_summary::-webkit-details-marker]:hidden">
+            <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-foreground-muted">
+              <span className="inline-flex items-center gap-2">
+                Internal info
+                <span className="rounded-full bg-foreground-subtle/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-foreground-subtle">
+                  not seen by chatbot
+                </span>
+              </span>
+              <ChevronDown className="size-4 transition-transform group-open:rotate-180" aria-hidden />
+            </summary>
+            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="legalName">Legal name</Label>
+                <Input
+                  id="legalName"
+                  value={draft.legalName}
+                  onChange={(e) => setDraft({ ...draft, legalName: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="websiteUrl">Website</Label>
+                <Input
+                  id="websiteUrl"
+                  type="url"
+                  placeholder="https://"
+                  value={draft.websiteUrl}
+                  onChange={(e) => setDraft({ ...draft, websiteUrl: e.target.value })}
+                />
+              </div>
+            </div>
+          </details>
         </CardContent>
       </Card>
 
@@ -292,6 +317,36 @@ function ProfilePanel() {
           <Save className="size-4" /> Save profile &amp; hours
         </Button>
       </div>
+    </div>
+  );
+}
+
+// ---------- team info (locations + contacts, NOT bot-facing) ----------------
+// Combines Locations + Contacts into a single tab. The bot prompt-builder
+// (apps/api/src/lib/bot-engine.ts) does not pull either entity into the
+// LLM context — they're operator-team-only data today. The banner makes
+// that explicit so operators stop expecting "phone: 1234" to appear in
+// chatbot replies because they typed it here.
+function TeamInfoPanel() {
+  return (
+    <div className="space-y-6">
+      <div
+        role="note"
+        className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+      >
+        <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600" aria-hidden />
+        <div>
+          <p className="font-medium">Not seen by the chatbot.</p>
+          <p className="mt-0.5 text-xs">
+            Locations + contact channels live here as a single source of truth for your team, but
+            the bot does not read them when replying to customers. If you want the bot to mention
+            an address or phone number, put it in <strong>Profile &rarr; About</strong> or add a{' '}
+            <strong>FAQ</strong> that quotes it.
+          </p>
+        </div>
+      </div>
+      <LocationsPanel />
+      <ContactsPanel />
     </div>
   );
 }

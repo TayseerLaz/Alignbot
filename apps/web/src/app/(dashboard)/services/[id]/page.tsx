@@ -10,7 +10,6 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shell/page-header';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -66,23 +65,31 @@ export default function ServiceEditPage() {
           </Button>
         }
       />
+      {/* Layout rationale:
+            Main column = the "what is this service?" cards (Details,
+            Pricing, Weekly availability). Operators spend 95% of their
+            time here.
+            Right sidebar = the "manage this service" cards (Booking
+            rules, Visibility toggle, Danger zone). Lower-frequency
+            edits, denser layout.
+          Visibility toggle moved INSIDE the Details card header so
+          there's no standalone Visibility card competing for space. */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           <DetailsCard service={service} categories={categoriesQuery.data?.data ?? []} />
           <PricingTiersCard service={service} />
           <AvailabilityCard service={service} />
-          <BookingRulesCard service={service} />
         </div>
         <div className="space-y-6">
-          <VisibilityCard service={service} />
-          {/* Sibling cards stay in this column. */}
+          <BookingRulesCard service={service} />
           <Card>
-            <CardHeader>
-              <CardTitle>Danger zone</CardTitle>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold">Danger zone</CardTitle>
             </CardHeader>
             <CardContent>
               <Button
                 variant="danger"
+                size="sm"
                 className="w-full"
                 onClick={async () => {
                   if (
@@ -183,11 +190,19 @@ function DetailsCard({ service, categories }: { service: Service; categories: Ca
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
+      <CardHeader className="flex flex-row items-center justify-between gap-3">
         <CardTitle>Details</CardTitle>
-        <span className="text-xs text-foreground-subtle">
-          {saving ? 'Saving…' : savedAt ? `Saved ${savedAt.toLocaleTimeString()}` : 'Auto-save on'}
-        </span>
+        <div className="flex items-center gap-3 text-xs text-foreground-subtle">
+          {/* Inline visibility toggle — replaces the standalone
+              VisibilityCard. Same PATCH endpoint, same optimistic
+              invalidation pattern; just lives next to the Save status
+              so the operator can see + change "is the bot offering
+              this?" without a separate card. */}
+          <InlineVisibilityToggle service={service} />
+          <span aria-live="polite">
+            {saving ? 'Saving…' : savedAt ? `Saved ${savedAt.toLocaleTimeString()}` : 'Auto-save on'}
+          </span>
+        </div>
       </CardHeader>
       <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="space-y-1.5 sm:col-span-2">
@@ -451,13 +466,11 @@ interface WeeklyRow {
   end: string;
 }
 
-// Mirrors the products page's StatusCard: badge for the current state +
-// a single button that flips it. The previous services-page implementation
-// rendered only the badge — operators had no way to toggle a service from
-// Unavailable to Available without an API call. The crawler can also seed
-// services in either state, so this control needs to exist regardless of
-// who created the row.
-function VisibilityCard({ service }: { service: Service }) {
+// Inline Available/Unavailable toggle rendered in the DetailsCard
+// header. Replaces the standalone VisibilityCard so the page goes from
+// 6 cards → 5. Same PATCH endpoint + same optimistic invalidation
+// pattern as the old card; the badge + button just live inline.
+function InlineVisibilityToggle({ service }: { service: Service }) {
   const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationFn: (isAvailable: boolean) =>
@@ -469,32 +482,27 @@ function VisibilityCard({ service }: { service: Service }) {
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Update failed'),
   });
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Visibility</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium">Available to chatbot</p>
-            <p className="text-xs text-foreground-muted">
-              When off, the chatbot won&apos;t surface this service.
-            </p>
-          </div>
-          <Badge variant={service.isAvailable ? 'success' : 'muted'}>
-            {service.isAvailable ? 'Available' : 'Unavailable'}
-          </Badge>
-        </div>
-        <Button
-          variant="secondary"
-          className="w-full"
-          onClick={() => mutation.mutate(!service.isAvailable)}
-          loading={mutation.isPending}
-        >
-          {service.isAvailable ? 'Mark unavailable' : 'Mark available'}
-        </Button>
-      </CardContent>
-    </Card>
+    <button
+      type="button"
+      onClick={() => mutation.mutate(!service.isAvailable)}
+      disabled={mutation.isPending}
+      title={
+        service.isAvailable
+          ? 'Click to hide this service from the chatbot'
+          : 'Click to make this service available to the chatbot'
+      }
+      className="inline-flex items-center gap-1.5 rounded-full border border-transparent px-2 py-0.5 transition hover:border-border hover:bg-surface-muted disabled:opacity-50"
+    >
+      <span
+        aria-hidden
+        className={`inline-block size-2 rounded-full ${
+          service.isAvailable ? 'bg-emerald-500' : 'bg-foreground-subtle'
+        }`}
+      />
+      <span className={service.isAvailable ? 'text-emerald-700' : 'text-foreground-subtle'}>
+        {service.isAvailable ? 'Available' : 'Unavailable'}
+      </span>
+    </button>
   );
 }
 

@@ -182,6 +182,26 @@ function LanguagePicker({
   );
 }
 
+// Numbered step header used to chunk the bot builder page into four
+// phases (Knowledge → Behaviour → Conversation flow → Test & ship).
+// Pure presentation — owns no state, no data, no save path.
+function SectionHeader({ step, title, hint }: { step: number; title: string; hint?: string }) {
+  return (
+    <div className="mt-8 mb-3 flex items-baseline gap-3">
+      <span
+        aria-hidden
+        className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700"
+      >
+        {step}
+      </span>
+      <div>
+        <h2 className="text-lg font-semibold tracking-[-0.01em]">{title}</h2>
+        {hint ? <p className="text-xs text-foreground-subtle">{hint}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 export default function BotPage() {
   const qc = useQueryClient();
 
@@ -241,31 +261,56 @@ export default function BotPage() {
         }
       />
 
+      {/* Section dividers chunk the 8 cards into 4 logical phases so the
+          page reads top-to-bottom as a sequence (know → behave → flow →
+          test) instead of a wall of disconnected cards. The dividers
+          are purely visual — each card still owns its own data + save
+          paths, so editing one section never invalidates another. */}
+
+      <SectionHeader
+        step={1}
+        title="Knowledge"
+        hint="Start here. Crawl your site (or skip — Catalog + Business info already feed the bot)."
+      />
+      <AnalyzeCard />
+
+      <SectionHeader
+        step={2}
+        title="Behaviour"
+        hint="Personality, greeting, language, and voice-vs-text reply mode."
+      />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
-          <AnalyzeCard />
           <PersonalityCard config={config} />
           <VoiceReplyCard config={config} />
-          <ScenarioRunner />
         </div>
         <div className="space-y-6">
           <Questionnaire />
-          <Simulator />
         </div>
       </div>
 
-      {/* The recommender shows 3-5 candidate flows tailored to the
-          business; selecting one mirrors its JSON onto BotConfig so
-          the editor below opens with that flow already loaded. */}
-      <div className="mt-6">
-        <FlowRecommendationsCard />
-      </div>
-
-      {/* Conversation flow gets the full content width — the editor
-          needs the room for readable nodes + a side panel. Pulled out
-          of the 2-col grid above. */}
+      <SectionHeader
+        step={3}
+        title="Conversation flow"
+        hint="Pick a candidate flow or edit yours node-by-node. Optional — works fine without one."
+      />
+      <FlowRecommendationsCard />
       <div className="mt-6">
         <FlowAndTemplatesCard config={config} />
+      </div>
+
+      <SectionHeader
+        step={4}
+        title="Test &amp; ship"
+        hint="Simulate replies, run scenarios, then deploy when you're ready."
+      />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          <ScenarioRunner />
+        </div>
+        <div className="space-y-6">
+          <Simulator />
+        </div>
       </div>
     </>
   );

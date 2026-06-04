@@ -535,6 +535,14 @@ function VariantsCard({ product }: { product: Product }) {
           <p className="mt-1 text-xs text-foreground-subtle">
             Add options like color or size. Each combination becomes a separate variant.
           </p>
+          {/* Scope hint — the bot's catalog block in bot-engine.ts only
+              reads variant `name` + `priceMinor` (line 285ish). Other
+              option metadata is operator-side state, not part of the
+              prompt. Without this hint operators expect colour/size
+              attributes to show up in chatbot replies; they don't. */}
+          <p className="mt-1 text-[11px] text-foreground-subtle">
+            Bot sees <span className="font-medium">name + price</span> only.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <Input

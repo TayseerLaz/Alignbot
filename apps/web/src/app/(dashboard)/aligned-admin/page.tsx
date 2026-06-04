@@ -7,6 +7,7 @@ import {
   Building2,
   Check,
   Copy,
+  Cpu,
   Eye,
   KeyRound,
   Pause,
@@ -40,6 +41,8 @@ import { api, ApiError, setAccessToken } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 import { useSession } from '@/lib/session';
 
+export type AiPlan = 'basic' | 'middle' | 'max';
+
 interface OrgRow {
   id: string;
   slug: string;
@@ -51,7 +54,20 @@ interface OrgRow {
   productCount: number;
   serviceCount: number;
   lastActivityAt: string | null;
+  aiPlan: AiPlan;
 }
+
+export const AI_PLAN_LABEL: Record<AiPlan, string> = {
+  basic: 'Basic',
+  middle: 'Middle',
+  max: 'Max',
+};
+
+export const AI_PLAN_DESCRIPTION: Record<AiPlan, string> = {
+  basic: 'Groq Llama 3.3 70B + GPT-4o-mini fallback. Cheap and fast.',
+  middle: 'OpenAI GPT-4o. Premium quality at moderate cost.',
+  max: 'Anthropic Claude Sonnet 4.6. Top-tier reasoning, highest cost.',
+};
 
 interface SystemHealth {
   orgs: { active: number; suspended: number; deleted: number };
@@ -139,6 +155,7 @@ export default function AlignedAdminPage() {
   // Org details dialog state. Null = closed. We track the row that
   // opened it so the dialog can show the org name in its header.
   const [detailsOpenFor, setDetailsOpenFor] = useState<OrgRow | null>(null);
+  const [aiOpenFor, setAiOpenFor] = useState<OrgRow | null>(null);
 
   if (!session?.user.isAlignedAdmin) {
     return (
@@ -251,6 +268,7 @@ export default function AlignedAdminPage() {
                   <tr>
                     <th className="px-4 py-3">Org</th>
                     <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3">AI plan</th>
                     <th className="px-4 py-3 text-right">Members</th>
                     <th className="px-4 py-3 text-right">Products</th>
                     <th className="px-4 py-3 text-right">Services</th>
@@ -272,6 +290,14 @@ export default function AlignedAdminPage() {
                           }
                         >
                           {o.status}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge
+                          variant={o.aiPlan === 'max' ? 'coral' : o.aiPlan === 'middle' ? 'info' : 'muted'}
+                          title={AI_PLAN_DESCRIPTION[o.aiPlan]}
+                        >
+                          {AI_PLAN_LABEL[o.aiPlan]}
                         </Badge>
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums">{o.memberCount}</td>
@@ -320,6 +346,14 @@ export default function AlignedAdminPage() {
                         <Button
                           size="sm"
                           variant="ghost"
+                          onClick={() => setAiOpenFor(o)}
+                          title="See AI token + USD usage and change the plan."
+                        >
+                          <Cpu className="size-4" /> AI
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
                           onClick={() => controlOrg.mutate(o)}
                           disabled={controlOrg.isPending || o.status !== 'active'}
                           title={
@@ -361,6 +395,16 @@ export default function AlignedAdminPage() {
       <OrgDetailsDialog
         org={detailsOpenFor}
         onClose={() => setDetailsOpenFor(null)}
+      />
+      <AiUsageDialog
+        org={aiOpenFor}
+        onClose={() => setAiOpenFor(null)}
+        onPlanChanged={() => {
+          // Re-fetch the orgs list so the row's plan badge reflects
+          // the change immediately (in addition to the dialog's own
+          // optimistic update).
+          queryClient.invalidateQueries({ queryKey: ['admin-orgs'] });
+        }}
       />
     </>
   );
@@ -749,6 +793,270 @@ function Stat({ label, value, accent }: { label: string; value: number; accent?:
       <p className={accent === 'red' ? 'font-semibold tabular-nums text-red-600' : 'font-semibold tabular-nums'}>
         {value}
       </p>
+    </div>
+  );
+}
+
+// ---------- AI usage + plan dialog ----------------------------------------
+// Per-tenant detail view used by the ALIGNED super-admin only. Shows:
+//   - current plan + provider chain that runs under it
+//   - tokens used today / this week / this month, broken into input vs
+//     output so spikes can be diagnosed (most spend is input — long
+//     catalog prompt)
+//   - USD cost over the same windows (rates from CHAT_PRICING)
+//   - per-model breakdown over the last 30 days (catches "we're on
+//     basic but 60% of replies hit the gpt-4o-mini fallback")
+//   - 30-day daily series so the operator can spot trends at a glance
+//   - inline plan selector — flipping it PUT-saves and invalidates
+//     the parent list so the row badge stays in sync
+//
+// Security: page-level access is gated by useSession().isAlignedAdmin
+// (the route /aligned-admin/* would redirect non-admins). All API
+// calls go through the same gating (requireAlignedAdmin preHandler).
+// The dialog never paints or echoes prompt text, customer messages,
+// or KB content — only aggregate numbers per tenant. No cross-tenant
+// data ever leaves the API: every query filters on { organizationId }.
+interface AiUsageBucket {
+  tokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  usd: number;
+  replies: number;
+}
+
+interface AiUsageResponse {
+  aiPlan: AiPlan;
+  today: AiUsageBucket;
+  thisWeek: AiUsageBucket;
+  thisMonth: AiUsageBucket;
+  dailySeries: { date: string; tokens: number; usd: number; replies: number }[];
+  byModel: { model: string; tokens: number; usd: number; replies: number }[];
+}
+
+function AiUsageDialog({
+  org,
+  onClose,
+  onPlanChanged,
+}: {
+  org: OrgRow | null;
+  onClose: () => void;
+  onPlanChanged: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const qKey = ['admin-ai-usage', org?.id];
+  const usage = useQuery({
+    enabled: !!org,
+    queryKey: qKey,
+    queryFn: () =>
+      api.get<{ data: AiUsageResponse }>(`/api/v1/aligned-admin/orgs/${org!.id}/ai-usage`),
+    // The data refreshes naturally every reply (each one writes a
+    // MessageProvenance row); a 30-second refetch is the right cadence
+    // for a dialog the admin keeps open while watching activity.
+    refetchInterval: 30_000,
+  });
+
+  const setPlan = useMutation({
+    mutationFn: (next: AiPlan) =>
+      api.put<{ data: { id: string; aiPlan: AiPlan } }>(
+        `/api/v1/aligned-admin/orgs/${org!.id}/ai-plan`,
+        { aiPlan: next },
+      ),
+    onSuccess: (res) => {
+      toast.success(`Plan changed to ${AI_PLAN_LABEL[res.data.aiPlan]}`);
+      // Optimistic — show the new plan in this dialog immediately.
+      queryClient.setQueryData(qKey, (prev: { data: AiUsageResponse } | undefined) =>
+        prev ? { ...prev, data: { ...prev.data, aiPlan: res.data.aiPlan } } : prev,
+      );
+      onPlanChanged();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Plan change failed'),
+  });
+
+  if (!org) return null;
+  const data = usage.data?.data;
+  const currentPlan = data?.aiPlan ?? org.aiPlan;
+
+  // Token-budget context: the daily per-org limit lives in
+  // openai.ts (DAILY_TOKEN_LIMIT_PER_ORG = 200_000). We show it
+  // alongside the today bucket so the admin can see "60% of cap used"
+  // at a glance.
+  const DAILY_CAP = 200_000;
+
+  return (
+    <Dialog open={!!org} onOpenChange={(v) => (!v ? onClose() : null)}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>AI usage · {org.name}</DialogTitle>
+          <DialogDescription>
+            Plan, tokens, and cost for this tenant. Data refreshes every 30 seconds.
+          </DialogDescription>
+        </DialogHeader>
+
+        {usage.isLoading ? (
+          <div className="h-32 animate-pulse rounded-md bg-surface-muted" />
+        ) : !data ? (
+          <p className="text-sm text-foreground-muted">No usage data yet.</p>
+        ) : (
+          <div className="space-y-5">
+            {/* Plan selector */}
+            <div className="rounded-lg border border-border p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-foreground-subtle">
+                    Current plan
+                  </p>
+                  <p className="mt-1 text-lg font-semibold">{AI_PLAN_LABEL[currentPlan]}</p>
+                  <p className="text-xs text-foreground-muted">{AI_PLAN_DESCRIPTION[currentPlan]}</p>
+                </div>
+                <Badge variant={currentPlan === 'max' ? 'coral' : currentPlan === 'middle' ? 'info' : 'muted'}>
+                  {AI_PLAN_LABEL[currentPlan]}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {(['basic', 'middle', 'max'] as const).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPlan.mutate(p)}
+                    disabled={setPlan.isPending || p === currentPlan}
+                    className={`rounded-md border p-3 text-left transition ${
+                      p === currentPlan
+                        ? 'border-brand-500 bg-brand-50/60'
+                        : 'border-border bg-surface hover:border-brand-300 hover:bg-brand-50/40'
+                    } disabled:opacity-60`}
+                  >
+                    <p className="text-sm font-semibold">{AI_PLAN_LABEL[p]}</p>
+                    <p className="mt-0.5 text-[11px] leading-tight text-foreground-muted">
+                      {AI_PLAN_DESCRIPTION[p]}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Usage buckets */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <UsageCard label="Today" bucket={data.today} dailyCap={DAILY_CAP} />
+              <UsageCard label="This week" bucket={data.thisWeek} />
+              <UsageCard label="This month" bucket={data.thisMonth} />
+            </div>
+
+            {/* Per-model breakdown */}
+            <div className="rounded-lg border border-border">
+              <div className="border-b border-border bg-surface-muted/40 px-4 py-2 text-xs font-medium uppercase tracking-wider text-foreground-subtle">
+                Last 30 days · per model
+              </div>
+              {data.byModel.length === 0 ? (
+                <p className="px-4 py-3 text-sm text-foreground-muted">No replies recorded yet.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="text-xs uppercase tracking-wide text-foreground-subtle">
+                    <tr className="border-b border-border">
+                      <th className="px-4 py-2 text-left font-medium">Model</th>
+                      <th className="px-4 py-2 text-right font-medium">Replies</th>
+                      <th className="px-4 py-2 text-right font-medium">Tokens</th>
+                      <th className="px-4 py-2 text-right font-medium">USD</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.byModel.map((m) => (
+                      <tr key={m.model} className="border-b border-border last:border-0">
+                        <td className="px-4 py-2 font-mono text-xs">{m.model}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {m.replies.toLocaleString()}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {m.tokens.toLocaleString()}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">${m.usd.toFixed(3)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* 30-day sparkline */}
+            <div className="rounded-lg border border-border p-4">
+              <div className="mb-2 flex items-baseline justify-between">
+                <p className="text-xs font-medium uppercase tracking-wider text-foreground-subtle">
+                  30-day usage
+                </p>
+                <p className="text-xs text-foreground-muted">
+                  Total ${data.dailySeries.reduce((s, d) => s + d.usd, 0).toFixed(2)} ·{' '}
+                  {data.dailySeries.reduce((s, d) => s + d.tokens, 0).toLocaleString()} tokens
+                </p>
+              </div>
+              <DailyBars series={data.dailySeries} />
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function UsageCard({
+  label,
+  bucket,
+  dailyCap,
+}: {
+  label: string;
+  bucket: AiUsageBucket;
+  dailyCap?: number;
+}) {
+  const percentOfCap = dailyCap ? Math.min(100, Math.round((bucket.tokens / dailyCap) * 100)) : null;
+  const barColor =
+    percentOfCap === null
+      ? 'bg-brand-500'
+      : percentOfCap >= 95
+        ? 'bg-red-500'
+        : percentOfCap >= 80
+          ? 'bg-amber-500'
+          : 'bg-emerald-500';
+  return (
+    <div className="rounded-lg border border-border p-3">
+      <p className="text-[10px] uppercase tracking-wide text-foreground-subtle">{label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums">${bucket.usd.toFixed(3)}</p>
+      <p className="text-xs text-foreground-muted">
+        {bucket.tokens.toLocaleString()} tokens · {bucket.replies.toLocaleString()} replies
+      </p>
+      <p className="text-[11px] text-foreground-subtle">
+        in {bucket.inputTokens.toLocaleString()} · out {bucket.outputTokens.toLocaleString()}
+      </p>
+      {percentOfCap !== null ? (
+        <>
+          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface-muted">
+            <div
+              className={`h-full ${barColor}`}
+              style={{ width: `${percentOfCap}%` }}
+            />
+          </div>
+          <p className="mt-1 text-[10px] text-foreground-subtle">
+            {percentOfCap}% of daily cap ({dailyCap!.toLocaleString()} tokens)
+          </p>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function DailyBars({ series }: { series: { date: string; tokens: number; usd: number }[] }) {
+  const max = Math.max(1, ...series.map((d) => d.tokens));
+  return (
+    <div className="flex h-24 items-end gap-0.5">
+      {series.map((d) => {
+        const h = Math.round((d.tokens / max) * 100);
+        return (
+          <div
+            key={d.date}
+            title={`${d.date}: ${d.tokens.toLocaleString()} tokens · $${d.usd.toFixed(3)}`}
+            className="flex-1 rounded-sm bg-brand-300 transition hover:bg-brand-500"
+            style={{ height: `${h}%`, minHeight: d.tokens > 0 ? '2px' : '0px' }}
+          />
+        );
+      })}
     </div>
   );
 }

@@ -1062,12 +1062,13 @@ export async function buildBotResponse(
       candidateFaqIds: faqs.map((f) => f.id),
       candidatePolicyKinds: policies.map((p) => p.kind),
       businessInfoFields,
-      // Phase 12 — record the model that actually ran. When Groq is
-      // configured (GROQ_API_KEY set), this is the Groq model name
-      // prefixed with "groq:" so /aligned-admin/provenance can group
-      // by provider for A/B comparisons. Falls back to env.OPENAI_MODEL
-      // when Groq is unset.
-      model: activeProviderModelLabel(),
+      // Record the model that actually ran. complete() now returns
+      // `model` per call — this reflects the plan-routed provider
+      // (basic = "groq:llama-3.3-70b-versatile" / "openai:gpt-4o-mini"
+      // after fallback; middle = "openai:gpt-4o"; max = "anthropic:
+      // claude-sonnet-4-6" etc). Used by /aligned-admin to roll up
+      // per-tenant token spend at the correct per-model rate.
+      model: result.model ?? activeProviderModelLabel(),
       temperature: TEMPERATURE,
       promptTokens: result.inputTokens,
       completionTokens: result.outputTokens,

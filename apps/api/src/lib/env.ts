@@ -120,6 +120,12 @@ const envSchema = z.object({
   // + Levant Arabic noticeably better.
   GROQ_WHISPER_MODEL: z.string().default('whisper-large-v3-turbo'),
 
+  // Anthropic — used as the `max` tier in Organization.aiPlan. The
+  // model defaults to Sonnet's current flagship for cost-efficiency;
+  // operators who want Opus can set ANTHROPIC_MODEL=claude-opus-4-8.
+  ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-6'),
+
   // MyFatoorah payment gateway — used by the bot to mint per-order
   // invoice URLs at checkout. When MYFATOORAH_API_KEY is unset, the
   // bot's payment-link request falls back to a generic gateway URL

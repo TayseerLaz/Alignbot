@@ -16,6 +16,7 @@
   "dependencies": {
     "@aligned/db": "workspace:*",
     "@aligned/shared": "workspace:*",
+    "@anthropic-ai/sdk": "^0.100.1",
     "@aws-sdk/client-s3": "^3.717.0",
     "@aws-sdk/s3-request-presigner": "^3.717.0",
     "@fastify/cookie": "^11.0.1",

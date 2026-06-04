@@ -7,8 +7,16 @@
 //   - Per-org daily token budget is enforced in Redis to bound spend.
 //   - When the env var is missing we throw a SERVICE_UNAVAILABLE so
 //     callers can 503 cleanly.
+//   - The complete() function routes to a different provider per the
+//     tenant's Organization.aiPlan — `basic` = Groq Llama 3.3 70B +
+//     OpenAI gpt-4o-mini fallback; `middle` = OpenAI gpt-4o; `max` =
+//     Anthropic Claude (Sonnet by default). The plan lookup is cached
+//     per-request via withRlsBypass to avoid an extra DB hit on the
+//     hot bot-reply path.
+import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 
+import { withRlsBypass } from './db.js';
 import { env } from './env.js';
 import { getRedis } from './redis.js';
 
@@ -62,6 +70,47 @@ function groqClient(): OpenAI {
 // can see which provider/model actually ran.
 function chatClientAndModel(): { client: OpenAI; model: string; provider: 'openai' | 'groq' } {
   return { client: groqClient(), model: env.GROQ_MODEL, provider: 'groq' };
+}
+
+let _anthropicClient: Anthropic | null = null;
+function anthropicClient(): Anthropic | null {
+  if (!env.ANTHROPIC_API_KEY) return null;
+  if (_anthropicClient) return _anthropicClient;
+  _anthropicClient = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  return _anthropicClient;
+}
+
+// Per-org plan lookup. Cached in-process for ~30s so the bot's hot
+// reply loop doesn't hit Postgres on every turn — plan changes are
+// rare and the operator who changes it gets the new behaviour at
+// most one cache-cycle late.
+type AiPlanRow = { aiPlan: 'basic' | 'middle' | 'max' };
+const planCache = new Map<string, { plan: 'basic' | 'middle' | 'max'; expiresAt: number }>();
+const PLAN_CACHE_TTL_MS = 30_000;
+
+async function loadOrgPlan(orgId: string): Promise<'basic' | 'middle' | 'max'> {
+  const now = Date.now();
+  const cached = planCache.get(orgId);
+  if (cached && cached.expiresAt > now) return cached.plan;
+  try {
+    const row = await withRlsBypass((tx) =>
+      tx.organization.findUnique({ where: { id: orgId }, select: { aiPlan: true } }),
+    );
+    const plan = (row as AiPlanRow | null)?.aiPlan ?? 'basic';
+    planCache.set(orgId, { plan, expiresAt: now + PLAN_CACHE_TTL_MS });
+    return plan;
+  } catch {
+    return 'basic';
+  }
+}
+
+/**
+ * Test-only: clear the in-process plan cache so an integration test
+ * can flip an org's plan and see the change immediately. Production
+ * code should never call this.
+ */
+export function _clearAiPlanCacheForTests(): void {
+  planCache.clear();
 }
 
 // Treat 429 (rate-limit) and 502/503 (Groq load-shedding) as "fall back
@@ -171,7 +220,7 @@ interface CompleteArgs {
   temperature?: number;
 }
 
-export async function complete(args: CompleteArgs): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+export async function complete(args: CompleteArgs): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
   // Pre-charge the budget pessimistically (estimate input length / 4 chars
   // per token, plus the maxTokens we're requesting). Final accounting on
   // the response is best-effort.
@@ -185,6 +234,22 @@ export async function complete(args: CompleteArgs): Promise<{ text: string; inpu
     throw err;
   }
 
+  const plan = await loadOrgPlan(args.organizationId);
+
+  switch (plan) {
+    case 'max':
+      return completeMax(args);
+    case 'middle':
+      return completeMiddle(args);
+    case 'basic':
+    default:
+      return completeBasic(args);
+  }
+}
+
+// ---------- basic tier (Groq Llama → OpenAI mini fallback) ----------------
+
+async function completeBasic(args: CompleteArgs): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
   const payload = {
     max_tokens: args.maxTokens ?? 1024,
     temperature: args.temperature ?? 0.4,
@@ -195,18 +260,14 @@ export async function complete(args: CompleteArgs): Promise<{ text: string; inpu
   };
 
   // Primary: Groq. On 429/5xx we fall back to OpenAI if a key is set.
-  // The fallback exists because Groq's free-tier daily cap is shallow
-  // enough that the bot goes silent for hours otherwise — see header
-  // comment on groqClient(). When OPENAI_API_KEY is unset, the Groq
-  // error propagates unchanged so the upstream warn log still fires.
   try {
     const { client: c, model } = chatClientAndModel();
     const res = await c.chat.completions.create({ model, ...payload });
-    const text = (res.choices[0]?.message.content ?? '').trim();
     return {
-      text,
+      text: (res.choices[0]?.message.content ?? '').trim(),
       inputTokens: res.usage?.prompt_tokens ?? 0,
       outputTokens: res.usage?.completion_tokens ?? 0,
+      model: `groq:${model}`,
     };
   } catch (err) {
     if (!isGroqRetryableError(err)) throw err;
@@ -222,12 +283,77 @@ export async function complete(args: CompleteArgs): Promise<{ text: string; inpu
       model: env.OPENAI_MODEL,
       ...payload,
     });
-    const text = (res.choices[0]?.message.content ?? '').trim();
     return {
-      text,
+      text: (res.choices[0]?.message.content ?? '').trim(),
       inputTokens: res.usage?.prompt_tokens ?? 0,
       outputTokens: res.usage?.completion_tokens ?? 0,
+      model: `openai:${env.OPENAI_MODEL}`,
     };
+  }
+}
+
+// ---------- middle tier (OpenAI gpt-4o) ----------------------------------
+
+const MIDDLE_MODEL = 'gpt-4o';
+
+async function completeMiddle(args: CompleteArgs): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
+  const res = await client().chat.completions.create({
+    model: MIDDLE_MODEL,
+    max_tokens: args.maxTokens ?? 1024,
+    temperature: args.temperature ?? 0.4,
+    messages: [
+      { role: 'system', content: args.systemPrompt },
+      ...args.messages,
+    ],
+  });
+  return {
+    text: (res.choices[0]?.message.content ?? '').trim(),
+    inputTokens: res.usage?.prompt_tokens ?? 0,
+    outputTokens: res.usage?.completion_tokens ?? 0,
+    model: `openai:${MIDDLE_MODEL}`,
+  };
+}
+
+// ---------- max tier (Anthropic Claude) ----------------------------------
+// Anthropic's Messages API takes the system prompt as a separate
+// argument (not a message). Output tokens come back on usage.output_tokens.
+// On any error (including missing API key) we degrade gracefully to the
+// basic stack so a key misconfig doesn't take the bot offline.
+
+async function completeMax(args: CompleteArgs): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
+  const a = anthropicClient();
+  if (!a) {
+    // eslint-disable-next-line no-console
+    console.warn('[chat] aiPlan=max but ANTHROPIC_API_KEY unset — degrading to basic');
+    return completeBasic(args);
+  }
+  try {
+    const res = await a.messages.create({
+      model: env.ANTHROPIC_MODEL,
+      max_tokens: args.maxTokens ?? 1024,
+      temperature: args.temperature ?? 0.4,
+      system: args.systemPrompt,
+      messages: args.messages.map((m) => ({ role: m.role, content: m.content })),
+    });
+    // Concatenate text blocks (Claude can return multi-block content).
+    const text = res.content
+      .filter((b) => b.type === 'text')
+      .map((b) => (b as { text: string }).text)
+      .join('')
+      .trim();
+    return {
+      text,
+      inputTokens: res.usage.input_tokens,
+      outputTokens: res.usage.output_tokens,
+      model: `anthropic:${res.model}`,
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[chat] Anthropic error — degrading to basic',
+      err instanceof Error ? err.message.slice(0, 200) : String(err),
+    );
+    return completeBasic(args);
   }
 }
 

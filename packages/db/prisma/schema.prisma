@@ -33,6 +33,18 @@ enum OrgStatus {
   deleted
 }
 
+// AI tier per tenant. Routes chat completions to a provider stack:
+//   basic  — Groq Llama 3.3 70B primary + OpenAI gpt-4o-mini fallback (cheap)
+//   middle — OpenAI gpt-4o (full model, premium quality)
+//   max    — Anthropic Claude Opus 4.x (top-tier reasoning, highest cost)
+// Editable from /aligned-admin. Default is `basic` so brand-new tenants
+// don't accidentally land on a $$$ plan.
+enum AiPlan {
+  basic
+  middle
+  max
+}
+
 enum UserStatus {
   pending // email not yet verified
   active
@@ -126,6 +138,8 @@ enum AuditAction {
   cart_created
   cart_updated
   cart_deleted
+  // AI plan tier (basic / middle / max) changed by an ALIGNED admin.
+  ai_plan_changed
 }
 
 enum RevisionEntityType {
@@ -291,6 +305,10 @@ model Organization {
   slug      String    @unique @db.Citext
   name      String
   status    OrgStatus @default(active)
+  // AI tier the tenant is on. Drives provider routing in lib/openai.ts
+  // (`basic` = Groq + gpt-4o-mini fallback; `middle` = OpenAI gpt-4o;
+  // `max` = Anthropic Claude Opus). Editable from /aligned-admin.
+  aiPlan    AiPlan    @default(basic) @map("ai_plan")
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
 

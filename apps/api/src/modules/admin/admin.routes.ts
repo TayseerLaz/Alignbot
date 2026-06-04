@@ -59,6 +59,10 @@ export default async function adminRoutes(app: FastifyInstance) {
               productCount: z.number().int(),
               serviceCount: z.number().int(),
               lastActivityAt: z.string().datetime().nullable(),
+              // Per-tenant AI tier surfaced on the admin list so the
+              // tenants table at /aligned-admin can render a colored
+              // badge per row + sort by plan.
+              aiPlan: z.enum(['basic', 'middle', 'max']),
             }),
           ),
         },
@@ -106,6 +110,7 @@ export default async function adminRoutes(app: FastifyInstance) {
               productCount,
               serviceCount,
               lastActivityAt: lastAudit?.createdAt.toISOString() ?? null,
+              aiPlan: (o as { aiPlan?: 'basic' | 'middle' | 'max' }).aiPlan ?? 'basic',
             };
           }),
         );
@@ -1589,6 +1594,255 @@ export default async function adminRoutes(app: FastifyInstance) {
         };
       }
       return { data: { promotedId: result.promotedId, alreadyExisted: result.alreadyExisted } };
+    },
+  );
+
+  // ============================================================
+  //   AI plan + usage — per-tenant tier + cost roll-up
+  // ============================================================
+
+  // ---------- GET /aligned-admin/orgs/:id/ai-usage ----------------------
+  // Token + USD usage rolled up per day/week/month. Reads
+  // MessageProvenance rows (one per bot reply) for the org, groups by
+  // day, costs each row at the rate of the model that actually ran
+  // (via CHAT_PRICING in lib/ai-pricing.ts). Heavy-ish query for orgs
+  // with millions of bot replies; bounded by `since` so the typical
+  // 30-day window stays cheap.
+  r.get(
+    '/aligned-admin/orgs/:id/ai-usage',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Per-tenant AI token + USD usage rolled up per day / week / month.',
+        params: z.object({ id: uuidSchema }),
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              aiPlan: z.enum(['basic', 'middle', 'max']),
+              today: z.object({
+                tokens: z.number().int(),
+                inputTokens: z.number().int(),
+                outputTokens: z.number().int(),
+                usd: z.number(),
+                replies: z.number().int(),
+              }),
+              thisWeek: z.object({
+                tokens: z.number().int(),
+                inputTokens: z.number().int(),
+                outputTokens: z.number().int(),
+                usd: z.number(),
+                replies: z.number().int(),
+              }),
+              thisMonth: z.object({
+                tokens: z.number().int(),
+                inputTokens: z.number().int(),
+                outputTokens: z.number().int(),
+                usd: z.number(),
+                replies: z.number().int(),
+              }),
+              // Last 30 days broken out per day, oldest first. Lets the
+              // admin UI render a sparkline / bar chart cheaply.
+              dailySeries: z.array(
+                z.object({
+                  date: z.string(), // YYYY-MM-DD UTC
+                  tokens: z.number().int(),
+                  usd: z.number(),
+                  replies: z.number().int(),
+                }),
+              ),
+              // Per-model breakdown over the last 30 days — surfaces
+              // when an org is split across the basic-tier fallback
+              // chain (groq + gpt-4o-mini) vs the plan they're actually
+              // on. Useful for diagnosing "why did my bill spike?".
+              byModel: z.array(
+                z.object({
+                  model: z.string(),
+                  tokens: z.number().int(),
+                  usd: z.number(),
+                  replies: z.number().int(),
+                }),
+              ),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const { tokensToUsd } = await import('../../lib/ai-pricing.js');
+      const orgId = req.params.id;
+      const now = new Date();
+      const startOfTodayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const sevenDaysAgo = new Date(startOfTodayUtc.getTime() - 6 * 24 * 60 * 60 * 1000);
+      const thirtyDaysAgo = new Date(startOfTodayUtc.getTime() - 29 * 24 * 60 * 60 * 1000);
+      const startOfMonthUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+
+      const org = await withRlsBypass((tx) =>
+        tx.organization.findUnique({ where: { id: orgId }, select: { id: true, aiPlan: true } }),
+      );
+      if (!org) throw notFound('Organization not found');
+
+      // Pull every provenance row inside the 30-day window in one
+      // query — small payload (just model + token counts + createdAt),
+      // big enough window that we can derive today / this-week / this-
+      // month + per-day series from a single fetch.
+      const rows = await withRlsBypass((tx) =>
+        tx.messageProvenance.findMany({
+          where: { organizationId: orgId, createdAt: { gte: thirtyDaysAgo } },
+          select: {
+            model: true,
+            promptTokens: true,
+            completionTokens: true,
+            createdAt: true,
+          },
+        }),
+      );
+
+      type Bucket = {
+        tokens: number;
+        inputTokens: number;
+        outputTokens: number;
+        usd: number;
+        replies: number;
+      };
+      const empty = (): Bucket => ({
+        tokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        usd: 0,
+        replies: 0,
+      });
+      const today = empty();
+      const thisWeek = empty();
+      const thisMonth = empty();
+      const byDay = new Map<string, Bucket>();
+      const byModel = new Map<string, Bucket>();
+
+      for (let i = 0; i < 30; i += 1) {
+        const d = new Date(startOfTodayUtc.getTime() - (29 - i) * 24 * 60 * 60 * 1000);
+        byDay.set(d.toISOString().slice(0, 10), empty());
+      }
+
+      for (const row of rows) {
+        const usd = tokensToUsd(row.model, row.promptTokens, row.completionTokens);
+        const total = row.promptTokens + row.completionTokens;
+        const day = row.createdAt.toISOString().slice(0, 10);
+
+        const bumpInto = (b: Bucket) => {
+          b.tokens += total;
+          b.inputTokens += row.promptTokens;
+          b.outputTokens += row.completionTokens;
+          b.usd += usd;
+          b.replies += 1;
+        };
+
+        if (row.createdAt >= startOfTodayUtc) bumpInto(today);
+        if (row.createdAt >= sevenDaysAgo) bumpInto(thisWeek);
+        if (row.createdAt >= startOfMonthUtc) bumpInto(thisMonth);
+
+        const dayBucket = byDay.get(day);
+        if (dayBucket) bumpInto(dayBucket);
+
+        const modelBucket = byModel.get(row.model) ?? empty();
+        bumpInto(modelBucket);
+        byModel.set(row.model, modelBucket);
+      }
+
+      const dailySeries = Array.from(byDay.entries()).map(([date, b]) => ({
+        date,
+        tokens: b.tokens,
+        usd: Number(b.usd.toFixed(4)),
+        replies: b.replies,
+      }));
+
+      const byModelArr = Array.from(byModel.entries())
+        .map(([model, b]) => ({
+          model,
+          tokens: b.tokens,
+          usd: Number(b.usd.toFixed(4)),
+          replies: b.replies,
+        }))
+        .sort((a, b) => b.usd - a.usd);
+
+      const round = (b: Bucket) => ({
+        tokens: b.tokens,
+        inputTokens: b.inputTokens,
+        outputTokens: b.outputTokens,
+        usd: Number(b.usd.toFixed(4)),
+        replies: b.replies,
+      });
+
+      return {
+        data: {
+          aiPlan: (org as { aiPlan?: 'basic' | 'middle' | 'max' }).aiPlan ?? 'basic',
+          today: round(today),
+          thisWeek: round(thisWeek),
+          thisMonth: round(thisMonth),
+          dailySeries,
+          byModel: byModelArr,
+        },
+      };
+    },
+  );
+
+  // ---------- PUT /aligned-admin/orgs/:id/ai-plan -----------------------
+  // Admin changes a tenant's AI tier. Persisted on Organization.aiPlan;
+  // the chat dispatch reads it on next reply (within ~30s — the
+  // in-process plan cache expires that quickly, see lib/openai.ts).
+  r.put(
+    '/aligned-admin/orgs/:id/ai-plan',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Change a tenant\'s AI plan (basic / middle / max).',
+        params: z.object({ id: uuidSchema }),
+        body: z.object({ aiPlan: z.enum(['basic', 'middle', 'max']) }),
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              id: uuidSchema,
+              aiPlan: z.enum(['basic', 'middle', 'max']),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const orgId = req.params.id;
+      const next = req.body.aiPlan;
+      const updated = await withRlsBypass(async (tx) => {
+        const existing = await tx.organization.findUnique({
+          where: { id: orgId },
+          select: { id: true, aiPlan: true },
+        });
+        if (!existing) return null;
+        const prev = (existing as { aiPlan?: 'basic' | 'middle' | 'max' }).aiPlan ?? 'basic';
+        if (prev === next) {
+          return { id: existing.id, aiPlan: prev, prev, changed: false };
+        }
+        const row = await tx.organization.update({
+          where: { id: orgId },
+          data: { aiPlan: next },
+          select: { id: true, aiPlan: true },
+        });
+        const newPlan = (row as { aiPlan?: 'basic' | 'middle' | 'max' }).aiPlan ?? next;
+        return { id: row.id, aiPlan: newPlan, prev, changed: true };
+      });
+      if (!updated) throw notFound('Organization not found');
+      if (updated.changed) {
+        // recordAudit opens its own tx (with RLS bypass) — call it
+        // after the org update commits so audit + state stay aligned.
+        await recordAudit({
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          action: 'ai_plan_changed',
+          entityType: 'organization',
+          entityId: orgId,
+          metadata: { from: updated.prev, to: next },
+        });
+      }
+      return { data: { id: updated.id, aiPlan: updated.aiPlan } };
     },
   );
 }

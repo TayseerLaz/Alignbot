@@ -506,7 +506,7 @@ function AnalyzeCard() {
               {job.liveCounts ? (
                 <div className="flex flex-wrap items-center gap-1 text-[11px] text-foreground-subtle">
                   {job.liveCounts.products > 0 ? (
-                    <Badge variant="secondary" className="font-medium">
+                    <Badge variant="muted" className="font-medium">
                       {job.liveCounts.products} product{job.liveCounts.products === 1 ? '' : 's'}
                       {job.liveCounts.productsPending > 0
                         ? ` · ${job.liveCounts.productsPending} pending`
@@ -514,24 +514,24 @@ function AnalyzeCard() {
                     </Badge>
                   ) : null}
                   {job.liveCounts.faqs > 0 ? (
-                    <Badge variant="secondary">{job.liveCounts.faqs} FAQ{job.liveCounts.faqs === 1 ? '' : 's'}</Badge>
+                    <Badge variant="muted">{job.liveCounts.faqs} FAQ{job.liveCounts.faqs === 1 ? '' : 's'}</Badge>
                   ) : null}
                   {job.liveCounts.contacts > 0 ? (
-                    <Badge variant="secondary">
+                    <Badge variant="muted">
                       {job.liveCounts.contacts} contact{job.liveCounts.contacts === 1 ? '' : 's'}
                     </Badge>
                   ) : null}
                   {job.liveCounts.locations > 0 ? (
-                    <Badge variant="secondary">
+                    <Badge variant="muted">
                       {job.liveCounts.locations} location{job.liveCounts.locations === 1 ? '' : 's'}
                     </Badge>
                   ) : null}
                   {job.liveCounts.policies > 0 ? (
-                    <Badge variant="secondary">
+                    <Badge variant="muted">
                       {job.liveCounts.policies} polic{job.liveCounts.policies === 1 ? 'y' : 'ies'}
                     </Badge>
                   ) : null}
-                  {job.liveCounts.hasAbout ? <Badge variant="secondary">About added</Badge> : null}
+                  {job.liveCounts.hasAbout ? <Badge variant="muted">About added</Badge> : null}
                 </div>
               ) : null}
               {isLive ? (
@@ -790,8 +790,8 @@ function CrawlListingsReview({ jobId, jobIsLive }: { jobId: string; jobIsLive: b
   const denyAll = async () => {
     const ok = await confirmDialog({
       title: `Deny ${pendingCount} draft${pendingCount === 1 ? '' : 's'}?`,
-      description: 'They will be soft-deleted and won’t appear in your catalog.',
-      confirmText: 'Deny all',
+      body: 'They will be soft-deleted and won’t appear in your catalog.',
+      confirmLabel: 'Deny all',
       destructive: true,
     });
     if (!ok) return;
@@ -891,7 +891,7 @@ function CrawlListingsReview({ jobId, jobIsLive }: { jobId: string; jobIsLive: b
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="truncate text-sm font-medium">{r.name}</p>
                   {price ? (
-                    <Badge variant="secondary" className="font-mono text-[11px]">
+                    <Badge variant="muted" className="font-mono text-[11px]">
                       {price}
                     </Badge>
                   ) : null}

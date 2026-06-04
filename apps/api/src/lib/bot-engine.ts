@@ -98,6 +98,25 @@ export interface BotData {
   } | null;
   faqs: { id: string; question: string; answer: string }[];
   policies: { kind: string; title: string; content: string }[];
+  // Phase 14 — Locations + Contact channels. Previously gathered only
+  // for the UI; now fed into the system prompt so the bot can quote a
+  // branch address or phone number when the customer asks.
+  locations: {
+    name: string;
+    addressLine1: string | null;
+    addressLine2: string | null;
+    city: string | null;
+    region: string | null;
+    country: string | null;
+    phone: string | null;
+    isPrimary: boolean;
+  }[];
+  contactChannels: {
+    kind: string;
+    label: string | null;
+    value: string;
+    isPrimary: boolean;
+  }[];
   // Operator-defined booking form (BusinessInfo.bookingForm). When enabled
   // and populated, the bot offers to collect these fields when the customer
   // asks to book a meeting/consultation/appointment, then emits the
@@ -248,7 +267,7 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
   // row has been copied into `faqs` via migration; the bot now reads ONE
   // Q&A source. The kb[] slot in BotData stays for backward-compat with
   // the BotData type but is always empty going forward.
-  const [config, products, services, biz, faqs, policies] = (await Promise.all([
+  const [config, products, services, biz, faqs, policies, locations, contactChannels] = (await Promise.all([
     tx.botConfig.findUnique({ where: { organizationId: orgId } }),
     // Include up to 5 images per product, primary first. The bot reply
     // path attaches them when the LLM emits an [IMAGE: <sku>] marker
@@ -305,6 +324,31 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
       select: { kind: true, title: true, content: true },
       take: 10,
     }),
+    // Phase 14 — fed into the prompt so the bot can quote a branch
+    // address or phone number when asked. Primary first so the bot
+    // defaults to the main location when the customer's request
+    // doesn't disambiguate (e.g. "where are you?" with 5 branches).
+    tx.location.findMany({
+      where: { organizationId: orgId },
+      orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
+      select: {
+        name: true,
+        addressLine1: true,
+        addressLine2: true,
+        city: true,
+        region: true,
+        country: true,
+        phone: true,
+        isPrimary: true,
+      },
+      take: 20,
+    }),
+    tx.contactChannel.findMany({
+      where: { organizationId: orgId },
+      orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
+      select: { kind: true, label: true, value: true, isPrimary: true },
+      take: 30,
+    }),
   ])) as [
     BotData['config'],
     // Prisma return type has nested images[]; we'll flatten next.
@@ -315,6 +359,8 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
     BotData['biz'],
     BotData['faqs'],
     BotData['policies'],
+    BotData['locations'],
+    BotData['contactChannels'],
   ];
   // KB stays in BotData for back-compat but is always empty post-Phase 10.
   const kb: BotData['kb'] = [];
@@ -456,7 +502,7 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
     }
   }
 
-  return { config, kb, products: flatProducts, services, biz, faqs, policies, bookingForm, shopForm };
+  return { config, kb, products: flatProducts, services, biz, faqs, policies, locations, contactChannels, bookingForm, shopForm };
 }
 
 interface BotResponseArgs {
@@ -525,7 +571,7 @@ export interface BotResponseInputs {
 export async function buildBotResponse(
   args: BotResponseArgs,
 ): Promise<{ text: string; usedKbCount: number; inputs: BotResponseInputs }> {
-  const { config, kb, products: allProducts, services, biz, faqs, policies, bookingForm, shopForm } = args.data;
+  const { config, kb, products: allProducts, services, biz, faqs, policies, locations, contactChannels, bookingForm, shopForm } = args.data;
 
   // Phase 2 Step 3 — top-K catalog injection. For tiny catalogs (≤ 12)
   // we send everything; below that threshold the embedding round-trip
@@ -763,6 +809,37 @@ export async function buildBotResponse(
       : '(none configured)',
     biz?.operatingHours
       ? `Opening hours:\n${formatOperatingHours(biz.operatingHours)}`
+      : '',
+    // Phase 14 — Locations. Multiple branches are common; primary
+    // first so a bare "where are you?" defaults to it. The bot quotes
+    // the most-relevant branch when the customer names a city /
+    // neighbourhood (operator-side disambiguation), or lists all when
+    // asked broadly ("where do you operate?").
+    locations.length > 0
+      ? `Locations (${locations.length}):\n${locations
+          .map((l) => {
+            const addr = [l.addressLine1, l.addressLine2, l.city, l.region, l.country]
+              .filter((p): p is string => !!p && p.trim().length > 0)
+              .join(', ');
+            const phone = l.phone ? ` · phone: ${l.phone}` : '';
+            const star = l.isPrimary ? ' (primary)' : '';
+            return `- ${l.name}${star}${addr ? `: ${addr}` : ''}${phone}`;
+          })
+          .join('\n')}`
+      : '',
+    // Phase 14 — Contact channels. Phone, email, IG, FB, etc. Bot
+    // quotes the relevant channel when the customer asks how to reach
+    // the business ("what's your number?", "Instagram?", etc.). When
+    // the customer asks generically ("contact info"), the bot lists
+    // primary channels first.
+    contactChannels.length > 0
+      ? `Contact channels (${contactChannels.length}):\n${contactChannels
+          .map((c) => {
+            const lbl = c.label ? ` (${c.label})` : '';
+            const star = c.isPrimary ? ' (primary)' : '';
+            return `- ${c.kind}: ${c.value}${lbl}${star}`;
+          })
+          .join('\n')}`
       : '',
     ``,
     // Phase 10 — Knowledge Base section dropped. The Q&A source is FAQs.

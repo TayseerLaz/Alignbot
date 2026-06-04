@@ -14,7 +14,7 @@ import {
   FaqVisibility,
 } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowDown, ArrowUp, Building2, CalendarCheck, ChevronDown, MessageSquare, Plus, Save, ScrollText, ShoppingCart, Trash2, Users } from 'lucide-react';
+import { ArrowDown, ArrowUp, Building2, CalendarCheck, CheckCircle2, ChevronDown, MessageSquare, Plus, Save, ScrollText, ShoppingCart, Trash2, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -63,13 +63,11 @@ export default function BusinessInfoPage() {
           <TabsTrigger value="shop">
             <ShoppingCart className="mr-2 size-4" /> Shop form
           </TabsTrigger>
-          {/* "Team info" combines Locations + Contacts — neither is fed
-              into the chatbot's prompt today (BotData omits both). We
-              keep the editor so operators have a single source of truth
-              for their own team's reference, but the banner inside the
-              panel makes the not-bot-facing nature explicit. */}
+          {/* Locations + Contact channels — fed into the bot's
+              system prompt by gatherBotData(), so the bot can quote
+              an address or phone when the customer asks. */}
           <TabsTrigger value="team">
-            <Users className="mr-2 size-4" /> Team info
+            <Users className="mr-2 size-4" /> Locations &amp; contacts
           </TabsTrigger>
         </TabsList>
         <TabsContent value="profile">
@@ -321,27 +319,27 @@ function ProfilePanel() {
   );
 }
 
-// ---------- team info (locations + contacts, NOT bot-facing) ----------------
-// Combines Locations + Contacts into a single tab. The bot prompt-builder
-// (apps/api/src/lib/bot-engine.ts) does not pull either entity into the
-// LLM context — they're operator-team-only data today. The banner makes
-// that explicit so operators stop expecting "phone: 1234" to appear in
-// chatbot replies because they typed it here.
+// ---------- locations + contacts (BOT-FACING) -------------------------------
+// Combines Locations + Contacts into a single tab. As of Phase 14 both
+// ARE fed into the bot's system prompt (gatherBotData → "Locations" /
+// "Contact channels" sections), so the bot can quote a branch address
+// or phone number when a customer asks. The green banner replaces the
+// older "not seen by chatbot" warning to make that clear.
 function TeamInfoPanel() {
   return (
     <div className="space-y-6">
       <div
         role="note"
-        className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+        className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900"
       >
-        <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600" aria-hidden />
+        <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600" aria-hidden />
         <div>
-          <p className="font-medium">Not seen by the chatbot.</p>
+          <p className="font-medium">The chatbot uses this data.</p>
           <p className="mt-0.5 text-xs">
-            Locations + contact channels live here as a single source of truth for your team, but
-            the bot does not read them when replying to customers. If you want the bot to mention
-            an address or phone number, put it in <strong>Profile &rarr; About</strong> or add a{' '}
-            <strong>FAQ</strong> that quotes it.
+            Locations and contact channels are read into every reply, so the bot can quote a
+            branch address or phone number when a customer asks. Primary entries (the star icon
+            below) are used by default when the customer doesn&apos;t name a specific branch or
+            channel.
           </p>
         </div>
       </div>

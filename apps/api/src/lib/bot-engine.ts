@@ -245,7 +245,7 @@ export function formatOperatingHours(raw: unknown): string {
 // Currency-aware money formatter. KWD / BHD / OMR use 3 decimals
 // (1 unit = 1000 minor); USD / EUR / etc. use 2 (1 unit = 100 minor).
 // Returns e.g. "1.250 KWD" or "$4.50" depending on the currency.
-function formatMoney(minor: number | null, currency: string | null): string {
+export function formatMoney(minor: number | null, currency: string | null): string {
   if (minor == null) return '';
   const code = (currency ?? 'USD').toUpperCase();
   const minorPerMajor = code === 'KWD' || code === 'BHD' || code === 'OMR' || code === 'JOD' ? 1000 : 100;

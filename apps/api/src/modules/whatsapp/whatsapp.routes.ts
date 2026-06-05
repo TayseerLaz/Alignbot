@@ -3113,7 +3113,7 @@ async function maybeReplyAsBot(args: {
     // Uses the brace-balanced parser from bot-engine because the cart
     // marker's JSON payload contains nested objects + arrays that the
     // booking regex's non-greedy match would truncate.
-    const { parseCartMarker, stripCartMarker } = await import('../../lib/bot-engine.js');
+    const { parseCartMarker, stripCartMarker, formatMoney } = await import('../../lib/bot-engine.js');
     const cartMarkerPayload = parseCartMarker(rawReply);
 
     let reply = stripCartMarker(
@@ -3264,11 +3264,63 @@ async function maybeReplyAsBot(args: {
       if (wantsHandoff) {
         reply = "Sure — connecting you with a teammate now. They'll pick up here shortly.";
       } else if (cartMarkerPayload) {
-        // Substitute the operator-configured confirmation message if there is one.
-        const tmpl = ctx.data.shopForm?.confirmationMessage;
-        reply = tmpl && tmpl.trim()
-          ? tmpl
-          : "Got it! Your order is in 🙏 We'll be in touch shortly.";
+        // Substitute the operator-configured confirmation message. It may
+        // contain {{cart_id_short}} / {{total}} placeholders — interpolate
+        // them from the draft cart that is about to be promoted (same row →
+        // same id + total the customer sees in /cart and the operator sees
+        // in the inbox). If we can't resolve a real cart (no draft yet) we
+        // fall back to the placeholder-free default rather than ship raw
+        // "{{…}}" tokens to the customer.
+        const DEFAULT_CONFIRMATION = "Got it! Your order is in 🙏 We'll be in touch shortly.";
+        const tmpl = ctx.data.shopForm?.confirmationMessage?.trim();
+        const hasPlaceholder = !!tmpl && /\{\{\s*(?:cart_id_short|total)\s*\}\}/.test(tmpl);
+        if (!tmpl) {
+          reply = DEFAULT_CONFIRMATION;
+        } else if (!hasPlaceholder) {
+          reply = tmpl;
+        } else {
+          const shopForm = ctx.data.shopForm;
+          const resolved = await withRlsBypass(async (tx) => {
+            const draft = await tx.cart.findFirst({
+              where: {
+                organizationId: args.organizationId,
+                threadId: ctx.threadId,
+                status: 'draft',
+              },
+              include: { items: true },
+            });
+            if (!draft || draft.items.length === 0) return null;
+            const subtotalMinor = draft.items.reduce(
+              (s, it) => s + it.unitPriceMinor * it.quantity,
+              0,
+            );
+            // Same delivery rule as the cart-promotion block below — keep the
+            // quoted total identical to the persisted total.
+            const baseDelivery = shopForm?.deliveryFeeMinor ?? 0;
+            const deliveryMinor =
+              shopForm?.freeDeliveryAboveMinor != null &&
+              subtotalMinor >= shopForm.freeDeliveryAboveMinor
+                ? 0
+                : baseDelivery;
+            const totalMinor = subtotalMinor + deliveryMinor;
+            const currency = draft.currency ?? shopForm?.currency ?? 'USD';
+            return {
+              cartIdShort: draft.id.slice(0, 8),
+              total: formatMoney(totalMinor, currency),
+            };
+          });
+          if (!resolved) {
+            reply = DEFAULT_CONFIRMATION;
+          } else {
+            reply = tmpl
+              .replace(/\{\{\s*cart_id_short\s*\}\}/g, resolved.cartIdShort)
+              .replace(/\{\{\s*total\s*\}\}/g, resolved.total)
+              // Strip any leftover/unknown tokens so nothing leaks raw.
+              .replace(/\{\{\s*[\w.]+\s*\}\}/g, '')
+              .replace(/[ \t]{2,}/g, ' ')
+              .trim();
+          }
+        }
       } else if (bookingMatch) {
         reply = 'All set — your request has been captured. A teammate will follow up shortly.';
       }

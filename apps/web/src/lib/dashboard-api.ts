@@ -21,6 +21,9 @@ export interface KpiTile {
   subtextTone: KpiTone;
   href: string;
   action?: { label: string; href: string };
+  // When set, the warning subtext becomes a press-to-reveal hint that lists
+  // the offending rows. Only populated when there's something to drill into.
+  hint?: { kind: 'services-incomplete' };
 }
 
 export interface KpiStripData {
@@ -60,6 +63,7 @@ export async function getKpiStrip(): Promise<KpiStripData> {
             : 'all complete',
         subtextTone: d.services.incomplete > 0 ? 'warning' : 'success',
         href: '/services',
+        hint: d.services.incomplete > 0 ? { kind: 'services-incomplete' } : undefined,
       },
       {
         id: 'faqs',
@@ -83,6 +87,27 @@ export async function getKpiStrip(): Promise<KpiStripData> {
       },
     ],
   };
+}
+
+// ---------- 1b. KPI drill-down: incomplete services -----------------------
+// Lazily fetched when the operator opens the "N missing details" hint on the
+// Services KPI tile. Tells them which services to fix and what each lacks.
+// Kept out of getKpiStrip so the dashboard's first paint stays a single
+// counts query — the detail list is only loaded on demand.
+
+export type ServiceMissingField = 'description' | 'price';
+
+export interface IncompleteService {
+  id: string;
+  name: string;
+  missing: ServiceMissingField[];
+}
+
+export async function getIncompleteServices(): Promise<IncompleteService[]> {
+  const res = await api.get<{ data: { services: IncompleteService[] } }>(
+    '/api/v1/dashboard/widgets/kpi/incomplete-services',
+  );
+  return res.data.services;
 }
 
 // ---------- 2. Onboarding checklist ----------------------------------------

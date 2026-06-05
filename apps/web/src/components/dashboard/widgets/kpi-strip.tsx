@@ -1,11 +1,25 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { ArrowUpRight, Plus, X } from 'lucide-react';
+import { ArrowUpRight, Info, Plus, X } from 'lucide-react';
 import Link from 'next/link';
+import { useState } from 'react';
 
 import { Card, CardContent } from '@/components/ui/card';
-import { getKpiStrip, type KpiTile } from '@/lib/dashboard-api';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  getIncompleteServices,
+  getKpiStrip,
+  type KpiTile,
+  type ServiceMissingField,
+} from '@/lib/dashboard-api';
 import { formatThousands } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -67,32 +81,41 @@ export function KpiStripWidget() {
 }
 
 function KpiTileCard({ tile }: { tile: KpiTile }) {
+  const showHint = tile.hint?.kind === 'services-incomplete' && tile.subtextTone === 'warning';
+
   return (
-    <Link
-      href={tile.href}
-      aria-label={`${tile.label}: ${tile.value}. ${tile.subtext}.`}
-      className="group block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-    >
-      <Card className="h-full transition-shadow group-hover:shadow-lg">
-        <CardContent className="p-5">
-          <div className="flex items-start justify-between gap-2">
-            <p className="text-xs font-medium uppercase tracking-wider text-foreground-subtle">
-              {tile.label}
-            </p>
-            {tile.action ? (
-              <Link
-                href={tile.action.href}
-                onClick={(e) => e.stopPropagation()}
-                className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-brand-500 transition hover:bg-brand-100"
-                aria-label={`${tile.action.label} ${tile.label.toLowerCase()}`}
-              >
-                <Plus className="size-3" aria-hidden /> {tile.action.label}
-              </Link>
-            ) : null}
-          </div>
-          <p className="mt-2 text-3xl font-semibold tracking-tight" aria-hidden>
-            {formatThousands(tile.value)}
+    // Stretched-link pattern: a single overlay <Link> covers the whole card,
+    // and interactive children (ADD, the missing-details hint) opt back into
+    // pointer events above it. This avoids nesting anchors/buttons inside an
+    // anchor — which is invalid HTML and lets a press on the hint navigate
+    // away instead of opening it.
+    <Card className="group relative h-full transition-shadow hover:shadow-lg">
+      <Link
+        href={tile.href}
+        aria-label={`${tile.label}: ${tile.value}. ${tile.subtext}.`}
+        className="absolute inset-0 z-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+      />
+      <CardContent className="pointer-events-none relative z-10 p-5">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-xs font-medium uppercase tracking-wider text-foreground-subtle">
+            {tile.label}
           </p>
+          {tile.action ? (
+            <Link
+              href={tile.action.href}
+              className="pointer-events-auto relative z-20 inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-brand-500 transition hover:bg-brand-100"
+              aria-label={`${tile.action.label} ${tile.label.toLowerCase()}`}
+            >
+              <Plus className="size-3" aria-hidden /> {tile.action.label}
+            </Link>
+          ) : null}
+        </div>
+        <p className="mt-2 text-3xl font-semibold tracking-tight" aria-hidden>
+          {formatThousands(tile.value)}
+        </p>
+        {showHint ? (
+          <MissingServicesHint subtext={tile.subtext} />
+        ) : (
           <p
             className={cn(
               'mt-1 flex items-center gap-1 text-xs',
@@ -111,8 +134,66 @@ function KpiTileCard({ tile }: { tile: KpiTile }) {
             {tile.subtext}
             <ArrowUpRight className="ml-auto size-3 text-foreground-subtle transition group-hover:text-foreground" />
           </p>
-        </CardContent>
-      </Card>
-    </Link>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+const MISSING_FIELD_LABEL: Record<ServiceMissingField, string> = {
+  description: 'description',
+  price: 'base price',
+};
+
+// Press-to-reveal breakdown for the Services tile. The subtext counts how
+// many services lack a description and/or a base price; this lists exactly
+// which ones and what each is missing, each row deep-linking to its editor.
+// The list is fetched lazily — only once the dropdown is first opened.
+function MissingServicesHint({ subtext }: { subtext: string }) {
+  const [open, setOpen] = useState(false);
+  const q = useQuery({
+    queryKey: ['dashboard', 'incomplete-services'],
+    queryFn: getIncompleteServices,
+    enabled: open,
+    staleTime: 30_000,
+  });
+  const services = q.data ?? [];
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="pointer-events-auto relative z-20 mt-1 flex w-full items-center gap-1 rounded text-xs text-amber-700 transition hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          aria-label={`${subtext} — show which services are incomplete`}
+        >
+          <span aria-hidden>!</span>
+          {subtext}
+          <Info className="ml-auto size-3" aria-hidden />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="max-h-80 w-72 overflow-auto">
+        <DropdownMenuLabel>Missing a description or base price</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {q.isLoading ? (
+          <p className="px-2 py-2 text-xs text-foreground-subtle">Loading…</p>
+        ) : q.isError ? (
+          <p className="px-2 py-2 text-xs text-red-700">Couldn’t load the list.</p>
+        ) : services.length === 0 ? (
+          <p className="px-2 py-2 text-xs text-foreground-subtle">Nothing missing — all set.</p>
+        ) : (
+          services.map((s) => (
+            <DropdownMenuItem key={s.id} asChild className="flex-col items-start gap-0.5">
+              <Link href={`/services/${s.id}`}>
+                <span className="font-medium">{s.name || 'Untitled service'}</span>
+                <span className="text-[11px] text-amber-700">
+                  Missing {s.missing.map((f) => MISSING_FIELD_LABEL[f]).join(' + ')}
+                </span>
+              </Link>
+            </DropdownMenuItem>
+          ))
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

@@ -267,6 +267,56 @@ export default async function dashboardRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- GET /dashboard/widgets/kpi/incomplete-services ---------------
+  // Drill-down behind the Services KPI tile's "N missing details" subtext.
+  // Uses the exact same rule the KPI count uses (no description AND/OR no
+  // base price) so the list length matches the badge, then returns the
+  // actual rows — lazily, only when the operator opens the hint — so the
+  // dashboard can say *which* services to fix and *what* each one lacks.
+  r.get(
+    '/dashboard/widgets/kpi/incomplete-services',
+    {
+      schema: {
+        tags: ['dashboard'],
+        summary: 'Services missing a description and/or base price (KPI drill-down).',
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              services: z.array(
+                z.object({
+                  id: uuidSchema,
+                  name: z.string(),
+                  missing: z.array(z.enum(['description', 'price'])),
+                }),
+              ),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const data = await app.tenant(req, async (tx) => {
+        const rows = await tx.service.findMany({
+          where: { deletedAt: null, OR: [{ description: null }, { basePriceMinor: null }] },
+          select: { id: true, name: true, description: true, basePriceMinor: true },
+          orderBy: { name: 'asc' },
+          take: 100,
+        });
+        const services = rows.map((s) => ({
+          id: s.id,
+          name: s.name,
+          missing: [
+            ...(s.description == null ? (['description'] as const) : []),
+            ...(s.basePriceMinor == null ? (['price'] as const) : []),
+          ],
+        }));
+        return { services };
+      });
+      return { data };
+    },
+  );
+
   // ---------- GET /dashboard/widgets/inbox-snapshot ------------------------
   // Open / unassigned / awaiting-reply counts + a rough avg first-response.
   // Avg first-response is approximated as the median over the last 50

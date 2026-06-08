@@ -2701,6 +2701,7 @@ async function maybeReplyAsBot(args: {
     // post-reply memory-update pass.
     let personaBlock: string | null = null;
     let isUltraPlan = false;
+    let pinnedSkus: string[] = [];
     let intentPromise: Promise<{ intent: string; confidence: number; reason: string } | null> | null =
       null;
     try {
@@ -2711,8 +2712,13 @@ async function maybeReplyAsBot(args: {
           role: h.direction === 'outbound' ? ('assistant' as const) : ('user' as const),
           content: h.body ?? '',
         }));
-        const { loadPersonaBlock, renderPersonaForPrompt, loadRecentOrders, renderOrdersForPrompt } =
-          await import('../../lib/contact-memory.js');
+        const {
+          loadPersonaBlock,
+          renderPersonaForPrompt,
+          loadRecentOrders,
+          renderOrdersForPrompt,
+          pinnedSkusFromOrders,
+        } = await import('../../lib/contact-memory.js');
         // Persona (distilled memory) + real recent orders (authoritative DB
         // records) loaded in parallel, then combined into the injected block
         // so the bot can answer "what did I order before?" and re-order.
@@ -2724,6 +2730,9 @@ async function maybeReplyAsBot(args: {
           [renderPersonaForPrompt(pb), renderOrdersForPrompt(orders)]
             .filter(Boolean)
             .join('\n\n') || null;
+        // Pin recent-order products so "yes add these" can re-add them even
+        // when top-K wouldn't have surfaced them this turn.
+        pinnedSkus = pinnedSkusFromOrders(orders);
         const { classifyIntent } = await import('../../lib/intent.js');
         intentPromise = classifyIntent({
           organizationId: args.organizationId,
@@ -2756,6 +2765,7 @@ async function maybeReplyAsBot(args: {
       customerName: (ctx as { customerName?: string | null }).customerName ?? null,
       cartState: cartStateForLLM,
       persona: personaBlock,
+      pinnedSkus,
     }).catch((err) => {
       args.log.warn({ err }, '[whatsapp] bot-engine failed');
       return null;
@@ -3391,26 +3401,26 @@ async function maybeReplyAsBot(args: {
     const GREETING_REPLY_RE =
       /^(\s*[👋🙏✨🌟😊]?\s*)?(hi|hello|hey|welcome|good\s+(morning|afternoon|evening)|greetings|أهل[اًاً]?|مرحب[اًا]|سلام|bonjour|salut|hola|buen(os|as)\s+(d[ií]as|tardes|noches))[\s,!.:؛،]/iu;
     if (greetingImageKey && reply && GREETING_REPLY_RE.test(reply.trim())) {
-      // Short 2-minute dedup so a customer who fires "hi", "hello",
-      // "you there?" back-to-back doesn't get the banner three times in
-      // a row — but a fresh greeting later in the day (or in a new
-      // visit) DOES get the welcome image again. Operators asked for
-      // every greeting to feel welcoming, not "once-per-day banner".
-      const sentVeryRecently = await withRlsBypass(async (tx) => {
+      // The welcome banner is for the START of a visit — not every time the
+      // bot opens a mid-conversation reply with "Hey <name>". Suppress it when
+      // the bot has already replied in this thread within the last hour (an
+      // active/continuing session). A genuinely returning customer (dormant >
+      // 1h, or a brand-new thread) still gets a fresh welcome. Previously this
+      // was a 2-minute dedup, so a voice note 3 min after an order re-sent the
+      // banner mid-conversation.
+      const recentlyChatting = await withRlsBypass(async (tx) => {
         const row = await tx.whatsAppMessage.findFirst({
           where: {
             threadId: ctx.threadId,
             organizationId: args.organizationId,
             direction: 'outbound',
-            messageType: 'image',
-            receivedAt: { gt: new Date(Date.now() - 2 * 60 * 1000) },
-            rawPayload: { path: ['kind'], equals: 'greeting' },
+            receivedAt: { gt: new Date(Date.now() - 60 * 60 * 1000) },
           },
           select: { id: true },
         });
         return !!row;
       });
-      if (!sentVeryRecently) {
+      if (!recentlyChatting) {
         // Prepend so the greeting image sends before any product images
         // in the same reply.
         dedupedImageSends.unshift({
@@ -3426,7 +3436,7 @@ async function maybeReplyAsBot(args: {
       } else {
         args.log.info(
           { threadId: ctx.threadId },
-          '[whatsapp] greeting image suppressed (sent within last 2 min)',
+          '[whatsapp] greeting image suppressed (mid-conversation — bot replied within last hour)',
         );
       }
     }

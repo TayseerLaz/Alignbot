@@ -549,6 +549,11 @@ interface BotResponseArgs {
   // the top of the system prompt so replies are personalised. Empty / null
   // for every other plan, so the prompt is byte-identical to before.
   persona?: string | null;
+  // Product SKUs to ALWAYS keep in the packed catalog (on top of the active
+  // cart's items) — e.g. the customer's recent-order items, so the bot can
+  // re-add a previous order instead of wrongly saying it "isn't in the
+  // catalog" when top-K didn't surface it for this turn.
+  pinnedSkus?: string[];
 }
 
 // Provenance bundle returned alongside the bot reply text. Captures
@@ -612,20 +617,25 @@ export async function buildBotResponse(
     }
   }
 
-  // Always keep the customer's active cart items in the packed catalog. On a
-  // "confirm" / "yes" turn the message doesn't embed near the items, so top-K
-  // would drop them — and the model (strict on "only mention products in the
-  // data") then wrongly tells the customer a cart item "isn't in our catalog".
-  if (products.length < allProducts.length && args.cartState?.items?.length) {
-    const cartSkus = new Set(
-      args.cartState.items.map((it) => (it.sku ?? '').toLowerCase()).filter(Boolean),
-    );
-    if (cartSkus.size > 0) {
+  // Always keep the customer's active cart items AND any pinned SKUs (recent-
+  // order items, for re-order requests) in the packed catalog. On a "confirm"
+  // / "yes" / "yes add these" turn the message doesn't embed near those items,
+  // so top-K would drop them — and the model (strict on "only mention products
+  // in the data") then wrongly tells the customer they "aren't in our catalog".
+  if (products.length < allProducts.length) {
+    const keepSkus = new Set<string>();
+    for (const it of args.cartState?.items ?? []) {
+      if (it.sku) keepSkus.add(it.sku.toLowerCase());
+    }
+    for (const sku of args.pinnedSkus ?? []) {
+      if (sku) keepSkus.add(sku.toLowerCase());
+    }
+    if (keepSkus.size > 0) {
       const have = new Set(products.map((p) => p.id));
-      const cartProducts = allProducts.filter(
-        (p) => cartSkus.has(p.sku.toLowerCase()) && !have.has(p.id),
+      const extra = allProducts.filter(
+        (p) => keepSkus.has(p.sku.toLowerCase()) && !have.has(p.id),
       );
-      if (cartProducts.length > 0) products = [...products, ...cartProducts];
+      if (extra.length > 0) products = [...products, ...extra];
     }
   }
 

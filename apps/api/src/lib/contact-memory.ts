@@ -76,7 +76,19 @@ export interface PastOrder {
   at: Date;
   totalMinor: number;
   currency: string;
-  items: { name: string; quantity: number }[];
+  items: { name: string; quantity: number; sku: string | null }[];
+}
+
+// Flatten the distinct product SKUs across a set of past orders. The bot
+// call-site pins these into the packed catalog so the model can actually
+// re-add a previous order ("yes add these") instead of wrongly claiming the
+// items aren't in the catalog (top-K would otherwise drop them).
+export function pinnedSkusFromOrders(orders: PastOrder[]): string[] {
+  return Array.from(
+    new Set(
+      orders.flatMap((o) => o.items.map((i) => i.sku).filter((s): s is string => !!s)),
+    ),
+  );
 }
 
 export async function loadRecentOrders(
@@ -98,7 +110,7 @@ export async function loadRecentOrders(
           createdAt: true,
           totalMinor: true,
           currency: true,
-          items: { select: { name: true, quantity: true } },
+          items: { select: { name: true, quantity: true, sku: true } },
         },
       }),
     );
@@ -108,7 +120,7 @@ export async function loadRecentOrders(
         at: c.createdAt,
         totalMinor: c.totalMinor ?? 0,
         currency: c.currency,
-        items: c.items.map((i) => ({ name: i.name, quantity: i.quantity })),
+        items: c.items.map((i) => ({ name: i.name, quantity: i.quantity, sku: i.sku })),
       }));
   } catch {
     return [];

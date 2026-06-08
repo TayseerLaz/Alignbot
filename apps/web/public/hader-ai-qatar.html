@@ -2,33 +2,34 @@
 <!--
   Hader by ALIGNED — Exclusive Qatar Launch landing page.
   Fonts + palette matched to hader.ai (Fraunces / Plus Jakarta Sans /
-  JetBrains Mono; warm ivory + oxblood with a signal-red accent).
+  JetBrains Mono; warm beige + oxblood with a signal-red accent).
+  Bilingual EN / AR with live RTL switch.
 
-  ▸ TO GO LIVE: replace 97400000000 below with your WhatsApp Business number
-    (Qatar country code 974 + the number, digits only, no + or spaces).
+  ▸ WhatsApp number wired to +974 6671 4112 (wa.me/97466714112).
 -->
 <html lang="en" dir="ltr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#f7f3ea" />
+  <meta name="theme-color" content="#cfc0a9" />
   <title>Hader by ALIGNED — Exclusive in Qatar | AI on WhatsApp</title>
   <meta name="description" content="Hader is the complete WhatsApp platform that sells for you, broadcasts to thousands, and answers every customer in their own language, 24 hours a day. Now exclusive in Qatar." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
     :root {
       --signal: #e53e34;
       --sand: #cfc0a9;
-      --paper: #f7f3ea;
-      --paper-2: #fbf9f4;
-      --paper-3: #efe8da;
+      --paper: #cfc0a9;
+      --paper-2: #d8cbb5;
+      --paper-3: #d2c3a8;
+      --surface: #ece4d2;
       --oxblood: #360516;
       --ink: #1a0a10;
-      --text: #5a4b46;
-      --line: rgba(54, 5, 22, .10);
-      --line-strong: rgba(54, 5, 22, .18);
+      --text: #4e3f3a;
+      --line: rgba(54, 5, 22, .12);
+      --line-strong: rgba(54, 5, 22, .2);
       --sans: "Plus Jakarta Sans", system-ui, sans-serif;
       --serif: "Fraunces", "Times New Roman", serif;
       --mono: "JetBrains Mono", ui-monospace, monospace;
@@ -36,7 +37,7 @@
       --radius-md: 18px;
       --radius-sm: 12px;
       --bezier: cubic-bezier(.2,.7,.2,1);
-      --shadow: 0 1px 2px rgba(26,10,16,.04), 0 12px 34px rgba(26,10,16,.06);
+      --shadow: 0 1px 2px rgba(26,10,16,.05), 0 14px 36px rgba(26,10,16,.09);
       --maxw: 1120px;
     }
 
@@ -66,12 +67,28 @@
     .wrap { width: 100%; max-width: var(--maxw); margin: 0 auto; padding: 0 28px; }
     .icon { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 
+    /* ---------- Arabic / RTL ---------- */
+    html[lang="ar"] body,
+    html[lang="ar"] h1, html[lang="ar"] h2, html[lang="ar"] h3,
+    html[lang="ar"] .eyebrow, html[lang="ar"] .badge, html[lang="ar"] .pill,
+    html[lang="ar"] .btn, html[lang="ar"] .nav-links a, html[lang="ar"] .foot-links a,
+    html[lang="ar"] .exclusive p, html[lang="ar"] .chip, html[lang="ar"] .lang button,
+    html[lang="ar"] .trust span, html[lang="ar"] .checklist li, html[lang="ar"] .brand small {
+      font-family: "IBM Plex Sans Arabic", var(--sans);
+    }
+    html[lang="ar"] h1, html[lang="ar"] h2, html[lang="ar"] h3 { font-weight: 700; letter-spacing: 0; line-height: 1.25; }
+    html[lang="ar"] .eyebrow, html[lang="ar"] .badge, html[lang="ar"] .pill,
+    html[lang="ar"] .nav-links a, html[lang="ar"] .foot-links a, html[lang="ar"] .exclusive p {
+      letter-spacing: 0; text-transform: none;
+    }
+    html[dir="rtl"] .wa-float { right: auto; left: 22px; }
+    html[dir="rtl"] .brand small { letter-spacing: 0; }
+
     .eyebrow {
       font-family: var(--mono); font-size: 12px; letter-spacing: .2em;
       text-transform: uppercase; color: var(--signal); display: inline-flex; align-items: center;
       gap: 10px; margin-bottom: 20px; font-weight: 500;
     }
-    .eyebrow.muted { color: var(--oxblood); opacity: .55; }
 
     .section { padding: 104px 0; }
     .section-head { max-width: 700px; margin: 0 auto 60px; text-align: center; }
@@ -89,15 +106,13 @@
     .btn .icon { width: 18px; height: 18px; }
     .btn-signal { background: var(--signal); color: #fff; }
     .btn-signal:hover { transform: translateY(-2px); box-shadow: 0 16px 30px -12px color-mix(in oklab, var(--signal) 75%, transparent); }
-    .btn-ink { background: var(--ink); color: var(--paper); }
-    .btn-ink:hover { transform: translateY(-2px); background: var(--oxblood); }
     .btn-outline { background: transparent; color: var(--ink); border-color: var(--line-strong); }
     .btn-outline:hover { border-color: var(--ink); transform: translateY(-2px); }
 
     /* ---------- header ---------- */
     header {
       position: sticky; top: 0; z-index: 50;
-      background: color-mix(in oklab, var(--paper) 88%, transparent);
+      background: color-mix(in oklab, var(--paper) 90%, transparent);
       backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--line);
     }
@@ -109,12 +124,12 @@
     .nav-links a { font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--text); transition: color .15s; }
     .nav-links a:hover { color: var(--ink); }
     .nav-right { display: flex; align-items: center; gap: 16px; }
-    .lang { display: flex; gap: 2px; background: color-mix(in oklab, var(--oxblood) 6%, transparent); padding: 4px; border-radius: 999px; }
+    .lang { display: flex; gap: 2px; background: color-mix(in oklab, var(--oxblood) 7%, transparent); padding: 4px; border-radius: 999px; }
     .lang button {
       border: 0; background: transparent; cursor: pointer; font-family: var(--mono); font-size: 12px; font-weight: 500;
       color: var(--text); padding: 5px 13px; border-radius: 999px; transition: background .15s, color .15s;
     }
-    .lang button[aria-pressed="true"] { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(26,10,16,.08); }
+    .lang button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(26,10,16,.1); }
     .menu-toggle { display: none; background: none; border: 0; cursor: pointer; padding: 8px; }
     .menu-toggle span { display: block; width: 22px; height: 2px; background: var(--ink); margin: 4px 0; border-radius: 2px; }
 
@@ -124,27 +139,27 @@
     @keyframes ping { 0% { transform: scale(.6); opacity: .55; } 100% { transform: scale(1.9); opacity: 0; } }
 
     /* ---------- hero ---------- */
-    .hero { position: relative; overflow: hidden; color: color-mix(in oklab, var(--paper) 90%, transparent); background: radial-gradient(130% 110% at 50% -10%, #3a0a1c 0%, var(--oxblood) 45%, var(--ink) 100%); }
+    .hero { position: relative; overflow: hidden; color: color-mix(in oklab, var(--paper) 92%, transparent); background: radial-gradient(130% 110% at 50% -10%, #3a0a1c 0%, var(--oxblood) 45%, var(--ink) 100%); }
     .hero::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(closest-side at 50% 0%, color-mix(in oklab, var(--signal) 22%, transparent), transparent 70%); }
     .hero .wrap { position: relative; z-index: 1; padding-top: 96px; padding-bottom: 104px; text-align: center; }
     .badge {
       display: inline-flex; align-items: center; gap: 11px; font-family: var(--mono); font-size: 11.5px;
-      letter-spacing: .16em; text-transform: uppercase; color: color-mix(in oklab, var(--paper) 92%, transparent);
-      background: color-mix(in oklab, var(--paper) 10%, transparent);
-      border: 1px solid color-mix(in oklab, var(--paper) 22%, transparent);
+      letter-spacing: .16em; text-transform: uppercase; color: color-mix(in oklab, var(--paper) 94%, transparent);
+      background: color-mix(in oklab, var(--paper) 12%, transparent);
+      border: 1px solid color-mix(in oklab, var(--paper) 24%, transparent);
       padding: 9px 16px; border-radius: 999px; margin-bottom: 32px;
     }
     .hero h1 { color: #fff; font-size: clamp(40px, 6vw, 70px); font-weight: 500; max-width: 920px; margin: 0 auto; letter-spacing: -.02em; }
-    .hero .sub { font-size: clamp(17px, 2.1vw, 20px); max-width: 660px; margin: 26px auto 0; line-height: 1.6; opacity: .85; }
+    .hero .sub { font-size: clamp(17px, 2.1vw, 20px); max-width: 660px; margin: 26px auto 0; line-height: 1.6; opacity: .88; }
     .hero-cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 40px; }
-    .hero .btn-outline { color: var(--paper); border-color: color-mix(in oklab, var(--paper) 35%, transparent); }
-    .hero .btn-outline:hover { background: color-mix(in oklab, var(--paper) 10%, transparent); border-color: var(--paper); }
+    .hero .btn-outline { color: var(--paper); border-color: color-mix(in oklab, var(--paper) 38%, transparent); }
+    .hero .btn-outline:hover { background: color-mix(in oklab, var(--paper) 12%, transparent); border-color: var(--paper); }
     .trust { display: flex; gap: 30px; justify-content: center; flex-wrap: wrap; margin-top: 46px; }
-    .trust span { display: inline-flex; align-items: center; gap: 9px; font-size: 14.5px; opacity: .85; }
+    .trust span { display: inline-flex; align-items: center; gap: 9px; font-size: 14.5px; opacity: .88; }
     .trust .icon { width: 17px; height: 17px; color: var(--signal); }
 
     /* ---------- exclusivity strip ---------- */
-    .exclusive { background: var(--ink); color: color-mix(in oklab, var(--paper) 82%, transparent); }
+    .exclusive { background: var(--ink); color: color-mix(in oklab, var(--paper) 85%, transparent); }
     .exclusive .wrap { padding: 18px 28px; display: flex; align-items: center; justify-content: center; gap: 13px; flex-wrap: wrap; text-align: center; }
     .exclusive p { font-family: var(--mono); font-size: 12.5px; letter-spacing: .06em; max-width: 880px; }
 
@@ -153,13 +168,13 @@
     .g-3 { grid-template-columns: repeat(3, 1fr); }
     .g-4 { grid-template-columns: repeat(4, 1fr); }
     .card {
-      background: #fff; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 34px;
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 34px;
       box-shadow: var(--shadow); transition: transform .3s var(--bezier), box-shadow .3s, border-color .2s;
     }
-    .card:hover { transform: translateY(-5px); box-shadow: 0 2px 4px rgba(26,10,16,.05), 0 22px 48px rgba(26,10,16,.10); border-color: var(--line-strong); }
+    .card:hover { transform: translateY(-5px); box-shadow: 0 2px 4px rgba(26,10,16,.06), 0 26px 52px rgba(26,10,16,.14); border-color: var(--line-strong); }
     .card .ico {
       width: 52px; height: 52px; border-radius: 13px; display: grid; place-items: center;
-      background: color-mix(in oklab, var(--sand) 38%, var(--paper)); color: var(--oxblood); margin-bottom: 22px;
+      background: var(--paper); color: var(--oxblood); margin-bottom: 22px;
     }
     .card .ico .icon { width: 24px; height: 24px; }
     .card h3 { font-size: 22px; margin-bottom: 11px; }
@@ -175,17 +190,17 @@
     .checklist .icon { width: 20px; height: 20px; color: var(--signal); flex: none; }
     .chips { display: flex; flex-wrap: wrap; gap: 12px; }
     .chip {
-      background: #fff; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 22px 16px;
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 22px 16px;
       text-align: center; font-weight: 600; color: var(--ink); font-size: 14.5px; display: flex; flex-direction: column;
       align-items: center; gap: 12px; flex: 1 1 140px; transition: transform .2s var(--bezier), border-color .2s, box-shadow .2s;
     }
     .chip:hover { transform: translateY(-4px); border-color: var(--line-strong); box-shadow: var(--shadow); }
-    .chip .dotbox { width: 44px; height: 44px; border-radius: 12px; background: color-mix(in oklab, var(--sand) 38%, var(--paper)); color: var(--oxblood); display: grid; place-items: center; }
+    .chip .dotbox { width: 44px; height: 44px; border-radius: 12px; background: var(--paper); color: var(--oxblood); display: grid; place-items: center; }
     .chip .dotbox .icon { width: 22px; height: 22px; }
 
     /* ---------- steps ---------- */
     .steps { background: var(--paper-3); }
-    .step { position: relative; background: #fff; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 38px 32px; box-shadow: var(--shadow); }
+    .step { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 38px 32px; box-shadow: var(--shadow); }
     .step .num {
       width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center;
       font-family: var(--serif); font-weight: 600; font-size: 20px; color: var(--paper);
@@ -195,20 +210,20 @@
     .step p { font-size: 15px; color: var(--text); }
 
     /* ---------- final CTA ---------- */
-    .final { position: relative; overflow: hidden; background: radial-gradient(130% 130% at 50% 120%, #3a0a1c 0%, var(--oxblood) 45%, var(--ink) 100%); color: color-mix(in oklab, var(--paper) 88%, transparent); text-align: center; }
+    .final { position: relative; overflow: hidden; background: radial-gradient(130% 130% at 50% 120%, #3a0a1c 0%, var(--oxblood) 45%, var(--ink) 100%); color: color-mix(in oklab, var(--paper) 90%, transparent); text-align: center; }
     .final::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(closest-side at 50% 100%, color-mix(in oklab, var(--signal) 20%, transparent), transparent 70%); }
     .final .wrap { position: relative; z-index: 1; padding: 100px 28px; }
     .final .pill {
       display: inline-flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 11.5px;
-      letter-spacing: .16em; text-transform: uppercase; background: color-mix(in oklab, var(--paper) 10%, transparent);
-      border: 1px solid color-mix(in oklab, var(--paper) 22%, transparent); color: color-mix(in oklab, var(--paper) 92%, transparent);
+      letter-spacing: .16em; text-transform: uppercase; background: color-mix(in oklab, var(--paper) 12%, transparent);
+      border: 1px solid color-mix(in oklab, var(--paper) 24%, transparent); color: color-mix(in oklab, var(--paper) 94%, transparent);
       padding: 9px 16px; border-radius: 999px; margin-bottom: 26px;
     }
     .final h2 { color: #fff; font-size: clamp(33px, 4.8vw, 52px); }
-    .final p { font-size: 18px; max-width: 620px; margin: 20px auto 36px; opacity: .85; }
+    .final p { font-size: 18px; max-width: 620px; margin: 20px auto 36px; opacity: .88; }
 
     /* ---------- footer ---------- */
-    footer { background: var(--ink); color: color-mix(in oklab, var(--paper) 62%, transparent); }
+    footer { background: var(--ink); color: color-mix(in oklab, var(--paper) 65%, transparent); }
     footer .wrap { padding: 58px 28px 44px; }
     .foot-top { display: flex; justify-content: space-between; gap: 28px; flex-wrap: wrap; align-items: center; }
     .foot-brand { display: flex; align-items: center; gap: 12px; color: var(--paper); font-family: var(--serif); font-weight: 600; font-size: 21px; }
@@ -216,7 +231,7 @@
     .foot-links { display: flex; gap: 28px; flex-wrap: wrap; }
     .foot-links a { font-family: var(--mono); font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; opacity: .72; }
     .foot-links a:hover { opacity: 1; color: var(--paper); }
-    .foot-bottom { margin-top: 34px; padding-top: 24px; border-top: 1px solid color-mix(in oklab, var(--paper) 14%, transparent); display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap; font-size: 13.5px; opacity: .6; }
+    .foot-bottom { margin-top: 34px; padding-top: 24px; border-top: 1px solid color-mix(in oklab, var(--paper) 16%, transparent); display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap; font-size: 13.5px; opacity: .65; }
 
     /* ---------- floating WA ---------- */
     .wa-float {
@@ -268,7 +283,7 @@
     <symbol id="i-box" viewBox="0 0 24 24"><path d="M12 2.5l8 4.5v9.9L12 21.4 4 16.9V7l8-4.5z"/><path d="M4 7l8 4.6 8-4.6M12 11.6v9.8"/></symbol>
     <symbol id="i-store" viewBox="0 0 24 24"><path d="M4.5 9.5L6 4h12l1.5 5.5"/><path d="M5 9.5v10.5h14V9.5"/><path d="M9.5 20v-5.5h5V20"/><path d="M4.5 9.5a2.4 2.4 0 004.8 0 2.4 2.4 0 004.8 0 2.4 2.4 0 004.8 0"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7"/></symbol>
-    <symbol id="i-whatsapp" viewBox="0 0 24 24"><path d="M20 11.8a8 8 0 01-11.9 7L4 20l1.3-4a8 8 0 113.8 3" /><path d="M9 9.2c.2-.5.4-.5.7-.5h.5c.2 0 .4 0 .6.5l.6 1.4c.1.2 0 .4-.1.5l-.4.5c-.1.1-.2.3-.1.5.3.6 1.1 1.4 1.8 1.7.2.1.4.1.5 0l.5-.5c.1-.2.3-.2.5-.1l1.3.6c.2.1.3.3.3.5 0 .6-.4 1.2-.9 1.4-.5.2-1.1.2-2.4-.4a8 8 0 01-3.4-3.4c-.5-1-.5-1.7-.4-2.2z"/></symbol>
+    <symbol id="i-whatsapp" viewBox="0 0 24 24"><path d="M20 11.8a8 8 0 01-11.9 7L4 20l1.3-4a8 8 0 113.8 3"/><path d="M9 9.2c.2-.5.4-.5.7-.5h.5c.2 0 .4 0 .6.5l.6 1.4c.1.2 0 .4-.1.5l-.4.5c-.1.1-.2.3-.1.5.3.6 1.1 1.4 1.8 1.7.2.1.4.1.5 0l.5-.5c.1-.2.3-.2.5-.1l1.3.6c.2.1.3.3.3.5 0 .6-.4 1.2-.9 1.4-.5.2-1.1.2-2.4-.4a8 8 0 01-3.4-3.4c-.5-1-.5-1.7-.4-2.2z"/></symbol>
   </defs></svg>
 
   <!-- ============ HEADER ============ -->
@@ -279,16 +294,16 @@
         <span>Hader<small>by ALIGNED</small></span>
       </a>
       <nav class="nav-links" id="navLinks">
-        <a href="#what">Features</a>
-        <a href="#integrations">Integrations</a>
-        <a href="#launch">Launch Offer</a>
+        <a href="#what" data-en="Features" data-ar="الميزات">Features</a>
+        <a href="#integrations" data-en="Integrations" data-ar="التكاملات">Integrations</a>
+        <a href="#launch" data-en="Launch Offer" data-ar="عرض الإطلاق">Launch Offer</a>
       </nav>
       <div class="nav-right">
         <div class="lang" role="group" aria-label="Language">
-          <button type="button" aria-pressed="true">EN</button>
-          <button type="button" aria-pressed="false">عربي</button>
+          <button type="button" data-lang="en" aria-pressed="true">EN</button>
+          <button type="button" data-lang="ar" aria-pressed="false">عربي</button>
         </div>
-        <a class="btn btn-signal" href="#launch" style="padding:11px 20px;font-size:14px;">Start on WhatsApp</a>
+        <a class="btn btn-signal" href="https://wa.me/97466714112?text=Hi%20Hader" target="_blank" rel="noopener" style="padding:11px 20px;font-size:14px;" data-en="Start on WhatsApp" data-ar="ابدأ على واتساب">Start on WhatsApp</a>
         <button class="menu-toggle" id="menuToggle" aria-label="Menu"><span></span><span></span><span></span></button>
       </div>
     </div>
@@ -297,17 +312,17 @@
   <!-- ============ HERO ============ -->
   <section class="hero" id="top">
     <div class="wrap">
-      <span class="badge reveal"><span class="dot"></span> Now Exclusive in Qatar</span>
-      <h1 class="reveal">Hader is responsible for every word AI says.</h1>
-      <p class="sub reveal">The complete WhatsApp platform that sells for you, broadcasts to thousands, and answers every customer in their own language, 24 hours a day.</p>
+      <span class="badge reveal"><span class="dot"></span> <span data-en="Now Exclusive in Qatar" data-ar="حصري الآن في قطر">Now Exclusive in Qatar</span></span>
+      <h1 class="reveal" data-en="Hader is responsible for every word AI says." data-ar="هادر مسؤول عن كل كلمة يقولها الذكاء الاصطناعي.">Hader is responsible for every word AI says.</h1>
+      <p class="sub reveal" data-en="The complete WhatsApp platform that sells for you, broadcasts to thousands, and answers every customer in their own language, 24 hours a day." data-ar="منصة واتساب المتكاملة التي تبيع نيابةً عنك، وترسل الحملات إلى الآلاف، وتجيب كل عميل بلغته، على مدار 24 ساعة.">The complete WhatsApp platform that sells for you, broadcasts to thousands, and answers every customer in their own language, 24 hours a day.</p>
       <div class="hero-cta reveal">
-        <a class="btn btn-signal" href="#launch"><svg class="icon"><use href="#i-whatsapp"/></svg> Start on WhatsApp</a>
-        <a class="btn btn-outline" href="#launch">See the launch offer</a>
+        <a class="btn btn-signal" href="https://wa.me/97466714112?text=Hi%20Hader" target="_blank" rel="noopener"><svg class="icon"><use href="#i-whatsapp"/></svg> <span data-en="Start on WhatsApp" data-ar="ابدأ على واتساب">Start on WhatsApp</span></a>
+        <a class="btn btn-outline" href="#launch" data-en="See the launch offer" data-ar="اطّلع على عرض الإطلاق">See the launch offer</a>
       </div>
       <div class="trust reveal">
-        <span><svg class="icon"><use href="#i-check"/></svg> No app to install</span>
-        <span><svg class="icon"><use href="#i-check"/></svg> Works on the WhatsApp you already use</span>
-        <span><svg class="icon"><use href="#i-check"/></svg> Speaks your customer's language</span>
+        <span><svg class="icon"><use href="#i-check"/></svg> <span data-en="No app to install" data-ar="لا حاجة لتثبيت أي تطبيق">No app to install</span></span>
+        <span><svg class="icon"><use href="#i-check"/></svg> <span data-en="Works on the WhatsApp you already use" data-ar="يعمل على واتساب الذي تستخدمه بالفعل">Works on the WhatsApp you already use</span></span>
+        <span><svg class="icon"><use href="#i-check"/></svg> <span data-en="Speaks your customer's language" data-ar="يتحدّث لغة عميلك">Speaks your customer's language</span></span>
       </div>
     </div>
   </section>
@@ -316,7 +331,7 @@
   <div class="exclusive">
     <div class="wrap">
       <span class="dot"></span>
-      <p>Exclusive in Qatar right now. Be the first in your industry to put AI to work on WhatsApp before your competitors do.</p>
+      <p data-en="Exclusive in Qatar right now. Be the first in your industry to put AI to work on WhatsApp before your competitors do." data-ar="حصري في قطر الآن. كن الأول في مجالك لتسخير الذكاء الاصطناعي على واتساب قبل منافسيك.">Exclusive in Qatar right now. Be the first in your industry to put AI to work on WhatsApp before your competitors do.</p>
     </div>
   </div>
 
@@ -324,25 +339,25 @@
   <section class="section" id="what">
     <div class="wrap">
       <div class="section-head reveal">
-        <span class="eyebrow">What Hader does</span>
-        <h2>One platform. Every conversation. More sales.</h2>
-        <p>Hader turns WhatsApp into your hardest working salesperson, marketer, and support agent, all at once.</p>
+        <span class="eyebrow" data-en="What Hader does" data-ar="ماذا يفعل هادر">What Hader does</span>
+        <h2 data-en="One platform. Every conversation. More sales." data-ar="منصة واحدة. كل محادثة. مبيعات أكثر.">One platform. Every conversation. More sales.</h2>
+        <p data-en="Hader turns WhatsApp into your hardest working salesperson, marketer, and support agent, all at once." data-ar="يحوّل هادر واتساب إلى أمهر مندوب مبيعات ومسوّق وموظف دعم لديك، في آنٍ واحد.">Hader turns WhatsApp into your hardest working salesperson, marketer, and support agent, all at once.</p>
       </div>
       <div class="grid g-3">
         <div class="card reveal">
           <div class="ico"><svg class="icon"><use href="#i-sales"/></svg></div>
-          <h3>AI That Sells</h3>
-          <p>Your AI knows your full catalog and recommends, upsells, and closes. It turns everyday chats into real orders, automatically.</p>
+          <h3 data-en="AI That Sells" data-ar="ذكاء اصطناعي يبيع">AI That Sells</h3>
+          <p data-en="Your AI knows your full catalog and recommends, upsells, and closes. It turns everyday chats into real orders, automatically." data-ar="يعرف الذكاء الاصطناعي كامل كتالوجك فيوصي ويرفع قيمة الطلب ويُتمّ البيع. يحوّل المحادثات اليومية إلى طلبات حقيقية، تلقائيًا.">Your AI knows your full catalog and recommends, upsells, and closes. It turns everyday chats into real orders, automatically.</p>
         </div>
         <div class="card reveal">
           <div class="ico"><svg class="icon"><use href="#i-broadcast"/></svg></div>
-          <h3>WhatsApp Broadcasting</h3>
-          <p>Reach thousands of customers at once with approved campaigns. Pick your audience, send, and watch deliveries and replies climb in real time.</p>
+          <h3 data-en="WhatsApp Broadcasting" data-ar="حملات واتساب">WhatsApp Broadcasting</h3>
+          <p data-en="Reach thousands of customers at once with approved campaigns. Pick your audience, send, and watch deliveries and replies climb in real time." data-ar="اصل إلى آلاف العملاء دفعةً واحدة عبر حملات معتمدة. اختر جمهورك، أرسِل، وراقب التسليمات والردود تتصاعد لحظيًا.">Reach thousands of customers at once with approved campaigns. Pick your audience, send, and watch deliveries and replies climb in real time.</p>
         </div>
         <div class="card reveal">
           <div class="ico"><svg class="icon"><use href="#i-chat"/></svg></div>
-          <h3>Customer Service Made Easy</h3>
-          <p>It replies with voice notes, follows up on its own, and never leaves a customer waiting, day or night, in every language.</p>
+          <h3 data-en="Customer Service Made Easy" data-ar="خدمة عملاء بلا عناء">Customer Service Made Easy</h3>
+          <p data-en="It replies with voice notes, follows up on its own, and never leaves a customer waiting, day or night, in every language." data-ar="يردّ برسائل صوتية، ويتابع تلقائيًا، ولا يترك عميلاً ينتظر، ليلاً أو نهارًا، وبكل لغة.">It replies with voice notes, follows up on its own, and never leaves a customer waiting, day or night, in every language.</p>
         </div>
       </div>
     </div>
@@ -353,21 +368,21 @@
     <div class="wrap">
       <div class="inner">
         <div class="reveal">
-          <span class="eyebrow">Connected to your business</span>
-          <h2>Full integration with your accounting system and CRM</h2>
-          <p class="lead">Hader plugs straight into the tools you already run. Orders, contacts, and inventory stay in sync automatically, so your team never copies data between systems again.</p>
+          <span class="eyebrow" data-en="Connected to your business" data-ar="متصل بأعمالك">Connected to your business</span>
+          <h2 data-en="Full integration with your accounting system and CRM" data-ar="تكامل كامل مع نظام المحاسبة وإدارة علاقات العملاء">Full integration with your accounting system and CRM</h2>
+          <p class="lead" data-en="Hader plugs straight into the tools you already run. Orders, contacts, and inventory stay in sync automatically, so your team never copies data between systems again." data-ar="يتصل هادر مباشرةً بالأدوات التي تستخدمها. تبقى الطلبات وجهات الاتصال والمخزون متزامنة تلقائيًا، فلا ينسخ فريقك البيانات بين الأنظمة بعد اليوم.">Hader plugs straight into the tools you already run. Orders, contacts, and inventory stay in sync automatically, so your team never copies data between systems again.</p>
           <ul class="checklist">
-            <li><svg class="icon"><use href="#i-check"/></svg> Two-way sync with your CRM and accounting</li>
-            <li><svg class="icon"><use href="#i-check"/></svg> Live stock and pricing pulled from your POS and inventory</li>
-            <li><svg class="icon"><use href="#i-check"/></svg> Secure connectors, set up and managed for you</li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Two-way sync with your CRM and accounting" data-ar="مزامنة ثنائية الاتجاه مع إدارة العملاء والمحاسبة">Two-way sync with your CRM and accounting</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Live stock and pricing pulled from your POS and inventory" data-ar="مخزون وأسعار محدّثة لحظيًا من نقاط البيع والمخزون">Live stock and pricing pulled from your POS and inventory</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Secure connectors, set up and managed for you" data-ar="موصّلات آمنة، نجهّزها ونديرها لك">Secure connectors, set up and managed for you</span></li>
           </ul>
         </div>
         <div class="chips reveal">
-          <div class="chip"><span class="dotbox"><svg class="icon"><use href="#i-chart"/></svg></span> Accounting</div>
-          <div class="chip"><span class="dotbox"><svg class="icon"><use href="#i-crm"/></svg></span> CRM</div>
-          <div class="chip"><span class="dotbox"><svg class="icon"><use href="#i-pos"/></svg></span> POS</div>
-          <div class="chip"><span class="dotbox"><svg class="icon"><use href="#i-box"/></svg></span> Inventory</div>
-          <div class="chip"><span class="dotbox"><svg class="icon"><use href="#i-store"/></svg></span> Online store</div>
+          <div class="chip"><span class="dotbox"><svg class="icon"><use href="#i-chart"/></svg></span> <span data-en="Accounting" data-ar="المحاسبة">Accounting</span></div>
+          <div class="chip"><span class="dotbox"><svg class="icon"><use href="#i-crm"/></svg></span> <span data-en="CRM" data-ar="إدارة العملاء">CRM</span></div>
+          <div class="chip"><span class="dotbox"><svg class="icon"><use href="#i-pos"/></svg></span> <span data-en="POS" data-ar="نقاط البيع">POS</span></div>
+          <div class="chip"><span class="dotbox"><svg class="icon"><use href="#i-box"/></svg></span> <span data-en="Inventory" data-ar="المخزون">Inventory</span></div>
+          <div class="chip"><span class="dotbox"><svg class="icon"><use href="#i-store"/></svg></span> <span data-en="Online store" data-ar="المتجر الإلكتروني">Online store</span></div>
         </div>
       </div>
     </div>
@@ -377,29 +392,29 @@
   <section class="section">
     <div class="wrap">
       <div class="section-head reveal">
-        <span class="eyebrow">Why choose Hader</span>
-        <h2>Why businesses in Qatar choose Hader</h2>
+        <span class="eyebrow" data-en="Why choose Hader" data-ar="لماذا هادر">Why choose Hader</span>
+        <h2 data-en="Why businesses in Qatar choose Hader" data-ar="لماذا تختار الشركات في قطر هادر">Why businesses in Qatar choose Hader</h2>
       </div>
       <div class="grid g-4">
         <div class="card reveal">
           <div class="ico"><svg class="icon"><use href="#i-zap"/></svg></div>
-          <h3>Never miss a lead</h3>
-          <p>Every message gets an instant reply, even at 2am. No customer slips away while you sleep.</p>
+          <h3 data-en="Never miss a lead" data-ar="لا تفوّت أي عميل محتمل">Never miss a lead</h3>
+          <p data-en="Every message gets an instant reply, even at 2am. No customer slips away while you sleep." data-ar="كل رسالة تحصل على ردّ فوري، حتى في الثانية صباحًا. لا يفلت أي عميل بينما تنام.">Every message gets an instant reply, even at 2am. No customer slips away while you sleep.</p>
         </div>
         <div class="card reveal">
           <div class="ico"><svg class="icon"><use href="#i-clock"/></svg></div>
-          <h3>Sell around the clock</h3>
-          <p>Hader recommends, answers, and closes orders 24 hours a day, even when your team is off.</p>
+          <h3 data-en="Sell around the clock" data-ar="بِع على مدار الساعة">Sell around the clock</h3>
+          <p data-en="Hader recommends, answers, and closes orders 24 hours a day, even when your team is off." data-ar="يوصي هادر ويجيب ويُتمّ الطلبات 24 ساعة في اليوم، حتى عندما يكون فريقك في إجازة.">Hader recommends, answers, and closes orders 24 hours a day, even when your team is off.</p>
         </div>
         <div class="card reveal">
           <div class="ico"><svg class="icon"><use href="#i-team"/></svg></div>
-          <h3>One number, your whole team</h3>
-          <p>A shared inbox keeps everyone aligned, with notes, assignments, and instant handover to a human.</p>
+          <h3 data-en="One number, your whole team" data-ar="رقم واحد، فريقك بالكامل">One number, your whole team</h3>
+          <p data-en="A shared inbox keeps everyone aligned, with notes, assignments, and instant handover to a human." data-ar="صندوق وارد مشترك يبقي الجميع على تنسيق، مع ملاحظات وإسناد مهام وتحويل فوري لموظف بشري.">A shared inbox keeps everyone aligned, with notes, assignments, and instant handover to a human.</p>
         </div>
         <div class="card reveal">
           <div class="ico"><svg class="icon"><use href="#i-shield"/></svg></div>
-          <h3>Done for you setup</h3>
-          <p>We train Hader on your products, prices, and policies before you go live. You just watch the leads come in.</p>
+          <h3 data-en="Done for you setup" data-ar="إعداد جاهز لك">Done for you setup</h3>
+          <p data-en="We train Hader on your products, prices, and policies before you go live. You just watch the leads come in." data-ar="ندرّب هادر على منتجاتك وأسعارك وسياساتك قبل انطلاقك. ما عليك سوى متابعة وصول العملاء.">We train Hader on your products, prices, and policies before you go live. You just watch the leads come in.</p>
         </div>
       </div>
     </div>
@@ -409,24 +424,24 @@
   <section class="section steps">
     <div class="wrap">
       <div class="section-head reveal">
-        <span class="eyebrow">Simple to start</span>
-        <h2>Live on WhatsApp in three steps</h2>
+        <span class="eyebrow" data-en="Simple to start" data-ar="البدء سهل">Simple to start</span>
+        <h2 data-en="Live on WhatsApp in three steps" data-ar="انطلق على واتساب في ثلاث خطوات">Live on WhatsApp in three steps</h2>
       </div>
       <div class="grid g-3">
         <div class="step reveal">
           <div class="num">1</div>
-          <h3>Connect</h3>
-          <p>Link your WhatsApp Business number. No new app and no new number.</p>
+          <h3 data-en="Connect" data-ar="اربط">Connect</h3>
+          <p data-en="Link your WhatsApp Business number. No new app and no new number." data-ar="اربط رقم واتساب للأعمال. لا تطبيق جديد ولا رقم جديد.">Link your WhatsApp Business number. No new app and no new number.</p>
         </div>
         <div class="step reveal">
           <div class="num">2</div>
-          <h3>Train</h3>
-          <p>Hader learns your products, prices, and policies from your website and catalog.</p>
+          <h3 data-en="Train" data-ar="درّب">Train</h3>
+          <p data-en="Hader learns your products, prices, and policies from your website and catalog." data-ar="يتعلّم هادر منتجاتك وأسعارك وسياساتك من موقعك وكتالوجك.">Hader learns your products, prices, and policies from your website and catalog.</p>
         </div>
         <div class="step reveal">
           <div class="num">3</div>
-          <h3>Sell</h3>
-          <p>It answers, recommends, follows up, and broadcasts while you watch the orders come in.</p>
+          <h3 data-en="Sell" data-ar="بِع">Sell</h3>
+          <p data-en="It answers, recommends, follows up, and broadcasts while you watch the orders come in." data-ar="يجيب ويوصي ويتابع ويرسل الحملات بينما تتابع وصول الطلبات.">It answers, recommends, follows up, and broadcasts while you watch the orders come in.</p>
         </div>
       </div>
     </div>
@@ -435,10 +450,10 @@
   <!-- ============ FINAL CTA ============ -->
   <section class="final" id="launch">
     <div class="wrap reveal">
-      <span class="pill"><span class="dot"></span> Exclusive Qatar Launch · Limited spots</span>
-      <h2>Be among the first in Qatar.</h2>
-      <p>We are onboarding a limited number of businesses for our exclusive Qatar launch. Get set up, trained on your business, and selling on WhatsApp with Hader. Reserve your spot today.</p>
-      <a class="btn btn-signal" href="https://wa.me/97400000000?text=I%20want%20to%20claim%20my%20Hader%20Qatar%20launch%20spot" target="_blank" rel="noopener"><svg class="icon"><use href="#i-whatsapp"/></svg> Claim your launch spot</a>
+      <span class="pill"><span class="dot"></span> <span data-en="Exclusive Qatar Launch · Limited spots" data-ar="إطلاق حصري في قطر · أماكن محدودة">Exclusive Qatar Launch · Limited spots</span></span>
+      <h2 data-en="Be among the first in Qatar." data-ar="كن من الأوائل في قطر.">Be among the first in Qatar.</h2>
+      <p data-en="We are onboarding a limited number of businesses for our exclusive Qatar launch. Get set up, trained on your business, and selling on WhatsApp with Hader. Reserve your spot today." data-ar="نستقبل عددًا محدودًا من الشركات ضمن إطلاقنا الحصري في قطر. جهّز حسابك، ودرّب النظام على أعمالك، وابدأ البيع على واتساب مع هادر. احجز مكانك اليوم.">We are onboarding a limited number of businesses for our exclusive Qatar launch. Get set up, trained on your business, and selling on WhatsApp with Hader. Reserve your spot today.</p>
+      <a class="btn btn-signal" href="https://wa.me/97466714112?text=I%20want%20to%20claim%20my%20Hader%20Qatar%20launch%20spot" target="_blank" rel="noopener"><svg class="icon"><use href="#i-whatsapp"/></svg> <span data-en="Claim your launch spot" data-ar="احجز مكانك في الإطلاق">Claim your launch spot</span></a>
     </div>
   </section>
 
@@ -449,19 +464,19 @@
         <div class="foot-brand"><img src="hader-icon.png" alt="Hader" /> Hader</div>
         <nav class="foot-links">
           <a href="https://hader.ai" target="_blank" rel="noopener">hader.ai</a>
-          <a href="#what">Features</a>
-          <a href="#integrations">Integrations</a>
-          <a href="#launch">Launch Offer</a>
+          <a href="#what" data-en="Features" data-ar="الميزات">Features</a>
+          <a href="#integrations" data-en="Integrations" data-ar="التكاملات">Integrations</a>
+          <a href="#launch" data-en="Launch Offer" data-ar="عرض الإطلاق">Launch Offer</a>
         </nav>
       </div>
       <div class="foot-bottom">
-        <span>Aligning Technology with Your Business, an ALIGNED product.</span>
+        <span data-en="Aligning Technology with Your Business, an ALIGNED product." data-ar="نوائم التقنية مع أعمالك، منتج من ALIGNED.">Aligning Technology with Your Business, an ALIGNED product.</span>
         <span>© 2026 Hader, hader.ai</span>
       </div>
     </div>
   </footer>
 
-  <a class="wa-float" href="https://wa.me/97400000000?text=Hi%20Hader" target="_blank" rel="noopener"><svg class="icon"><use href="#i-whatsapp"/></svg> Chat on WhatsApp</a>
+  <a class="wa-float" href="https://wa.me/97466714112?text=Hi%20Hader" target="_blank" rel="noopener"><svg class="icon"><use href="#i-whatsapp"/></svg> <span data-en="Chat on WhatsApp" data-ar="تواصل عبر واتساب">Chat on WhatsApp</span></a>
 
   <script>
     const toggle = document.getElementById('menuToggle');
@@ -469,13 +484,21 @@
     toggle.addEventListener('click', () => links.classList.toggle('open'));
     links.querySelectorAll('a').forEach(a => a.addEventListener('click', () => links.classList.remove('open')));
 
-    document.querySelectorAll('.lang button').forEach(b => {
-      b.addEventListener('click', () => {
-        document.querySelectorAll('.lang button').forEach(x => x.setAttribute('aria-pressed', 'false'));
-        b.setAttribute('aria-pressed', 'true');
+    // ----- Language switch (EN / AR) with live RTL -----
+    function setLang(lang) {
+      const ar = lang === 'ar';
+      const html = document.documentElement;
+      html.lang = ar ? 'ar' : 'en';
+      html.dir = ar ? 'rtl' : 'ltr';
+      document.querySelectorAll('[data-en]').forEach(el => {
+        const val = ar ? (el.getAttribute('data-ar') || el.getAttribute('data-en')) : el.getAttribute('data-en');
+        el.textContent = val;
       });
-    });
+      document.querySelectorAll('.lang button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.lang === lang)));
+    }
+    document.querySelectorAll('.lang button').forEach(b => b.addEventListener('click', () => setLang(b.dataset.lang)));
 
+    // ----- Scroll reveal -----
     const io = new IntersectionObserver((entries) => {
       entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
     }, { threshold: 0.12 });

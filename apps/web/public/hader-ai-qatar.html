@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<!--
+  Hader by ALIGNED — Exclusive Qatar Launch landing page.
+  Self-contained: no build step, no external JS deps. Open directly in a browser
+  or host the single file anywhere.
+
+  ▸ TO GO LIVE: replace 97400000000 below with your WhatsApp Business number
+    (Qatar country code 974 + the number, digits only, no + or spaces).
+-->
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hader by ALIGNED — Exclusive in Qatar 🇶🇦 | AI on WhatsApp</title>
+  <meta name="description" content="Hader is the complete WhatsApp platform that sells for you, broadcasts to thousands, and answers every customer in their own language, 24 hours a day. Now exclusive in Qatar." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --blue-900: #073d73;
+      --blue-700: #0a5ba9;
+      --blue-600: #0e63b3;
+      --blue-500: #2278cb;
+      --blue-100: #e7f0fa;
+      --navy: #0b1f33;
+      --maroon: #8a1538;
+      --maroon-soft: #b03654;
+      --wa: #25d366;
+      --wa-dark: #1da851;
+      --ink: #14283b;
+      --muted: #5b6b7b;
+      --line: #e3ebf3;
+      --bg: #f5f8fc;
+      --card: #ffffff;
+      --radius: 16px;
+      --shadow-sm: 0 1px 2px rgba(11, 31, 51, .06), 0 4px 14px rgba(11, 31, 51, .06);
+      --shadow-md: 0 8px 30px rgba(10, 91, 169, .12);
+      --maxw: 1140px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    h1, h2, h3 { line-height: 1.15; color: var(--navy); margin: 0; letter-spacing: -.02em; }
+    p { margin: 0; }
+    a { color: inherit; text-decoration: none; }
+    .wrap { width: 100%; max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+    .kicker {
+      display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .12em;
+      text-transform: uppercase; color: var(--blue-700); margin-bottom: 14px;
+    }
+    .section { padding: 86px 0; }
+    .section-head { max-width: 720px; margin: 0 auto 52px; text-align: center; }
+    .section-head h2 { font-size: clamp(28px, 4vw, 40px); }
+    .section-head p { color: var(--muted); font-size: 18px; margin-top: 16px; }
+
+    /* ---------- buttons ---------- */
+    .btn {
+      display: inline-flex; align-items: center; gap: 10px; justify-content: center;
+      font-weight: 600; font-size: 16px; padding: 14px 26px; border-radius: 999px;
+      border: 1px solid transparent; cursor: pointer; transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+      white-space: nowrap;
+    }
+    .btn:hover { transform: translateY(-2px); }
+    .btn-wa { background: var(--wa); color: #06351c; box-shadow: 0 8px 22px rgba(37, 211, 102, .35); }
+    .btn-wa:hover { background: var(--wa-dark); color: #fff; }
+    .btn-ghost { background: rgba(255,255,255,.12); color: #fff; border-color: rgba(255,255,255,.45); }
+    .btn-ghost:hover { background: rgba(255,255,255,.2); }
+    .btn-blue { background: var(--blue-700); color: #fff; box-shadow: var(--shadow-md); }
+    .btn-blue:hover { background: var(--blue-600); }
+    .btn-outline { background: #fff; color: var(--blue-700); border-color: var(--line); }
+    .btn-outline:hover { border-color: var(--blue-500); }
+
+    /* ---------- header ---------- */
+    header {
+      position: sticky; top: 0; z-index: 50;
+      background: rgba(255,255,255,.86); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--line);
+    }
+    .nav { display: flex; align-items: center; justify-content: space-between; height: 72px; gap: 18px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; color: var(--navy); }
+    .brand .logo {
+      width: 34px; height: 34px; border-radius: 9px;
+      background: linear-gradient(135deg, var(--blue-600), var(--blue-900));
+      display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 18px;
+      box-shadow: var(--shadow-md);
+    }
+    .brand small { display: block; font-size: 11px; font-weight: 500; color: var(--muted); letter-spacing: .04em; margin-top: -2px; }
+    .nav-links { display: flex; align-items: center; gap: 28px; }
+    .nav-links a { color: var(--muted); font-weight: 500; font-size: 15px; transition: color .15s; }
+    .nav-links a:hover { color: var(--navy); }
+    .nav-right { display: flex; align-items: center; gap: 16px; }
+    .lang { display: flex; gap: 4px; background: var(--blue-100); padding: 4px; border-radius: 999px; }
+    .lang button {
+      border: 0; background: transparent; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600;
+      color: var(--blue-700); padding: 5px 12px; border-radius: 999px; transition: background .15s, color .15s;
+    }
+    .lang button[aria-pressed="true"] { background: #fff; color: var(--blue-900); box-shadow: var(--shadow-sm); }
+    .lang button.ar { font-family: "IBM Plex Sans Arabic", "IBM Plex Sans", sans-serif; }
+    .menu-toggle { display: none; background: none; border: 0; cursor: pointer; padding: 8px; }
+    .menu-toggle span { display: block; width: 22px; height: 2px; background: var(--navy); margin: 4px 0; border-radius: 2px; }
+
+    /* ---------- hero ---------- */
+    .hero {
+      position: relative; overflow: hidden; color: #fff;
+      background: radial-gradient(120% 120% at 85% 0%, #0e63b3 0%, #0a5ba9 38%, #073d73 100%);
+    }
+    .hero::after {
+      content: ""; position: absolute; inset: 0;
+      background: radial-gradient(60% 50% at 15% 100%, rgba(138,21,56,.35), transparent 70%);
+      pointer-events: none;
+    }
+    .hero .wrap { position: relative; z-index: 1; padding-top: 84px; padding-bottom: 96px; text-align: center; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600;
+      background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.3);
+      padding: 8px 16px; border-radius: 999px; margin-bottom: 26px;
+    }
+    .hero h1 {
+      color: #fff; font-size: clamp(34px, 5.4vw, 60px); font-weight: 700;
+      max-width: 880px; margin: 0 auto;
+    }
+    .hero .sub { color: rgba(255,255,255,.9); font-size: clamp(17px, 2.2vw, 21px); max-width: 720px; margin: 22px auto 0; }
+    .hero-cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 36px; }
+    .trust { display: flex; gap: 26px; justify-content: center; flex-wrap: wrap; margin-top: 40px; }
+    .trust span { display: inline-flex; align-items: center; gap: 9px; font-size: 15px; color: rgba(255,255,255,.92); font-weight: 500; }
+    .tick {
+      width: 20px; height: 20px; border-radius: 50%; background: rgba(37,211,102,.95); color: #06351c;
+      display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none;
+    }
+
+    /* ---------- exclusivity strip ---------- */
+    .exclusive {
+      background: linear-gradient(90deg, var(--maroon), var(--maroon-soft));
+      color: #fff; text-align: center;
+    }
+    .exclusive .wrap { padding: 22px 24px; display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; }
+    .exclusive .star { font-size: 22px; }
+    .exclusive p { font-size: 16px; font-weight: 500; max-width: 860px; }
+
+    /* ---------- generic grid + cards ---------- */
+    .grid { display: grid; gap: 24px; }
+    .g-3 { grid-template-columns: repeat(3, 1fr); }
+    .g-4 { grid-template-columns: repeat(4, 1fr); }
+    .card {
+      background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+      padding: 30px; box-shadow: var(--shadow-sm); transition: transform .18s ease, box-shadow .18s ease, border-color .18s;
+    }
+    .card:hover { transform: translateY(-4px); box-shadow: var(--shadow-md); border-color: #cfe0f2; }
+    .card .ico {
+      width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; font-size: 24px;
+      background: var(--blue-100); color: var(--blue-700); margin-bottom: 18px;
+    }
+    .card h3 { font-size: 21px; margin-bottom: 10px; }
+    .card p { color: var(--muted); font-size: 15.5px; }
+
+    /* ---------- integrations ---------- */
+    .integrate { background: #fff; }
+    .integrate .inner { display: grid; grid-template-columns: 1.05fr .95fr; gap: 56px; align-items: center; }
+    .integrate h2 { font-size: clamp(26px, 3.4vw, 36px); }
+    .integrate p.lead { color: var(--muted); font-size: 17px; margin-top: 18px; }
+    .checklist { list-style: none; padding: 0; margin: 26px 0 0; display: grid; gap: 14px; }
+    .checklist li { display: flex; gap: 12px; align-items: flex-start; font-size: 16px; }
+    .checklist .tick { background: var(--blue-700); color: #fff; margin-top: 2px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 14px; }
+    .chip {
+      background: var(--bg); border: 1px solid var(--line); border-radius: 14px;
+      padding: 22px 18px; text-align: center; font-weight: 600; color: var(--navy); font-size: 15px;
+      display: flex; flex-direction: column; align-items: center; gap: 10px; flex: 1 1 140px;
+      transition: transform .15s, border-color .15s;
+    }
+    .chip:hover { transform: translateY(-3px); border-color: var(--blue-500); }
+    .chip .dot { width: 40px; height: 40px; border-radius: 11px; background: var(--blue-100); color: var(--blue-700); display: grid; place-items: center; font-size: 20px; }
+
+    /* ---------- steps ---------- */
+    .steps { background: linear-gradient(180deg, var(--bg), #eef4fb); }
+    .step { position: relative; background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 34px 28px; box-shadow: var(--shadow-sm); }
+    .step .num {
+      width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 20px;
+      color: #fff; background: linear-gradient(135deg, var(--blue-600), var(--blue-900)); margin-bottom: 18px;
+    }
+    .step h3 { font-size: 20px; margin-bottom: 8px; }
+    .step p { color: var(--muted); font-size: 15.5px; }
+
+    /* ---------- final CTA ---------- */
+    .final { background: radial-gradient(120% 140% at 0% 0%, #0a5ba9, #073d73 60%, #061f3a 100%); color: #fff; text-align: center; }
+    .final .wrap { padding: 88px 24px; }
+    .final .pill {
+      display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+      background: var(--maroon); color: #fff; padding: 8px 18px; border-radius: 999px; margin-bottom: 22px;
+    }
+    .final h2 { color: #fff; font-size: clamp(30px, 4.4vw, 46px); }
+    .final p { color: rgba(255,255,255,.88); font-size: 18px; max-width: 660px; margin: 18px auto 32px; }
+
+    /* ---------- footer ---------- */
+    footer { background: #06192e; color: #b9c6d4; }
+    footer .wrap { padding: 54px 24px 40px; }
+    .foot-top { display: flex; justify-content: space-between; gap: 28px; flex-wrap: wrap; align-items: center; }
+    .foot-brand { display: flex; align-items: center; gap: 10px; color: #fff; font-weight: 700; font-size: 20px; }
+    .foot-links { display: flex; gap: 26px; flex-wrap: wrap; }
+    .foot-links a { color: #b9c6d4; font-size: 15px; }
+    .foot-links a:hover { color: #fff; }
+    .foot-bottom { margin-top: 30px; padding-top: 22px; border-top: 1px solid rgba(255,255,255,.1); display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap; font-size: 14px; color: #8aa0b4; }
+
+    /* ---------- floating WA ---------- */
+    .wa-float {
+      position: fixed; right: 22px; bottom: 22px; z-index: 60;
+      display: inline-flex; align-items: center; gap: 10px; background: var(--wa); color: #06351c;
+      font-weight: 600; padding: 14px 20px; border-radius: 999px; box-shadow: 0 10px 30px rgba(37,211,102,.45);
+      transition: transform .15s, background .15s;
+    }
+    .wa-float:hover { transform: translateY(-3px); background: var(--wa-dark); color: #fff; }
+
+    /* ---------- reveal anim ---------- */
+    .reveal { opacity: 0; transform: translateY(22px); transition: opacity .6s ease, transform .6s ease; }
+    .reveal.in { opacity: 1; transform: none; }
+    @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } html { scroll-behavior: auto; } }
+
+    /* ---------- responsive ---------- */
+    @media (max-width: 940px) {
+      .g-4 { grid-template-columns: repeat(2, 1fr); }
+      .g-3 { grid-template-columns: 1fr; }
+      .integrate .inner { grid-template-columns: 1fr; gap: 36px; }
+      .nav-links { display: none; }
+      .menu-toggle { display: block; }
+      .nav-links.open {
+        display: flex; flex-direction: column; position: absolute; top: 72px; left: 0; right: 0;
+        background: #fff; border-bottom: 1px solid var(--line); padding: 18px 24px; gap: 16px; z-index: 49;
+      }
+    }
+    @media (max-width: 560px) {
+      .g-4 { grid-template-columns: 1fr; }
+      .section { padding: 64px 0; }
+      .lang { display: none; }
+      .brand small { display: none; }
+      .hero .wrap { padding-top: 58px; padding-bottom: 70px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ============ HEADER ============ -->
+  <header>
+    <div class="wrap nav">
+      <a class="brand" href="#top">
+        <span class="logo">H</span>
+        <span>Hader<small>by ALIGNED</small></span>
+      </a>
+      <nav class="nav-links" id="navLinks">
+        <a href="#what">Features</a>
+        <a href="#integrations">Integrations</a>
+        <a href="#launch">Launch Offer</a>
+      </nav>
+      <div class="nav-right">
+        <div class="lang" role="group" aria-label="Language">
+          <button type="button" aria-pressed="true">EN</button>
+          <button type="button" class="ar" aria-pressed="false">عربي</button>
+          <button type="button" aria-pressed="false">हिंदी</button>
+        </div>
+        <a class="btn btn-wa" href="#launch" style="padding:11px 20px;font-size:15px;">Start on WhatsApp</a>
+        <button class="menu-toggle" id="menuToggle" aria-label="Menu"><span></span><span></span><span></span></button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============ HERO ============ -->
+  <section class="hero" id="top">
+    <div class="wrap">
+      <span class="badge reveal">Now Exclusive in Qatar 🇶🇦</span>
+      <h1 class="reveal">Hader is responsible for every word AI says.</h1>
+      <p class="sub reveal">The complete WhatsApp platform that sells for you, broadcasts to thousands, and answers every customer in their own language, 24 hours a day.</p>
+      <div class="hero-cta reveal">
+        <a class="btn btn-wa" href="#launch">Start on WhatsApp</a>
+        <a class="btn btn-ghost" href="#launch">See the launch offer</a>
+      </div>
+      <div class="trust reveal">
+        <span><span class="tick">✓</span> No app to install</span>
+        <span><span class="tick">✓</span> Works on the WhatsApp you already use</span>
+        <span><span class="tick">✓</span> Speaks your customer's language</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ EXCLUSIVITY STRIP ============ -->
+  <div class="exclusive">
+    <div class="wrap">
+      <span class="star">★</span>
+      <p>Exclusive in Qatar right now. Be the first in your industry to put AI to work on WhatsApp before your competitors do.</p>
+    </div>
+  </div>
+
+  <!-- ============ WHAT HADER DOES ============ -->
+  <section class="section" id="what">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <span class="kicker">What Hader does</span>
+        <h2>One platform. Every conversation. More sales.</h2>
+        <p>Hader turns WhatsApp into your hardest working salesperson, marketer, and support agent, all at once.</p>
+      </div>
+      <div class="grid g-3">
+        <div class="card reveal">
+          <div class="ico">🛒</div>
+          <h3>AI That Sells</h3>
+          <p>Your AI knows your full catalog and recommends, upsells, and closes. It turns everyday chats into real orders, automatically.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico">📣</div>
+          <h3>WhatsApp Broadcasting</h3>
+          <p>Reach thousands of customers at once with approved campaigns. Pick your audience, send, and watch deliveries and replies climb in real time.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico">💬</div>
+          <h3>Customer Service Made Easy</h3>
+          <p>It replies with voice notes, follows up on its own, and never leaves a customer waiting, day or night, in every language.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ INTEGRATIONS ============ -->
+  <section class="section integrate" id="integrations">
+    <div class="wrap">
+      <div class="inner">
+        <div class="reveal">
+          <span class="kicker">Connected to your business</span>
+          <h2>Full integration with your accounting system and CRM</h2>
+          <p class="lead">Hader plugs straight into the tools you already run. Orders, contacts, and inventory stay in sync automatically, so your team never copies data between systems again.</p>
+          <ul class="checklist">
+            <li><span class="tick">✓</span> Two-way sync with your CRM and accounting</li>
+            <li><span class="tick">✓</span> Live stock and pricing pulled from your POS and inventory</li>
+            <li><span class="tick">✓</span> Secure connectors, set up and managed for you</li>
+          </ul>
+        </div>
+        <div class="chips reveal">
+          <div class="chip"><span class="dot">📊</span> Accounting</div>
+          <div class="chip"><span class="dot">👥</span> CRM</div>
+          <div class="chip"><span class="dot">🧾</span> POS</div>
+          <div class="chip"><span class="dot">📦</span> Inventory</div>
+          <div class="chip"><span class="dot">🛍️</span> Online store</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ WHY CHOOSE ============ -->
+  <section class="section" style="background:linear-gradient(180deg,#eef4fb,var(--bg));">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <span class="kicker">Why choose Hader</span>
+        <h2>Why businesses in Qatar choose Hader</h2>
+      </div>
+      <div class="grid g-4">
+        <div class="card reveal">
+          <div class="ico">⏰</div>
+          <h3>Never miss a lead</h3>
+          <p>Every message gets an instant reply, even at 2am. No customer slips away while you sleep.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico">🌙</div>
+          <h3>Sell around the clock</h3>
+          <p>Hader recommends, answers, and closes orders 24 hours a day, even when your team is off.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico">👥</div>
+          <h3>One number, your whole team</h3>
+          <p>A shared inbox keeps everyone aligned, with notes, assignments, and instant handover to a human.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico">🚀</div>
+          <h3>Done for you setup</h3>
+          <p>We train Hader on your products, prices, and policies before you go live. You just watch the leads come in.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STEPS ============ -->
+  <section class="section steps">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <span class="kicker">Simple to start</span>
+        <h2>Live on WhatsApp in three steps</h2>
+      </div>
+      <div class="grid g-3">
+        <div class="step reveal">
+          <div class="num">1</div>
+          <h3>Connect</h3>
+          <p>Link your WhatsApp Business number. No new app and no new number.</p>
+        </div>
+        <div class="step reveal">
+          <div class="num">2</div>
+          <h3>Train</h3>
+          <p>Hader learns your products, prices, and policies from your website and catalog.</p>
+        </div>
+        <div class="step reveal">
+          <div class="num">3</div>
+          <h3>Sell</h3>
+          <p>It answers, recommends, follows up, and broadcasts while you watch the orders come in.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FINAL CTA ============ -->
+  <section class="final" id="launch">
+    <div class="wrap reveal">
+      <span class="pill">Exclusive Qatar Launch · Limited spots</span>
+      <h2>Be among the first in Qatar.</h2>
+      <p>We are onboarding a limited number of businesses for our exclusive Qatar launch. Get set up, trained on your business, and selling on WhatsApp with Hader. Reserve your spot today.</p>
+      <a class="btn btn-wa" href="https://wa.me/97400000000?text=I%20want%20to%20claim%20my%20Hader%20Qatar%20launch%20spot" target="_blank" rel="noopener">Claim your launch spot</a>
+    </div>
+  </section>
+
+  <!-- ============ FOOTER ============ -->
+  <footer>
+    <div class="wrap">
+      <div class="foot-top">
+        <div class="foot-brand"><span class="logo" style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--blue-500),var(--blue-900));display:grid;place-items:center;color:#fff;">H</span> Hader</div>
+        <nav class="foot-links">
+          <a href="https://hader.ai" target="_blank" rel="noopener">hader.ai</a>
+          <a href="#what">Features</a>
+          <a href="#integrations">Integrations</a>
+          <a href="#launch">Launch Offer</a>
+        </nav>
+      </div>
+      <div class="foot-bottom">
+        <span>Aligning Technology with Your Business, an ALIGNED product.</span>
+        <span>© 2026 Hader, hader.ai</span>
+      </div>
+    </div>
+  </footer>
+
+  <a class="wa-float" href="https://wa.me/97400000000?text=Hi%20Hader" target="_blank" rel="noopener">💬 Chat on WhatsApp</a>
+
+  <script>
+    // Mobile menu
+    const toggle = document.getElementById('menuToggle');
+    const links = document.getElementById('navLinks');
+    toggle.addEventListener('click', () => links.classList.toggle('open'));
+    links.querySelectorAll('a').forEach(a => a.addEventListener('click', () => links.classList.remove('open')));
+
+    // Language switcher — visual state only (content is English; AR/HI
+    // translations not wired yet). Kept here so the control matches the spec.
+    document.querySelectorAll('.lang button').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('.lang button').forEach(x => x.setAttribute('aria-pressed', 'false'));
+        b.setAttribute('aria-pressed', 'true');
+      });
+    });
+
+    // Scroll reveal
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+  </script>
+</body>
+</html>

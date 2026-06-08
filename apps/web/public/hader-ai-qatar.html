@@ -12,11 +12,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#cfc0a9" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
   <title>Hader by ALIGNED — Exclusive in Qatar | AI on WhatsApp</title>
   <meta name="description" content="Hader is the complete WhatsApp platform that sells for you, broadcasts to thousands, and answers every customer in their own language, 24 hours a day. Now exclusive in Qatar." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
     :root {
       --signal: #e53e34;
@@ -54,11 +55,10 @@
       text-rendering: optimizeLegibility;
     }
     h1, h2, h3 {
-      font-family: var(--serif);
-      font-optical-sizing: auto;
-      font-weight: 500;
-      line-height: 1.1;
-      letter-spacing: -.015em;
+      font-family: var(--sans);
+      font-weight: 800;
+      line-height: 1.06;
+      letter-spacing: -.03em;
       color: var(--ink);
       margin: 0;
     }
@@ -117,9 +117,10 @@
       border-bottom: 1px solid var(--line);
     }
     .nav { display: flex; align-items: center; justify-content: space-between; height: 76px; gap: 18px; }
-    .brand { display: flex; align-items: center; gap: 12px; font-family: var(--serif); font-weight: 600; font-size: 21px; color: var(--ink); }
-    .brand .logo { width: 38px; height: 38px; object-fit: contain; display: block; }
-    .brand small { display: block; font-family: var(--mono); font-size: 9.5px; font-weight: 400; letter-spacing: .16em; text-transform: uppercase; color: var(--text); opacity: .7; margin-top: 1px; }
+    .brand { display: inline-flex; align-items: center; gap: 9px; }
+    .brand-mark { width: 30px; height: 30px; display: block; overflow: visible; flex: none; }
+    .brand-word { font-family: var(--sans); font-weight: 800; font-size: 21px; letter-spacing: -.025em; line-height: 1; color: var(--oxblood); }
+    .brand-word span { margin-left: 4px; }
     .nav-links { display: flex; align-items: center; gap: 32px; }
     .nav-links a { font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--text); transition: color .15s; }
     .nav-links a:hover { color: var(--ink); }
@@ -149,7 +150,7 @@
       border: 1px solid color-mix(in oklab, var(--paper) 24%, transparent);
       padding: 9px 16px; border-radius: 999px; margin-bottom: 32px;
     }
-    .hero h1 { color: #fff; font-size: clamp(40px, 6vw, 70px); font-weight: 500; max-width: 920px; margin: 0 auto; letter-spacing: -.02em; }
+    .hero h1 { color: #fff; font-size: clamp(42px, 6.6vw, 78px); font-weight: 800; max-width: 940px; margin: 0 auto; letter-spacing: -.045em; line-height: .98; }
     .hero .sub { font-size: clamp(17px, 2.1vw, 20px); max-width: 660px; margin: 26px auto 0; line-height: 1.6; opacity: .88; }
     .hero-cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 40px; }
     .hero .btn-outline { color: var(--paper); border-color: color-mix(in oklab, var(--paper) 38%, transparent); }
@@ -177,7 +178,7 @@
       background: var(--paper); color: var(--oxblood); margin-bottom: 22px;
     }
     .card .ico .icon { width: 24px; height: 24px; }
-    .card h3 { font-size: 22px; margin-bottom: 11px; }
+    .card h3 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; margin-bottom: 11px; }
     .card p { font-size: 15px; color: var(--text); line-height: 1.62; }
 
     /* ---------- integrations ---------- */
@@ -203,10 +204,10 @@
     .step { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 38px 32px; box-shadow: var(--shadow); }
     .step .num {
       width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center;
-      font-family: var(--serif); font-weight: 600; font-size: 20px; color: var(--paper);
+      font-family: var(--sans); font-weight: 800; font-size: 19px; color: var(--paper);
       background: var(--ink); margin-bottom: 22px;
     }
-    .step h3 { font-size: 21px; margin-bottom: 9px; }
+    .step h3 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; margin-bottom: 9px; }
     .step p { font-size: 15px; color: var(--text); }
 
     /* ---------- final CTA ---------- */
@@ -226,8 +227,7 @@
     footer { background: var(--ink); color: color-mix(in oklab, var(--paper) 65%, transparent); }
     footer .wrap { padding: 58px 28px 44px; }
     .foot-top { display: flex; justify-content: space-between; gap: 28px; flex-wrap: wrap; align-items: center; }
-    .foot-brand { display: flex; align-items: center; gap: 12px; color: var(--paper); font-family: var(--serif); font-weight: 600; font-size: 21px; }
-    .foot-brand img { width: 34px; height: 34px; object-fit: contain; filter: brightness(0) invert(1); opacity: .92; }
+    .foot-brand { display: inline-flex; align-items: center; gap: 9px; }
     .foot-links { display: flex; gap: 28px; flex-wrap: wrap; }
     .foot-links a { font-family: var(--mono); font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; opacity: .72; }
     .foot-links a:hover { opacity: 1; color: var(--paper); }
@@ -289,9 +289,12 @@
   <!-- ============ HEADER ============ -->
   <header>
     <div class="wrap nav">
-      <a class="brand" href="#top">
-        <img class="logo" src="hader-icon.png" alt="Hader" />
-        <span>Hader<small>by ALIGNED</small></span>
+      <a class="brand" href="#top" aria-label="Hader AI">
+        <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true">
+          <defs><mask id="logo-mask-h" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100" style="mask-type:alpha"><image href="hader-icon.png" x="0" y="0" width="100" height="100" preserveAspectRatio="xMidYMid meet"/></mask></defs>
+          <rect x="0" y="0" width="100" height="100" fill="var(--oxblood)" mask="url(#logo-mask-h)"/>
+        </svg>
+        <span class="brand-word">Hader<span>AI</span></span>
       </a>
       <nav class="nav-links" id="navLinks">
         <a href="#what" data-en="Features" data-ar="الميزات">Features</a>
@@ -461,7 +464,13 @@
   <footer>
     <div class="wrap">
       <div class="foot-top">
-        <div class="foot-brand"><img src="hader-icon.png" alt="Hader" /> Hader</div>
+        <div class="foot-brand" aria-label="Hader AI">
+          <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true">
+            <defs><mask id="logo-mask-f" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100" style="mask-type:alpha"><image href="hader-icon.png" x="0" y="0" width="100" height="100" preserveAspectRatio="xMidYMid meet"/></mask></defs>
+            <rect x="0" y="0" width="100" height="100" fill="var(--paper)" mask="url(#logo-mask-f)"/>
+          </svg>
+          <span class="brand-word" style="color:var(--paper)">Hader<span>AI</span></span>
+        </div>
         <nav class="foot-links">
           <a href="https://hader.ai" target="_blank" rel="noopener">hader.ai</a>
           <a href="#what" data-en="Features" data-ar="الميزات">Features</a>

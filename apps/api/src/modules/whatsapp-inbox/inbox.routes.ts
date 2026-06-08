@@ -278,11 +278,18 @@ export default async function inboxRoutes(app: FastifyInstance) {
     },
     async (req) =>
       app.tenant(req, async (tx) => {
-        const messages = await tx.whatsAppMessage.findMany({
+        // Fetch the MOST RECENT 500 messages, then reverse to chronological
+        // order for display. Previously this used `orderBy: asc, take: 500`,
+        // which returned the OLDEST 500 — so on any thread with >500 messages
+        // the recent conversation silently vanished from the chat view (the
+        // nav preview still showed the latest message, hence "it answered but
+        // doesn't appear in the chat"). The customer's "Boss" thread had 625.
+        const recent = await tx.whatsAppMessage.findMany({
           where: { threadId: req.params.id },
-          orderBy: { receivedAt: 'asc' },
+          orderBy: { receivedAt: 'desc' },
           take: 500,
         });
+        const messages = recent.reverse();
         return {
           data: messages.map((m) => {
             const raw = (m.rawPayload ?? null) as

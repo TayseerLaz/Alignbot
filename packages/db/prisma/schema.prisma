@@ -2375,3 +2375,30 @@ model ProvenanceFlagDecision {
   @@index([organizationId, decidedAt(sort: Desc)])
   @@map("provenance_flag_decisions")
 }
+
+// ----------------------------------------------------------------------------
+// Lead (GLOBAL) — public marketing-site capture (name + WhatsApp number).
+// Not tenant-scoped: these are ALIGNED's own inbound leads, viewed only in
+// /aligned-admin/leads. No organization_id → no RLS policy; accessed via
+// withRlsBypass() from the public capture route + admin routes.
+// ----------------------------------------------------------------------------
+
+enum LeadStatus {
+  new
+  contacted
+  converted
+  archived
+}
+
+model Lead {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  phone     String
+  source    String     @default("hader_landing")
+  status    LeadStatus @default(new)
+  note      String?
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  @@index([createdAt(sort: Desc)])
+  @@map("leads")
+}

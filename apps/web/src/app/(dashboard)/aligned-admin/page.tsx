@@ -176,11 +176,18 @@ export default function AlignedAdminPage() {
         title="ALIGNED admin"
         description="Cross-tenant operations and system health."
         actions={
-          <Button asChild>
-            <Link href="/aligned-admin/new-tenant">
-              <Plus className="size-4" /> New tenant
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button asChild variant="secondary">
+              <Link href="/aligned-admin/leads">
+                <Users className="size-4" /> Leads
+              </Link>
+            </Button>
+            <Button asChild>
+              <Link href="/aligned-admin/new-tenant">
+                <Plus className="size-4" /> New tenant
+              </Link>
+            </Button>
+          </div>
         }
       />
 

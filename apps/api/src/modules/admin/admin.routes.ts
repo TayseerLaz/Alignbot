@@ -3,10 +3,13 @@
 import {
   adminCreateTenantBodySchema,
   adminCreateTenantResponseSchema,
+  adminListLeadsQuerySchema,
   adminListOrgsQuerySchema,
+  adminUpdateLeadBodySchema,
   adminUpdateOrgBodySchema,
   ApiErrorCode,
   itemEnvelopeSchema,
+  leadSchema,
   listEnvelopeSchema,
   organizationSchema,
   successSchema,
@@ -1843,6 +1846,101 @@ export default async function adminRoutes(app: FastifyInstance) {
         });
       }
       return { data: { id: updated.id, aiPlan: updated.aiPlan } };
+    },
+  );
+
+  // ---------- Leads (public marketing-site captures) ----------------------
+  const toLeadDto = (l: {
+    id: string;
+    name: string;
+    phone: string;
+    source: string;
+    status: 'new' | 'contacted' | 'converted' | 'archived';
+    note: string | null;
+    createdAt: Date;
+  }) => ({
+    id: l.id,
+    name: l.name,
+    phone: l.phone,
+    source: l.source,
+    status: l.status,
+    note: l.note,
+    createdAt: l.createdAt.toISOString(),
+  });
+
+  r.get(
+    '/aligned-admin/leads',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'List marketing leads captured from the public landing page.',
+        querystring: adminListLeadsQuerySchema,
+        response: { 200: listEnvelopeSchema(leadSchema) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const leads = await withRlsBypass((tx) =>
+        tx.lead.findMany({
+          where: {
+            ...(req.query.status ? { status: req.query.status } : {}),
+            ...(req.query.q
+              ? {
+                  OR: [
+                    { name: { contains: req.query.q, mode: 'insensitive' as const } },
+                    { phone: { contains: req.query.q } },
+                  ],
+                }
+              : {}),
+          },
+          orderBy: { createdAt: 'desc' },
+          take: req.query.limit,
+        }),
+      );
+      return { data: leads.map(toLeadDto), nextCursor: null };
+    },
+  );
+
+  r.patch(
+    '/aligned-admin/leads/:id',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Update a lead (status / note).',
+        params: z.object({ id: uuidSchema }),
+        body: adminUpdateLeadBodySchema,
+        response: { 200: itemEnvelopeSchema(leadSchema) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const lead = await withRlsBypass((tx) =>
+        tx.lead.update({
+          where: { id: req.params.id },
+          data: {
+            ...(req.body.status ? { status: req.body.status } : {}),
+            ...(req.body.note !== undefined ? { note: req.body.note } : {}),
+          },
+        }),
+      );
+      return { data: toLeadDto(lead) };
+    },
+  );
+
+  r.delete(
+    '/aligned-admin/leads/:id',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Delete a lead.',
+        params: z.object({ id: uuidSchema }),
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      await withRlsBypass((tx) => tx.lead.delete({ where: { id: req.params.id } }));
+      return { ok: true as const };
     },
   );
 }

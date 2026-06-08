@@ -28,6 +28,7 @@ import dashboardRoutes from './modules/dashboard/dashboard.routes.js';
 import dataExportRoutes from './modules/data-export/data-export.routes.js';
 import orgRoutes from './modules/org/org.routes.js';
 import saasRoutes from './modules/saas/saas.routes.js';
+import leadsRoutes from './modules/leads/leads.routes.js';
 import statusRoutes from './modules/status/status.routes.js';
 import inboxRoutes from './modules/whatsapp-inbox/inbox.routes.js';
 import whatsappRoutes from './modules/whatsapp/whatsapp.routes.js';
@@ -335,6 +336,9 @@ export async function buildServer() {
 
   // Routes — public (HMAC-verified, no JWT)
   await app.register(inboundWebhookRoutes, { prefix: '/api/v1' });
+
+  // Routes — public marketing lead capture (no auth, per-IP rate limited)
+  await app.register(leadsRoutes, { prefix: '/api/v1' });
 
   // Routes — public status page data (no auth). Mounted at /api/v1/status.
   await app.register(statusRoutes, { prefix: '/api/v1' });

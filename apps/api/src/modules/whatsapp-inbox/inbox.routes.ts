@@ -270,26 +270,46 @@ export default async function inboxRoutes(app: FastifyInstance) {
     {
       schema: {
         tags: ['inbox'],
-        summary: 'Full message history for a thread (chronological).',
+        summary: 'Message history for a thread (chronological, recent-first paged).',
         params: z.object({ id: uuidSchema }),
+        // `before` = load the page of messages OLDER than this ISO timestamp
+        // (for "load earlier messages"). Omitted = the most recent page.
+        querystring: z.object({
+          before: z.string().datetime().optional(),
+          // Default 1000 so the initial open shows the full conversation for
+          // virtually every thread in one load; "load earlier" pages beyond.
+          limit: z.coerce.number().int().min(1).max(1000).default(1000),
+        }),
         response: { 200: listEnvelopeSchema(messageDtoSchema) },
       },
       preHandler: [app.requireRole('viewer')],
     },
     async (req) =>
       app.tenant(req, async (tx) => {
-        // Fetch the MOST RECENT 500 messages, then reverse to chronological
-        // order for display. Previously this used `orderBy: asc, take: 500`,
-        // which returned the OLDEST 500 — so on any thread with >500 messages
-        // the recent conversation silently vanished from the chat view (the
-        // nav preview still showed the latest message, hence "it answered but
-        // doesn't appear in the chat"). The customer's "Boss" thread had 625.
-        const recent = await tx.whatsAppMessage.findMany({
-          where: { threadId: req.params.id },
+        // Fetch the most RECENT `limit` messages (older than `before` if
+        // paging back), then reverse to chronological order for display.
+        // Previously this used `orderBy: asc, take: 500`, returning the OLDEST
+        // 500 — so on any thread with >500 messages the recent conversation
+        // silently vanished from the chat view (the nav preview still showed
+        // the latest message, hence "it answered but doesn't appear in the
+        // chat"). The "Boss" thread had 625. We fetch one extra row to know
+        // whether older messages remain (nextCursor) so the UI can page back
+        // through the FULL history of any size of thread.
+        const limit = req.query.limit;
+        const rows = await tx.whatsAppMessage.findMany({
+          where: {
+            threadId: req.params.id,
+            ...(req.query.before ? { receivedAt: { lt: new Date(req.query.before) } } : {}),
+          },
           orderBy: { receivedAt: 'desc' },
-          take: 500,
+          take: limit + 1,
         });
-        const messages = recent.reverse();
+        const hasOlder = rows.length > limit;
+        const page = hasOlder ? rows.slice(0, limit) : rows;
+        const messages = page.reverse();
+        // Cursor for the NEXT (older) page = the oldest message in this page.
+        const olderCursor =
+          hasOlder && messages.length > 0 ? messages[0]!.receivedAt.toISOString() : null;
         return {
           data: messages.map((m) => {
             const raw = (m.rawPayload ?? null) as
@@ -328,7 +348,7 @@ export default async function inboxRoutes(app: FastifyInstance) {
               imageSource,
             };
           }),
-          nextCursor: null,
+          nextCursor: olderCursor,
         };
       }),
   );

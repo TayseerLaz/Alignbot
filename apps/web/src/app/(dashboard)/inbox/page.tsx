@@ -468,11 +468,40 @@ function ThreadView({
     queryKey: ['inbox-thread', thread?.id, 'messages'],
     queryFn: () =>
       thread
-        ? api.get<{ data: Message[] }>(`/api/v1/inbox/threads/${thread.id}/messages`)
-        : Promise.resolve({ data: [] as Message[] }),
+        ? api.get<{ data: Message[]; nextCursor: string | null }>(
+            `/api/v1/inbox/threads/${thread.id}/messages`,
+          )
+        : Promise.resolve({ data: [] as Message[], nextCursor: null }),
     enabled: !!thread,
     refetchInterval: 5_000,
   });
+
+  // "Load earlier messages" pagination. The query above returns the most
+  // recent page; this pages back through older history so the FULL chat is
+  // viewable no matter how many messages it has. Reset when the thread changes.
+  const [olderMessages, setOlderMessages] = useState<Message[]>([]);
+  const [olderCursor, setOlderCursor] = useState<string | null | undefined>(undefined);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  useEffect(() => {
+    setOlderMessages([]);
+    setOlderCursor(undefined);
+  }, [thread?.id]);
+  // undefined = not paged yet (use the recent page's cursor); null = exhausted.
+  const effectiveOlderCursor =
+    olderCursor === undefined ? (messagesQ.data?.nextCursor ?? null) : olderCursor;
+  const loadEarlier = async () => {
+    if (!thread || loadingOlder || !effectiveOlderCursor) return;
+    setLoadingOlder(true);
+    try {
+      const res = await api.get<{ data: Message[]; nextCursor: string | null }>(
+        `/api/v1/inbox/threads/${thread.id}/messages?before=${encodeURIComponent(effectiveOlderCursor)}`,
+      );
+      setOlderMessages((prev) => [...res.data, ...prev]);
+      setOlderCursor(res.nextCursor);
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
 
   const notesQ = useQuery({
     queryKey: ['inbox-thread', thread?.id, 'notes'],
@@ -636,7 +665,8 @@ function ThreadView({
   // call in this component, otherwise the moment a thread arrives the
   // render count of hooks changes and React throws #310 "Rendered more
   // hooks than during the previous render."
-  const messages = messagesQ.data?.data ?? [];
+  const messages = [...olderMessages, ...(messagesQ.data?.data ?? [])];
+  const canLoadEarlier = effectiveOlderCursor != null;
   const notes = notesQ.data?.data ?? [];
   // Interleave messages + notes by time.
   const timeline = useMemo(() => {
@@ -686,17 +716,31 @@ function ThreadView({
         ) : timeline.length === 0 ? (
           <p className="text-center text-sm text-foreground-muted">No messages yet.</p>
         ) : (
-          timeline.map((item) =>
-            item.kind === 'msg' ? (
-              <Bubble
-                key={item.msg.id}
-                message={item.msg}
-                isAlignedAdmin={isAlignedAdmin}
-              />
-            ) : (
-              <NoteBubble key={item.note.id} note={item.note} />
-            ),
-          )
+          <>
+            {canLoadEarlier ? (
+              <div className="flex justify-center pb-2">
+                <button
+                  type="button"
+                  onClick={loadEarlier}
+                  disabled={loadingOlder}
+                  className="rounded-full border border-border bg-surface px-3 py-1 text-xs text-foreground-muted transition hover:bg-brand-50 disabled:opacity-60"
+                >
+                  {loadingOlder ? 'Loading…' : 'Load earlier messages'}
+                </button>
+              </div>
+            ) : null}
+            {timeline.map((item) =>
+              item.kind === 'msg' ? (
+                <Bubble
+                  key={item.msg.id}
+                  message={item.msg}
+                  isAlignedAdmin={isAlignedAdmin}
+                />
+              ) : (
+                <NoteBubble key={item.note.id} note={item.note} />
+              ),
+            )}
+          </>
         )}
       </MessageScroller>
       <div className="shrink-0">

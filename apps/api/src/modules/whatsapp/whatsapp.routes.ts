@@ -2711,11 +2711,19 @@ async function maybeReplyAsBot(args: {
           role: h.direction === 'outbound' ? ('assistant' as const) : ('user' as const),
           content: h.body ?? '',
         }));
-        const { loadPersonaBlock, renderPersonaForPrompt } = await import(
-          '../../lib/contact-memory.js'
-        );
-        const pb = await loadPersonaBlock(args.organizationId, m.from);
-        personaBlock = renderPersonaForPrompt(pb) || null;
+        const { loadPersonaBlock, renderPersonaForPrompt, loadRecentOrders, renderOrdersForPrompt } =
+          await import('../../lib/contact-memory.js');
+        // Persona (distilled memory) + real recent orders (authoritative DB
+        // records) loaded in parallel, then combined into the injected block
+        // so the bot can answer "what did I order before?" and re-order.
+        const [pb, orders] = await Promise.all([
+          loadPersonaBlock(args.organizationId, m.from),
+          loadRecentOrders(args.organizationId, m.from),
+        ]);
+        personaBlock =
+          [renderPersonaForPrompt(pb), renderOrdersForPrompt(orders)]
+            .filter(Boolean)
+            .join('\n\n') || null;
         const { classifyIntent } = await import('../../lib/intent.js');
         intentPromise = classifyIntent({
           organizationId: args.organizationId,

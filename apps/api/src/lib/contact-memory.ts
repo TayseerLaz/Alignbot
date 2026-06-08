@@ -61,9 +61,74 @@ export function renderPersonaForPrompt(block: PersonaBlock | null): string {
     );
   }
   lines.push(
-    'Use this to personalise — do NOT invent facts beyond it, and do NOT mention that you have a memory of them.',
+    'Use this to personalise, but CONFIRM specifics (delivery address, payment) with the customer for each order instead of assuming them from memory. Do NOT invent facts beyond this, and do NOT say you have a memory of them.',
   );
   return lines.join('\n');
+}
+
+// ---- Order history (for "what did I order before" + re-order requests) -----
+// Pulls the customer's recent FINALISED orders (carts promoted past 'draft')
+// straight from the DB — authoritative, not a chat summary. Injected into the
+// prompt so the bot can answer "what was my last order?" and re-order the same
+// items, instead of "I don't have access to your order history".
+
+export interface PastOrder {
+  at: Date;
+  totalMinor: number;
+  currency: string;
+  items: { name: string; quantity: number }[];
+}
+
+export async function loadRecentOrders(
+  organizationId: string,
+  phoneE164: string,
+  limit = 3,
+): Promise<PastOrder[]> {
+  try {
+    const rows = await withRlsBypass((tx) =>
+      tx.cart.findMany({
+        where: {
+          organizationId,
+          customerPhone: phoneE164,
+          status: { in: ['new', 'confirmed'] },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        select: {
+          createdAt: true,
+          totalMinor: true,
+          currency: true,
+          items: { select: { name: true, quantity: true } },
+        },
+      }),
+    );
+    return rows
+      .filter((c) => c.items.length > 0)
+      .map((c) => ({
+        at: c.createdAt,
+        totalMinor: c.totalMinor ?? 0,
+        currency: c.currency,
+        items: c.items.map((i) => ({ name: i.name, quantity: i.quantity })),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+export function renderOrdersForPrompt(orders: PastOrder[]): string {
+  if (orders.length === 0) return '';
+  const lines = orders.map((o, idx) => {
+    const items = o.items.map((i) => `${i.quantity}x ${i.name}`).join(', ');
+    const dec = ['KWD', 'BHD', 'OMR', 'JOD'].includes(o.currency) ? 3 : 2;
+    const total = (o.totalMinor / Math.pow(10, dec)).toFixed(dec);
+    const label = idx === 0 ? 'Most recent order' : `Order ${idx + 1} back`;
+    return `- ${label}: ${items} (${total} ${o.currency})`;
+  });
+  return [
+    "# This customer's recent orders (authoritative — from our records)",
+    'Use these to answer "what did I order before?" and to re-order ("the same as last time") — quote the items + totals VERBATIM, never invent. If they ask to re-order, add those exact items to a fresh cart and confirm.',
+    ...lines,
+  ].join('\n');
 }
 
 // Fold the latest exchange into the contact's stored memory via a cheap

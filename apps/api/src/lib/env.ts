@@ -125,6 +125,13 @@ const envSchema = z.object({
   // operators who want Opus can set ANTHROPIC_MODEL=claude-opus-4-8.
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-6'),
+  // `ultra` tier (hybrid Haiku + Sonnet). The cheap auxiliary passes
+  // (intent classification + persona summarization) run on Haiku; the
+  // final grounded reply runs on Sonnet. Pinned separately from
+  // ANTHROPIC_MODEL so an operator who sets the `max` tier to Opus
+  // doesn't also drag the ultra reply onto Opus.
+  ANTHROPIC_FAST_MODEL: z.string().default('claude-haiku-4-5'),
+  ANTHROPIC_ULTRA_MODEL: z.string().default('claude-sonnet-4-6'),
 
   // MyFatoorah payment gateway — used by the bot to mint per-order
   // invoice URLs at checkout. When MYFATOORAH_API_KEY is unset, the

@@ -41,7 +41,7 @@ import { api, ApiError, setAccessToken } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 import { useSession } from '@/lib/session';
 
-export type AiPlan = 'basic' | 'middle' | 'max';
+export type AiPlan = 'basic' | 'middle' | 'max' | 'ultra';
 
 interface OrgRow {
   id: string;
@@ -61,12 +61,15 @@ export const AI_PLAN_LABEL: Record<AiPlan, string> = {
   basic: 'Basic',
   middle: 'Middle',
   max: 'Max',
+  ultra: 'Ultra',
 };
 
 export const AI_PLAN_DESCRIPTION: Record<AiPlan, string> = {
   basic: 'Groq Llama 3.3 70B + GPT-4o-mini fallback. Cheap and fast.',
   middle: 'OpenAI GPT-4o. Premium quality at moderate cost.',
   max: 'Anthropic Claude Sonnet 4.6. Top-tier reasoning, highest cost.',
+  ultra:
+    'Flagship: Claude Haiku 4.5 for intent + per-customer persona memory, Claude Sonnet 4.6 for the grounded reply. Fast, best reasoning, lowest hallucination.',
 };
 
 interface SystemHealth {
@@ -921,7 +924,7 @@ function AiUsageDialog({
                 </Badge>
               </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                {(['basic', 'middle', 'max'] as const).map((p) => (
+                {(['basic', 'middle', 'max', 'ultra'] as const).map((p) => (
                   <button
                     key={p}
                     type="button"

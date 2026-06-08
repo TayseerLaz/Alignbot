@@ -65,7 +65,7 @@ export default async function adminRoutes(app: FastifyInstance) {
               // Per-tenant AI tier surfaced on the admin list so the
               // tenants table at /aligned-admin can render a colored
               // badge per row + sort by plan.
-              aiPlan: z.enum(['basic', 'middle', 'max']),
+              aiPlan: z.enum(['basic', 'middle', 'max', 'ultra']),
             }),
           ),
         },
@@ -113,7 +113,7 @@ export default async function adminRoutes(app: FastifyInstance) {
               productCount,
               serviceCount,
               lastActivityAt: lastAudit?.createdAt.toISOString() ?? null,
-              aiPlan: (o as { aiPlan?: 'basic' | 'middle' | 'max' }).aiPlan ?? 'basic',
+              aiPlan: (o as { aiPlan?: 'basic' | 'middle' | 'max' | 'ultra' }).aiPlan ?? 'basic',
             };
           }),
         );
@@ -1621,7 +1621,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         response: {
           200: itemEnvelopeSchema(
             z.object({
-              aiPlan: z.enum(['basic', 'middle', 'max']),
+              aiPlan: z.enum(['basic', 'middle', 'max', 'ultra']),
               today: z.object({
                 tokens: z.number().int(),
                 inputTokens: z.number().int(),
@@ -1777,7 +1777,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
       return {
         data: {
-          aiPlan: (org as { aiPlan?: 'basic' | 'middle' | 'max' }).aiPlan ?? 'basic',
+          aiPlan: (org as { aiPlan?: 'basic' | 'middle' | 'max' | 'ultra' }).aiPlan ?? 'basic',
           today: round(today),
           thisWeek: round(thisWeek),
           thisMonth: round(thisMonth),
@@ -1799,12 +1799,12 @@ export default async function adminRoutes(app: FastifyInstance) {
         tags: ['admin'],
         summary: 'Change a tenant\'s AI plan (basic / middle / max).',
         params: z.object({ id: uuidSchema }),
-        body: z.object({ aiPlan: z.enum(['basic', 'middle', 'max']) }),
+        body: z.object({ aiPlan: z.enum(['basic', 'middle', 'max', 'ultra']) }),
         response: {
           200: itemEnvelopeSchema(
             z.object({
               id: uuidSchema,
-              aiPlan: z.enum(['basic', 'middle', 'max']),
+              aiPlan: z.enum(['basic', 'middle', 'max', 'ultra']),
             }),
           ),
         },
@@ -1820,7 +1820,7 @@ export default async function adminRoutes(app: FastifyInstance) {
           select: { id: true, aiPlan: true },
         });
         if (!existing) return null;
-        const prev = (existing as { aiPlan?: 'basic' | 'middle' | 'max' }).aiPlan ?? 'basic';
+        const prev = (existing as { aiPlan?: 'basic' | 'middle' | 'max' | 'ultra' }).aiPlan ?? 'basic';
         if (prev === next) {
           return { id: existing.id, aiPlan: prev, prev, changed: false };
         }
@@ -1829,7 +1829,7 @@ export default async function adminRoutes(app: FastifyInstance) {
           data: { aiPlan: next },
           select: { id: true, aiPlan: true },
         });
-        const newPlan = (row as { aiPlan?: 'basic' | 'middle' | 'max' }).aiPlan ?? next;
+        const newPlan = (row as { aiPlan?: 'basic' | 'middle' | 'max' | 'ultra' }).aiPlan ?? next;
         return { id: row.id, aiPlan: newPlan, prev, changed: true };
       });
       if (!updated) throw notFound('Organization not found');

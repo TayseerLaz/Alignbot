@@ -139,6 +139,8 @@ SELECT _aligned_apply_tenant_rls('sequence_enrollments');
 -- Cart / Shop feature
 SELECT _aligned_apply_tenant_rls('carts');
 SELECT _aligned_apply_tenant_rls('cart_items');
+-- Ultra plan — per-contact persona memory
+SELECT _aligned_apply_tenant_rls('contact_memory');
 -- Phase 8 — AI message provenance / audit trail
 SELECT _aligned_apply_tenant_rls('system_prompt_snapshots');
 SELECT _aligned_apply_tenant_rls('message_provenances');

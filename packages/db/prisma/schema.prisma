@@ -43,6 +43,12 @@ enum AiPlan {
   basic
   middle
   max
+  // Flagship "Ultra" tier — hybrid orchestration: Claude Haiku 4.5 for the
+  // cheap auxiliary passes (intent classification + per-contact persona
+  // summarization) and Claude Sonnet 4.6 for the final grounded reply.
+  // Pairs the grounding pipeline + post-LLM hallucination scanner with
+  // per-user memory for the best speed/reasoning/faithfulness combo.
+  ultra
 }
 
 enum UserStatus {
@@ -307,7 +313,8 @@ model Organization {
   status    OrgStatus @default(active)
   // AI tier the tenant is on. Drives provider routing in lib/openai.ts
   // (`basic` = Groq + gpt-4o-mini fallback; `middle` = OpenAI gpt-4o;
-  // `max` = Anthropic Claude Opus). Editable from /aligned-admin.
+  // `max` = Anthropic Claude Sonnet; `ultra` = Haiku-assisted Sonnet with
+  // per-contact persona memory). Editable from /aligned-admin.
   aiPlan    AiPlan    @default(basic) @map("ai_plan")
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -351,6 +358,7 @@ model Organization {
   dataExports           DataExport[]
   // Phase 4 — Broadcasts
   contacts              Contact[]
+  contactMemories       ContactMemory[]
   contactTags           ContactTag[]
   segments              Segment[]
   broadcasts            Broadcast[]
@@ -2034,6 +2042,38 @@ model ContactTag {
   @@unique([contactId, tag])
   @@index([organizationId, tag])
   @@map("contact_tags")
+}
+
+// Per-contact persona / memory for the `ultra` AI plan. Distilled facts
+// worth remembering across conversations — NOT a transcript cache. Keyed
+// by phone (not threadId) so memory survives re-opened / re-created
+// threads. Written by a cheap Haiku summarization pass after a reply;
+// read + injected into the system prompt before the next reply.
+model ContactMemory {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String    @map("organization_id") @db.Uuid
+  phoneE164       String    @map("phone_e164")
+  // Compact natural-language persona block injected verbatim into the
+  // system prompt (preferred language, tone, recurring needs, do-nots).
+  persona         String?
+  // Structured durable facts the summarizer extracts — past orders /
+  // bookings, preferences, names. Free-form JSON so the shape can grow
+  // without a migration.
+  facts           Json      @default("{}")
+  // Detected primary language (en / ar / fr) — biases reply language.
+  language        String?
+  // How many conversation turns have been folded into `persona` so far —
+  // lets the summarizer decide when a refresh is worth the token spend.
+  turnsSummarized Int       @default(0) @map("turns_summarized")
+  lastSummaryAt   DateTime? @map("last_summary_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, phoneE164])
+  @@index([organizationId, updatedAt(sort: Desc)])
+  @@map("contact_memory")
 }
 
 // `filter` is a normalized AST: { mode: 'all'|'any', clauses: [...] }.

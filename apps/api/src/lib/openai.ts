@@ -84,11 +84,11 @@ function anthropicClient(): Anthropic | null {
 // reply loop doesn't hit Postgres on every turn — plan changes are
 // rare and the operator who changes it gets the new behaviour at
 // most one cache-cycle late.
-type AiPlanRow = { aiPlan: 'basic' | 'middle' | 'max' };
-const planCache = new Map<string, { plan: 'basic' | 'middle' | 'max'; expiresAt: number }>();
+type AiPlanRow = { aiPlan: 'basic' | 'middle' | 'max' | 'ultra' };
+const planCache = new Map<string, { plan: 'basic' | 'middle' | 'max' | 'ultra'; expiresAt: number }>();
 const PLAN_CACHE_TTL_MS = 30_000;
 
-async function loadOrgPlan(orgId: string): Promise<'basic' | 'middle' | 'max'> {
+async function loadOrgPlan(orgId: string): Promise<'basic' | 'middle' | 'max' | 'ultra'> {
   const now = Date.now();
   const cached = planCache.get(orgId);
   if (cached && cached.expiresAt > now) return cached.plan;
@@ -111,6 +111,18 @@ async function loadOrgPlan(orgId: string): Promise<'basic' | 'middle' | 'max'> {
  */
 export function _clearAiPlanCacheForTests(): void {
   planCache.clear();
+}
+
+/**
+ * Public accessor for a tenant's AI plan (cached). Used by the bot
+ * call-site to decide whether to run the ultra-plan extras (persona
+ * memory load + post-reply summarization) without duplicating the
+ * cache logic.
+ */
+export async function getOrgAiPlan(
+  orgId: string,
+): Promise<'basic' | 'middle' | 'max' | 'ultra'> {
+  return loadOrgPlan(orgId);
 }
 
 // Treat 429 (rate-limit) and 502/503 (Groq load-shedding) as "fall back
@@ -237,6 +249,8 @@ export async function complete(args: CompleteArgs): Promise<{ text: string; inpu
   const plan = await loadOrgPlan(args.organizationId);
 
   switch (plan) {
+    case 'ultra':
+      return completeUltra(args);
     case 'max':
       return completeMax(args);
     case 'middle':
@@ -354,6 +368,129 @@ async function completeMax(args: CompleteArgs): Promise<{ text: string; inputTok
       err instanceof Error ? err.message.slice(0, 200) : String(err),
     );
     return completeBasic(args);
+  }
+}
+
+// ---------- ultra tier (Haiku-assisted Sonnet) ---------------------------
+// The conversational reply runs on Sonnet (ANTHROPIC_ULTRA_MODEL) for
+// top-tier reasoning + faithfulness. The cheap auxiliary passes (intent
+// classification, persona summarization) run on Haiku via completeFast()
+// below. Same graceful-degradation contract as completeMax: if Anthropic
+// is unavailable we fall back to the basic stack so a key misconfig never
+// takes the bot offline.
+async function completeUltra(args: CompleteArgs): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
+  const a = anthropicClient();
+  if (!a) {
+    // eslint-disable-next-line no-console
+    console.warn('[chat] aiPlan=ultra but ANTHROPIC_API_KEY unset — degrading to basic');
+    return completeBasic(args);
+  }
+  try {
+    const res = await a.messages.create({
+      model: env.ANTHROPIC_ULTRA_MODEL,
+      max_tokens: args.maxTokens ?? 1024,
+      temperature: args.temperature ?? 0.4,
+      system: args.systemPrompt,
+      messages: args.messages.map((m) => ({ role: m.role, content: m.content })),
+    });
+    const text = res.content
+      .filter((b) => b.type === 'text')
+      .map((b) => (b as { text: string }).text)
+      .join('')
+      .trim();
+    return {
+      text,
+      inputTokens: res.usage.input_tokens,
+      outputTokens: res.usage.output_tokens,
+      model: `anthropic:${res.model}`,
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[chat] Anthropic (ultra) error — degrading to basic',
+      err instanceof Error ? err.message.slice(0, 200) : String(err),
+    );
+    return completeBasic(args);
+  }
+}
+
+// ---------- fast auxiliary pass (Haiku JSON) ------------------------------
+// Cheap, structured side-calls for the ultra plan: intent classification,
+// per-contact persona summarization, etc. Runs on Haiku for speed + low
+// cost; falls back to the basic JSON path (Groq/OpenAI json_object mode)
+// when Anthropic isn't configured. Metered against the same per-org daily
+// token budget as the main reply. Returns parsed JSON of the caller's type.
+export async function completeFast<T = unknown>(args: {
+  organizationId: string;
+  systemPrompt: string;
+  userContent: string;
+  maxTokens?: number;
+  temperature?: number;
+}): Promise<T> {
+  const estIn = Math.ceil((args.systemPrompt.length + args.userContent.length) / 4);
+  const estOut = args.maxTokens ?? 400;
+  const ok = await consumeDailyTokens(args.organizationId, estIn + estOut);
+  if (!ok) {
+    const err = new Error('Daily AI token budget exceeded for this organization.');
+    (err as Error & { code?: string }).code = 'TOKEN_BUDGET_EXCEEDED';
+    throw err;
+  }
+
+  const a = anthropicClient();
+  if (a) {
+    try {
+      const res = await a.messages.create({
+        model: env.ANTHROPIC_FAST_MODEL,
+        max_tokens: args.maxTokens ?? 400,
+        temperature: args.temperature ?? 0,
+        system: `${args.systemPrompt}\n\nRespond with ONLY a single minified JSON object — no prose, no markdown, no code fences.`,
+        messages: [{ role: 'user', content: args.userContent }],
+      });
+      const text = res.content
+        .filter((b) => b.type === 'text')
+        .map((b) => (b as { text: string }).text)
+        .join('');
+      return parseJsonLoose<T>(text);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[chat] Haiku fast pass failed — falling back to basic JSON',
+        err instanceof Error ? err.message.slice(0, 160) : String(err),
+      );
+      // fall through to the basic JSON path below
+    }
+  }
+
+  // Fallback: basic chat provider in JSON mode. We already pre-charged the
+  // budget above, so we call the raw client here (not completeJson) to
+  // avoid double-charging.
+  const { client: c, model } = chatClientAndModel();
+  const res = await c.chat.completions.create({
+    model,
+    max_tokens: args.maxTokens ?? 400,
+    temperature: args.temperature ?? 0,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: args.systemPrompt },
+      { role: 'user', content: args.userContent },
+    ],
+  });
+  return parseJsonLoose<T>(res.choices[0]?.message.content ?? '{}');
+}
+
+// Tolerant JSON parse — strips ``` fences and, on failure, grabs the
+// outermost { … } so a stray prefix/suffix from the model doesn't throw.
+function parseJsonLoose<T>(raw: string): T {
+  const s = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+  try {
+    return JSON.parse(s) as T;
+  } catch {
+    const start = s.indexOf('{');
+    const end = s.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      return JSON.parse(s.slice(start, end + 1)) as T;
+    }
+    throw new Error('completeFast: could not parse JSON from model output');
   }
 }
 

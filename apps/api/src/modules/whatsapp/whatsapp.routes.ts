@@ -2692,6 +2692,48 @@ async function maybeReplyAsBot(args: {
       };
     });
 
+    // Ultra plan — (1) load this contact's persona/memory to personalise
+    // the reply and (2) kick off intent classification CONCURRENTLY with
+    // the reply below (it adds no wall-clock — the Haiku classify finishes
+    // before the Sonnet reply). No-op for every other plan; all failures
+    // are swallowed so the reply path is never blocked. isUltraPlan +
+    // intentPromise are reused after the reply for link selection + the
+    // post-reply memory-update pass.
+    let personaBlock: string | null = null;
+    let isUltraPlan = false;
+    let intentPromise: Promise<{ intent: string; confidence: number; reason: string } | null> | null =
+      null;
+    try {
+      const { getOrgAiPlan } = await import('../../lib/openai.js');
+      isUltraPlan = (await getOrgAiPlan(args.organizationId)) === 'ultra';
+      if (isUltraPlan) {
+        const ultraHistory = ctx.history.map((h) => ({
+          role: h.direction === 'outbound' ? ('assistant' as const) : ('user' as const),
+          content: h.body ?? '',
+        }));
+        const { loadPersonaBlock, renderPersonaForPrompt } = await import(
+          '../../lib/contact-memory.js'
+        );
+        const pb = await loadPersonaBlock(args.organizationId, m.from);
+        personaBlock = renderPersonaForPrompt(pb) || null;
+        const { classifyIntent } = await import('../../lib/intent.js');
+        intentPromise = classifyIntent({
+          organizationId: args.organizationId,
+          userMessage: m.bodyText!,
+          history: ultraHistory,
+          offers: {
+            hasProducts: ctx.data.products.length > 0,
+            hasServices: ctx.data.services.length > 0,
+            hasBookingForm: !!ctx.data.bookingForm,
+            hasShopForm: !!ctx.data.shopForm,
+          },
+        }).catch(() => null);
+      }
+    } catch (err) {
+      args.log.warn({ err }, '[whatsapp] ultra pre-reply setup failed (non-fatal)');
+    }
+    stopwatch.lap('persona');
+
     // OpenAI call — outside the tx. Safe to be slow.
     const result = await buildBotResponse({
       organizationId: args.organizationId,
@@ -2705,6 +2747,7 @@ async function maybeReplyAsBot(args: {
       customerSpokeAudio,
       customerName: (ctx as { customerName?: string | null }).customerName ?? null,
       cartState: cartStateForLLM,
+      persona: personaBlock,
     }).catch((err) => {
       args.log.warn({ err }, '[whatsapp] bot-engine failed');
       return null;
@@ -2732,6 +2775,57 @@ async function maybeReplyAsBot(args: {
       );
       if (isNoisyInbound(m.bodyText)) continue;
       rawReply = emptyReplyFallback(m.bodyText);
+    }
+
+    // Ultra plan — deterministically append the single most relevant link
+    // for the classified intent, when it isn't already in the reply. The
+    // LLM can't be trusted to remember to paste links (bot-engine lesson),
+    // so this is the backstop. Skipped for voice replies (a URL in a TTS
+    // voice note reads terribly). Gated on ultra + a confident intent.
+    const willSpeak =
+      ctx.replyMode === 'voice' || (ctx.replyMode === 'match_customer' && customerSpokeAudio);
+    if (isUltraPlan && intentPromise && rawReply && !willSpeak) {
+      try {
+        const intent = await intentPromise;
+        if (intent && intent.confidence >= 0.5) {
+          const { selectLinks, appendRelevantLink } = await import('../../lib/link-rules.js');
+          const contactUrl =
+            ctx.contacts.find((c) => /^https?:\/\//i.test(c.value))?.value ?? null;
+          const candidates = selectLinks(
+            intent.intent as 'order' | 'booking' | 'question' | 'support' | 'smalltalk' | 'other',
+            {
+              menuUrl: (ctx.data.shopForm as { menuUrl?: string | null } | null)?.menuUrl ?? null,
+              websiteUrl:
+                (ctx.data.biz as { websiteUrl?: string | null } | null)?.websiteUrl ?? null,
+              contactUrl,
+            },
+          );
+          rawReply = appendRelevantLink(rawReply, candidates);
+        }
+      } catch (err) {
+        args.log.warn({ err }, '[whatsapp] ultra link-append failed (non-fatal)');
+      }
+    }
+
+    // Ultra plan — fold this turn into the contact's persona memory via a
+    // cheap Haiku pass. Fire-and-forget (not awaited): runs in the
+    // background, has its own try/catch, and can never delay or fail the
+    // reply the customer is waiting on.
+    if (isUltraPlan && rawReply) {
+      const replyForMemory = rawReply;
+      void import('../../lib/contact-memory.js').then(({ updateContactMemory }) =>
+        updateContactMemory({
+          organizationId: args.organizationId,
+          phoneE164: m.from,
+          customerName: (ctx as { customerName?: string | null }).customerName ?? null,
+          history: ctx.history.map((h) => ({
+            role: h.direction === 'outbound' ? ('assistant' as const) : ('user' as const),
+            content: h.body ?? '',
+          })),
+          latestUserMessage: m.bodyText!,
+          latestBotReply: replyForMemory,
+        }),
+      );
     }
 
     // Phase 9 — universal reply validators. Runs the pre-send pipeline:

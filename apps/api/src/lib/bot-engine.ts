@@ -544,6 +544,11 @@ interface BotResponseArgs {
      */
     capturedFields?: Record<string, string>;
   } | null;
+  // Ultra plan — a pre-rendered persona/memory block about THIS customer
+  // (from lib/contact-memory.ts → renderPersonaForPrompt). Injected near
+  // the top of the system prompt so replies are personalised. Empty / null
+  // for every other plan, so the prompt is byte-identical to before.
+  persona?: string | null;
 }
 
 // Provenance bundle returned alongside the bot reply text. Captures
@@ -693,6 +698,8 @@ export async function buildBotResponse(
   const currencyCode = biz?.currency ?? 'KWD';
   const sys = [
     ...deliveryBanner,
+    // Ultra-plan persona/memory (empty for other plans — no prompt drift).
+    args.persona ? args.persona : '',
     `You are the WhatsApp customer-service bot for ${biz?.legalName ?? 'this business'}. Reply in plain text, scannable, under 60 words. No markdown headings.`,
     `Tone: ${personalityKey}. ${personalityHint}`,
     greeting ? `Default greeting: "${greeting}"` : '',

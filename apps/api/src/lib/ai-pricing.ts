@@ -12,6 +12,7 @@ export type ChatModelKey =
   | 'groq:llama-3.3-70b-versatile'
   | 'openai:gpt-4o-mini'
   | 'openai:gpt-4o'
+  | 'anthropic:claude-haiku-4-5'
   | 'anthropic:claude-sonnet-4-6'
   | 'anthropic:claude-opus-4-8';
 
@@ -26,6 +27,7 @@ export const CHAT_PRICING: Record<ChatModelKey, Rate> = {
   'groq:llama-3.3-70b-versatile': { inUsdPerM: 0.59, outUsdPerM: 0.79 },
   'openai:gpt-4o-mini': { inUsdPerM: 0.15, outUsdPerM: 0.6 },
   'openai:gpt-4o': { inUsdPerM: 2.5, outUsdPerM: 10 },
+  'anthropic:claude-haiku-4-5': { inUsdPerM: 1, outUsdPerM: 5 },
   'anthropic:claude-sonnet-4-6': { inUsdPerM: 3, outUsdPerM: 15 },
   'anthropic:claude-opus-4-8': { inUsdPerM: 15, outUsdPerM: 75 },
 };
@@ -60,6 +62,7 @@ function normaliseModelKey(modelLabel: string): ChatModelKey | null {
   }
   if (m.includes('gpt-4o-mini')) return 'openai:gpt-4o-mini';
   if (m.includes('gpt-4o')) return 'openai:gpt-4o';
+  if (m.includes('haiku')) return 'anthropic:claude-haiku-4-5';
   if (m.includes('opus')) return 'anthropic:claude-opus-4-8';
   if (m.includes('sonnet') || m.includes('claude')) return 'anthropic:claude-sonnet-4-6';
   return null;
@@ -68,8 +71,13 @@ function normaliseModelKey(modelLabel: string): ChatModelKey | null {
 // Per-plan model label — what the bot-engine should record on
 // MessageProvenance.model for downstream cost roll-ups. Keep aligned
 // with the dispatch in lib/openai.ts complete() to avoid drift.
-export function modelLabelForPlan(plan: 'basic' | 'middle' | 'max'): string {
+export function modelLabelForPlan(plan: 'basic' | 'middle' | 'max' | 'ultra'): string {
   switch (plan) {
+    case 'ultra':
+      // The final grounded reply (the cost driver) runs on Sonnet. The
+      // ultra plan's auxiliary Haiku passes are metered + recorded
+      // separately under the anthropic:claude-haiku-4-5 key.
+      return 'anthropic:claude-sonnet-4-6';
     case 'max':
       return 'anthropic:claude-sonnet-4-6';
     case 'middle':

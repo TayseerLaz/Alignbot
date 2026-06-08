@@ -4203,7 +4203,16 @@ async function maybeReplyAsBot(args: {
             );
           }
 
-          if (!recentCart && lineItems.length > 0) {
+          // A fresh draft with items is a NEW order in progress — promote it
+          // even if the thread had a recent order. Customers legitimately
+          // re-order within 30 min, and the old `!recentCart` 30-min dedupe
+          // silently dropped EVERY repeat order on a thread to a stuck draft
+          // (the bot still said "confirmed", so it looked successful). In-place
+          // promotion (draft → 'new', same id) cannot double-create, so the
+          // recentCart dedupe only needs to guard the no-draft marker-fallback
+          // path below (where a re-fired marker could otherwise dup an order).
+          const hasFreshDraft = !!(draft && draft.items.length > 0);
+          if ((hasFreshDraft || !recentCart) && lineItems.length > 0) {
             const subtotalMinor = lineItems.reduce(
               (s, it) => s + it.quantity * it.unitPriceMinor,
               0,

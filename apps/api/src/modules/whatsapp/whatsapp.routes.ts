@@ -3223,7 +3223,62 @@ async function maybeReplyAsBot(args: {
     // marker's JSON payload contains nested objects + arrays that the
     // booking regex's non-greedy match would truncate.
     const { parseCartMarker, stripCartMarker, formatMoney } = await import('../../lib/bot-engine.js');
-    const cartMarkerPayload = parseCartMarker(rawReply);
+    let cartMarkerPayload = parseCartMarker(rawReply);
+
+    // Deterministic order-confirmation fallback (mirrors the extractBooking
+    // safety net). The reply model — especially Claude Sonnet on the ultra
+    // plan — intermittently SKIPS the load-bearing [CART:] marker, which
+    // leaves the order stuck as a 'draft' that never reaches the orders page
+    // even though the bot told the customer "order confirmed". When there's
+    // no marker but a shop form exists and the customer's last message looks
+    // like a confirmation, run the deterministic extractor; if it reports the
+    // order complete (item chosen + required fields captured + just
+    // confirmed), synthesize a marker so the existing promote-draft-to-'new'
+    // logic below finalizes the order. The finalizer's own 30-min dedupe
+    // prevents any double-creation.
+    if (!cartMarkerPayload && result && ctx.data.shopForm) {
+      const looksLikeConfirm =
+        /\b(confirm|confirmed|yes|yep|yeah|correct|go ahead|place (?:the )?order|that'?s all|that is all|done|ok(?:ay)?|sure|proceed)\b/i.test(
+          m.bodyText ?? '',
+        ) || /تمام|اكد|أكد|أكّد|نعم|ايوه|أيوه|اوكي|اوك|أوكي|تأكيد|أكمل|اكمل|خلص|ماشي|زبط/.test(m.bodyText ?? '');
+      if (looksLikeConfirm) {
+        try {
+          const { extractCart } = await import('../../lib/bot-engine.js');
+          const ex = await extractCart({
+            organizationId: args.organizationId,
+            shopForm: ctx.data.shopForm,
+            catalog: ctx.data.products.map((p) => ({
+              sku: p.sku,
+              name: p.name,
+              priceMinor: p.priceMinor,
+            })),
+            history: ctx.history.map((h) => ({
+              role: h.direction === 'outbound' ? ('assistant' as const) : ('user' as const),
+              content: h.body ?? '',
+            })),
+            latestUserMessage: m.bodyText!,
+          });
+          if (ex.complete && ex.items.length > 0) {
+            cartMarkerPayload = {
+              items: ex.items.map((it) => ({
+                sku: it.sku,
+                name: it.name,
+                quantity: it.quantity,
+                unitPriceMinor: it.unitPriceMinor,
+                notes: it.notes,
+              })),
+              fields: ex.values,
+            };
+            args.log.info(
+              { orgId: args.organizationId, threadId: ctx.threadId, items: ex.items.length },
+              '[whatsapp] cart fallback: no [CART:] marker but extractor reports complete — finalizing order',
+            );
+          }
+        } catch (err) {
+          args.log.warn({ err }, '[whatsapp] cart fallback extractCart failed (non-fatal)');
+        }
+      }
+    }
 
     let reply = stripCartMarker(
       rawReply

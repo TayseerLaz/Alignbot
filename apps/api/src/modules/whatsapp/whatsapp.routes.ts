@@ -2784,13 +2784,28 @@ async function maybeReplyAsBot(args: {
     // voice note reads terribly). Gated on ultra + a confident intent.
     const willSpeak =
       ctx.replyMode === 'voice' || (ctx.replyMode === 'match_customer' && customerSpokeAudio);
-    if (isUltraPlan && intentPromise && rawReply && !willSpeak) {
+    // Only surface a link on the FIRST bot reply in the thread, or when the
+    // customer EXPLICITLY asks for one — never on every order-intent turn
+    // (that spammed the menu link). And never resend a link already sent in
+    // this thread. ("when asked" for the menu is also handled deterministically
+    // inside bot-engine; appendRelevantLink dedupes against the current reply.)
+    const isFirstBotReply = (ctx.threadOutboundCount ?? 0) === 0;
+    const asksForLink =
+      /\b(menu|link|catalog|catalogue|website|site|book|booking|reserve|reservation)\b/i.test(
+        m.bodyText ?? '',
+      ) || /قائمة|منيو|رابط|الموقع|احجز|حجز|carte|lien|réserv/i.test(m.bodyText ?? '');
+    if (isUltraPlan && intentPromise && rawReply && !willSpeak && (isFirstBotReply || asksForLink)) {
       try {
         const intent = await intentPromise;
         if (intent && intent.confidence >= 0.5) {
           const { selectLinks, appendRelevantLink } = await import('../../lib/link-rules.js');
           const contactUrl =
             ctx.contacts.find((c) => /^https?:\/\//i.test(c.value))?.value ?? null;
+          // Don't resend a link the bot already pasted earlier in this thread.
+          const recentOutbound = ctx.history
+            .filter((h) => h.direction === 'outbound')
+            .map((h) => h.body ?? '')
+            .join('\n');
           const candidates = selectLinks(
             intent.intent as 'order' | 'booking' | 'question' | 'support' | 'smalltalk' | 'other',
             {
@@ -2799,7 +2814,7 @@ async function maybeReplyAsBot(args: {
                 (ctx.data.biz as { websiteUrl?: string | null } | null)?.websiteUrl ?? null,
               contactUrl,
             },
-          );
+          ).filter((c) => !recentOutbound.includes(c.url));
           rawReply = appendRelevantLink(rawReply, candidates);
         }
       } catch (err) {

@@ -612,6 +612,23 @@ export async function buildBotResponse(
     }
   }
 
+  // Always keep the customer's active cart items in the packed catalog. On a
+  // "confirm" / "yes" turn the message doesn't embed near the items, so top-K
+  // would drop them — and the model (strict on "only mention products in the
+  // data") then wrongly tells the customer a cart item "isn't in our catalog".
+  if (products.length < allProducts.length && args.cartState?.items?.length) {
+    const cartSkus = new Set(
+      args.cartState.items.map((it) => (it.sku ?? '').toLowerCase()).filter(Boolean),
+    );
+    if (cartSkus.size > 0) {
+      const have = new Set(products.map((p) => p.id));
+      const cartProducts = allProducts.filter(
+        (p) => cartSkus.has(p.sku.toLowerCase()) && !have.has(p.id),
+      );
+      if (cartProducts.length > 0) products = [...products, ...cartProducts];
+    }
+  }
+
   const personalityKey = config?.personality ?? config?.detectedTone ?? 'friendly';
   const personalityHint =
     config?.customPersonality?.trim() ||
@@ -965,6 +982,7 @@ export async function buildBotResponse(
             lines,
             capturedBlock,
             `When the customer asks "what's the total" / "how much" / "كم المجموع", quote the subtotal above VERBATIM. NEVER reply "I can't compute the total" or "I don't have that info" — you have the running total right here.`,
+            `These cart items are CONFIRMED and orderable — they are in the catalog. NEVER tell the customer a cart item "isn't in our catalog", doesn't exist, or can't be ordered; this cart is authoritative. NEVER reset, clear, or abandon it, say it's "pending", or "start fresh" — carry these exact items through checkout and the final confirmation.`,
           ]
             .filter(Boolean)
             .join('\n');

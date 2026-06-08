@@ -219,6 +219,28 @@ export interface ParseAddedItemsOptions {
  *      called Fawran — the customer almost certainly meant the
  *      payment channel.
  */
+// Bounded Levenshtein edit distance — used so the user-mention guard below
+// tolerates customer typos ("mago" ≈ "mango", "icream" ≈ "ice cream"). The
+// LLM corrects typos in its reply, but the guard reads the RAW user text.
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  const al = a.length;
+  const bl = b.length;
+  if (al === 0) return bl;
+  if (bl === 0) return al;
+  let prev = Array.from({ length: bl + 1 }, (_, j) => j);
+  let curr = new Array<number>(bl + 1);
+  for (let i = 1; i <= al; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= bl; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(prev[j]! + 1, curr[j - 1]! + 1, prev[j - 1]! + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[bl]!;
+}
+
 export function parseAddedItems(
   reply: string,
   catalog: CatalogProduct[],
@@ -256,9 +278,21 @@ export function parseAddedItems(
       if (userTextNorm) {
         const productNorm = normalise(product.name);
         const productTokens = productNorm.split(/\s+/).filter((t) => t.length >= 4);
+        // Typo tolerance: customers misspell ("mago icrecram" for "mango ice
+        // cream"). The LLM corrects it in its reply (so findProduct matched),
+        // but this guard reads the RAW user text — so fuzzy-match each product
+        // token against the user's words (~1 edit per 4 chars). Without this,
+        // a single typo meant the item was never added to the draft cart and
+        // the whole checkout silently reset at the confirm step.
+        const userTokens = userTextNorm.split(/\s+/).filter((t) => t.length >= 3);
+        const fuzzyHit = (ptok: string) =>
+          userTokens.some((utok) => {
+            const tol = Math.max(1, Math.floor(Math.max(ptok.length, utok.length) / 4));
+            return Math.abs(ptok.length - utok.length) <= tol && levenshtein(utok, ptok) <= tol;
+          });
         const userMentions =
           userTextNorm.includes(productNorm) ||
-          productTokens.some((tok) => userTextNorm.includes(tok));
+          productTokens.some((tok) => userTextNorm.includes(tok) || fuzzyHit(tok));
         if (!userMentions) continue;
       }
 

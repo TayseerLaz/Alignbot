@@ -3249,7 +3249,16 @@ async function maybeReplyAsBot(args: {
         /\b(confirm|confirmed|yes|yep|yeah|correct|go ahead|place (?:the )?order|that'?s all|that is all|done|ok(?:ay)?|sure|proceed)\b/i.test(
           m.bodyText ?? '',
         ) || /تمام|اكد|أكد|أكّد|نعم|ايوه|أيوه|اوكي|اوك|أوكي|تأكيد|أكمل|اكمل|خلص|ماشي|زبط/.test(m.bodyText ?? '');
-      if (looksLikeConfirm) {
+      // Don't finalize while the bot is STILL asking the customer to confirm
+      // (it just showed the summary + "Shall I confirm?"). The customer's "yes"
+      // on that turn answers an EARLIER question (e.g. payment), not the final
+      // confirmation — finalizing now captures a premature, possibly partial
+      // cart. Wait for the customer's reply to the "shall I confirm?" question.
+      const botStillAsking =
+        /\b(shall i confirm|should i (?:place|confirm)|confirm (?:this|your) order|ready to confirm|do you want me to (?:place|confirm)|place (?:the|this|your) order\?|to confirm(?: this| your)?(?: order)?\?)\b/i.test(
+          rawReply ?? '',
+        ) || /هل (?:أؤكد|تريد|تؤكد)|أؤكد (?:الطلب|لك)|تأكيد الطلب\؟/.test(rawReply ?? '');
+      if (looksLikeConfirm && !botStillAsking) {
         try {
           const { extractCart } = await import('../../lib/bot-engine.js');
           const ex = await extractCart({
@@ -3497,6 +3506,43 @@ async function maybeReplyAsBot(args: {
         reply = 'All set — your request has been captured. A teammate will follow up shortly.';
       }
     }
+
+    // Whenever a cart is being finalized THIS turn, guarantee the customer
+    // sees the REAL order number + total. The reply is sent before the cart is
+    // promoted below, but the draft's id == the promoted order's id, so we
+    // resolve it from the draft here and append (the LLM routinely omits the
+    // total or invents a number). No-op if the reply already shows the id.
+    if (cartMarkerPayload && reply) {
+      const orderInfo = await withRlsBypass(async (tx) => {
+        const draft = await tx.cart.findFirst({
+          where: {
+            organizationId: args.organizationId,
+            threadId: ctx.threadId,
+            status: 'draft',
+          },
+          include: { items: true },
+        });
+        if (!draft || draft.items.length === 0) return null;
+        const subtotalMinor = draft.items.reduce(
+          (s, it) => s + it.unitPriceMinor * it.quantity,
+          0,
+        );
+        const sf = ctx.data.shopForm;
+        const baseDelivery = sf?.deliveryFeeMinor ?? 0;
+        const deliveryMinor =
+          sf?.freeDeliveryAboveMinor != null && subtotalMinor >= sf.freeDeliveryAboveMinor
+            ? 0
+            : baseDelivery;
+        return {
+          idShort: draft.id.slice(0, 8),
+          total: formatMoney(subtotalMinor + deliveryMinor, draft.currency ?? sf?.currency ?? 'USD'),
+        };
+      });
+      if (orderInfo && !reply.includes(orderInfo.idShort)) {
+        reply = `${reply.trimEnd()}\n\nOrder #${orderInfo.idShort} · Total ${orderInfo.total}`;
+      }
+    }
+
     if (!reply && dedupedImageSends.length === 0) {
       // Same reasoning as the post-LLM bail above: the customer is
       // staring at a "..." typing indicator that's about to evaporate

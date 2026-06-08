@@ -293,7 +293,19 @@ export function parseAddedItems(
         const userMentions =
           userTextNorm.includes(productNorm) ||
           productTokens.some((tok) => userTextNorm.includes(tok) || fuzzyHit(tok));
-        if (!userMentions) continue;
+        // Upsell acceptance: the bot OFFERED this exact product in its previous
+        // reply ("Want to add an Enstein Milkshake?") and the customer affirmed
+        // ("yes", "add that too", "sure") WITHOUT re-naming it. Without this,
+        // accepting an upsell silently dropped the item from the cart.
+        const prevBotNorm = options.previousBotReply ? normalise(options.previousBotReply) : '';
+        const botOfferedIt =
+          !!prevBotNorm &&
+          (prevBotNorm.includes(productNorm) || productTokens.some((t) => prevBotNorm.includes(t)));
+        const userAffirmed =
+          /\b(yes|yeah|yep|yup|sure|ok|okay|add (?:it|that|those|them|this)|go ahead|please|why not|definitely|of course|sounds good)\b/.test(
+            userTextNorm,
+          ) || /نعم|ايوه|أيوه|اوكي|اوك|أوكي|تمام|اضف|أضف|ضيف|ماشي|اكيد|أكيد/.test(userTextNorm);
+        if (!userMentions && !(botOfferedIt && userAffirmed)) continue;
       }
 
       const prev = bySku.get(product.sku);

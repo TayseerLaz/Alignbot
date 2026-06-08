@@ -247,6 +247,27 @@
     .step h3 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; margin-bottom: 9px; }
     .step p { font-size: 15px; color: var(--text); }
 
+    /* ---------- pricing / offer ---------- */
+    .pricing { background: var(--paper-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; align-items: stretch; }
+    .plan { position: relative; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 34px 28px; box-shadow: var(--shadow); }
+    .plan.featured { border: 1.5px solid var(--signal); box-shadow: 0 2px 4px rgba(26,10,16,.06), 0 26px 52px rgba(26,10,16,.16); }
+    .plan-pop { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--signal); color: #fff; font-family: var(--mono); font-size: 10.5px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; padding: 5px 13px; border-radius: 999px; white-space: nowrap; }
+    .plan h3 { font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+    .plan-tag { color: var(--text); font-size: 14px; margin-top: 6px; }
+    .plan-from { display: block; font-family: var(--mono); font-size: 10.5px; font-weight: 500; letter-spacing: .14em; text-transform: uppercase; color: var(--signal); margin: 22px 0 5px; }
+    .plan-price { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+    .plan-now { font-family: var(--sans); font-weight: 800; font-size: 42px; line-height: 1; letter-spacing: -.03em; color: var(--ink); }
+    .plan-cur { font-weight: 700; font-size: 17px; color: var(--ink); }
+    .plan-was { text-decoration: line-through; opacity: .55; font-weight: 600; font-size: 17px; }
+    .plan-per { color: var(--text); font-size: 13.5px; margin-top: 5px; }
+    .plan-eb { align-self: flex-start; margin-top: 12px; background: color-mix(in oklab, var(--signal) 14%, transparent); color: var(--signal); font-weight: 700; font-size: 12px; padding: 4px 11px; border-radius: 999px; }
+    .plan-feats { list-style: none; padding: 0; margin: 22px 0 26px; display: grid; gap: 11px; }
+    .plan-feats li { display: flex; gap: 10px; align-items: flex-start; font-size: 14.5px; color: var(--ink); }
+    .plan-feats .icon { width: 18px; height: 18px; color: var(--signal); flex: none; margin-top: 2px; }
+    .plan .btn { margin-top: auto; width: 100%; }
+    @media (max-width: 940px) { .plans { grid-template-columns: 1fr; max-width: 440px; margin: 0 auto; } }
+
     /* ---------- final CTA ---------- */
     .final { position: relative; overflow: hidden; background: radial-gradient(130% 130% at 50% 120%, #3a0a1c 0%, var(--oxblood) 45%, var(--ink) 100%); color: color-mix(in oklab, var(--paper) 90%, transparent); text-align: center; }
     .final::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(closest-side at 50% 100%, color-mix(in oklab, var(--signal) 20%, transparent), transparent 70%); }
@@ -349,7 +370,7 @@
       <nav class="nav-links" id="navLinks">
         <a href="#what" data-en="Features" data-ar="الميزات">Features</a>
         <a href="#integrations" data-en="Integrations" data-ar="التكاملات">Integrations</a>
-        <a href="#launch" data-en="Launch Offer" data-ar="عرض الإطلاق">Launch Offer</a>
+        <a href="#offer" data-en="Launch Offer" data-ar="عرض الإطلاق">Launch Offer</a>
       </nav>
       <div class="nav-right">
         <div class="lang" role="group" aria-label="Language">
@@ -371,7 +392,7 @@
       <p class="sub reveal" data-en="The complete WhatsApp platform that sells for you, broadcasts to thousands, and answers every customer in their own language, 24 hours a day." data-ar="منصة واتساب المتكاملة التي تبيع نيابةً عنك، وترسل الحملات إلى الآلاف، وتجيب كل عميل بلغته، على مدار 24 ساعة.">The complete WhatsApp platform that sells for you, broadcasts to thousands, and answers every customer in their own language, 24 hours a day.</p>
       <div class="hero-cta reveal">
         <a class="btn btn-signal" href="https://wa.me/97466714112?text=Hi%20Hader" target="_blank" rel="noopener"><svg class="icon"><use href="#i-whatsapp"/></svg> <span data-en="Start on WhatsApp" data-ar="ابدأ على واتساب">Start on WhatsApp</span></a>
-        <a class="btn btn-outline" href="#launch" data-en="See the launch offer" data-ar="اطّلع على عرض الإطلاق">See the launch offer</a>
+        <a class="btn btn-outline" href="#offer" data-en="See the launch offer" data-ar="اطّلع على عرض الإطلاق">See the launch offer</a>
       </div>
       <div class="trust reveal">
         <span><svg class="icon"><use href="#i-check"/></svg> <span data-en="No app to install" data-ar="لا حاجة لتثبيت أي تطبيق">No app to install</span></span>
@@ -524,6 +545,88 @@
     </div>
   </section>
 
+  <!-- ============ OFFER / PRICING ============ -->
+  <section class="section pricing" id="offer">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <span class="eyebrow" data-en="Launch offer" data-ar="عرض الإطلاق">Launch offer</span>
+        <h2 data-en="Early-bird pricing for Qatar" data-ar="أسعار العرض المبكر لقطر">Early-bird pricing for Qatar</h2>
+        <p data-en="Lock in founder pricing during our exclusive Qatar launch. Prices shown are starting points — pick the plan that fits and we will tailor the rest." data-ar="احجز سعر التأسيس خلال إطلاقنا الحصري في قطر. الأسعار الظاهرة هي نقطة البداية — اختر الباقة المناسبة وسنخصّص الباقي.">Lock in founder pricing during our exclusive Qatar launch. Prices shown are starting points — pick the plan that fits and we will tailor the rest.</p>
+      </div>
+
+      <div class="plans">
+        <!-- Basic -->
+        <div class="plan reveal">
+          <h3 data-en="Basic" data-ar="الأساسية">Basic</h3>
+          <p class="plan-tag" data-en="For small shops getting started on WhatsApp." data-ar="للمتاجر الصغيرة التي تبدأ على واتساب.">For small shops getting started on WhatsApp.</p>
+          <span class="plan-from" data-en="Starting from" data-ar="تبدأ من">Starting from</span>
+          <div class="plan-price">
+            <span class="plan-now">500</span>
+            <span class="plan-cur" data-en="QR" data-ar="ر.ق">QR</span>
+            <span class="plan-was">700</span>
+          </div>
+          <span class="plan-per" data-en="per month" data-ar="شهريًا">per month</span>
+          <span class="plan-eb" data-en="Early bird" data-ar="عرض مبكر">Early bird</span>
+          <ul class="plan-feats">
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="AI that replies 24/7 on your number" data-ar="ذكاء اصطناعي يردّ 24/7 على رقمك">AI that replies 24/7 on your number</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Up to 1,000 conversations / month" data-ar="حتى 1,000 محادثة شهريًا">Up to 1,000 conversations / month</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Product catalog + order capture" data-ar="كتالوج المنتجات والتقاط الطلبات">Product catalog + order capture</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Shared inbox for your team" data-ar="صندوق وارد مشترك لفريقك">Shared inbox for your team</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Email support" data-ar="دعم عبر البريد الإلكتروني">Email support</span></li>
+          </ul>
+          <a class="btn btn-outline" href="https://wa.me/97466714112?text=I%27m%20interested%20in%20the%20Basic%20plan" target="_blank" rel="noopener" data-en="Choose Basic" data-ar="اختر الأساسية">Choose Basic</a>
+        </div>
+
+        <!-- Pro (featured) -->
+        <div class="plan featured reveal">
+          <span class="plan-pop" data-en="Most popular" data-ar="الأكثر طلبًا">Most popular</span>
+          <h3 data-en="Pro" data-ar="الاحترافية">Pro</h3>
+          <p class="plan-tag" data-en="For growing businesses that sell and broadcast daily." data-ar="للأعمال المتنامية التي تبيع وترسل الحملات يوميًا.">For growing businesses that sell and broadcast daily.</p>
+          <span class="plan-from" data-en="Starting from" data-ar="تبدأ من">Starting from</span>
+          <div class="plan-price">
+            <span class="plan-now">1,000</span>
+            <span class="plan-cur" data-en="QR" data-ar="ر.ق">QR</span>
+            <span class="plan-was">1,400</span>
+          </div>
+          <span class="plan-per" data-en="per month" data-ar="شهريًا">per month</span>
+          <span class="plan-eb" data-en="Early bird" data-ar="عرض مبكر">Early bird</span>
+          <ul class="plan-feats">
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Everything in Basic" data-ar="كل ما في الأساسية">Everything in Basic</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Up to 10,000 conversations / month" data-ar="حتى 10,000 محادثة شهريًا">Up to 10,000 conversations / month</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="WhatsApp broadcasting to thousands" data-ar="حملات واتساب لآلاف العملاء">WhatsApp broadcasting to thousands</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="CRM + accounting integration" data-ar="تكامل مع CRM والمحاسبة">CRM + accounting integration</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Voice replies + auto follow-ups" data-ar="ردود صوتية ومتابعات تلقائية">Voice replies + auto follow-ups</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Priority support" data-ar="دعم ذو أولوية">Priority support</span></li>
+          </ul>
+          <a class="btn btn-signal" href="https://wa.me/97466714112?text=I%27m%20interested%20in%20the%20Pro%20plan" target="_blank" rel="noopener" data-en="Choose Pro" data-ar="اختر الاحترافية">Choose Pro</a>
+        </div>
+
+        <!-- Enterprise -->
+        <div class="plan reveal">
+          <h3 data-en="Enterprise" data-ar="المؤسسات">Enterprise</h3>
+          <p class="plan-tag" data-en="For multi-branch brands that need scale and control." data-ar="للعلامات متعددة الفروع التي تحتاج التوسّع والتحكّم.">For multi-branch brands that need scale and control.</p>
+          <span class="plan-from" data-en="Starting from" data-ar="تبدأ من">Starting from</span>
+          <div class="plan-price">
+            <span class="plan-now">2,500</span>
+            <span class="plan-cur" data-en="QR" data-ar="ر.ق">QR</span>
+            <span class="plan-was">3,500</span>
+          </div>
+          <span class="plan-per" data-en="per month" data-ar="شهريًا">per month</span>
+          <span class="plan-eb" data-en="Early bird" data-ar="عرض مبكر">Early bird</span>
+          <ul class="plan-feats">
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Everything in Pro" data-ar="كل ما في الاحترافية">Everything in Pro</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Unlimited conversations" data-ar="محادثات غير محدودة">Unlimited conversations</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Multiple numbers + branches" data-ar="أرقام وفروع متعددة">Multiple numbers + branches</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Dedicated success manager" data-ar="مدير نجاح مخصّص">Dedicated success manager</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Custom integrations + SLA" data-ar="تكاملات مخصّصة واتفاقية مستوى خدمة">Custom integrations + SLA</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg> <span data-en="Guided onboarding" data-ar="إعداد موجّه">Guided onboarding</span></li>
+          </ul>
+          <a class="btn btn-outline" href="https://wa.me/97466714112?text=I%27m%20interested%20in%20the%20Enterprise%20plan" target="_blank" rel="noopener" data-en="Talk to sales" data-ar="تواصل مع المبيعات">Talk to sales</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ FINAL CTA ============ -->
   <section class="final" id="launch">
     <div class="wrap reveal">
@@ -549,7 +652,7 @@
           <a href="https://hader.ai" target="_blank" rel="noopener">hader.ai</a>
           <a href="#what" data-en="Features" data-ar="الميزات">Features</a>
           <a href="#integrations" data-en="Integrations" data-ar="التكاملات">Integrations</a>
-          <a href="#launch" data-en="Launch Offer" data-ar="عرض الإطلاق">Launch Offer</a>
+          <a href="#offer" data-en="Launch Offer" data-ar="عرض الإطلاق">Launch Offer</a>
         </nav>
       </div>
       <div class="foot-bottom">

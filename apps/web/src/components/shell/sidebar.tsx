@@ -22,6 +22,7 @@ import {
   ShoppingCart,
   TrendingUp,
   Upload,
+  UserPlus,
   Users,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -44,7 +45,7 @@ interface NavItem {
   badgeKey?: BadgeKey;
 }
 
-type BadgeKey = 'inboxEscalated';
+type BadgeKey = 'inboxEscalated' | 'leadsNew';
 
 interface NavGroup {
   label: string;
@@ -121,6 +122,7 @@ const groups: NavGroup[] = [
 
 const alignedAdminItems: NavItem[] = [
   { href: '/aligned-admin', label: 'Tenants', icon: ShieldCheck },
+  { href: '/aligned-admin/leads', label: 'Leads', icon: UserPlus, badgeKey: 'leadsNew' },
   { href: '/aligned-admin/system', label: 'System health', icon: Code2 },
   { href: '/aligned-admin/audit', label: 'Cross-tenant audit', icon: Activity },
   { href: '/aligned-admin/provenance', label: 'AI provenance', icon: ScanSearch },
@@ -153,8 +155,20 @@ export function Sidebar({
     refetchInterval: 10_000,
     staleTime: 5_000,
   });
+
+  // ALIGNED admins only: poll the new-lead count for the Leads badge.
+  const leadsCount = useQuery({
+    enabled: !!session?.user.isAlignedAdmin,
+    queryKey: ['sidebar-leads-count'],
+    queryFn: () =>
+      api.get<{ data: { new: number; total: number } }>('/api/v1/aligned-admin/leads/count'),
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
+
   const badges: Record<BadgeKey, number> = {
     inboxEscalated: counts.data?.data.escalated ?? 0,
+    leadsNew: leadsCount.data?.data.new ?? 0,
   };
 
   const isActive = (item: NavItem) => (item.exact ? pathname === item.href : pathname.startsWith(item.href));

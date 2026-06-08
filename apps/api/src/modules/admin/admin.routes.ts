@@ -1901,6 +1901,28 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
   );
 
+  r.get(
+    '/aligned-admin/leads/count',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Count of new (unhandled) leads — drives the sidebar badge.',
+        response: {
+          200: z.object({
+            data: z.object({ new: z.number().int(), total: z.number().int() }),
+          }),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async () => {
+      const [newCount, total] = await withRlsBypass((tx) =>
+        Promise.all([tx.lead.count({ where: { status: 'new' } }), tx.lead.count()]),
+      );
+      return { data: { new: newCount, total } };
+    },
+  );
+
   r.patch(
     '/aligned-admin/leads/:id',
     {

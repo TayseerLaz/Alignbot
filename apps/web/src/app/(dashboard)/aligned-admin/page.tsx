@@ -924,7 +924,11 @@ function AiUsageDialog({
                 </Badge>
               </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                {(['basic', 'middle', 'max', 'ultra'] as const).map((p) => (
+                {/* Max is hidden from the picker (superseded by Ultra). Still
+                    shown if an org is already on it, so it isn't stranded. */}
+                {(['basic', 'middle', 'max', 'ultra'] as const)
+                  .filter((p) => p !== 'max' || currentPlan === 'max')
+                  .map((p) => (
                   <button
                     key={p}
                     type="button"

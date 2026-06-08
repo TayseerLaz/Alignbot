@@ -14,6 +14,7 @@ import { emitWebhookEvent } from '../lib/emit-webhook.js';
 import { getConnection } from '../lib/redis.js';
 
 import { prisma } from './db.js';
+import { recordOutboundTemplate } from './inbox-consistency.js';
 
 const QUEUE_SEND = 'broadcast-send';
 const SEND_CONCURRENCY = Number(process.env.BROADCAST_SEND_CONCURRENCY ?? 10);
@@ -350,19 +351,15 @@ export function startBroadcastSendWorker() {
           where: { id: broadcastId },
           data: { sentCount: { increment: 1 } },
         });
-        // Record an outbound WhatsAppMessage row so the inbox sees it.
-        await prisma.whatsAppMessage.create({
-          data: {
-            organizationId,
-            direction: 'outbound',
-            metaMessageId: out.metaMessageId,
-            toNumber: recipient.phoneE164.replace(/^\+/, ''),
-            messageType: 'template',
-            body: template.name,
-            metaStatus: 'sent',
-            metaStatusAt: new Date(),
-          },
-        }).catch(() => undefined);
+        // Record an outbound WhatsAppMessage row LINKED to the customer's
+        // inbox thread so it actually shows in the inbox (was an orphaned,
+        // thread-less row that never appeared in any conversation).
+        await recordOutboundTemplate({
+          organizationId,
+          toNumber: recipient.phoneE164,
+          metaMessageId: out.metaMessageId,
+          templateName: template.name,
+        });
         await clearFailureBurst(broadcastId);
         return;
       }

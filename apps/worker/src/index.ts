@@ -15,6 +15,7 @@ import { startDataExportWorker } from './jobs/data-export.js';
 import { startDunningTick } from './jobs/dunning-tick.js';
 import { startImportWorker } from './jobs/import.js';
 import { startSequenceTick } from './jobs/sequence-tick.js';
+import { startInboxConsistencyTick } from './jobs/inbox-consistency.js';
 import { startSyncWorker } from './jobs/sync.js';
 import { startUptimeProbe } from './jobs/uptime-probe.js';
 import { startWebhookDeliveryWorker } from './jobs/webhook-delivery.js';
@@ -136,6 +137,11 @@ async function main() {
   // ALIGNED admin. Silent when there are zero flagged replies in the window.
   const provenanceDigestTick = startProvenanceDigestTick();
   log.info({ name: provenanceDigestTick.name }, 'tick started');
+  // Inbox consistency: every 15 min, re-link any orphaned (thread-less)
+  // WhatsApp messages to their conversation so no chat is ever lost from the
+  // inbox. Also repairs any pre-existing orphans on first run after boot.
+  const inboxConsistencyTick = startInboxConsistencyTick();
+  log.info({ name: inboxConsistencyTick.name }, 'tick started');
 
   const workers = [
     startImportWorker(),

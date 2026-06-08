@@ -9,6 +9,7 @@
 // becomes one outbound WhatsAppMessage row. There's no BroadcastRecipient
 // for sequence sends — that's by design (sequences ≠ broadcasts).
 import { prisma } from './db.js';
+import { recordOutboundTemplate } from './inbox-consistency.js';
 import { getConnection } from '../lib/redis.js';
 
 const TICK_INTERVAL_MS = Number(process.env.SEQUENCE_TICK_INTERVAL_MS ?? 30_000);
@@ -184,19 +185,15 @@ async function processOneEnrollment(enrollmentId: string): Promise<void> {
     return;
   }
 
-  // Persist outbound message + advance enrollment to the next step or complete.
-  await prisma.whatsAppMessage.create({
-    data: {
-      organizationId: e.organizationId,
-      direction: 'outbound',
-      metaMessageId: out.metaMessageId,
-      toNumber: e.contact.phoneE164.replace(/^\+/, ''),
-      messageType: 'template',
-      body: template.name,
-      metaStatus: 'sent',
-      metaStatusAt: new Date(),
-    },
-  }).catch(() => undefined);
+  // Persist outbound message LINKED to the customer's inbox thread (was
+  // creating an orphaned, thread-less row that never showed in the inbox),
+  // then advance enrollment to the next step or complete.
+  await recordOutboundTemplate({
+    organizationId: e.organizationId,
+    toNumber: e.contact.phoneE164,
+    metaMessageId: out.metaMessageId,
+    templateName: template.name,
+  });
 
   const nextIdx = e.nextStepIndex + 1;
   const nextStep = e.sequence.steps[nextIdx];

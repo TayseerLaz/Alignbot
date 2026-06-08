@@ -2166,7 +2166,49 @@ async function maybeReplyAsBot(args: {
   // time goes on each reply.
   const { PipelineStopwatch } = await import('../../lib/pipeline-timer.js');
 
-  for (const m of args.messages) {
+  // Coalesce rapid-fire messages so the bot sends ONE reply per burst instead
+  // of greeting/answering each message separately. Meta delivers each message
+  // as its own webhook (separate maybeReplyAsBot calls), and a customer often
+  // sends "Hi" then "I want to order" within a second or two. Two layers:
+  //   (a) within THIS webhook batch, only the LAST message per sender replies;
+  //   (b) across webhooks, a short Redis debounce — set a token, wait, and if
+  //       a newer message has arrived (token changed) skip this reply and let
+  //       the newer invocation handle it (the earlier messages are already in
+  //       the thread history the LLM sees).
+  const COALESCE_MS = Number(process.env.BOT_COALESCE_MS ?? 2000);
+  const lastIdxByFrom = new Map<string, number>();
+  args.messages.forEach((mm, i) => {
+    if (mm.from) lastIdxByFrom.set(mm.from, i);
+  });
+
+  for (let mi = 0; mi < args.messages.length; mi++) {
+    const m = args.messages[mi]!;
+    // (a) In-batch: skip earlier messages from the same sender in this batch.
+    if (m.from && lastIdxByFrom.get(m.from) !== mi) {
+      args.log.info({ from: m.from }, '[whatsapp] coalesce: superseded within batch — skipping');
+      continue;
+    }
+    // (b) Cross-webhook debounce.
+    if (m.from && COALESCE_MS > 0) {
+      try {
+        const { getRedis } = await import('../../lib/redis.js');
+        const redis = getRedis();
+        const ckey = `botcoalesce:${args.organizationId}:${m.from}`;
+        const ctoken = `${Date.now()}.${m.metaId ?? Math.random().toString(36).slice(2)}`;
+        await redis.set(ckey, ctoken, 'PX', COALESCE_MS + 15000);
+        await new Promise((r) => setTimeout(r, COALESCE_MS));
+        const latest = await redis.get(ckey);
+        if (latest && latest !== ctoken) {
+          args.log.info(
+            { from: m.from },
+            '[whatsapp] coalesce: superseded by a newer message — skipping reply',
+          );
+          continue;
+        }
+      } catch {
+        /* Redis unavailable — proceed without coalescing rather than drop the reply. */
+      }
+    }
     const stopwatch = new PipelineStopwatch();
     // Voice-note path: customer sent an audio/voice message. Download
     // the bytes from Meta, run Whisper, then feed the transcript into

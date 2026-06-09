@@ -1207,17 +1207,18 @@ function MessageScroller({
     stuckRef.current = true;
   }, [threadId]);
 
-  // Smooth-scroll to the bottom whenever a new message lands AND the
-  // operator is currently near the bottom. Triggered by either a
-  // timeline count change OR the most recent message's timestamp
-  // changing (covers in-place edits).
+  // Jump straight to the bottom whenever a new message lands AND the
+  // operator is currently near the bottom. Instant (no smooth animation)
+  // so the latest message is simply shown, never animated into view.
+  // Triggered by either a timeline count change OR the most recent
+  // message's timestamp changing (covers in-place edits).
   useEffect(() => {
     const el = ref.current;
     if (!el || !stuckRef.current) return;
     // Defer one frame so the DOM has rendered the new message before
     // we measure scrollHeight.
     requestAnimationFrame(() => {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      el.scrollTop = el.scrollHeight;
     });
   }, [timelineLength, latestTimestamp]);
 
@@ -1412,7 +1413,7 @@ function Bubble({
           {/* Who sent it — Bot vs a human operator (outbound only). */}
           {isOut && message.sentBy ? (
             <span className="font-semibold">
-              {message.sentBy === 'bot' ? '🤖 Bot' : '🧑 You'}
+              {message.sentBy === 'bot' ? 'Bot' : 'You'}
             </span>
           ) : null}
           <span>{formatRelative(message.receivedAt)}</span>

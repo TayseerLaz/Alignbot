@@ -15,10 +15,8 @@ import {
   type LucideIcon,
   Megaphone,
   Package,
-  ScanSearch,
   Settings,
   ShieldCheck,
-  ShieldOff,
   ShoppingCart,
   TrendingUp,
   Upload,
@@ -131,9 +129,10 @@ const alignedAdminItems: NavItem[] = [
   { href: '/aligned-admin/leads', label: 'Leads', icon: UserPlus, badgeKey: 'leadsNew' },
   { href: '/aligned-admin/system', label: 'System health', icon: Code2 },
   { href: '/aligned-admin/audit', label: 'Cross-tenant audit', icon: Activity },
-  { href: '/aligned-admin/provenance', label: 'AI provenance', icon: ScanSearch },
-  { href: '/aligned-admin/provenance/suppressions', label: 'Suppression list', icon: ShieldOff },
-  // Revenue page hidden from the nav (route still exists if deep-linked).
+  // The following pages are hidden from the nav (routes still exist if
+  // deep-linked): AI provenance, Suppression list, Revenue.
+  // { href: '/aligned-admin/provenance', label: 'AI provenance', icon: ScanSearch },
+  // { href: '/aligned-admin/provenance/suppressions', label: 'Suppression list', icon: ShieldOff },
   // { href: '/aligned-admin/revenue', label: 'Revenue', icon: CreditCard },
 ];
 

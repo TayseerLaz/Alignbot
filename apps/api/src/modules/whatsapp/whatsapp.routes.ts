@@ -243,6 +243,95 @@ async function transcribeInboundVoice(args: {
   }
 }
 
+// Download an inbound WhatsApp IMAGE from Meta and persist it to object
+// storage, then point the message row at the new Asset (mediaAssetId) so the
+// inbox renders the actual photo instead of an "[image]" placeholder. The
+// pattern mirrors transcribeInboundVoice (media-id → download URL → bytes),
+// but instead of transcribing we store the bytes. Best-effort: every failure
+// is swallowed + logged; nothing here ever blocks the customer reply path.
+async function storeInboundImage(args: {
+  organizationId: string;
+  mediaId: string;
+  mediaMime: string | null;
+  wamid: string | null;
+  log: { warn: (...args: unknown[]) => void; info: (...args: unknown[]) => void };
+}): Promise<void> {
+  try {
+    if (!args.wamid) return; // need the wamid to link the stored asset back
+    const { withRlsBypass } = await import('../../lib/db.js');
+    const { isStorageConfigured, buildStorageKey, putObject } = await import('../../lib/storage.js');
+    if (!isStorageConfigured()) return;
+
+    const channel = await withRlsBypass((tx) =>
+      tx.whatsAppChannel.findFirst({
+        where: { organizationId: args.organizationId, isPrimary: true },
+        select: { accessToken: true },
+      }),
+    );
+    if (!channel?.accessToken) return;
+
+    // Step 1: media id → short-lived download URL.
+    const metaUrl = `https://graph.facebook.com/v20.0/${encodeURIComponent(args.mediaId)}`;
+    const urlRes = await fetch(metaUrl, {
+      headers: { Authorization: `Bearer ${channel.accessToken}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!urlRes.ok) {
+      args.log.warn({ status: urlRes.status, mediaId: args.mediaId }, '[whatsapp] inbound image lookup failed');
+      return;
+    }
+    const urlJson = (await urlRes.json()) as { url?: string; mime_type?: string };
+    if (!urlJson.url) return;
+
+    // Step 2: download the bytes (authenticated with the channel token).
+    const fileRes = await fetch(urlJson.url, {
+      headers: { Authorization: `Bearer ${channel.accessToken}` },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!fileRes.ok) {
+      args.log.warn({ status: fileRes.status, mediaId: args.mediaId }, '[whatsapp] inbound image download failed');
+      return;
+    }
+    const buf = Buffer.from(await fileRes.arrayBuffer());
+    // Sanity bounds: drop empty + anything pathologically large (>10 MB).
+    if (buf.length === 0 || buf.length > 10 * 1024 * 1024) return;
+
+    const mime = (args.mediaMime ?? urlJson.mime_type ?? 'image/jpeg').split(';')[0]!.trim();
+    const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
+
+    // Step 3: store first (so a failed PUT never leaves an orphan Asset row),
+    // then create the Asset, then link the message. The assetId is generated
+    // app-side so the storageKey is known before the row exists.
+    const assetId = crypto.randomUUID();
+    const storageKey = buildStorageKey({
+      organizationId: args.organizationId,
+      kind: 'inbound-image',
+      assetId,
+      filename: `img.${ext}`,
+    });
+    await putObject({ storageKey, body: buf, contentType: mime });
+    await withRlsBypass(async (tx) => {
+      await tx.asset.create({
+        data: {
+          id: assetId,
+          organizationId: args.organizationId,
+          kind: 'image',
+          storageKey,
+          contentType: mime,
+          byteSize: buf.length,
+        },
+      });
+      await tx.whatsAppMessage.updateMany({
+        where: { organizationId: args.organizationId, metaMessageId: args.wamid! },
+        data: { mediaAssetId: assetId },
+      });
+    });
+    args.log.info({ mediaId: args.mediaId, bytes: buf.length }, '[whatsapp] stored inbound image');
+  } catch (err) {
+    args.log.warn({ err, mediaId: args.mediaId }, '[whatsapp] inbound image store threw');
+  }
+}
+
 function maskSecret(s: string | null | undefined): string | null {
   if (!s) return null;
   if (s.length <= 8) return '••••';
@@ -1749,6 +1838,10 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 // transcribe customer voice notes.
                 audio?: { id?: string; mime_type?: string; voice?: boolean };
                 voice?: { id?: string; mime_type?: string };
+                // Inbound photo: `id` pulls the bytes from Meta so we can
+                // store + render it in the inbox; `caption` (if any) is the
+                // operator-visible body.
+                image?: { id?: string; mime_type?: string; caption?: string };
               }[];
               statuses?: {
                 id?: string; // wamid of the outbound message
@@ -1905,13 +1998,17 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 ? m.audio?.id ?? null
                 : m.type === 'voice'
                   ? m.voice?.id ?? null
-                  : null;
+                  : m.type === 'image'
+                    ? m.image?.id ?? null
+                    : null;
             const mediaMime =
               m.type === 'audio'
                 ? m.audio?.mime_type ?? null
                 : m.type === 'voice'
                   ? m.voice?.mime_type ?? null
-                  : null;
+                  : m.type === 'image'
+                    ? m.image?.mime_type ?? null
+                    : null;
             persisted.push({
               from: m.from ?? '',
               type: m.type ?? 'unknown',
@@ -2088,6 +2185,21 @@ export default async function whatsappRoutes(app: FastifyInstance) {
               }
             }).catch((err) => req.log.error({ err }, '[whatsapp] persist failed'));
           }
+        }
+      }
+
+      // Inbound photos — download each one from Meta + store it so the inbox
+      // can render the actual image (not just an "[image]" tag). Fire-and-
+      // forget and fully independent of the bot reply below.
+      for (const p of persisted) {
+        if (p.type === 'image' && p.mediaId) {
+          void storeInboundImage({
+            organizationId: channel.organizationId,
+            mediaId: p.mediaId,
+            mediaMime: p.mediaMime,
+            wamid: p.metaId,
+            log: req.log,
+          });
         }
       }
 
@@ -3804,9 +3916,13 @@ async function maybeReplyAsBot(args: {
                       toNumber: m.from,
                       messageType: 'image',
                       body: `[image] ${previewName}`,
+                      // `storageKey` lets the inbox resolve a signed Wasabi
+                      // URL to actually render this image inline (not just an
+                      // "[image]" placeholder). `sentBy`/`kind`/`sku` drive the
+                      // sender label + provenance attribution.
                       rawPayload: isGreeting
-                        ? ({ sentBy: 'bot', kind: 'greeting' } as never)
-                        : ({ sentBy: 'bot', sku: send.sku } as never),
+                        ? ({ sentBy: 'bot', kind: 'greeting', storageKey: send.storageKey } as never)
+                        : ({ sentBy: 'bot', sku: send.sku, storageKey: send.storageKey } as never),
                     },
                   });
                   await tx.whatsAppThread.update({

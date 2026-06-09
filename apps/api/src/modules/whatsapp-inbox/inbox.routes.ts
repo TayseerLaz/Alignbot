@@ -75,6 +75,10 @@ const messageDtoSchema = z.object({
       productSku: z.string().nullable(),
     })
     .nullable(),
+  // Signed, directly-loadable Wasabi URL for image-type messages so the
+  // chat renders the actual picture. Null when the image isn't stored
+  // (e.g. a not-yet-downloaded inbound photo) or storage is unconfigured.
+  mediaUrl: z.string().nullable(),
 });
 
 const noteDtoSchema = z.object({
@@ -310,6 +314,111 @@ export default async function inboxRoutes(app: FastifyInstance) {
         // Cursor for the NEXT (older) page = the oldest message in this page.
         const olderCursor =
           hasOlder && messages.length > 0 ? messages[0]!.receivedAt.toISOString() : null;
+
+        // ---- Inline image URLs ------------------------------------------
+        // Turn each image message into a signed, directly-loadable Wasabi URL
+        // so the chat renders the actual picture instead of an "[image]" tag.
+        // The URL loads straight from Wasabi (CSP allows *.wasabisys.com), so
+        // there's no API-auth-in-<img> problem and no new data surface — the
+        // signature IS the (short-lived) capability. Sources, in priority:
+        //   1. a stored Asset (operator-sent media + downloaded inbound), via
+        //      mediaAssetId;
+        //   2. a storageKey stamped on the rawPayload (bot images, going fwd);
+        //   3. older bot images: the product image looked up by SKU, or the
+        //      greeting image from the bot config.
+        const imageMsgs = messages.filter(
+          (m) => (m.messageType ?? '').toLowerCase() === 'image',
+        );
+        const mediaUrlByMsgId = new Map<string, string>();
+        if (imageMsgs.length > 0) {
+          const { presignGetUrl } = await import('../../lib/storage.js');
+          const rawOf = (m: (typeof imageMsgs)[number]) =>
+            (m.rawPayload ?? null) as
+              | { storageKey?: unknown; sku?: unknown; kind?: unknown }
+              | null;
+
+          // 1. Stored assets.
+          const assetIds = Array.from(
+            new Set(imageMsgs.map((m) => m.mediaAssetId).filter((x): x is string => !!x)),
+          );
+          const assets = assetIds.length
+            ? await tx.asset.findMany({
+                where: { id: { in: assetIds } },
+                select: { id: true, storageKey: true },
+              })
+            : [];
+          const keyByAssetId = new Map(assets.map((a) => [a.id, a.storageKey]));
+
+          // 3a. Older bot images by SKU → primary product image's storageKey.
+          const skus = Array.from(
+            new Set(
+              imageMsgs
+                .map(rawOf)
+                .filter(
+                  (r): r is { sku: string } =>
+                    !!r && typeof r.sku === 'string' && typeof r.storageKey !== 'string',
+                )
+                .map((r) => r.sku),
+            ),
+          );
+          const keyBySku = new Map<string, string>();
+          if (skus.length) {
+            const prods = await tx.product.findMany({
+              where: { sku: { in: skus } },
+              select: {
+                sku: true,
+                images: {
+                  select: { asset: { select: { storageKey: true } } },
+                  orderBy: { isPrimary: 'desc' },
+                  take: 1,
+                },
+              },
+            });
+            for (const p of prods) {
+              const k = p.images[0]?.asset?.storageKey;
+              if (k) keyBySku.set(p.sku, k);
+            }
+          }
+
+          // 3b. Greeting image storageKey from the bot config (older greeting
+          // images stored only `kind:'greeting'` without the key).
+          let greetingKey: string | null = null;
+          if (
+            imageMsgs.some((m) => {
+              const r = rawOf(m);
+              return r?.kind === 'greeting' && typeof r.storageKey !== 'string';
+            })
+          ) {
+            const cfg = await tx.botConfig.findFirst({
+              select: { greetingImageStorageKey: true },
+            });
+            greetingKey = cfg?.greetingImageStorageKey ?? null;
+          }
+
+          await Promise.all(
+            imageMsgs.map(async (m) => {
+              const r = rawOf(m);
+              let key: string | null = null;
+              if (m.mediaAssetId && keyByAssetId.has(m.mediaAssetId)) {
+                key = keyByAssetId.get(m.mediaAssetId)!;
+              } else if (r && typeof r.storageKey === 'string') {
+                key = r.storageKey;
+              } else if (r && typeof r.sku === 'string' && keyBySku.has(r.sku)) {
+                key = keyBySku.get(r.sku)!;
+              } else if (r && r.kind === 'greeting' && greetingKey) {
+                key = greetingKey;
+              }
+              if (key) {
+                try {
+                  mediaUrlByMsgId.set(m.id, await presignGetUrl(key, 24 * 3600));
+                } catch {
+                  /* storage unconfigured / sign failure → fall back to tag */
+                }
+              }
+            }),
+          );
+        }
+
         return {
           data: messages.map((m) => {
             const raw = (m.rawPayload ?? null) as
@@ -346,6 +455,7 @@ export default async function inboxRoutes(app: FastifyInstance) {
               receivedAt: m.receivedAt.toISOString(),
               sentBy,
               imageSource,
+              mediaUrl: mediaUrlByMsgId.get(m.id) ?? null,
             };
           }),
           nextCursor: olderCursor,

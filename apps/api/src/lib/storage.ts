@@ -76,6 +76,27 @@ export async function presignPutUrl(args: {
   return { url, expiresInSeconds: env.WASABI_SIGNED_URL_TTL_SECONDS };
 }
 
+/**
+ * Upload raw bytes to object storage from the server (no browser round-trip).
+ * Used for media we fetch ourselves — e.g. downloading an inbound WhatsApp
+ * image from Meta and persisting it so the inbox can render it later.
+ */
+export async function putObject(args: {
+  storageKey: string;
+  body: Buffer;
+  contentType: string;
+}): Promise<void> {
+  await getClient().send(
+    new PutObjectCommand({
+      Bucket: env.WASABI_BUCKET,
+      Key: args.storageKey,
+      Body: args.body,
+      ContentType: args.contentType,
+      ContentLength: args.body.length,
+    }),
+  );
+}
+
 export async function presignGetUrl(storageKey: string, expiresIn = 3600): Promise<string> {
   const cmd = new GetObjectCommand({ Bucket: env.WASABI_BUCKET, Key: storageKey });
   return getSignedUrl(getClient(), cmd, { expiresIn });

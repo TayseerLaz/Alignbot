@@ -112,6 +112,9 @@ interface Message {
   // Phase 8 / 1.5 — for image-type bot messages, the upstream source.
   // Either the greeting image set on /bot, or a product image by SKU.
   imageSource: { kind: 'greeting' | 'product'; productSku: string | null } | null;
+  // Signed, directly-loadable URL for image messages so the chat renders
+  // the actual photo. Null when not stored / storage unconfigured.
+  mediaUrl?: string | null;
 }
 
 // Phase 8 / 1.3 — shape returned by GET /inbox/messages/:id/provenance.
@@ -1276,6 +1279,12 @@ function AiStatusBanner({ thread, botDeployed }: { thread: Thread; botDeployed: 
   );
 }
 
+// Per-message image-URL cache. The API returns a fresh *signed* Wasabi URL on
+// every poll (the signature changes), which would otherwise make the <img>
+// re-download + flicker every few seconds. We pin the first URL we see for a
+// given message id (valid 24h) so the src stays stable across polls.
+const imageUrlCache = new Map<string, string>();
+
 function Bubble({
   message,
   isAlignedAdmin,
@@ -1330,6 +1339,17 @@ function Bubble({
     contacts: '👤 Contact',
   };
   const mediaTag = MEDIA_TAGS[mt];
+  // Inline image rendering. Pin the first signed URL we see (see cache above).
+  if (message.mediaUrl && !imageUrlCache.has(message.id)) {
+    imageUrlCache.set(message.id, message.mediaUrl);
+  }
+  const imgSrc = imageUrlCache.get(message.id) ?? message.mediaUrl ?? null;
+  const showImage = isImage && !!imgSrc;
+  // For image bubbles the body is usually a bland "[image]" / "[image] Name"
+  // placeholder — hide it when we render the real picture; keep genuine
+  // customer captions.
+  const bodyIsImagePlaceholder =
+    isImage && (!message.body || /^\[image\]/i.test(message.body.trim()));
   const flaggedCount = provQ.data?.data?.hallucinations?.length ?? 0;
   return (
     <div className={cn('flex flex-col', isOut ? 'items-end' : 'items-start')}>
@@ -1350,7 +1370,7 @@ function Bubble({
           >
             🔘 Button tapped
           </p>
-        ) : mediaTag ? (
+        ) : mediaTag && !showImage ? (
           <p
             className={cn(
               'mb-1 text-[10px] font-semibold uppercase tracking-wide',
@@ -1360,9 +1380,29 @@ function Bubble({
             {mediaTag}
           </p>
         ) : null}
-        <p className="whitespace-pre-wrap break-words">
-          {message.body ?? <em className="opacity-70">[{message.messageType ?? 'media'}]</em>}
-        </p>
+        {showImage ? (
+          // Click to open the full-resolution image in a new tab.
+          <a
+            href={imgSrc!}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block"
+            title="Open full image"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imgSrc!}
+              alt={message.body?.replace(/^\[image\]\s*/i, '') || 'Image'}
+              loading="lazy"
+              className="max-h-80 w-auto max-w-full rounded-lg object-contain"
+            />
+          </a>
+        ) : null}
+        {bodyIsImagePlaceholder ? null : (
+          <p className={cn('whitespace-pre-wrap break-words', showImage && 'mt-1.5')}>
+            {message.body ?? <em className="opacity-70">[{message.messageType ?? 'media'}]</em>}
+          </p>
+        )}
         <div
           className={cn(
             'mt-1.5 flex items-center gap-2 text-[11px]',

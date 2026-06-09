@@ -3,12 +3,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   ChevronDown,
   Clock,
   FileText,
   Inbox,
   MessageCircle,
+  MoreHorizontal,
   Paperclip,
   Phone,
   RotateCcw,
@@ -37,6 +39,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -903,17 +913,9 @@ function ThreadHeader({
               <SelectItem value="escalated">Escalated</SelectItem>
             </SelectContent>
           </Select>
-          {thread.assignedToName ? (
-            <Badge variant="muted" className="gap-1 whitespace-nowrap">
-              <UserCheck className="size-3" /> {thread.assignedToName}
-            </Badge>
-          ) : (
-            <Badge variant={STATUS_VARIANT[thread.status]} className="gap-1 whitespace-nowrap">
-              <Sparkles className="size-3" /> AI handling
-            </Badge>
-          )}
-          {/* The three ownership actions, visually grouped via a rounded
-              container so they read as a single control. */}
+          {/* The ownership actions, visually grouped via a rounded
+              container so they read as a single control. (Assignee name now
+              lives quietly in row 2; the green banner covers "AI handling".) */}
           <div className="flex items-center overflow-hidden rounded-md border border-border bg-surface">
             <Button
               size="sm"
@@ -953,37 +955,50 @@ function ThreadHeader({
               <AlertTriangle className="size-3.5" /> Handoff
             </Button>
           </div>
-          {/* Destructive actions — separate group so they read as
-              distinct from the ownership controls. Reset clears the
-              chat in-place; Delete removes the conversation entirely. */}
-          <div className="flex items-center overflow-hidden rounded-md border border-border bg-surface">
-            <Button
-              size="sm"
-              variant="ghost"
-              className="rounded-none border-0 text-foreground-muted hover:text-foreground"
-              onClick={() => setConfirmReset(true)}
-              title="Clear all messages in this conversation — keeps the contact + name, starts a fresh chat"
-              aria-label="Reset conversation"
-            >
-              <RotateCcw className="size-3.5" />
-            </Button>
-            <span className="h-5 w-px bg-border" aria-hidden />
-            <Button
-              size="sm"
-              variant="ghost"
-              className="rounded-none border-0 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
-              onClick={() => setConfirmDelete(true)}
-              title="Delete this conversation. The contact will reappear in the inbox only after they send a new message."
-              aria-label="Delete conversation"
-            >
-              <Trash2 className="size-3.5" />
-            </Button>
-          </div>
+          {/* Secondary actions tucked into one overflow menu so the header
+              stays calm: per-thread bot reply mode + the two destructive
+              actions (reset clears the chat in place; delete removes it). */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="ghost" className="border border-border" aria-label="More actions">
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>Bot reply mode · this chat</DropdownMenuLabel>
+              {(
+                [
+                  [null, 'Default (org-wide)'],
+                  ['text', 'Always text'],
+                  ['voice', 'Always voice'],
+                  ['match_customer', 'Match customer'],
+                ] as [('text' | 'voice' | 'match_customer' | null), string][]
+              ).map(([value, label]) => (
+                <DropdownMenuItem key={label} onClick={() => onBotReplyModeChange(value)}>
+                  <Check
+                    className={cn('size-4', (thread.botReplyMode ?? null) === value ? 'opacity-100' : 'opacity-0')}
+                  />
+                  {label}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setConfirmReset(true)}>
+                <RotateCcw className="size-4" /> Reset conversation
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setConfirmDelete(true)}
+                className="text-rose-600 focus:bg-rose-50 focus:text-rose-700"
+              >
+                <Trash2 className="size-4" /> Delete conversation
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
-      {/* Row 2 — phone + WhatsApp nickname (quiet reference info) */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-12 text-[11px] text-foreground-subtle">
+      {/* Row 2 — phone + WhatsApp nickname + who owns it (quiet reference).
+          Bot reply mode moved into the ⋯ menu to declutter this row. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-12 text-xs text-foreground-subtle">
         <span className="inline-flex items-center gap-1 font-mono">
           <Phone className="size-3" />
           {thread.customerPhone}
@@ -993,29 +1008,11 @@ function ThreadHeader({
             WhatsApp: <span className="font-medium">{thread.customerWhatsappName}</span>
           </span>
         ) : null}
-        {/* Phase 6 — per-thread bot reply-mode override. "Default" inherits
-            BotConfig.replyMode (set on /bot). */}
-        <span className="ml-auto inline-flex items-center gap-1.5">
-          <span className="text-foreground-subtle">Bot reply:</span>
-          <select
-            value={thread.botReplyMode ?? ''}
-            onChange={(e) => {
-              const v = e.target.value;
-              onBotReplyModeChange(
-                v === ''
-                  ? null
-                  : (v as 'text' | 'voice' | 'match_customer'),
-              );
-            }}
-            className="rounded-md border border-border bg-surface px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-surface-muted"
-            title="Override how the bot replies to THIS conversation only. Default = use org-wide setting from /bot."
-          >
-            <option value="">Default (org-wide)</option>
-            <option value="text">Always text</option>
-            <option value="voice">Always voice</option>
-            <option value="match_customer">Match customer</option>
-          </select>
-        </span>
+        {thread.assignedToName ? (
+          <span className="ml-auto inline-flex items-center gap-1 font-medium text-foreground-muted">
+            <UserCheck className="size-3" /> {thread.assignedToName}
+          </span>
+        ) : null}
       </div>
 
       <Dialog open={confirmReset} onOpenChange={(open) => !resetPending && setConfirmReset(open)}>

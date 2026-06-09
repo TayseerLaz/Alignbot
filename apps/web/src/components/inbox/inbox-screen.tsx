@@ -9,6 +9,7 @@ import {
   Clock,
   FileText,
   Inbox,
+  Info,
   MessageCircle,
   MoreHorizontal,
   Paperclip,
@@ -27,6 +28,7 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import { CustomerInfoSheet } from '@/components/customer/customer-info-sheet';
 import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -517,6 +519,8 @@ function ThreadView({
   // on bot bubbles. Regular org users get a clean chat surface.
   const { session } = useSession();
   const isAlignedAdmin = session?.user.isAlignedAdmin === true;
+  // Customer-info slide-over (profile + memory + orders + bookings + tags).
+  const [infoOpen, setInfoOpen] = useState(false);
 
   // Whether the AI bot is deployed at the org level. This + an
   // unassigned thread are the two preconditions for auto-reply; the
@@ -763,6 +767,7 @@ function ThreadView({
         onRename={(name) => renameContact.mutate(name)}
         renameSaving={renameContact.isPending}
         onBotReplyModeChange={(m) => setBotReplyMode.mutate(m)}
+        onShowInfo={() => setInfoOpen(true)}
         onDelete={() => deleteThread.mutate()}
         onReset={() => resetThread.mutate()}
         deletePending={deleteThread.isPending}
@@ -819,6 +824,12 @@ function ThreadView({
           addingNote={addNote.isPending}
         />
       </div>
+      <CustomerInfoSheet
+        phone={thread.customerPhone}
+        fallbackName={thread.customerName ?? thread.customerWhatsappName}
+        open={infoOpen}
+        onClose={() => setInfoOpen(false)}
+      />
     </div>
   );
 }
@@ -832,6 +843,7 @@ function ThreadHeader({
   onRename,
   renameSaving,
   onBotReplyModeChange,
+  onShowInfo,
   onDelete,
   onReset,
   deletePending,
@@ -845,6 +857,7 @@ function ThreadHeader({
   onRename: (name: string | null) => void;
   renameSaving: boolean;
   onBotReplyModeChange: (m: 'text' | 'voice' | 'match_customer' | null) => void;
+  onShowInfo: () => void;
   // Destructive actions on the thread. Both are confirmed via dialog
   // before firing because both wipe message history.
   onDelete: () => void;
@@ -949,6 +962,16 @@ function ThreadHeader({
               </button>
             )}
           </div>
+          {/* Open the full customer profile (info, memory, orders, tags). */}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onShowInfo}
+            className="shrink-0 gap-1 border border-border"
+            title="Customer info"
+          >
+            <Info className="size-4" /> Info
+          </Button>
         </div>
 
         {/* Right cluster: status pill + assignee chip + action group.

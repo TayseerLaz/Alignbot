@@ -2,10 +2,11 @@
 
 import type { ContactDto } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Plus, Save, Search, Trash2, Upload, X } from 'lucide-react';
+import { Info, Pencil, Plus, Save, Search, Trash2, Upload, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
+import { CustomerInfoSheet } from '@/components/customer/customer-info-sheet';
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -32,6 +33,8 @@ export default function ContactsPage() {
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  // Phone of the contact whose info slide-over is open (null = closed).
+  const [infoPhone, setInfoPhone] = useState<string | null>(null);
 
   const contactsQuery = useQuery({
     queryKey: ['contacts', { search, tag: tagFilter }],
@@ -177,6 +180,7 @@ export default function ContactsPage() {
                     contact={c}
                     onSave={(patch) => editMutation.mutate({ id: c.id, ...patch })}
                     saving={editMutation.isPending}
+                    onShowInfo={() => setInfoPhone(c.phoneE164)}
                     onDelete={() => {
                       if (window.confirm(`Delete ${c.phoneE164}?`)) deleteMutation.mutate(c.id);
                     }}
@@ -204,6 +208,11 @@ export default function ContactsPage() {
           qc.invalidateQueries({ queryKey: ['contacts', 'tags'] });
         }}
       />
+      <CustomerInfoSheet
+        phone={infoPhone}
+        open={infoPhone !== null}
+        onClose={() => setInfoPhone(null)}
+      />
     </>
   );
 }
@@ -213,11 +222,13 @@ function ContactRow({
   contact,
   onSave,
   saving,
+  onShowInfo,
   onDelete,
 }: {
   contact: ContactDto;
   onSave: (patch: { displayName?: string | null; phoneE164?: string }) => void;
   saving: boolean;
+  onShowInfo: () => void;
   onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -309,6 +320,9 @@ function ContactRow({
           </div>
         ) : (
           <div className="flex items-center justify-end gap-1">
+            <Button size="icon" variant="ghost" onClick={onShowInfo} aria-label="View info & tags" title="Info & tags">
+              <Info className="size-4" />
+            </Button>
             <Button size="icon" variant="ghost" onClick={() => setEditing(true)} aria-label="Edit">
               <Pencil className="size-4" />
             </Button>

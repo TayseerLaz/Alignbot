@@ -68,6 +68,161 @@ function toContactDto(row: ContactRow) {
 export default async function contactsRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
 
+  // ---------- GET /contacts/overview ---------------------------------------
+  // Everything we know about ONE customer, keyed by phone (E.164). Powers the
+  // "User info" slide-over in both the inbox and the contacts page: profile +
+  // tags + the AI's per-contact memory + recent orders + recent bookings +
+  // message activity. All reads are tenant-scoped via app.tenant().
+  const overviewResponse = itemEnvelopeSchema(
+    z.object({
+      contact: z
+        .object({
+          id: uuidSchema,
+          phoneE164: z.string(),
+          displayName: z.string().nullable(),
+          whatsappName: z.string().nullable(),
+          optedInAt: z.string().nullable(),
+          optedOutAt: z.string().nullable(),
+          timezone: z.string().nullable(),
+          source: z.string(),
+          tags: z.array(z.string()),
+          lastInboundAt: z.string().nullable(),
+          lastOutboundAt: z.string().nullable(),
+          createdAt: z.string().nullable(),
+        })
+        .nullable(),
+      memory: z
+        .object({
+          persona: z.string().nullable(),
+          language: z.string().nullable(),
+          facts: z.record(z.string(), z.unknown()),
+          lastSummaryAt: z.string().nullable(),
+        })
+        .nullable(),
+      orders: z.array(
+        z.object({
+          id: uuidSchema,
+          createdAt: z.string(),
+          status: z.string(),
+          totalMinor: z.number(),
+          currency: z.string(),
+          itemsCount: z.number(),
+          items: z.array(z.object({ name: z.string(), quantity: z.number() })),
+        }),
+      ),
+      bookings: z.array(
+        z.object({
+          id: uuidSchema,
+          status: z.string(),
+          appointmentAt: z.string().nullable(),
+          notes: z.string().nullable(),
+          createdAt: z.string(),
+        }),
+      ),
+      stats: z.object({
+        inboundCount: z.number(),
+        outboundCount: z.number(),
+        threadId: uuidSchema.nullable(),
+      }),
+    }),
+  );
+
+  r.get(
+    '/contacts/overview',
+    {
+      schema: {
+        tags: ['contacts'],
+        summary: 'Full profile for one customer (by phone): info, memory, orders, bookings.',
+        querystring: z.object({ phone: z.string().trim().min(3).max(32) }),
+        response: { 200: overviewResponse },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const phone = req.query.phone;
+        // RLS scopes every query to the caller's org, so findFirst by phone
+        // is safe without threading orgId through.
+        const [contact, memory, carts, bookings, thread] = await Promise.all([
+          tx.contact.findFirst({
+            where: { phoneE164: phone, deletedAt: null },
+            include: { tags: { select: { tag: true } } },
+          }),
+          tx.contactMemory.findFirst({ where: { phoneE164: phone } }),
+          tx.cart.findMany({
+            where: { customerPhone: phone, itemsCount: { gt: 0 } },
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+            include: { items: { select: { name: true, quantity: true } } },
+          }),
+          tx.booking.findMany({
+            where: { customerPhone: phone },
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+          }),
+          tx.whatsAppThread.findFirst({
+            where: { customerPhone: phone },
+            select: { id: true, inboundCount: true, outboundCount: true },
+          }),
+        ]);
+
+        const facts =
+          memory?.facts && typeof memory.facts === 'object' && !Array.isArray(memory.facts)
+            ? (memory.facts as Record<string, unknown>)
+            : {};
+
+        return {
+          data: {
+            contact: contact
+              ? {
+                  id: contact.id,
+                  phoneE164: contact.phoneE164,
+                  displayName: contact.displayName,
+                  whatsappName: contact.whatsappName,
+                  optedInAt: contact.optedInAt?.toISOString() ?? null,
+                  optedOutAt: contact.optedOutAt?.toISOString() ?? null,
+                  timezone: contact.timezone,
+                  source: contact.source,
+                  tags: contact.tags.map((t) => t.tag),
+                  lastInboundAt: contact.lastInboundAt?.toISOString() ?? null,
+                  lastOutboundAt: contact.lastOutboundAt?.toISOString() ?? null,
+                  createdAt: contact.createdAt.toISOString(),
+                }
+              : null,
+            memory: memory
+              ? {
+                  persona: memory.persona,
+                  language: memory.language,
+                  facts,
+                  lastSummaryAt: memory.lastSummaryAt?.toISOString() ?? null,
+                }
+              : null,
+            orders: carts.map((c) => ({
+              id: c.id,
+              createdAt: c.createdAt.toISOString(),
+              status: c.status,
+              totalMinor: c.totalMinor,
+              currency: c.currency,
+              itemsCount: c.itemsCount,
+              items: c.items.map((i) => ({ name: i.name, quantity: i.quantity })),
+            })),
+            bookings: bookings.map((b) => ({
+              id: b.id,
+              status: b.status,
+              appointmentAt: b.appointmentAt?.toISOString() ?? null,
+              notes: b.notes,
+              createdAt: b.createdAt.toISOString(),
+            })),
+            stats: {
+              inboundCount: thread?.inboundCount ?? 0,
+              outboundCount: thread?.outboundCount ?? 0,
+              threadId: thread?.id ?? null,
+            },
+          },
+        };
+      }),
+  );
+
   // ---------- GET /contacts -------------------------------------------------
   r.get(
     '/contacts',

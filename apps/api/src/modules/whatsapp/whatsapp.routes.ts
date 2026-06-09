@@ -2734,13 +2734,12 @@ async function maybeReplyAsBot(args: {
       };
     });
 
-    // Ultra plan — (1) load this contact's persona/memory to personalise
-    // the reply and (2) kick off intent classification CONCURRENTLY with
-    // the reply below (it adds no wall-clock — the Haiku classify finishes
-    // before the Sonnet reply). No-op for every other plan; all failures
-    // are swallowed so the reply path is never blocked. isUltraPlan +
-    // intentPromise are reused after the reply for link selection + the
-    // post-reply memory-update pass.
+    // Per-user memory ("user_info") — ALL plans. Loads this contact's
+    // distilled persona + real recent orders so the bot personalises and uses
+    // FEWER tokens (it reads saved facts instead of re-deriving them from the
+    // full history every turn). Intent classification + link selection stay
+    // Ultra-only (those drive the deterministic link backstop). All failures
+    // are swallowed so the reply path is never blocked.
     let personaBlock: string | null = null;
     let isUltraPlan = false;
     let pinnedSkus: string[] = [];
@@ -2749,32 +2748,33 @@ async function maybeReplyAsBot(args: {
     try {
       const { getOrgAiPlan } = await import('../../lib/openai.js');
       isUltraPlan = (await getOrgAiPlan(args.organizationId)) === 'ultra';
+      const {
+        loadPersonaBlock,
+        renderPersonaForPrompt,
+        loadRecentOrders,
+        renderOrdersForPrompt,
+        pinnedSkusFromOrders,
+      } = await import('../../lib/contact-memory.js');
+      // Persona (distilled memory) + real recent orders, loaded in parallel
+      // and combined so the bot can answer "what did I order before?",
+      // re-order, and skip re-asking known details (name, etc.).
+      const [pb, orders] = await Promise.all([
+        loadPersonaBlock(args.organizationId, m.from),
+        loadRecentOrders(args.organizationId, m.from),
+      ]);
+      personaBlock =
+        [renderPersonaForPrompt(pb), renderOrdersForPrompt(orders)]
+          .filter(Boolean)
+          .join('\n\n') || null;
+      // Pin recent-order products so "yes add these" can re-add them even when
+      // top-K wouldn't have surfaced them this turn.
+      pinnedSkus = pinnedSkusFromOrders(orders);
+      // Intent + link selection — Ultra only.
       if (isUltraPlan) {
         const ultraHistory = ctx.history.map((h) => ({
           role: h.direction === 'outbound' ? ('assistant' as const) : ('user' as const),
           content: h.body ?? '',
         }));
-        const {
-          loadPersonaBlock,
-          renderPersonaForPrompt,
-          loadRecentOrders,
-          renderOrdersForPrompt,
-          pinnedSkusFromOrders,
-        } = await import('../../lib/contact-memory.js');
-        // Persona (distilled memory) + real recent orders (authoritative DB
-        // records) loaded in parallel, then combined into the injected block
-        // so the bot can answer "what did I order before?" and re-order.
-        const [pb, orders] = await Promise.all([
-          loadPersonaBlock(args.organizationId, m.from),
-          loadRecentOrders(args.organizationId, m.from),
-        ]);
-        personaBlock =
-          [renderPersonaForPrompt(pb), renderOrdersForPrompt(orders)]
-            .filter(Boolean)
-            .join('\n\n') || null;
-        // Pin recent-order products so "yes add these" can re-add them even
-        // when top-K wouldn't have surfaced them this turn.
-        pinnedSkus = pinnedSkusFromOrders(orders);
         const { classifyIntent } = await import('../../lib/intent.js');
         intentPromise = classifyIntent({
           organizationId: args.organizationId,
@@ -2789,7 +2789,7 @@ async function maybeReplyAsBot(args: {
         }).catch(() => null);
       }
     } catch (err) {
-      args.log.warn({ err }, '[whatsapp] ultra pre-reply setup failed (non-fatal)');
+      args.log.warn({ err }, '[whatsapp] per-user memory setup failed (non-fatal)');
     }
     stopwatch.lap('persona');
 
@@ -2882,11 +2882,12 @@ async function maybeReplyAsBot(args: {
       }
     }
 
-    // Ultra plan — fold this turn into the contact's persona memory via a
-    // cheap Haiku pass. Fire-and-forget (not awaited): runs in the
-    // background, has its own try/catch, and can never delay or fail the
-    // reply the customer is waiting on.
-    if (isUltraPlan && rawReply) {
+    // Fold this turn into the contact's "user_info" memory (ALL plans now).
+    // Fire-and-forget: runs in the background, has its own try/catch + a
+    // per-contact throttle (so it doesn't re-summarize on every single
+    // message), and can never delay or fail the reply the customer is waiting
+    // on.
+    if (rawReply) {
       const replyForMemory = rawReply;
       void import('../../lib/contact-memory.js').then(({ updateContactMemory }) =>
         updateContactMemory({
@@ -3349,11 +3350,24 @@ async function maybeReplyAsBot(args: {
       }
     }
 
+    // Clear-cart marker — the customer declined to resume their leftover cart
+    // (or chose to start over), so discard the draft. The token is stripped
+    // from the visible reply below. Only runs the DB write when present.
+    if (/\[CLEAR_CART\]/i.test(rawReply) && ctx.data.shopForm) {
+      await withRlsBypass((tx) =>
+        tx.cart.updateMany({
+          where: { organizationId: args.organizationId, threadId: ctx.threadId, status: 'draft' },
+          data: { status: 'cancelled' },
+        }),
+      ).catch((err) => args.log.warn({ err }, '[whatsapp] clear-cart cancel failed (non-fatal)'));
+    }
+
     let reply = stripCartMarker(
       rawReply
         .replace(imageMarkerRe, '')
         .replace(handoffMarkerRe, '')
-        .replace(bookingMarkerRe, ''),
+        .replace(bookingMarkerRe, '')
+        .replace(/\[CLEAR_CART\]/gi, ''),
     ).trim();
     // Resolve every emitted SKU against the catalog. Dedupe by product
     // id so multiple markers for the same SKU collapse to one send.

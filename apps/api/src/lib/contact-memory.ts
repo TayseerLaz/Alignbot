@@ -21,6 +21,7 @@ import type { Prisma } from '@aligned/db';
 
 import { withRlsBypass } from './db.js';
 import { completeFast } from './openai.js';
+import { getRedis } from './redis.js';
 
 export interface PersonaBlock {
   persona: string | null;
@@ -155,6 +156,23 @@ export async function updateContactMemory(args: {
   latestBotReply?: string | null;
 }): Promise<void> {
   try {
+    // Per-contact throttle — at most one re-summarisation per ~90s, so a burst
+    // of messages doesn't fire a summariser call per message (this runs on all
+    // plans now, so the token cost matters). Skipped turns are still folded in
+    // next time, since we re-read recent history each run.
+    try {
+      const redis = getRedis();
+      const set = await redis.set(
+        `memthrottle:${args.organizationId}:${args.phoneE164}`,
+        '1',
+        'PX',
+        90_000,
+        'NX',
+      );
+      if (set !== 'OK') return;
+    } catch {
+      /* redis unavailable — proceed without throttling */
+    }
     const existing = await withRlsBypass((tx) =>
       tx.contactMemory.findUnique({
         where: {

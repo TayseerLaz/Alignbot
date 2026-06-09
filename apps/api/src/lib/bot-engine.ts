@@ -733,6 +733,11 @@ export async function buildBotResponse(
     shouldGreetByName
       ? `Customer's first name on WhatsApp: "${customerFirstName}". When your reply opens with a greeting word (Hi/Hello/Hey/Welcome/مرحبا/أهلاً/سلام/Bonjour/Hola), include their name. Mid-conversation replies should NOT shoehorn the name in.`
       : '',
+    // Name pre-fill — the bot already knows who it's talking to, so checkout /
+    // booking must NOT re-ask "what's your full name?". Use the known name.
+    args.customerName && args.customerName.trim()
+      ? `You already know this customer's name: "${args.customerName.trim()}". When an order or booking form needs their NAME, DO NOT ask "what's your name?" — use this name and just confirm, e.g. "I'll put this under ${args.customerName.trim()} — all good?". Only ask if they say it's wrong or ask to use a different name. (Still ask for the OTHER fields like address/payment normally.)`
+      : '',
     ``,
     `# Core rules`,
     `- Only mention products, prices, hours, locations, contacts, policies that appear VERBATIM in the data below. No invented items, no rounded prices, no industry-knowledge gap-fills. If the data isn't there, say so honestly and offer to connect a human.`,
@@ -992,7 +997,11 @@ export async function buildBotResponse(
             lines,
             capturedBlock,
             `When the customer asks "what's the total" / "how much" / "كم المجموع", quote the subtotal above VERBATIM. NEVER reply "I can't compute the total" or "I don't have that info" — you have the running total right here.`,
-            `These cart items are CONFIRMED and orderable — they are in the catalog. NEVER tell the customer a cart item "isn't in our catalog", doesn't exist, or can't be ordered; this cart is authoritative. NEVER reset, clear, or abandon it, say it's "pending", or "start fresh" — carry these exact items through checkout and the final confirmation.`,
+            `These cart items are CONFIRMED and orderable — they are in the catalog. NEVER tell the customer a cart item "isn't in our catalog", doesn't exist, or can't be ordered; this cart is authoritative. NEVER reset, clear, or abandon it mid-checkout, say it's "pending", or "start fresh" — carry these exact items through checkout and the final confirmation.`,
+            // Unfinished-cart resume — when the customer RETURNS (greets / asks
+            // something new) and this cart is left over from earlier, offer to
+            // resume it. If they decline / want to start over, emit [CLEAR_CART].
+            `RESUME CHECK: if the customer is returning or starting a new topic (greeting, a fresh question) and this cart is left over from an earlier chat — NOT actively mid-checkout — offer ONCE: "You've got an unfinished order: ${args.cartState!.items.map((it) => `${it.quantity}× ${it.name}`).join(', ')}. Want to continue it, or start fresh?". If they say start fresh / a new order / they don't want it, put the literal token [CLEAR_CART] on its own line (the platform discards the saved cart) and then help them with the new request. If they want to continue, proceed with this cart.`,
           ]
             .filter(Boolean)
             .join('\n');

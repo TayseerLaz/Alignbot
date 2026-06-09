@@ -380,7 +380,7 @@ function ThreadList({
               onClick={() => onSelect(t.id)}
               aria-current={activeId === t.id}
               className={cn(
-                'flex w-full flex-col gap-1.5 border-b border-l-4 border-border border-l-transparent px-4 py-3.5 text-left hover:bg-surface-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400',
+                'flex w-full items-start gap-3 border-b border-l-4 border-border border-l-transparent px-4 py-4 text-left hover:bg-surface-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400',
                 // Bot-flagged "needs human" threads get a tinted background +
                 // a red left bar so operators can spot them at a glance.
                 t.status === 'escalated' &&
@@ -389,54 +389,66 @@ function ThreadList({
                 activeId === t.id && t.status === 'escalated' && 'bg-red-100/70',
               )}
             >
-              {/* Line 1 — name + time */}
-              <div className="flex items-center justify-between gap-2">
-                <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground">
-                  <Phone className="size-4 shrink-0 text-foreground-muted" />
-                  <span className="truncate">{t.customerName ?? t.customerWhatsappName ?? t.customerPhone}</span>
-                  {/* ALIGNED-admin only — red dot indicating ≥1 bot reply
-                      on this thread has hallucinations flagged. */}
-                  {(flaggedByThread.get(t.id) ?? 0) > 0 ? (
-                    <span
-                      className="inline-flex size-2 shrink-0 rounded-full bg-rose-500"
-                      title={`${flaggedByThread.get(t.id)} flagged bot reply${(flaggedByThread.get(t.id) ?? 0) > 1 ? 'ies' : ''}`}
-                    />
-                  ) : null}
-                </span>
-                <span className="whitespace-nowrap text-xs text-foreground-subtle">
-                  {formatRelative(t.lastMessageAt)}
-                </span>
+              {/* Avatar — first letter of the visible name (WhatsApp-style) */}
+              <div
+                aria-hidden
+                className="flex size-11 shrink-0 items-center justify-center rounded-full bg-brand-100 text-base font-semibold text-brand-700"
+              >
+                {(t.customerName ?? t.customerWhatsappName ?? t.customerPhone)
+                  .replace(/[^\p{L}\p{N}]/gu, '')
+                  .charAt(0)
+                  .toUpperCase() || '#'}
               </div>
-              {/* Line 2 — last message preview */}
-              <p className="truncate text-sm text-foreground-muted">
-                {t.lastMessagePreview ?? <em className="text-foreground-subtle">no preview</em>}
-              </p>
-              {/* Line 3 — status + assignee + notes + tags, with msg counts right-aligned */}
-              <div className="flex flex-wrap items-center gap-1.5">
-                <Badge variant={STATUS_VARIANT[t.status]} className="text-[11px]">
-                  {STATUS_LABEL[t.status]}
-                </Badge>
-                {t.assignedToName ? (
-                  <Badge variant="muted" className="gap-1 text-[11px]">
-                    <UserCheck className="size-3" /> {t.assignedToName.split(' ')[0]}
+              <div className="min-w-0 flex-1">
+                {/* Line 1 — name + time */}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold text-foreground">
+                    <span className="truncate">
+                      {t.customerName ?? t.customerWhatsappName ?? t.customerPhone}
+                    </span>
+                    {/* ALIGNED-admin only — red dot for flagged bot replies. */}
+                    {(flaggedByThread.get(t.id) ?? 0) > 0 ? (
+                      <span
+                        className="inline-flex size-2 shrink-0 rounded-full bg-rose-500"
+                        title={`${flaggedByThread.get(t.id)} flagged bot reply${(flaggedByThread.get(t.id) ?? 0) > 1 ? 'ies' : ''}`}
+                      />
+                    ) : null}
+                  </span>
+                  <span className="whitespace-nowrap text-xs text-foreground-subtle">
+                    {formatRelative(t.lastMessageAt)}
+                  </span>
+                </div>
+                {/* Line 2 — last message preview */}
+                <p className="mt-0.5 truncate text-sm text-foreground-muted">
+                  {t.lastMessagePreview ?? <em className="text-foreground-subtle">no preview</em>}
+                </p>
+                {/* Line 3 — status + assignee + notes + tags, counts right-aligned */}
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <Badge variant={STATUS_VARIANT[t.status]} className="text-[11px]">
+                    {STATUS_LABEL[t.status]}
                   </Badge>
-                ) : null}
-                {t.noteCount > 0 ? (
-                  <Badge variant="muted" className="gap-1 text-[11px]">
-                    <StickyNote className="size-3" /> {t.noteCount}
-                  </Badge>
-                ) : null}
-                {t.tags.slice(0, 1).map((tag) => (
-                  <Badge key={tag} variant="outline" className="text-[11px]">
-                    {tag}
-                  </Badge>
-                ))}
-                {t.tags.length > 1 ? (
-                  <span className="text-[11px] text-foreground-subtle">+{t.tags.length - 1}</span>
-                ) : null}
-                <span className="ml-auto whitespace-nowrap text-[11px] text-foreground-subtle">
-                  {t.inboundCount}↓ {t.outboundCount}↑
-                </span>
+                  {t.assignedToName ? (
+                    <Badge variant="muted" className="gap-1 text-[11px]">
+                      <UserCheck className="size-3" /> {t.assignedToName.split(' ')[0]}
+                    </Badge>
+                  ) : null}
+                  {t.noteCount > 0 ? (
+                    <Badge variant="muted" className="gap-1 text-[11px]">
+                      <StickyNote className="size-3" /> {t.noteCount}
+                    </Badge>
+                  ) : null}
+                  {t.tags.slice(0, 1).map((tag) => (
+                    <Badge key={tag} variant="outline" className="text-[11px]">
+                      {tag}
+                    </Badge>
+                  ))}
+                  {t.tags.length > 1 ? (
+                    <span className="text-[11px] text-foreground-subtle">+{t.tags.length - 1}</span>
+                  ) : null}
+                  <span className="ml-auto whitespace-nowrap text-[11px] text-foreground-subtle">
+                    {t.inboundCount}↓ {t.outboundCount}↑
+                  </span>
+                </div>
               </div>
             </button>
           </li>
@@ -1319,6 +1331,12 @@ function Bubble({
             isOut ? 'text-white/80' : 'text-foreground-subtle',
           )}
         >
+          {/* Who sent it — Bot vs a human operator (outbound only). */}
+          {isOut && message.sentBy ? (
+            <span className="font-semibold">
+              {message.sentBy === 'bot' ? '🤖 Bot' : '🧑 You'}
+            </span>
+          ) : null}
           <span>{formatRelative(message.receivedAt)}</span>
           {canAudit ? (
             <button

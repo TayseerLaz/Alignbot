@@ -58,6 +58,7 @@ interface Overview {
     appointmentAt: string | null;
     notes: string | null;
     createdAt: string;
+    fields: { label: string; value: string }[];
   }[];
   stats: { inboundCount: number; outboundCount: number; threadId: string | null };
 }
@@ -341,14 +342,28 @@ export function CustomerInfoSheet({
                 <ul className="space-y-2">
                   {data!.bookings.map((b) => (
                     <li key={b.id} className="rounded-lg border border-border p-2.5 text-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium text-foreground">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-foreground-subtle">
                           {b.appointmentAt
                             ? new Date(b.appointmentAt).toLocaleString()
-                            : 'Unscheduled'}
+                            : `Requested ${formatRelative(b.createdAt)}`}
                         </span>
                         <Badge variant="outline">{b.status}</Badge>
                       </div>
+                      {/* The actual answers the customer gave (name, preferred
+                          date, …). This is the real content of the booking. */}
+                      {b.fields.length > 0 ? (
+                        <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-0.5 text-xs">
+                          {b.fields.map((f) => (
+                            <div key={f.label} className="contents">
+                              <dt className="truncate text-foreground-subtle">{f.label}</dt>
+                              <dd className="break-words text-foreground">{f.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      ) : (
+                        <p className="text-xs text-foreground-subtle">No details captured.</p>
+                      )}
                       {b.notes ? (
                         <p className="mt-1 text-xs text-foreground-muted">{b.notes}</p>
                       ) : null}

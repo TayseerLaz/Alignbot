@@ -117,6 +117,9 @@ export default async function contactsRoutes(app: FastifyInstance) {
           appointmentAt: z.string().nullable(),
           notes: z.string().nullable(),
           createdAt: z.string(),
+          // The actual form answers (Full name, Preferred date, …) — this is
+          // the real content; appointmentAt is often null for free-text dates.
+          fields: z.array(z.object({ label: z.string(), value: z.string() })),
         }),
       ),
       stats: z.object({
@@ -220,6 +223,14 @@ export default async function contactsRoutes(app: FastifyInstance) {
               appointmentAt: b.appointmentAt?.toISOString() ?? null,
               notes: b.notes,
               createdAt: b.createdAt.toISOString(),
+              fields: Array.isArray(b.fields)
+                ? (b.fields as { label?: unknown; key?: unknown; value?: unknown }[])
+                    .filter((f) => f && f.value != null && String(f.value).trim() !== '')
+                    .map((f) => ({
+                      label: String(f.label ?? f.key ?? ''),
+                      value: String(f.value),
+                    }))
+                : [],
             })),
             stats: {
               inboundCount: thread?.inboundCount ?? 0,

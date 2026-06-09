@@ -3,7 +3,7 @@
 // Persistent per-org address book. Used as a recipient source for broadcasts
 // (manual + segment audiences) and auto-populated from the inbox when a new
 // customer message arrives. All queries are tenant-scoped via app.tenant().
-import type { ContactSource } from '@aligned/db';
+import type { ContactSource, Prisma } from '@aligned/db';
 import {
   ApiErrorCode,
   contactDtoSchema,
@@ -23,6 +23,36 @@ import { recordAudit } from '../../lib/audit.js';
 import { badRequest, conflict, notFound } from '../../lib/errors.js';
 
 const tagBodySchema = z.object({ tag: z.string().trim().min(1).max(40) });
+
+// Keep contact tags and inbox thread tags in sync so a tag added on either
+// surface shows on both. Threads store the phone without a leading "+",
+// contacts with it — match every variant. `tx` is already tenant-scoped.
+async function mirrorTagToThreads(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  phoneE164: string,
+  tag: string,
+  op: 'add' | 'remove',
+): Promise<void> {
+  const digits = phoneE164.replace(/[^0-9]/g, '');
+  const phones = Array.from(new Set([phoneE164, digits, `+${digits}`].filter(Boolean)));
+  const threads = await tx.whatsAppThread.findMany({
+    where: { customerPhone: { in: phones } },
+    select: { id: true },
+  });
+  if (threads.length === 0) return;
+  if (op === 'add') {
+    for (const th of threads) {
+      await tx.whatsAppThreadTag
+        .create({ data: { organizationId, threadId: th.id, tag } })
+        .catch(() => undefined); // duplicate (org, thread, tag) is fine
+    }
+  } else {
+    await tx.whatsAppThreadTag.deleteMany({
+      where: { threadId: { in: threads.map((t) => t.id) }, tag },
+    });
+  }
+}
 
 interface ContactRow {
   id: string;
@@ -509,6 +539,11 @@ export default async function contactsRoutes(app: FastifyInstance) {
           create: { organizationId: orgId, contactId: id, tag },
           update: {},
         });
+        // Mirror to the matching inbox thread(s) so the tag also shows under
+        // the customer's name in /inbox. Threads store the phone WITHOUT a
+        // leading "+", contacts WITH it — match both forms. (The reverse
+        // mirror, inbox→contact, already lives in the inbox tag endpoints.)
+        await mirrorTagToThreads(tx, orgId, existing.phoneE164, tag, 'add');
         return tx.contact.findUniqueOrThrow({
           where: { id },
           include: { tags: { select: { tag: true } } },
@@ -542,6 +577,8 @@ export default async function contactsRoutes(app: FastifyInstance) {
         await tx.contactTag
           .delete({ where: { contactId_tag: { contactId: id, tag } } })
           .catch(() => undefined);
+        // Mirror the removal to the inbox thread(s) too.
+        await mirrorTagToThreads(tx, req.auth!.organizationId, existing.phoneE164, tag, 'remove');
         return tx.contact.findUniqueOrThrow({
           where: { id },
           include: { tags: { select: { tag: true } } },

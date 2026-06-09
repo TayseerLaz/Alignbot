@@ -273,21 +273,21 @@ export default function InboxPage() {
         }
       />
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-hidden rounded-lg border border-border bg-surface lg:grid-cols-[22rem_1fr]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-hidden rounded-lg border border-border bg-surface lg:grid-cols-[25rem_1fr]">
         <div className="flex min-h-0 flex-col border-r border-border">
           {/* Filters pinned to the top of the thread-list column so the
               conversation pane on the right gets the full vertical space. */}
-          <div className="grid shrink-0 grid-cols-1 gap-2 border-b border-border bg-surface-muted/40 px-3 py-2">
+          <div className="grid shrink-0 grid-cols-1 gap-2 border-b border-border bg-surface-muted/40 px-3 py-3">
             <Input
               placeholder="Search by phone, name, or message…"
               value={filterQ}
               onChange={(e) => setFilterQ(e.target.value)}
               aria-label="Search conversations"
-              className="h-8 text-sm"
+              className="h-9 text-sm"
             />
             <div className="grid grid-cols-2 gap-2">
               <Select value={filterStatus} onValueChange={(v) => setFilterStatus(v as ThreadStatus | 'all')}>
-                <SelectTrigger className="h-8 text-xs">
+                <SelectTrigger className="h-9 text-sm">
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>
@@ -303,7 +303,7 @@ export default function InboxPage() {
                 value={filterTag}
                 onChange={(e) => setFilterTag(e.target.value)}
                 aria-label="Filter by tag"
-                className="h-8 text-sm"
+                className="h-9 text-sm"
               />
             </div>
           </div>
@@ -370,60 +370,63 @@ function ThreadList({
               onClick={() => onSelect(t.id)}
               aria-current={activeId === t.id}
               className={cn(
-                'flex w-full flex-col gap-1 border-b border-l-4 border-border border-l-transparent px-3 py-3 text-left text-sm hover:bg-surface-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400',
+                'flex w-full flex-col gap-1.5 border-b border-l-4 border-border border-l-transparent px-4 py-3.5 text-left hover:bg-surface-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400',
                 // Bot-flagged "needs human" threads get a tinted background +
                 // a red left bar so operators can spot them at a glance.
                 t.status === 'escalated' &&
                   'border-l-red-500 bg-red-50/60 hover:bg-red-50/80',
-                activeId === t.id && t.status !== 'escalated' && 'bg-brand-50/50',
+                activeId === t.id && t.status !== 'escalated' && 'bg-brand-50/60',
                 activeId === t.id && t.status === 'escalated' && 'bg-red-100/70',
               )}
             >
+              {/* Line 1 — name + time */}
               <div className="flex items-center justify-between gap-2">
-                <span className="flex items-center gap-1.5 truncate font-mono text-xs">
-                  <Phone className="size-3.5 shrink-0 text-foreground-muted" />
-                  {t.customerName ?? t.customerPhone}
+                <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground">
+                  <Phone className="size-4 shrink-0 text-foreground-muted" />
+                  <span className="truncate">{t.customerName ?? t.customerWhatsappName ?? t.customerPhone}</span>
                   {/* ALIGNED-admin only — red dot indicating ≥1 bot reply
                       on this thread has hallucinations flagged. */}
                   {(flaggedByThread.get(t.id) ?? 0) > 0 ? (
                     <span
-                      className="ml-0.5 inline-flex h-2 w-2 shrink-0 rounded-full bg-rose-500"
+                      className="inline-flex size-2 shrink-0 rounded-full bg-rose-500"
                       title={`${flaggedByThread.get(t.id)} flagged bot reply${(flaggedByThread.get(t.id) ?? 0) > 1 ? 'ies' : ''}`}
                     />
                   ) : null}
                 </span>
-                <span className="whitespace-nowrap text-[10px] text-foreground-subtle">
+                <span className="whitespace-nowrap text-xs text-foreground-subtle">
                   {formatRelative(t.lastMessageAt)}
                 </span>
               </div>
-              <p className="truncate text-xs text-foreground">
+              {/* Line 2 — last message preview */}
+              <p className="truncate text-sm text-foreground-muted">
                 {t.lastMessagePreview ?? <em className="text-foreground-subtle">no preview</em>}
               </p>
-              <div className="flex flex-wrap items-center gap-1">
-                <Badge variant={STATUS_VARIANT[t.status]} className="text-[10px]">
+              {/* Line 3 — status + assignee + notes + tags, with msg counts right-aligned */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge variant={STATUS_VARIANT[t.status]} className="text-[11px]">
                   {STATUS_LABEL[t.status]}
                 </Badge>
                 {t.assignedToName ? (
-                  <Badge variant="muted" className="text-[10px]">
-                    @{t.assignedToName.split(' ')[0]}
+                  <Badge variant="muted" className="gap-1 text-[11px]">
+                    <UserCheck className="size-3" /> {t.assignedToName.split(' ')[0]}
                   </Badge>
                 ) : null}
                 {t.noteCount > 0 ? (
-                  <Badge variant="muted" className="gap-1 text-[10px]">
+                  <Badge variant="muted" className="gap-1 text-[11px]">
                     <StickyNote className="size-3" /> {t.noteCount}
                   </Badge>
                 ) : null}
-                {t.tags.slice(0, 2).map((tag) => (
-                  <Badge key={tag} variant="outline" className="text-[10px]">
+                {t.tags.slice(0, 1).map((tag) => (
+                  <Badge key={tag} variant="outline" className="text-[11px]">
                     {tag}
                   </Badge>
                 ))}
-                {t.tags.length > 2 ? (
-                  <span className="text-[10px] text-foreground-subtle">+{t.tags.length - 2}</span>
+                {t.tags.length > 1 ? (
+                  <span className="text-[11px] text-foreground-subtle">+{t.tags.length - 1}</span>
                 ) : null}
-              </div>
-              <div className="text-[10px] text-foreground-subtle">
-                {t.inboundCount} in · {t.outboundCount} out
+                <span className="ml-auto whitespace-nowrap text-[11px] text-foreground-subtle">
+                  {t.inboundCount}↓ {t.outboundCount}↑
+                </span>
               </div>
             </button>
           </li>
@@ -1179,7 +1182,7 @@ function MessageScroller({
     <div
       ref={ref}
       onScroll={handleScroll}
-      className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4"
+      className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-surface-muted/20 p-5"
     >
       {children}
     </div>
@@ -1285,7 +1288,7 @@ function Bubble({
     <div className={cn('flex flex-col', isOut ? 'items-end' : 'items-start')}>
       <div
         className={cn(
-          'max-w-[80%] rounded-lg px-3 py-2 text-sm',
+          'max-w-[78%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed shadow-sm',
           isOut ? 'bg-brand-500 text-on-brand' : 'bg-surface-muted text-foreground',
           // Subtle red ring when the scanner flagged hallucinations.
           canAudit && flaggedCount > 0 ? 'ring-2 ring-rose-400/70' : '',
@@ -1315,7 +1318,7 @@ function Bubble({
         </p>
         <div
           className={cn(
-            'mt-1 flex items-center gap-2 text-[10px]',
+            'mt-1.5 flex items-center gap-2 text-[11px]',
             isOut ? 'text-white/80' : 'text-foreground-subtle',
           )}
         >

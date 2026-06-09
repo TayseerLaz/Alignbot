@@ -346,7 +346,12 @@ export async function issueSession(args: {
 // user reported. Within this window we return success without rotating
 // again; the client gets a fresh access token and the family stays
 // intact. Outside the window: real replay → keep the strict behaviour.
-const REUSE_GRACE_WINDOW_MS = 10_000;
+// Widened 10s → 60s on 2026-06-09. With the full-screen inbox opening a
+// second tab, a backgrounded/throttled tab's refresh can legitimately land
+// later than 10s after the foreground tab rotated. The client now also
+// serializes refreshes across tabs (Web Locks) + shares tokens, so this is
+// a belt-and-suspenders margin for slow networks — not the primary guard.
+const REUSE_GRACE_WINDOW_MS = 60_000;
 
 export async function refreshSession(refreshToken: string, meta: RequestMeta) {
   const tokenHash = hashToken(refreshToken);

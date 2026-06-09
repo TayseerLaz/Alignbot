@@ -10,14 +10,61 @@ let accessToken: string | null = null;
 let accessTokenExpiresAt: number | null = null;
 let refreshInFlight: Promise<void> | null = null;
 
-export function setAccessToken(token: string, expiresAtIso: string) {
+// Cross-tab auth coordination. The full-screen inbox opens its own browser
+// tab, so >1 tab is now the norm. Each tab's SessionProvider fires its own
+// POST /auth/refresh on mount; the server ROTATES the shared refresh-token
+// family on every call and runs reuse-detection, so two tabs refreshing
+// close together (or a backgrounded tab's throttled refresh landing late)
+// trips reuse-detection and REVOKES the session — the "logged out
+// frequently" bug. We fix it two ways:
+//   1. serialize refreshes across ALL tabs with the Web Locks API, and
+//   2. broadcast each freshly-minted access token so sibling tabs ADOPT it
+//      instead of firing their own refresh.
+// The token stays in memory only (never localStorage), so this adds no
+// XSS-persistence surface.
+const authChannel: BroadcastChannel | null =
+  typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('aligned-auth') : null;
+
+function applyAccessToken(token: string, expiresAtMs: number) {
   accessToken = token;
-  accessTokenExpiresAt = new Date(expiresAtIso).getTime();
+  accessTokenExpiresAt = expiresAtMs;
+}
+
+// Adopt a token a sibling tab just minted (no network, no extra rotation).
+authChannel?.addEventListener('message', (e: MessageEvent) => {
+  const d = e.data as { accessToken?: string; expiresAt?: number } | null;
+  if (d && typeof d.accessToken === 'string' && typeof d.expiresAt === 'number') {
+    applyAccessToken(d.accessToken, d.expiresAt);
+  }
+});
+
+export function setAccessToken(token: string, expiresAtIso: string) {
+  const ms = new Date(expiresAtIso).getTime();
+  applyAccessToken(token, ms);
+  // Share with sibling tabs so they don't each refresh + rotate the family.
+  authChannel?.postMessage({ accessToken: token, expiresAt: ms });
 }
 
 export function clearAccessToken() {
   accessToken = null;
   accessTokenExpiresAt = null;
+}
+
+// Run `fn` while holding a browser-wide exclusive lock so only ONE tab
+// refreshes at a time. Falls back to running directly where Web Locks
+// isn't available (older Safari) — no worse than today's behaviour.
+async function withRefreshLock(fn: () => Promise<void>): Promise<void> {
+  const locks =
+    typeof navigator !== 'undefined'
+      ? (navigator as Navigator & { locks?: LockManager }).locks
+      : undefined;
+  if (locks?.request) {
+    await locks.request('aligned-auth-refresh', async () => {
+      await fn();
+    });
+  } else {
+    await fn();
+  }
 }
 
 export function getAccessToken() {
@@ -57,17 +104,29 @@ export async function tryRefresh(): Promise<void> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
-        method: 'POST',
-        credentials: 'include',
+      await withRefreshLock(async () => {
+        // A sibling tab may have refreshed (and broadcast a token) while we
+        // waited for the lock. If our token is now comfortably valid, skip
+        // the network call entirely — no second rotation, no reuse race.
+        if (
+          accessToken &&
+          accessTokenExpiresAt &&
+          Date.now() < accessTokenExpiresAt - 30_000
+        ) {
+          return;
+        }
+        const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (!res.ok) {
+          clearAccessToken();
+          notifySessionExpired();
+          return;
+        }
+        const json = (await res.json()) as { accessToken: string; expiresAt: string };
+        setAccessToken(json.accessToken, json.expiresAt);
       });
-      if (!res.ok) {
-        clearAccessToken();
-        notifySessionExpired();
-        return;
-      }
-      const json = (await res.json()) as { accessToken: string; expiresAt: string };
-      setAccessToken(json.accessToken, json.expiresAt);
     } finally {
       refreshInFlight = null;
     }

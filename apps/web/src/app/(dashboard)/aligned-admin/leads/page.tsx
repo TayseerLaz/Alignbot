@@ -60,7 +60,13 @@ export default function LeadsPage() {
   const setStatus = useMutation({
     mutationFn: (vars: { id: string; status: LeadStatus }) =>
       api.patch(`/api/v1/aligned-admin/leads/${vars.id}`, { status: vars.status }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-leads'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-leads'] });
+      // Also refresh the sidebar "new leads" badge immediately — moving a
+      // lead off 'new' (or onto it) changes the count, so the number badge
+      // should update right away instead of lingering until its 30s poll.
+      queryClient.invalidateQueries({ queryKey: ['sidebar-leads-count'] });
+    },
     onError: () => toast.error('Could not update lead'),
   });
 
@@ -69,6 +75,7 @@ export default function LeadsPage() {
     onSuccess: () => {
       toast.success('Lead deleted');
       queryClient.invalidateQueries({ queryKey: ['admin-leads'] });
+      queryClient.invalidateQueries({ queryKey: ['sidebar-leads-count'] });
     },
     onError: () => toast.error('Could not delete lead'),
   });

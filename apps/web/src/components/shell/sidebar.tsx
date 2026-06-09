@@ -9,7 +9,6 @@ import {
   CalendarCheck,
   Code2,
   Contact as ContactIcon,
-  CreditCard,
   ExternalLink,
   Inbox,
   LayoutDashboard,
@@ -134,7 +133,8 @@ const alignedAdminItems: NavItem[] = [
   { href: '/aligned-admin/audit', label: 'Cross-tenant audit', icon: Activity },
   { href: '/aligned-admin/provenance', label: 'AI provenance', icon: ScanSearch },
   { href: '/aligned-admin/provenance/suppressions', label: 'Suppression list', icon: ShieldOff },
-  { href: '/aligned-admin/revenue', label: 'Revenue', icon: CreditCard },
+  // Revenue page hidden from the nav (route still exists if deep-linked).
+  // { href: '/aligned-admin/revenue', label: 'Revenue', icon: CreditCard },
 ];
 
 export function Sidebar({

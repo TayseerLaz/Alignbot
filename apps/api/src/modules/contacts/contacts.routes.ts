@@ -140,28 +140,36 @@ export default async function contactsRoutes(app: FastifyInstance) {
     },
     async (req) =>
       app.tenant(req, async (tx) => {
-        const phone = req.query.phone;
-        // RLS scopes every query to the caller's org, so findFirst by phone
-        // is safe without threading orgId through.
+        // Phone formats are inconsistent across tables: the bot stores
+        // threads / carts / bookings / contact_memory WITHOUT a leading "+"
+        // (raw Meta wa_id), while contacts are stored WITH it (E.164). So we
+        // match against BOTH forms — otherwise the inbox (no "+") would miss
+        // the contact/tags and the contacts page ("+") would miss memory +
+        // orders + bookings. Querying all variants makes both surfaces show
+        // the identical, complete profile.
+        const rawPhone = req.query.phone.trim();
+        const digits = rawPhone.replace(/[^0-9]/g, '');
+        const phones = Array.from(new Set([rawPhone, digits, `+${digits}`].filter(Boolean)));
+        // RLS scopes every query to the caller's org.
         const [contact, memory, carts, bookings, thread] = await Promise.all([
           tx.contact.findFirst({
-            where: { phoneE164: phone, deletedAt: null },
+            where: { phoneE164: { in: phones }, deletedAt: null },
             include: { tags: { select: { tag: true } } },
           }),
-          tx.contactMemory.findFirst({ where: { phoneE164: phone } }),
+          tx.contactMemory.findFirst({ where: { phoneE164: { in: phones } } }),
           tx.cart.findMany({
-            where: { customerPhone: phone, itemsCount: { gt: 0 } },
+            where: { customerPhone: { in: phones }, itemsCount: { gt: 0 } },
             orderBy: { createdAt: 'desc' },
             take: 10,
             include: { items: { select: { name: true, quantity: true } } },
           }),
           tx.booking.findMany({
-            where: { customerPhone: phone },
+            where: { customerPhone: { in: phones } },
             orderBy: { createdAt: 'desc' },
             take: 10,
           }),
           tx.whatsAppThread.findFirst({
-            where: { customerPhone: phone },
+            where: { customerPhone: { in: phones } },
             select: { id: true, inboundCount: true, outboundCount: true },
           }),
         ]);

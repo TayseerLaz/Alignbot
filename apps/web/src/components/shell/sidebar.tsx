@@ -10,6 +10,7 @@ import {
   Code2,
   Contact as ContactIcon,
   CreditCard,
+  ExternalLink,
   Inbox,
   LayoutDashboard,
   type LucideIcon,
@@ -43,6 +44,11 @@ interface NavItem {
   // adding new badges is just (a) plumb a number through useBadges
   // and (b) tag the matching nav item.
   badgeKey?: BadgeKey;
+  // When set, the item opens in a dedicated, reused browser tab (named
+  // target) instead of navigating in place — used for the chrome-less,
+  // full-screen Inbox workspace. `rel="noopener"` is applied so the new
+  // tab can't reach back into this one (anti tab-nabbing).
+  newTab?: boolean;
 }
 
 type BadgeKey = 'inboxEscalated' | 'leadsNew';
@@ -67,7 +73,8 @@ const groups: NavGroup[] = [
     label: 'Engagement',
     items: [
       { href: '/contacts', label: 'Contacts', icon: ContactIcon },
-      { href: '/inbox', label: 'Inbox', icon: Inbox, badgeKey: 'inboxEscalated' },
+      // Opens the bigger, chrome-less inbox in its own (reused) tab.
+      { href: '/inbox-full', label: 'Inbox', icon: Inbox, badgeKey: 'inboxEscalated', newTab: true },
       { href: '/inbox/canned', label: 'Canned replies', icon: Inbox },
       // Standalone /whatsapp/templates URL still resolves — operators
       // who deep-linked into it before still get there. Sidebar only
@@ -178,7 +185,9 @@ export function Sidebar({
   // can still identify each link without giving up screen real estate.
   const renderItem = (item: NavItem) => {
     const Icon = item.icon;
-    const active = isActive(item);
+    // A new-tab item is never the "current" page in this tab, so it never
+    // gets the active highlight.
+    const active = !item.newTab && isActive(item);
     const badgeCount = item.badgeKey ? badges[item.badgeKey] : 0;
     const showBadge = badgeCount > 0;
     return (
@@ -186,8 +195,19 @@ export function Sidebar({
         key={item.href}
         href={item.href}
         onClick={onNavigate}
-        title={collapsed ? `${item.label}${showBadge ? ` (${badgeCount})` : ''}` : undefined}
-        aria-label={item.label}
+        // Named target → repeated clicks reuse the SAME tab instead of
+        // spawning a new one each time. noopener/noreferrer hardens it.
+        target={item.newTab ? 'aligned-inbox' : undefined}
+        rel={item.newTab ? 'noopener noreferrer' : undefined}
+        prefetch={item.newTab ? false : undefined}
+        title={
+          collapsed
+            ? `${item.label}${item.newTab ? ' (opens in a new tab)' : ''}${showBadge ? ` (${badgeCount})` : ''}`
+            : item.newTab
+              ? 'Opens the full-screen inbox in its own tab'
+              : undefined
+        }
+        aria-label={item.newTab ? `${item.label} (opens in a new tab)` : item.label}
         className={cn(
           'relative flex items-center rounded-full text-sm font-medium transition-all duration-150',
           collapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-4 py-2.5',
@@ -198,6 +218,9 @@ export function Sidebar({
       >
         <Icon className="size-4 shrink-0" />
         {collapsed ? null : <span className="truncate">{item.label}</span>}
+        {!collapsed && item.newTab ? (
+          <ExternalLink className="ml-auto size-3.5 shrink-0 opacity-50" aria-hidden />
+        ) : null}
         {showBadge ? (
           collapsed ? (
             <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold text-white">

@@ -81,7 +81,13 @@ export default async function productRoutes(app: FastifyInstance) {
         const cursor = decodeCursor<{ id: string }>(q.cursor);
         // Fetch a page + the total count in parallel so the UI can render
         // "N products" / "Showing X of N" without an extra round trip.
-        const [products, total] = await Promise.all([
+        // Currency is a single source of truth at the org level
+        // (BusinessInfo.currency) — the per-product `currency` column is a
+        // denormalized default that drifts (seed/import write "USD", and a
+        // later business-info currency change never backfills it). Always
+        // report the org currency so prices don't render as "$" on a
+        // KWD/EUR/etc. catalog.
+        const [products, total, orgInfo] = await Promise.all([
           tx.product.findMany({
             where,
             orderBy: SORT_ORDERS[q.sort],
@@ -94,7 +100,12 @@ export default async function productRoutes(app: FastifyInstance) {
             ...(cursor ? { cursor: { id: cursor.id }, skip: 1 } : {}),
           }),
           tx.product.count({ where }),
+          tx.businessInfo.findUnique({
+            where: { organizationId: req.auth!.organizationId },
+            select: { currency: true },
+          }),
         ]);
+        const orgCurrency = orgInfo?.currency || 'USD';
         const hasMore = products.length > q.limit;
         const page = hasMore ? products.slice(0, q.limit) : products;
         const data = await Promise.all(
@@ -105,7 +116,7 @@ export default async function productRoutes(app: FastifyInstance) {
             slug: p.slug,
             shortDescription: p.shortDescription,
             priceMinor: p.priceMinor,
-            currency: p.currency,
+            currency: orgCurrency,
             isAvailable: p.isAvailable,
             stockQuantity: p.stockQuantity,
             primaryImageUrl: p.images[0] ? await resolveAssetUrl(p.images[0].asset.storageKey) : null,
@@ -597,6 +608,13 @@ async function loadProduct(tx: Prisma.TransactionClient, id: string) {
     },
   });
   if (!p) throw notFound('Product not found.');
+  // Currency is org-level (BusinessInfo.currency) — see the list handler.
+  // Report it instead of the drift-prone per-product column.
+  const orgInfo = await tx.businessInfo.findUnique({
+    where: { organizationId: p.organizationId },
+    select: { currency: true },
+  });
+  const orgCurrency = orgInfo?.currency || 'USD';
   return {
     id: p.id,
     sku: p.sku,
@@ -606,7 +624,7 @@ async function loadProduct(tx: Prisma.TransactionClient, id: string) {
     shortDescription: p.shortDescription,
     priceMinor: p.priceMinor,
     compareAtMinor: p.compareAtMinor,
-    currency: p.currency,
+    currency: orgCurrency,
     isAvailable: p.isAvailable,
     stockQuantity: p.stockQuantity,
     trackInventory: p.trackInventory,

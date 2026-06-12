@@ -31,13 +31,24 @@ export interface ParsedAdd {
 // We pull the integer quantity + the rest of the line for fuzzy product
 // matching against the catalog (the LLM sometimes paraphrases — "Oreo
 // Milkshake (vanilla)" — so exact-match on name doesn't cut it).
+// NOTE: the quantity group is OPTIONAL on the verb-anchored patterns
+// (English "added", Arabic "أضفت"). The bot frequently confirms a
+// single-item add WITHOUT a number — "أضفت Waffle بـ 0.300 KWD" /
+// "Added Mango Ice Cream" — and an earlier version of these patterns
+// REQUIRED a digit, so those confirmations parsed to nothing, the draft
+// cart stayed empty, and checkout silently fell back to the unreliable
+// [CART:] marker (which drops items). Missing quantity now defaults to 1.
+// The bare "N× X" running-total pattern keeps its REQUIRED digit — making
+// it optional there would match almost any sentence.
 const ADD_PATTERNS = [
-  // English: "Got it — 4× Oreo …", "I've added 1× Oreo …", "Added 4 Oreo …"
-  /(?:i(?:'ve|\s+have)?\s+added|got\s+it\s*[—\-,]?\s*|added)\s+(\d{1,3})\s*[x×]?\s+([^\n.;]{2,80})/gi,
+  // English: "Got it — 4× Oreo …", "I've added 1× Oreo …", "Added 4 Oreo …",
+  // and the quantity-less "Added Oreo …" / "I've added Oreo Milkshake …".
+  /(?:i(?:'ve|\s+have)?\s+added|got\s+it\s*[—\-,]?\s*|added)\s+(?:(\d{1,3})\s*[x×]?\s+)?([^\n.;]{2,80})/gi,
   // English: "4× Oreo Milkshake at 0.150 KWD" (running-total line variant)
   /\b(\d{1,3})\s*[x×]\s+([a-z][^.\n;]{2,80})/gi,
-  // Arabic: "أضفت 4× Oreo Milkshake" or "Nأضفت X "
-  /(?:أضفت|أَضَفْتُ|تمت\s+إضافة)\s+(\d{1,3})\s*[x×]?\s+([^\n.؛.]{2,80})/g,
+  // Arabic: "أضفت 4× Oreo Milkshake", "تمت إضافة X", and the quantity-less
+  // "أضفت Waffle بـ 0.300 KWD".
+  /(?:أضفت|أَضَفْتُ|تمت\s+إضافة)\s+(?:(\d{1,3})\s*[x×]?\s+)?([^\n.؛.]{2,80})/g,
 ];
 
 // Payment-method words customers say in response to "how would you
@@ -261,7 +272,10 @@ export function parseAddedItems(
     re.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = re.exec(reply)) !== null) {
-      const qty = Math.max(1, Math.min(999, Number(match[1])));
+      // Quantity is optional on the verb-anchored patterns — a bare
+      // "Added Waffle" / "أضفت Waffle" means qty 1.
+      const qtyRaw = match[1];
+      const qty = qtyRaw ? Math.max(1, Math.min(999, Number(qtyRaw))) : 1;
       if (!Number.isFinite(qty)) continue;
       const fragment = match[2] ?? '';
       const product = findProduct(fragment, catalog);

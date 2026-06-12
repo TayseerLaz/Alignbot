@@ -8,7 +8,15 @@ const country2 = z.string().length(2).regex(/^[A-Z]{2}$/);
 const timeOfDay = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'HH:MM');
 
 export const operatingHoursDaySchema = z.array(
-  z.object({ open: timeOfDay, close: timeOfDay }).refine((v) => v.open < v.close, 'open must be before close'),
+  z
+    .object({ open: timeOfDay, close: timeOfDay })
+    // Allow OVERNIGHT ranges (close <= open means "closes after midnight"):
+    // a dessert shop open 18:00–00:00 or a bar open 20:00–02:00 is normal and
+    // must be saveable. A close of "00:00" reads as midnight / end of day. The
+    // only invalid case is a zero-length range (open === close). Nothing
+    // downstream computes on open < close — formatOperatingHours just renders
+    // the range as text for the bot.
+    .refine((v) => v.open !== v.close, 'open and close cannot be identical'),
 );
 
 export const operatingHoursSchema = z.object(

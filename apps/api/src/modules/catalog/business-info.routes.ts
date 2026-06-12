@@ -126,6 +126,28 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
                 : (req.body.shopForm as Prisma.InputJsonValue),
           },
         });
+        // Currency is org-level (single source of truth). Catalog rows
+        // (products, services, pricing tiers) carry a denormalized
+        // `currency` column that several read paths trust directly — the
+        // chatbot read API and the bot engine among them. When the org
+        // currency changes here, propagate it so prices never render in a
+        // stale currency (the "$820,000.00 on a KWD shop" class of bug).
+        if (req.body.currency != null) {
+          await Promise.all([
+            tx.product.updateMany({
+              where: { organizationId: orgId },
+              data: { currency: req.body.currency },
+            }),
+            tx.service.updateMany({
+              where: { organizationId: orgId },
+              data: { currency: req.body.currency },
+            }),
+            tx.servicePricingTier.updateMany({
+              where: { organizationId: orgId },
+              data: { currency: req.body.currency },
+            }),
+          ]);
+        }
         await recordAudit({
           action: 'business_info_updated',
           organizationId: orgId,

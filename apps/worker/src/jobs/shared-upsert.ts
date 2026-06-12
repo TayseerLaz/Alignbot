@@ -74,6 +74,22 @@ async function resolveCategoryId(
   return (await tx.category.create({ data: { organizationId, slug: cleanSlug, name: slug } })).id;
 }
 
+/**
+ * The org's single source of truth for currency (BusinessInfo.currency).
+ * Used as the default when an imported row omits a currency, so bulk
+ * imports inherit the shop's currency instead of hardcoding 'USD'.
+ */
+async function resolveOrgCurrency(
+  tx: PrismaClient,
+  organizationId: string,
+): Promise<string> {
+  const info = await tx.businessInfo.findUnique({
+    where: { organizationId },
+    select: { currency: true },
+  });
+  return info?.currency || 'USD';
+}
+
 export async function upsertOne(
   tx: PrismaClient,
   organizationId: string,
@@ -84,6 +100,11 @@ export async function upsertOne(
     case 'product': {
       const data = productSchema.parse(raw);
       const categoryId = await resolveCategoryId(tx, organizationId, data.categorySlug ?? null);
+      // Currency is org-level (BusinessInfo.currency). When the CSV omits it,
+      // inherit the org default rather than hardcoding 'USD' — otherwise a
+      // bulk import into a KWD/EUR shop silently writes dollar rows that later
+      // render with a '$'.
+      const orgCurrency = await resolveOrgCurrency(tx, organizationId);
       const slug = data.name
         .toLowerCase()
         .normalize('NFKD')
@@ -101,7 +122,7 @@ export async function upsertOne(
           shortDescription: data.shortDescription ?? null,
           description: data.description ?? null,
           priceMinor: data.priceMinor ?? null,
-          currency: data.currency ?? 'USD',
+          currency: data.currency ?? orgCurrency,
           isAvailable: data.isAvailable ?? true,
           stockQuantity: data.stockQuantity ?? null,
           categoryId,
@@ -123,6 +144,7 @@ export async function upsertOne(
     case 'service': {
       const data = serviceSchema.parse(raw);
       const categoryId = await resolveCategoryId(tx, organizationId, data.categorySlug ?? null);
+      const orgCurrency = await resolveOrgCurrency(tx, organizationId);
       const slug = data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
       const upserted = await tx.service.upsert({
         where: { organizationId_slug: { organizationId, slug } },
@@ -134,7 +156,7 @@ export async function upsertOne(
           description: data.description ?? null,
           durationMinutes: data.durationMinutes ?? null,
           basePriceMinor: data.basePriceMinor ?? null,
-          currency: data.currency ?? 'USD',
+          currency: data.currency ?? orgCurrency,
           priceUnit: data.priceUnit ?? 'flat',
           isAvailable: data.isAvailable ?? true,
           categoryId,

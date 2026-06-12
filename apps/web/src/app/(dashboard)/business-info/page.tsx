@@ -143,16 +143,28 @@ function ProfilePanel() {
   }, [infoQuery.data]);
 
   const save = useMutation({
-    mutationFn: () =>
-      api.put('/api/v1/business-info', {
+    mutationFn: () => {
+      // Sanitize hours before sending: a day toggled open but with a time
+      // field cleared would serialize as { open: '', close: '17:00' } and the
+      // API (correctly) 400s on the empty HH:MM. Drop any slot missing either
+      // time so a half-filled row reads as "closed" instead of failing the
+      // whole save.
+      const cleanHours = Object.fromEntries(
+        DAYS_OF_WEEK.map((day) => [
+          day,
+          (draft.hours[day] ?? []).filter((s) => s.open && s.close),
+        ]),
+      );
+      return api.put('/api/v1/business-info', {
         legalName: draft.legalName || null,
         tagline: draft.tagline || null,
         about: draft.about || null,
         websiteUrl: draft.websiteUrl || null,
         timezone: draft.timezone,
         currency: draft.currency,
-        operatingHours: draft.hours,
-      }),
+        operatingHours: cleanHours,
+      });
+    },
     onSuccess: () => {
       toast.success('Business profile saved');
       queryClient.invalidateQueries({ queryKey: ['business-info'] });

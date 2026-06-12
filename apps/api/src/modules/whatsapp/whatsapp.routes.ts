@@ -4385,6 +4385,12 @@ async function maybeReplyAsBot(args: {
             unitPriceMinor: number;
             notes: string | null;
           }[] = [];
+          // True when we couldn't promote a parsed draft and had to trust
+          // the LLM's [CART:] marker instead. The marker is known to drop
+          // items, so this is a strong signal the captured cart may be
+          // wrong — we surface it to operators (note + warning ping)
+          // rather than letting it look like a clean confirmation.
+          let usedMarkerFallback = false;
           if (draft && draft.items.length > 0) {
             for (const it of draft.items) {
               lineItems.push({
@@ -4407,6 +4413,7 @@ async function maybeReplyAsBot(args: {
               '[whatsapp] cart marker: promoting draft, ignoring marker items',
             );
           } else {
+            usedMarkerFallback = true;
             for (const it of cartMarkerPayload.items ?? []) {
               const sku = (it.sku ?? '').toString().trim();
               const matched = sku ? productsBySku.get(sku.toLowerCase()) : null;
@@ -4546,11 +4553,15 @@ async function maybeReplyAsBot(args: {
                 threadId: thread.id,
                 organizationId: args.organizationId,
                 authorUserId: null,
-                body: `🛒 Cart captured (id ${cart.id.slice(0, 8)}…, ${itemsCount} item${itemsCount === 1 ? '' : 's'}, ${totalMinor} ${shopForm.currency} minor). See /cart.`,
+                body: usedMarkerFallback
+                  ? `⚠️ Cart captured FROM LLM MARKER, not a parsed draft (id ${cart.id.slice(0, 8)}…, ${itemsCount} item${itemsCount === 1 ? '' : 's'}, ${totalMinor} ${shopForm.currency} minor). The item parser matched nothing, so this cart may be missing items the customer agreed to — VERIFY against the chat before fulfilling. See /cart.`
+                  : `🛒 Cart captured (id ${cart.id.slice(0, 8)}…, ${itemsCount} item${itemsCount === 1 ? '' : 's'}, ${totalMinor} ${shopForm.currency} minor). See /cart.`,
               },
             });
             // Push the thread to 'pending' for operator review unless
-            // an explicit handoff already set escalated.
+            // an explicit handoff already set escalated. A marker-fallback
+            // capture ALWAYS needs review (the cart may be incomplete), so
+            // it overrides any non-handoff state too.
             if (!wantsHandoff) {
               await tx.whatsAppThread.update({
                 where: { id: thread.id },
@@ -4573,12 +4584,15 @@ async function maybeReplyAsBot(args: {
             void (await import('../../lib/notifications.js')).createNotification({
               organizationId: args.organizationId,
               kind: 'cart_received',
-              severity: 'info',
-              title: `New cart · ${itemsCount} item${itemsCount === 1 ? '' : 's'}`,
-              body: `${thread.customerName ?? thread.customerWhatsappName ?? m.from} · ${totalMinor / (shopForm.currency === 'KWD' || shopForm.currency === 'BHD' || shopForm.currency === 'OMR' || shopForm.currency === 'JOD' ? 1000 : 100)} ${shopForm.currency}`,
+              severity: usedMarkerFallback ? 'warning' : 'info',
+              title: usedMarkerFallback
+                ? `⚠️ Cart needs review · ${itemsCount} item${itemsCount === 1 ? '' : 's'} (parser missed)`
+                : `New cart · ${itemsCount} item${itemsCount === 1 ? '' : 's'}`,
+              body: `${thread.customerName ?? thread.customerWhatsappName ?? m.from} · ${totalMinor / (shopForm.currency === 'KWD' || shopForm.currency === 'BHD' || shopForm.currency === 'OMR' || shopForm.currency === 'JOD' ? 1000 : 100)} ${shopForm.currency}${usedMarkerFallback ? ' · captured from LLM marker — may be missing items' : ''}`,
               link: `/cart`,
               entityType: 'cart',
               entityId: cart.id,
+              metadata: { capturedVia: usedMarkerFallback ? 'marker_fallback' : 'parsed_draft' },
             });
           }
         }

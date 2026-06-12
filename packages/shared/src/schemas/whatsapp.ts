@@ -79,6 +79,22 @@ export const whatsappVerifyResultSchema = z.object({
 });
 export type WhatsAppVerifyResult = z.infer<typeof whatsappVerifyResultSchema>;
 
+// Result of subscribing this org's webhook to the WABA (one-click connect).
+// We POST /{waba-id}/subscribed_apps with the per-org override callback URL +
+// verify token; Meta GET-verifies the URL before accepting. On success the
+// channel is auto-activated so the bot can start replying.
+export const whatsappSubscribeResultSchema = z.object({
+  ok: z.boolean(),
+  status: z.string(), // 'subscribed' | 'missing_credentials' | 'token_invalid' | 'verify_failed' | 'network_error' | 'http_<n>'
+  // The callback URL we told Meta to deliver to (so the UI can show it).
+  callbackUrl: z.string().nullable(),
+  // True when we also flipped the channel to active as part of this call.
+  activated: z.boolean(),
+  errorMessage: z.string().nullable(),
+  rawSample: z.string().nullable(), // ≤500 chars of upstream body for debugging
+});
+export type WhatsAppSubscribeResult = z.infer<typeof whatsappSubscribeResultSchema>;
+
 // Test-send a template to a number the operator types. Defaults to the
 // well-known Meta sandbox `hello_world / en_US`, but accepts an arbitrary
 // template name + language so accounts whose library doesn't include

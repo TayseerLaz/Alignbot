@@ -28,6 +28,7 @@ import {
   whatsappChannelSchema,
   whatsappMessageSchema,
   whatsappTestSendBodySchema,
+  whatsappSubscribeResultSchema,
   whatsappTestSendResultSchema,
   whatsappSendTextBodySchema,
   whatsappSendMediaBodySchema,
@@ -646,6 +647,178 @@ export default async function whatsappRoutes(app: FastifyInstance) {
           verifiedQualityRating: quality,
           verifiedNameStatus: nameStatus,
           errorMessage: null,
+          rawSample: null,
+        },
+      };
+    },
+  );
+
+  // ---------- POST /whatsapp/subscribe ----------------------------------
+  // One-click connect. Tells Meta to deliver THIS number's inbound webhooks
+  // to THIS org's callback URL by registering an override callback on the
+  // WABA's subscribed-apps entry, using the channel's own verify token.
+  //
+  // Why this exists: a WABA-level override callback supersedes the app-level
+  // webhook config, and Meta delivers inbound only to whatever URL is set
+  // there. Without this call an operator can paste valid credentials and the
+  // channel still receives NOTHING (the symptom: messages never reach the
+  // inbox, the bot never replies) — either because no callback was ever set,
+  // or because the number was migrated from another system that left a stale
+  // override pointing elsewhere. This overwrites it with our per-org URL.
+  //
+  // Meta GET-verifies the URL (hub.verify_token must match) before accepting,
+  // which our GET /whatsapp/webhook/:orgId handler already satisfies. On
+  // success we flip the channel active so the bot can reply immediately.
+  r.post(
+    '/whatsapp/subscribe',
+    {
+      schema: {
+        tags: ['whatsapp'],
+        summary: 'Register this org’s webhook callback on the WABA + activate the channel.',
+        response: { 200: itemEnvelopeSchema(whatsappSubscribeResultSchema) },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const channel = await app.tenant(req, (tx) =>
+        tx.whatsAppChannel.findFirst({ where: { organizationId: orgId, isPrimary: true } }),
+      );
+      if (!channel) throw notFound('WhatsApp channel not configured.');
+
+      const callbackUrl = webhookCallbackUrl(orgId);
+      // Need an access token (to call Graph) and a WABA id (the subscription
+      // target). The app secret is also required for the actual inbound HMAC
+      // later, but it's not needed to register the callback — we surface a
+      // clear status instead of a half-working connect.
+      if (!channel.accessToken || !channel.wabaId) {
+        return {
+          data: {
+            ok: false,
+            status: 'missing_credentials',
+            callbackUrl,
+            activated: false,
+            errorMessage: 'Set the access token and WhatsApp Business Account (WABA) ID first.',
+            rawSample: null,
+          },
+        };
+      }
+
+      const url = `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.wabaId)}/subscribed_apps`;
+      const params = new URLSearchParams({
+        override_callback_uri: callbackUrl,
+        verify_token: channel.webhookVerifyToken,
+      });
+      let body = '';
+      let httpStatus = 0;
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${channel.accessToken}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: params,
+          signal: AbortSignal.timeout(15_000),
+        });
+        httpStatus = res.status;
+        body = await res.text();
+      } catch (err) {
+        const status = 'network_error';
+        await app.tenant(req, (tx) =>
+          tx.whatsAppChannel.update({
+            where: { id: channel.id },
+            data: { lastVerifyStatus: status, lastVerifiedAt: new Date() },
+          }),
+        );
+        return {
+          data: {
+            ok: false,
+            status,
+            callbackUrl,
+            activated: false,
+            errorMessage: err instanceof Error ? err.message : 'fetch failed',
+            rawSample: null,
+          },
+        };
+      }
+
+      let parsed: Record<string, unknown> | null = null;
+      try {
+        parsed = JSON.parse(body) as Record<string, unknown>;
+      } catch {
+        parsed = null;
+      }
+      const success =
+        httpStatus >= 200 && httpStatus < 300 && parsed?.success === true;
+
+      if (!success) {
+        // Meta returns { error: { code, message, type, fbtrace_id } }. The
+        // most common failures: code 190 (token invalid/expired), or a
+        // callback-verification failure when our GET endpoint didn't echo the
+        // challenge (rare — our endpoint is public + verified, but the URL
+        // must be reachable from Meta and the token must match).
+        const errObj = (parsed?.error ?? {}) as Record<string, unknown>;
+        const code = typeof errObj.code === 'number' ? errObj.code : null;
+        const msg = typeof errObj.message === 'string' ? errObj.message : `HTTP ${httpStatus}`;
+        const status =
+          code === 190
+            ? 'token_invalid'
+            : /callback|verify|url/i.test(msg)
+              ? 'verify_failed'
+              : `http_${httpStatus}`;
+        await app.tenant(req, (tx) =>
+          tx.whatsAppChannel.update({
+            where: { id: channel.id },
+            data: { lastVerifyStatus: `subscribe_${status}`, lastVerifiedAt: new Date() },
+          }),
+        );
+        return {
+          data: {
+            ok: false,
+            status,
+            callbackUrl,
+            activated: false,
+            errorMessage: msg,
+            rawSample: body.slice(0, 500),
+          },
+        };
+      }
+
+      // Subscribed. Flip the channel active so the bot can send replies, and
+      // record the success. We only auto-activate when an app secret is also
+      // present (inbound HMAC verification needs it); otherwise inbound would
+      // still be rejected at the webhook with a 403, so we leave it inactive
+      // and tell the operator to add the app secret.
+      const canActivate = !!channel.appSecret;
+      await app.tenant(req, (tx) =>
+        tx.whatsAppChannel.update({
+          where: { id: channel.id },
+          data: {
+            lastVerifyStatus: 'subscribed',
+            lastVerifiedAt: new Date(),
+            ...(canActivate ? { isActive: true } : {}),
+          },
+        }),
+      );
+      await recordAudit({
+        action: 'business_info_updated',
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        entityType: 'whatsapp_channel',
+        entityId: channel.id,
+        metadata: { event: 'whatsapp_channel_subscribed', callbackUrl, activated: canActivate },
+      });
+
+      return {
+        data: {
+          ok: true,
+          status: 'subscribed',
+          callbackUrl,
+          activated: canActivate,
+          errorMessage: canActivate
+            ? null
+            : 'Subscribed, but the channel was left inactive because the app secret is missing — add it so inbound messages can be verified, then this will activate.',
           rawSample: null,
         },
       };
@@ -2517,12 +2690,34 @@ async function maybeReplyAsBot(args: {
     // fires, and leave the rest to the operator.
     const lastBotReply =
       [...ctx.history].reverse().find((h) => h.direction === 'outbound')?.body ?? '';
-    const HANDOFF_OFFER_RE =
-      /(connect|transfer|escalat|hand[\s-]?off|speak|talk).{0,40}(human|specialist|agent|representative|teammate|operator|colleague)/i;
-    const AFFIRMATIVE_RE =
-      /^\s*(yes|yep|yeah|yup|sure|please|ok(ay)?|y|si|sí|oui|نعم|إيه|aywa|ايوة|na'?am|طيب|تمام|of course|please do|connect me|go ahead|do it|sounds good)[\s.!,?]*\s*$/i;
-    const isHandoffConfirm =
-      HANDOFF_OFFER_RE.test(lastBotReply) && AFFIRMATIVE_RE.test(m.bodyText!);
+    // The bot offers the handoff in the CUSTOMER's language, so detecting that
+    // offer must be multilingual. An English-only regex silently failed for
+    // Arabic / Arabizi / French offers (e.g. Lebanese "2etwasal ma3 7ada mn el
+    // team") — so the customer's "yes" was never recognised as a handoff
+    // confirmation and the thread never escalated / flagged support.
+    const HANDOFF_OFFER_RES: RegExp[] = [
+      // English: connect/transfer/speak/talk/put-you-in-touch … human/agent/team
+      /(connect|transfer|escalat|hand[\s-]?off|speak|talk|put you (?:in touch|through)|get you).{0,40}(human|specialist|agent|representative|teammate|operator|colleague|team|staff|support)/i,
+      // Levantine / Gulf Arabizi: (2/n)etwasal / wassel / ne7ki … (7ada / el) team / fari2
+      /(twasal|etwasal|netwasal|wasse?l|wassl|ne7ki|n7ki|7ki).{0,40}(team|fari[2q]|7ada)/i,
+      // Arabic script: connect/talk + team/someone/staff/support
+      /(أوصلك|نوصلك|نوصّلك|تواصل|نتواصل|أتواصل|نحكي|تحكي|نحكيك).{0,40}(الفريق|فريق|حدا|أحد|موظف|الدعم|زميل|الزملاء)/,
+      /(فريق|الدعم|موظف).{0,30}(يساعدك|للمساعدة|يتواصل|يرد)/,
+      // French: contacter / mettre en contact / parler / transférer … agent/équipe/humain
+      /(contacter|mettre en (?:contact|relation)|parler|transf[ée]rer|joindre|passer).{0,40}(agent|conseiller|[ée]quipe|collaborateur|humain|membre|support)/i,
+    ];
+    const isHandoffOffer = HANDOFF_OFFER_RES.some((re) => re.test(lastBotReply));
+    // Affirmative = a SHORT reply (≤4 words) containing a yes-word in any
+    // supported language/dialect. The previous whole-string anchor rejected
+    // multi-word affirmatives like "eh akid" / "aywa akid" / "oui bien sûr".
+    const AFFIRMATIVE_WORD_RE =
+      /(^|\s)(yes|yep|yeah|yup|sure|please|ok(ay)?|oui|si|sí|d'accord|na'?am|aywa|ay?wa|akid|2akid|ee+|eh|tab|tayyeb|mashi|tmam|tamam|نعم|إيه|ايه|اي|ايوة|أيوة|أكيد|اكيد|طيب|تمام|ماشي|اوكي|أوكي)(\s|$)/i;
+    const userMsgTrim = (m.bodyText ?? '').trim();
+    const isAffirmative =
+      userMsgTrim.length > 0 &&
+      userMsgTrim.split(/\s+/).length <= 4 &&
+      AFFIRMATIVE_WORD_RE.test(userMsgTrim);
+    const isHandoffConfirm = isHandoffOffer && isAffirmative;
 
     if (isHandoffConfirm) {
       // Prefer the org's configured escalation fallback so it carries
@@ -2575,7 +2770,10 @@ async function maybeReplyAsBot(args: {
           await tx.whatsAppThread.update({
             where: { id: ctx.threadId },
             data: {
-              status: 'pending',
+              // 'escalated' (not 'pending') so the bot-skip guard below
+              // actually stops auto-replying and the inbox surfaces it as
+              // needing a human — matches the [HANDOFF] marker path.
+              status: 'escalated',
               lastMessageAt: new Date(),
               lastMessagePreview: confirmText.slice(0, 200),
               outboundCount: { increment: 1 },
@@ -2589,6 +2787,18 @@ async function maybeReplyAsBot(args: {
               body: '🤖 → 👤 Bot escalated to human (customer confirmed handoff).',
             },
           });
+        });
+        // Flag support to the team in the notifications bell too, so a
+        // handoff isn't silently buried in the thread.
+        void (await import('../../lib/notifications.js')).createNotification({
+          organizationId: args.organizationId,
+          kind: 'cart_received',
+          severity: 'warning',
+          title: 'Customer needs a human',
+          body: `${(ctx as { customerName?: string | null }).customerName ?? m.from} confirmed a handoff — reply in the inbox.`,
+          link: `/inbox?thread=${ctx.threadId}`,
+          entityType: 'whatsapp_thread',
+          entityId: ctx.threadId,
         });
       } catch (err) {
         args.log.warn({ err }, '[whatsapp] handoff-confirm send failed');

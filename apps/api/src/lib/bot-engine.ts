@@ -62,6 +62,8 @@ export interface BotData {
     priceMinor: number | null;
     currency: string | null;
     shortDescription: string | null;
+    // Full description (HTML possible) — nutrition / ingredients / specs.
+    description: string | null;
     // Phase 2 follow-up — operator-facing fields the customer wants the
     // bot to mention when describing a product.
     categoryName: string | null;
@@ -289,6 +291,10 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
         priceMinor: true,
         currency: true,
         shortDescription: true,
+        // Full description carries nutrition / ingredients / spec details
+        // (e.g. "41g protein") the customer asks about. Packed into the
+        // prompt (HTML-stripped) so the bot can answer instead of handing off.
+        description: true,
         // Phase 2 Step 3 — vector for top-K ranking. Returned as Float[]
         // (double precision[] in Postgres). Empty array means "not yet
         // embedded" — the ranker handles that gracefully.
@@ -372,6 +378,7 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
     priceMinor: p.priceMinor,
     currency: p.currency,
     shortDescription: p.shortDescription,
+    description: (p as { description?: string | null }).description ?? null,
     categoryName:
       (p as { category?: { name: string } | null }).category?.name ?? null,
     variants:
@@ -759,6 +766,15 @@ export async function buildBotResponse(
     `# Image marker (load-bearing)`,
     `When you mention a specific catalog product by NAME — describing it, suggesting it, confirming an add, or the customer asked to see it — end the reply with: [IMAGE: <SKU>] on its own line. The marker IS the attachment; words like "here's a pic" or 📷 send NOTHING. SKU must match CATALOG exactly. Multiple products: one marker per line.`,
     `Product-mention rule: when a reply mentions a product, include its short description (the text after " — " in the catalog line), its price in ${currencyCode}, and the [IMAGE: <SKU>] marker — all in one reply. The customer should never need to ask "and the price?" or "send me the image?".`,
+    // Menu / recommendation behaviour — load-bearing. Without this the bot
+    // parrots a generic intent template ("Here's our menu…") or hands off
+    // instead of actually listing what's in the Catalog.
+    `# Menu & recommendations (load-bearing)`,
+    `- When the customer asks what you have, for "the menu", for recommendations, or for a category ("something healthy", "drinks", "desserts", "sandwiches"...), you MUST LIST the matching products from the Catalog below — each as: name + price in ${currencyCode} + a few words of description. Match by the product's "cat:" tag when they name a category. This applies EVEN IF an intent template matched: a template like "Here's our menu…" is only framing — never send it without the actual product list.`,
+    `- NEVER say you don't have menu / product / item info when the Catalog has products. The Catalog IS your menu. Saying "I don't have the menu" while products are listed is a hard error.`,
+    `- Answer specific product questions (ingredients, nutrition, protein/calories, allergens, size, spice level) from that product's description in the Catalog. The description after "·" may contain these details (e.g. "41g protein") — read it before saying you don't know.`,
+    `- Near-miss: if the customer names an item you can't find exactly, DON'T jump to a human handoff. Suggest the closest available alternative(s) from the Catalog first (e.g. a "taouk"/"tawook" request → the closest taouk/chicken wrap you carry). Only offer a human when they ask for one, or you truly can't help from the Catalog/FAQs.`,
+    `- Images when recommending: when you recommend or list specific products (up to ~4 in one reply), add each one's [IMAGE: <SKU>] marker on its own line at the end so the customer sees the photos. For a long full-menu dump, skip images to avoid spamming.`,
     // Customer-service handoff protocol — when a customer explicitly asks
     // for human support / customer service / a real agent / to stop
     // talking to a bot, acknowledge briefly, tell them a teammate will
@@ -920,7 +936,17 @@ export async function buildBotResponse(
                   )
                   .join(', ')}]`
               : '';
-            const desc = p.shortDescription ? ` · ${p.shortDescription.slice(0, 120)}` : '';
+            // Prefer the full description (carries nutrition / ingredients /
+            // specs like "41g protein"); fall back to the short one. Strip
+            // HTML the rich-text editor leaves behind, collapse whitespace,
+            // cap length so one product can't crowd the prompt.
+            const rawDesc = (p.description && p.description.trim()) || p.shortDescription || '';
+            const cleanDesc = rawDesc
+              .replace(/<[^>]*>/g, ' ')
+              .replace(/&nbsp;/gi, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+            const desc = cleanDesc ? ` · ${cleanDesc.slice(0, 300)}` : '';
             return `- ${p.name}${priceTag}${catTag}${desc}${varTag}${imgTag} · sku-ref:${p.sku}`;
           })
           .join('\n')}`

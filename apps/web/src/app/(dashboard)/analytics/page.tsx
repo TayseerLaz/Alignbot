@@ -127,45 +127,13 @@ export default function AnalyticsPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Activity className="size-4" /> Top keywords
+                  <Activity className="size-4" /> Top sentences
                 </CardTitle>
-                <CardDescription>Most frequent words across all inbound messages.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {a.topQueries.length === 0 ? (
-                  <p className="text-sm text-foreground-muted">Not enough inbound text yet.</p>
-                ) : (
-                  <ul className="space-y-1 text-sm">
-                    {a.topQueries.map((q) => (
-                      <li key={q.word} className="flex items-center justify-between">
-                        <span className="font-mono">{q.word}</span>
-                        <Badge variant="muted">{q.count}</Badge>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Full-message clustering + product/service mentions — three
-              cards stacked in a responsive grid so each gets enough
-              horizontal space for long content. */}
-          <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Activity className="size-4" /> Top messages
-                </CardTitle>
-                <CardDescription>
-                  The same inbound text asked more than once. Useful for spotting missing FAQs.
-                </CardDescription>
+                <CardDescription>Most frequent full messages customers send.</CardDescription>
               </CardHeader>
               <CardContent>
                 {a.topMessages.length === 0 ? (
-                  <p className="text-sm text-foreground-muted">
-                    No repeated questions yet — every inbound so far is unique.
-                  </p>
+                  <p className="text-sm text-foreground-muted">Not enough inbound messages yet.</p>
                 ) : (
                   <ul className="space-y-1.5 text-sm">
                     {a.topMessages.map((q, i) => (
@@ -178,7 +146,12 @@ export default function AnalyticsPage() {
                 )}
               </CardContent>
             </Card>
+          </div>
 
+          {/* Full-message clustering + product/service mentions — three
+              cards stacked in a responsive grid so each gets enough
+              horizontal space for long content. */}
+          <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">

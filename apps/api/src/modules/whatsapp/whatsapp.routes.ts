@@ -4465,6 +4465,11 @@ async function maybeReplyAsBot(args: {
       // provenance write. Writing provenance from inside the tx would race
       // the message-row FK (provenance.message_id → whatsapp_messages.id).
       let botMessageId: string | null = null;
+      // When an order is captured we send a deterministic confirmation
+      // (order ref + line items + total) AFTER the tx commits — the LLM's
+      // own "order placed" reply can't include the server-generated order
+      // number or a guaranteed total, so we append a clean receipt.
+      let orderConfirmation: { body: string } | null = null;
       await withRlsBypass(async (tx) => {
         const thread = await tx.whatsAppThread.findFirst({
           where: { organizationId: args.organizationId, customerPhone: m.from },
@@ -4804,10 +4809,73 @@ async function maybeReplyAsBot(args: {
               entityId: cart.id,
               metadata: { capturedVia: usedMarkerFallback ? 'marker_fallback' : 'parsed_draft' },
             });
+            // Build the customer-facing order receipt (sent after commit).
+            // Mostly numbers + a short order ref so it reads cleanly in any
+            // language; the line items echo what they ordered.
+            const itemLines = lineItems
+              .map((it) => `• ${it.name}${it.quantity > 1 ? ` ×${it.quantity}` : ''}`)
+              .join('\n');
+            orderConfirmation = {
+              body:
+                `✅ Order #${cart.id.slice(0, 8)}\n` +
+                `${itemLines}\n` +
+                `Total: ${formatMoney(totalMinor, shopForm.currency)}`,
+            };
           }
         }
       });
       stopwatch.lap('persist');
+
+      // Send the deterministic order receipt (order ref + items + total) once
+      // the cart row is committed. Separate from the LLM reply on purpose:
+      // the model already said "order placed" but can't know the order number
+      // or guarantee the total. Persist it so it shows in the inbox too.
+      if (orderConfirmation && ctx.channel.phoneNumberId && ctx.channel.accessToken) {
+        const confBody = (orderConfirmation as { body: string }).body;
+        try {
+          const res = await fetch(
+            `https://graph.facebook.com/v20.0/${encodeURIComponent(ctx.channel.phoneNumberId)}/messages`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${ctx.channel.accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                messaging_product: 'whatsapp',
+                recipient_type: 'individual',
+                to: m.from,
+                type: 'text',
+                text: { preview_url: false, body: confBody },
+              }),
+              signal: AbortSignal.timeout(10_000),
+            },
+          );
+          const txt = await res.text();
+          let confMetaId: string | null = null;
+          try {
+            confMetaId = (JSON.parse(txt) as { messages?: { id?: string }[] }).messages?.[0]?.id ?? null;
+          } catch {
+            /* ignore */
+          }
+          await withRlsBypass(async (tx) => {
+            await tx.whatsAppMessage.create({
+              data: {
+                threadId: ctx.threadId,
+                organizationId: args.organizationId,
+                direction: 'outbound',
+                metaMessageId: confMetaId,
+                toNumber: m.from,
+                messageType: 'text',
+                body: confBody,
+                rawPayload: { sentBy: 'bot', reason: 'order_confirmation' } as never,
+              },
+            });
+          });
+        } catch (err) {
+          args.log.warn({ err }, '[whatsapp] order-confirmation send failed');
+        }
+      }
 
       // Phase 8 — provenance write, AFTER the tx commits so the bot
       // message row is visible to the FK check. Fire-and-forget: any

@@ -2,7 +2,16 @@ import { z } from 'zod';
 
 import { uuidSchema } from './common.js';
 
-export const apiKeyScopes = ['read:catalog', 'read:business-info', 'read:faqs'] as const;
+export const apiKeyScopes = [
+  'read:catalog',
+  'read:business-info',
+  'read:faqs',
+  // Voice media gateway (Aseer-time voicebot). `voice:config` reads the
+  // compiled per-tenant realtime persona/grounding; `voice:calls` writes
+  // call lifecycle + transcripts.
+  'voice:config',
+  'voice:calls',
+] as const;
 export type ApiKeyScope = (typeof apiKeyScopes)[number];
 
 export const apiKeySchema = z.object({

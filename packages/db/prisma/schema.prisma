@@ -377,6 +377,9 @@ model Organization {
   messageProvenances      MessageProvenance[]
   provenanceSuppressions  ProvenanceSuppression[]
   provenanceFlagDecisions ProvenanceFlagDecision[]
+  // Voice media gateway — phone calls handled by the Aseer-time voicebot
+  voiceCalls              VoiceCall[]
+  voiceCallTurns          VoiceCallTurn[]
 
   @@index([status])
   @@map("organizations")
@@ -2441,4 +2444,68 @@ model Lead {
 
   @@index([createdAt(sort: Desc)])
   @@map("leads")
+}
+
+// ----------------------------------------------------------------------------
+// Voice calls — ingested by the Aseer-time voice media gateway over
+// /api/v1/voice/* (X-Aligned-Api-Key, scope voice:calls). One VoiceCall per
+// phone call; turns are the finalized speech transcripts (caller + assistant)
+// streamed in as the call happens. Tenant-scoped + RLS like everything else.
+// ----------------------------------------------------------------------------
+
+enum VoiceCallOutcome {
+  in_progress
+  completed
+  handoff
+  dropped
+}
+
+model VoiceCall {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  // AudioSocket call UUID — dashed-lowercase hex derived from the Asterisk
+  // UNIQUEID (SHA1), NOT an RFC 4122 uuid. Kept as text on purpose.
+  callUuid       String           @map("call_uuid")
+  // Caller ID exactly as the PBX/gateway delivered it (format varies per
+  // trunk — may or may not be E.164).
+  callerId       String?          @map("caller_id")
+  dialedExten    String?          @map("dialed_exten")
+  outcome        VoiceCallOutcome @default(in_progress)
+  // Why the call ended the way it did: the model's stated transfer reason on
+  // outcome=handoff, or the bridge's close reason (e.g. "openai-closed") on
+  // outcome=dropped. Null on clean completions.
+  handoffReason  String?          @map("handoff_reason")
+  startedAt      DateTime         @map("started_at")
+  endedAt        DateTime?        @map("ended_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  turns        VoiceCallTurn[]
+
+  @@unique([organizationId, callUuid])
+  @@index([organizationId, startedAt(sort: Desc)])
+  @@map("voice_calls")
+}
+
+model VoiceCallTurn {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  voiceCallId    String   @map("voice_call_id") @db.Uuid
+  // Client-assigned per-call monotonic sequence. The unique constraint plus
+  // createMany(skipDuplicates) makes turn ingestion idempotent under the
+  // bridge's retry-on-timeout, and (at, seq) gives a stable transcript order.
+  seq            Int
+  role           String // 'caller' | 'assistant'
+  text           String
+  at             DateTime
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  call         VoiceCall    @relation(fields: [voiceCallId], references: [id], onDelete: Cascade)
+
+  @@unique([voiceCallId, seq])
+  @@index([voiceCallId, at])
+  @@index([organizationId])
+  @@map("voice_call_turns")
 }

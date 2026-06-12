@@ -51,6 +51,7 @@ import importRoutes from './modules/imports/import.routes.js';
 import memberRoutes from './modules/members/members.routes.js';
 import notificationRoutes from './modules/notifications/notifications.routes.js';
 import readApiRoutes from './modules/read/read.routes.js';
+import voiceRoutes from './modules/voice/voice.routes.js';
 import revisionRoutes from './modules/revisions/revisions.routes.js';
 import multipartUploadRoutes from './modules/storage/multipart-upload.routes.js';
 import storageRoutes from './modules/storage/storage.routes.js';
@@ -210,9 +211,12 @@ export async function buildServer() {
     redis: getRedis(),
     nameSpace: 'aligned-rl:',
     skipOnError: true,
-    // Chatbot Read API gets its own (higher) ceiling per API key.
+    // Chatbot Read API + voice media gateway get their own (higher) ceiling
+    // per API key. Voice especially: the bridge ships every transcript turn
+    // from one VPS IP — under the per-IP bucket a busy hour of calls would
+    // 429 and silently drop transcripts.
     max: (req) =>
-      req.url.startsWith('/api/v1/read/')
+      req.url.startsWith('/api/v1/read/') || req.url.startsWith('/api/v1/voice/')
         ? env.RATE_LIMIT_READ_API_PER_SECOND
         : env.RATE_LIMIT_API_PER_SECOND,
     // Bypass for Playwright runs. Only outside production; the header is set
@@ -220,7 +224,7 @@ export async function buildServer() {
     allowList: (req) =>
       env.NODE_ENV !== 'production' && req.headers['x-e2e-run'] === '1',
     keyGenerator: (req) => {
-      if (req.url.startsWith('/api/v1/read/')) {
+      if (req.url.startsWith('/api/v1/read/') || req.url.startsWith('/api/v1/voice/')) {
         const apiKey = req.headers['x-aligned-api-key'];
         return Array.isArray(apiKey) ? apiKey[0] ?? req.ip : (apiKey ?? req.ip);
       }
@@ -263,6 +267,7 @@ export async function buildServer() {
         { name: 'webhooks', description: 'Outbound webhooks' },
         { name: 'api-keys', description: 'API keys for the chatbot read API' },
         { name: 'chatbot-read', description: 'Read-only API consumed by the WhatsApp chatbot' },
+        { name: 'voice', description: 'Voice media gateway — call config, lifecycle, transcripts' },
       ],
     },
     transform: jsonSchemaTransform,
@@ -345,6 +350,10 @@ export async function buildServer() {
 
   // Routes — chatbot read API (X-Aligned-Api-Key)
   await app.register(readApiRoutes, { prefix: '/api/v1' });
+
+  // Routes — voice media gateway (X-Aligned-Api-Key for the voicebot bridge;
+  // the two /voice/calls GET routes inside are JWT portal routes)
+  await app.register(voiceRoutes, { prefix: '/api/v1' });
 
   return app;
 }

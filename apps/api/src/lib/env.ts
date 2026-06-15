@@ -73,6 +73,14 @@ const envSchema = z.object({
   // quality regresses on a specific use case.
   ELEVENLABS_MODEL: z.string().default('eleven_flash_v2_5'),
 
+  // Voice media gateway — shared multi-tenant mode. A single platform secret
+  // (NOT org-scoped) held only by the trusted Aseer-time voicebot infra. When
+  // set, the voicebot resolves an inbound dialed number to a tenant phone line
+  // via GET /voice/resolve and posts call lifecycle with this secret +
+  // X-Phone-Integration-Id. Leave empty to disable gateway mode (those routes
+  // 503); per-line X-Aligned-Api-Key auth keeps working regardless.
+  VOICE_GATEWAY_SECRET: z.string().optional(),
+
   RATE_LIMIT_AUTH_PER_MINUTE: z.coerce.number().int().positive().default(10),
   RATE_LIMIT_API_PER_SECOND: z.coerce.number().int().positive().default(100),
   RATE_LIMIT_READ_API_PER_SECOND: z.coerce.number().int().positive().default(200),

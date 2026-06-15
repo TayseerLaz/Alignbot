@@ -20,24 +20,91 @@ import {
   endVoiceCallBodySchema,
   itemEnvelopeSchema,
   listEnvelopeSchema,
+  normalizePhoneNumber,
   startVoiceCallBodySchema,
   uuidSchema,
   voiceCallDetailSchema,
   voiceCallSchema,
   voiceCallUuidSchema,
   voiceConfigSchema,
+  voiceResolveResponseSchema,
 } from '@aligned/shared';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { gatherBotData } from '../../lib/bot-engine.js';
-import { withTenant } from '../../lib/db.js';
+import { withRlsBypass, withTenant } from '../../lib/db.js';
 import type { Tx } from '../../lib/db.js';
-import { conflict, forbidden, notFound } from '../../lib/errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../../lib/errors.js';
 import { readCacheGet, readCacheSet } from '../../lib/read-cache.js';
 import { compileVoiceConfig } from '../../lib/voice-prompt.js';
 import { decodeCursor, encodeCursor } from '../catalog/shared.js';
+
+type VoiceConfigEnvelope = { data: z.infer<typeof voiceConfigSchema> };
+
+// Compile (or fetch from the 60s-fresh / 5min-stale Redis cache) the org's
+// realtime voice config. Shared by GET /voice/config (api-key) and
+// GET /voice/resolve (gateway) so both serve byte-identical, co-invalidated
+// config. The cache key is the same one catalog writes flush.
+async function loadVoiceConfig(
+  orgId: string,
+): Promise<{ value: VoiceConfigEnvelope; cache: 'HIT' | 'STALE' | 'MISS' }> {
+  const hit = await readCacheGet<VoiceConfigEnvelope>(orgId, 'voice-config', null);
+  if (hit && !hit.stale) return { value: hit.value, cache: 'HIT' };
+  const value = await withTenant(orgId, async (tx) => {
+    const org = await tx.organization.findUnique({ where: { id: orgId }, select: { name: true } });
+    const data = await gatherBotData(tx, orgId);
+    return { data: compileVoiceConfig(data, org?.name ?? 'this business') };
+  });
+  await readCacheSet(orgId, 'voice-config', null, value);
+  return { value, cache: hit?.stale ? 'STALE' : 'MISS' };
+}
+
+// Resolved identity for a call-lifecycle write. Two credentials map onto it:
+//   • X-Aligned-Api-Key  → org from the key; line by apiKeyId (attribution).
+//   • X-Voice-Gateway-Secret + X-Phone-Integration-Id → org + line from the
+//     referenced phone integration (shared gateway mode, cross-tenant).
+type VoiceWriteCtx = { orgId: string; phoneIntegrationId: string | null };
+
+async function authenticateVoiceWrite(
+  app: FastifyInstance,
+  req: FastifyRequest,
+): Promise<VoiceWriteCtx> {
+  const gwRaw = req.headers['x-voice-gateway-secret'];
+  const gw = Array.isArray(gwRaw) ? gwRaw[0] : gwRaw;
+  if (gw) {
+    await app.requireVoiceGateway(req);
+    const pidRaw = req.headers['x-phone-integration-id'];
+    const pid = Array.isArray(pidRaw) ? pidRaw[0] : pidRaw;
+    const parsed = uuidSchema.safeParse(pid);
+    if (!parsed.success) {
+      throw badRequest(
+        ApiErrorCode.VALIDATION_ERROR,
+        'Gateway mode requires a valid X-Phone-Integration-Id header.',
+      );
+    }
+    const line = await withRlsBypass((tx) =>
+      tx.phoneIntegration.findFirst({
+        where: { id: parsed.data, isActive: true },
+        select: { id: true, organizationId: true },
+      }),
+    );
+    if (!line) throw notFound('Phone integration not found or inactive.');
+    return { orgId: line.organizationId, phoneIntegrationId: line.id };
+  }
+  // Dedicated single-line mode — the existing X-Aligned-Api-Key path.
+  await app.requireApiKey(req);
+  requireScope(req, 'voice:calls');
+  const orgId = req.apiKey!.organizationId;
+  const line = await withRlsBypass((tx) =>
+    tx.phoneIntegration.findFirst({
+      where: { apiKeyId: req.apiKey!.id },
+      select: { id: true },
+    }),
+  );
+  return { orgId, phoneIntegrationId: line?.id ?? null };
+}
 
 // Cumulative ceiling per call. A real phone call produces a few hundred turns
 // at most; the cap exists so a leaked voice:calls key cannot grow one call's
@@ -85,23 +152,8 @@ export default async function voiceRoutes(app: FastifyInstance) {
     async (req, reply) => {
       requireScope(req, 'voice:config');
       const orgId = req.apiKey!.organizationId;
-
-      type Envelope = { data: z.infer<typeof voiceConfigSchema> };
-      const hit = await readCacheGet<Envelope>(orgId, 'voice-config', null);
-      if (hit && !hit.stale) {
-        reply.header('x-cache', 'HIT');
-        return hit.value;
-      }
-      const value = await withTenant(orgId, async (tx) => {
-        const org = await tx.organization.findUnique({
-          where: { id: orgId },
-          select: { name: true },
-        });
-        const data = await gatherBotData(tx, orgId);
-        return { data: compileVoiceConfig(data, org?.name ?? 'this business') };
-      });
-      await readCacheSet(orgId, 'voice-config', null, value);
-      reply.header('x-cache', hit?.stale ? 'STALE' : 'MISS');
+      const { value, cache } = await loadVoiceConfig(orgId);
+      reply.header('x-cache', cache);
       return value;
     },
   );
@@ -117,17 +169,15 @@ export default async function voiceRoutes(app: FastifyInstance) {
         response: { 201: itemEnvelopeSchema(z.object({ id: uuidSchema })) },
         security: [{ apiKey: [] }],
       },
-      preHandler: [app.requireApiKey],
     },
     async (req, reply) => {
-      requireScope(req, 'voice:calls');
-      const orgId = req.apiKey!.organizationId;
+      const { orgId, phoneIntegrationId } = await authenticateVoiceWrite(app, req);
       const b = req.body;
       const row = await withTenant(orgId, async (tx) => {
         // Never overwrite stored metadata (call records are historical), but
         // DO fill nulls: when turns/end arrived first, ensureCall created the
-        // row with no callerId/dialedExten and the late start event carries
-        // them.
+        // row with no callerId/dialedExten/line and the late start event
+        // carries them.
         const call = await tx.voiceCall.upsert({
           where: { organizationId_callUuid: { organizationId: orgId, callUuid: b.callUuid } },
           update: {},
@@ -136,6 +186,7 @@ export default async function voiceRoutes(app: FastifyInstance) {
             callUuid: b.callUuid,
             callerId: b.callerId ?? null,
             dialedExten: b.dialedExten ?? null,
+            phoneIntegrationId,
             startedAt: b.startedAt ? new Date(b.startedAt) : new Date(),
           },
           select: { id: true },
@@ -150,6 +201,17 @@ export default async function voiceRoutes(app: FastifyInstance) {
           await tx.voiceCall.updateMany({
             where: { id: call.id, dialedExten: null },
             data: { dialedExten: b.dialedExten },
+          });
+        }
+        if (phoneIntegrationId != null) {
+          await tx.voiceCall.updateMany({
+            where: { id: call.id, phoneIntegrationId: null },
+            data: { phoneIntegrationId },
+          });
+          // Best-effort recency stamp for the line (updateMany = no-op if gone).
+          await tx.phoneIntegration.updateMany({
+            where: { id: phoneIntegrationId },
+            data: { lastCallAt: new Date() },
           });
         }
         return call;
@@ -171,11 +233,9 @@ export default async function voiceRoutes(app: FastifyInstance) {
         response: { 200: itemEnvelopeSchema(z.object({ appended: z.number().int() })) },
         security: [{ apiKey: [] }],
       },
-      preHandler: [app.requireApiKey],
     },
     async (req) => {
-      requireScope(req, 'voice:calls');
-      const orgId = req.apiKey!.organizationId;
+      const { orgId } = await authenticateVoiceWrite(app, req);
       const { callUuid } = req.params;
       const appended = await withTenant(orgId, async (tx) => {
         const call = await ensureCall(tx, orgId, callUuid);
@@ -214,11 +274,9 @@ export default async function voiceRoutes(app: FastifyInstance) {
         response: { 200: itemEnvelopeSchema(z.object({ id: uuidSchema })) },
         security: [{ apiKey: [] }],
       },
-      preHandler: [app.requireApiKey],
     },
     async (req) => {
-      requireScope(req, 'voice:calls');
-      const orgId = req.apiKey!.organizationId;
+      const { orgId } = await authenticateVoiceWrite(app, req);
       const { callUuid } = req.params;
       const b = req.body;
       const row = await withTenant(orgId, async (tx) => {
@@ -239,6 +297,45 @@ export default async function voiceRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- GET /voice/resolve --------------------------------------------
+  // Shared gateway mode: map an inbound dialed number (DID) to the tenant phone
+  // line that owns it + the compiled (org-wide) voice config. Auth is the
+  // platform gateway secret, not an org key — this is the one cross-tenant read.
+  r.get(
+    '/voice/resolve',
+    {
+      schema: {
+        tags: ['voice'],
+        summary:
+          'Resolve a dialed number to its tenant phone line + compiled voice config (gateway-secret auth).',
+        querystring: z.object({ did: z.string().trim().min(1).max(40) }),
+        response: { 200: itemEnvelopeSchema(voiceResolveResponseSchema) },
+      },
+      preHandler: [app.requireVoiceGateway],
+    },
+    async (req, reply) => {
+      const did = normalizePhoneNumber(req.query.did);
+      if (did.length < 2) throw notFound('No phone line matches that number.');
+      const line = await withRlsBypass((tx) =>
+        tx.phoneIntegration.findFirst({
+          where: { phoneNumber: did, isActive: true },
+          select: { id: true, organizationId: true },
+        }),
+      );
+      if (!line) throw notFound('No active phone line matches that number.');
+
+      const { value, cache } = await loadVoiceConfig(line.organizationId);
+      reply.header('x-cache', cache);
+      return {
+        data: {
+          ...value.data,
+          phoneIntegrationId: line.id,
+          organizationId: line.organizationId,
+        },
+      };
+    },
+  );
+
   // ===========================================================================
   // Portal half — dashboard (JWT)
   // ===========================================================================
@@ -253,6 +350,8 @@ export default async function voiceRoutes(app: FastifyInstance) {
         querystring: z.object({
           limit: z.coerce.number().int().min(1).max(200).default(50),
           cursor: z.string().optional(),
+          // Restrict to one phone line (used by the per-line "Calls" view).
+          phoneIntegrationId: uuidSchema.optional(),
         }),
         response: { 200: listEnvelopeSchema(voiceCallSchema) },
       },
@@ -262,6 +361,9 @@ export default async function voiceRoutes(app: FastifyInstance) {
       return app.tenant(req, async (tx) => {
         const cursor = decodeCursor<{ id: string }>(req.query.cursor);
         const rows = await tx.voiceCall.findMany({
+          where: req.query.phoneIntegrationId
+            ? { phoneIntegrationId: req.query.phoneIntegrationId }
+            : undefined,
           orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
           take: req.query.limit + 1,
           ...(cursor ? { cursor: { id: cursor.id }, skip: 1 } : {}),

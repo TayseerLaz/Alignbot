@@ -146,6 +146,53 @@ describe('tenant isolation', () => {
     expect(visible).toBe(0);
   });
 
+  // Phone integrations. Same gate, with an extra wrinkle: phone_number is
+  // GLOBALLY unique (it's the gateway routing key), so we also confirm that
+  // collision surfaces as a generic 409 and never leaks org B's row to org A.
+  it('a user in org A cannot read phone integrations from org B (and the global number unique does not leak)', async () => {
+    const app = getApp();
+    const a = await seedOrgAndLogin(app, 'phone-iso-a');
+    const b = await seedOrgAndLogin(app, 'phone-iso-b');
+
+    const createB = await app.inject({
+      method: 'POST',
+      url: '/api/v1/phone-integrations',
+      headers: { authorization: `Bearer ${b.accessToken}` },
+      payload: { name: 'B line', phoneNumber: '+961 1 000 000' },
+    });
+    expect(createB.statusCode).toBe(201);
+    const bLineId = (createB.json() as { data: { id: string } }).data.id;
+
+    // Org A: fetch by ID → 404
+    const fetchA = await app.inject({
+      method: 'GET',
+      url: `/api/v1/phone-integrations/${bLineId}`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect(fetchA.statusCode).toBe(404);
+
+    // Org A: list does not contain B's line
+    const listA = await app.inject({
+      method: 'GET',
+      url: '/api/v1/phone-integrations',
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect((listA.json() as { data: { id: string }[] }).data.find((l) => l.id === bLineId)).toBeUndefined();
+
+    // Org A registering B's number (same normalized DID) → generic 409, no leak.
+    const dupA = await app.inject({
+      method: 'POST',
+      url: '/api/v1/phone-integrations',
+      headers: { authorization: `Bearer ${a.accessToken}` },
+      payload: { name: 'A dup', phoneNumber: '961-1-000-000' },
+    });
+    expect(dupA.statusCode).toBe(409);
+
+    // Postgres-level: B's line row is invisible bound to org A.
+    const visibleToA = await probeRls('phone_integrations', bLineId, a.orgId);
+    expect(visibleToA).toBe(0);
+  });
+
   it('Postgres RLS hides org B api_connector rows from org A', async () => {
     const app = getApp();
     const a = await seedOrgAndLogin(app, 'rls-conn-a');

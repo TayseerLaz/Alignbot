@@ -52,11 +52,13 @@ import memberRoutes from './modules/members/members.routes.js';
 import notificationRoutes from './modules/notifications/notifications.routes.js';
 import readApiRoutes from './modules/read/read.routes.js';
 import voiceRoutes from './modules/voice/voice.routes.js';
+import phoneIntegrationRoutes from './modules/voice/phone-integration.routes.js';
 import revisionRoutes from './modules/revisions/revisions.routes.js';
 import multipartUploadRoutes from './modules/storage/multipart-upload.routes.js';
 import storageRoutes from './modules/storage/storage.routes.js';
 import webhookEndpointRoutes from './modules/webhooks/webhooks.routes.js';
 import apiKeyPlugin from './plugins/api-key.js';
+import voiceGatewayPlugin from './plugins/voice-gateway.js';
 import authPlugin from './plugins/auth.js';
 import errorHandler from './plugins/error-handler.js';
 import healthcheck from './plugins/healthcheck.js';
@@ -302,6 +304,7 @@ export async function buildServer() {
   await app.register(healthcheck);
   await app.register(authPlugin);
   await app.register(apiKeyPlugin);
+  await app.register(voiceGatewayPlugin);
   await app.register(tenantContext);
 
   // Routes — portal (JWT cookie/bearer)
@@ -319,6 +322,7 @@ export async function buildServer() {
   await app.register(connectorRoutes, { prefix: '/api/v1' });
   await app.register(webhookEndpointRoutes, { prefix: '/api/v1' });
   await app.register(apiKeyRoutes, { prefix: '/api/v1' });
+  await app.register(phoneIntegrationRoutes, { prefix: '/api/v1' });
   await app.register(revisionRoutes, { prefix: '/api/v1' });
   await app.register(notificationRoutes, { prefix: '/api/v1' });
   await app.register(dashboardRoutes, { prefix: '/api/v1' });

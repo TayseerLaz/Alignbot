@@ -33,3 +33,6 @@ export const tooMany = (message = 'Too many requests.') =>
 
 export const internal = (message = 'Internal server error.') =>
   new HttpError(500, ApiErrorCode.INTERNAL, message);
+
+export const serviceUnavailable = (message = 'Service unavailable.') =>
+  new HttpError(503, ApiErrorCode.SERVICE_UNAVAILABLE, message);

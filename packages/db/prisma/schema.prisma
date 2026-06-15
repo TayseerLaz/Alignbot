@@ -146,6 +146,10 @@ enum AuditAction {
   cart_deleted
   // AI plan tier (basic / middle / max) changed by an ALIGNED admin.
   ai_plan_changed
+  // Phone integrations (voice gateway)
+  phone_integration_created
+  phone_integration_updated
+  phone_integration_deleted
 }
 
 enum RevisionEntityType {
@@ -380,6 +384,7 @@ model Organization {
   // Voice media gateway — phone calls handled by the Aseer-time voicebot
   voiceCalls              VoiceCall[]
   voiceCallTurns          VoiceCallTurn[]
+  phoneIntegrations       PhoneIntegration[]
 
   @@index([status])
   @@map("organizations")
@@ -548,6 +553,10 @@ model ApiKey {
   createdAt      DateTime  @default(now()) @map("created_at")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // A voice key auto-issued for a phone line back-links here (onDelete SetNull
+  // on the line side; revoking the key leaves the line keyless rather than
+  // dangling).
+  phoneIntegration PhoneIntegration?
 
   @@index([organizationId])
   @@index([revokedAt])
@@ -2475,17 +2484,59 @@ model VoiceCall {
   // outcome=handoff, or the bridge's close reason (e.g. "openai-closed") on
   // outcome=dropped. Null on clean completions.
   handoffReason  String?          @map("handoff_reason")
+  // Which phone line (PhoneIntegration) this call came in on, when known.
+  // Stamped on call start from the calling credential (the line's API key in
+  // dedicated mode, or the X-Phone-Integration-Id header in gateway mode).
+  // SetNull so deleting a line doesn't erase its call history.
+  phoneIntegrationId String?      @map("phone_integration_id") @db.Uuid
   startedAt      DateTime         @map("started_at")
   endedAt        DateTime?        @map("ended_at")
   createdAt      DateTime         @default(now()) @map("created_at")
   updatedAt      DateTime         @updatedAt @map("updated_at")
 
-  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  turns        VoiceCallTurn[]
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  phoneIntegration PhoneIntegration? @relation(fields: [phoneIntegrationId], references: [id], onDelete: SetNull)
+  turns            VoiceCallTurn[]
 
   @@unique([organizationId, callUuid])
   @@index([organizationId, startedAt(sort: Desc)])
+  @@index([phoneIntegrationId, startedAt(sort: Desc)])
   @@map("voice_calls")
+}
+
+// ----------------------------------------------------------------------------
+// PhoneIntegration — a phone line (DID) a tenant owns, routed to the Aseer-time
+// voicebot. Many per org. Each line auto-issues its own voice-scoped API key
+// (apiKeyId). phoneNumber is GLOBALLY unique so an inbound DID resolves to
+// exactly one tenant in shared gateway mode (GET /api/v1/voice/resolve).
+// Tenant-scoped + RLS like everything else; the global unique index is the only
+// cross-tenant constraint and never leaks another org's rows (a collision
+// surfaces as a generic 409).
+// ----------------------------------------------------------------------------
+
+model PhoneIntegration {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  name           String
+  // Normalized dialed number (DID). Matched against the call's dialed exten.
+  phoneNumber    String    @map("phone_number")
+  isActive       Boolean   @default(true) @map("is_active")
+  // The voice-scoped API key auto-issued for this line. SetNull if the key is
+  // revoked out-of-band; the line keeps working in gateway mode (which doesn't
+  // use the key) and can be re-keyed.
+  apiKeyId       String?   @unique @map("api_key_id") @db.Uuid
+  lastCallAt     DateTime? @map("last_call_at")
+  createdById    String?   @map("created_by_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  apiKey       ApiKey?      @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  calls        VoiceCall[]
+
+  @@unique([phoneNumber])
+  @@index([organizationId, isActive])
+  @@map("phone_integrations")
 }
 
 model VoiceCallTurn {

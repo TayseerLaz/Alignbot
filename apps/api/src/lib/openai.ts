@@ -346,7 +346,11 @@ async function completeMax(args: CompleteArgs): Promise<{ text: string; inputTok
       model: env.ANTHROPIC_MODEL,
       max_tokens: args.maxTokens ?? 1024,
       temperature: args.temperature ?? 0.4,
-      system: args.systemPrompt,
+      // Prompt caching: the per-tenant system prompt is large and largely
+      // stable, so cache it (5-min ephemeral). Cached input tokens are ~90%
+      // cheaper and skip re-processing (faster TTFT). Transparent — a miss
+      // just pays normal price + a small write cost.
+      system: [{ type: 'text', text: args.systemPrompt, cache_control: { type: 'ephemeral' } }],
       messages: args.messages.map((m) => ({ role: m.role, content: m.content })),
     });
     // Concatenate text blocks (Claude can return multi-block content).
@@ -390,7 +394,8 @@ async function completeUltra(args: CompleteArgs): Promise<{ text: string; inputT
       model: env.ANTHROPIC_ULTRA_MODEL,
       max_tokens: args.maxTokens ?? 1024,
       temperature: args.temperature ?? 0.4,
-      system: args.systemPrompt,
+      // Cache the stable per-tenant system prompt (see completeMax).
+      system: [{ type: 'text', text: args.systemPrompt, cache_control: { type: 'ephemeral' } }],
       messages: args.messages.map((m) => ({ role: m.role, content: m.content })),
     });
     const text = res.content

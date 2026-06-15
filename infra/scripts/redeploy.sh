@@ -59,15 +59,23 @@ echo "▶ Restarting services…"
 sudo systemctl restart aligned-api aligned-worker
 [ "$WEB_CHANGED" = 1 ] && sudo systemctl restart aligned-web
 
-sleep 4
 echo "▶ Service status:"
 systemctl is-active aligned-api aligned-worker aligned-web || true
 
-echo "▶ Health check:"
-if curl -fsS --max-time 15 "$API_HEALTH_URL" >/dev/null; then
-  echo "  ✓ $API_HEALTH_URL OK"
-else
-  echo "  ✗ HEALTH CHECK FAILED — investigate (journalctl -u aligned-api -n 100)"
+# Health check with retry — the api runs under tsx and cold-starts in ~10-20s,
+# so a single immediate probe gives a false 502. Poll for up to ~60s.
+echo "▶ Health check (waiting for cold start)…"
+HEALTHY=0
+for i in $(seq 1 20); do
+  if curl -fsS --max-time 10 "$API_HEALTH_URL" >/dev/null 2>&1; then
+    HEALTHY=1
+    echo "  ✓ $API_HEALTH_URL OK (after ~$(( i * 3 ))s)"
+    break
+  fi
+  sleep 3
+done
+if [ "$HEALTHY" != 1 ]; then
+  echo "  ✗ HEALTH CHECK FAILED after ~60s — investigate (journalctl -u aligned-api -n 100)"
   exit 1
 fi
 echo "✓ Deploy complete: $NEW"

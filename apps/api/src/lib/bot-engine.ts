@@ -988,7 +988,12 @@ export async function buildBotResponse(
           shopForm.deliveryFeeMinor != null
             ? `\nDelivery fee: ${shopForm.deliveryFeeMinor} minor units${shopForm.freeDeliveryAboveMinor != null ? ` (waived if subtotal ≥ ${shopForm.freeDeliveryAboveMinor} minor units)` : ''}.`
             : ''
-        }`
+        }${(() => {
+          const areas = (shopForm as { deliveryAreas?: string[] }).deliveryAreas;
+          return Array.isArray(areas) && areas.length > 0
+            ? `\nDELIVERY AREAS (load-bearing): you deliver ONLY to: ${areas.join(', ')}. When the customer gives a delivery address, check it falls within these areas. If it's clearly OUTSIDE them (e.g. a different city/country), politely tell them it's outside the delivery area, offer pickup or to connect a teammate, and DO NOT confirm the order or emit a [CART:] marker for delivery. If unsure which area, ask them.`
+            : '';
+        })()}`
       : '',
     // Phase 9 — running cart state. The caller computes this from the
     // active draft cart for this thread; the LLM can quote the total

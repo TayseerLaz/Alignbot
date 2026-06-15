@@ -398,6 +398,70 @@ function newDefaults(orgId: string) {
   };
 }
 
+/**
+ * Guard against crossed Meta-app credentials at save time.
+ *
+ * Inbound webhook verification HMACs with the channel's app_secret, and Meta
+ * signs with the secret of the app that's subscribed to the WABA. So the
+ * access token, App ID, and App Secret MUST all belong to the SAME Meta app —
+ * otherwise inbound silently fails the signature check and every customer
+ * message is dropped (the 2026-06-15 Sandwich Wnos outage: token from
+ * "Aligned Campaigns", secret from a different app). We catch the mismatch the
+ * moment it's entered instead of letting it go dark.
+ *
+ * Best-effort: only validates when a token + App ID are present, and never
+ * blocks a save on a Meta network blip — only on a DEFINITIVE mismatch.
+ */
+async function assertMetaCredentialsConsistent(
+  creds: { accessToken: string | null; appId: string | null; appSecret: string | null },
+  log: { warn: (obj: unknown, msg?: string) => void },
+): Promise<void> {
+  const { accessToken, appId, appSecret } = creds;
+  if (!accessToken || !appId) return; // not enough to check anything meaningful
+
+  // 1. Which app does the access token actually belong to?
+  let tokenAppId: string | null = null;
+  try {
+    const res = await fetch(
+      `https://graph.facebook.com/v20.0/debug_token?input_token=${encodeURIComponent(accessToken)}&access_token=${encodeURIComponent(accessToken)}`,
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    const json = (await res.json()) as { data?: { app_id?: string } };
+    tokenAppId = typeof json.data?.app_id === 'string' ? json.data.app_id : null;
+  } catch (err) {
+    log.warn({ err }, '[whatsapp] credential check: debug_token unreachable — skipping');
+    return;
+  }
+  if (tokenAppId && tokenAppId !== appId) {
+    throw badRequest(
+      ApiErrorCode.VALIDATION_ERROR,
+      `The access token belongs to Meta app ${tokenAppId}, but the App ID you entered is ${appId}. The access token, App ID, and App Secret must ALL come from the same Meta app — inbound message verification fails otherwise. Copy all three from the same app in the Meta dashboard.`,
+    );
+  }
+
+  // 2. Does the App Secret belong to that App ID? (An app access token
+  // app-id|app-secret is rejected with code 190 when the secret is wrong.)
+  if (appSecret) {
+    let secretMismatch = false;
+    try {
+      const res = await fetch(
+        `https://graph.facebook.com/v20.0/${encodeURIComponent(appId)}/subscriptions?access_token=${encodeURIComponent(appId)}|${encodeURIComponent(appSecret)}`,
+        { signal: AbortSignal.timeout(10_000) },
+      );
+      const json = (await res.json()) as { error?: { code?: number } };
+      if (json.error?.code === 190) secretMismatch = true;
+    } catch (err) {
+      log.warn({ err }, '[whatsapp] credential check: app-secret probe failed — skipping');
+    }
+    if (secretMismatch) {
+      throw badRequest(
+        ApiErrorCode.VALIDATION_ERROR,
+        `The App Secret doesn't match App ID ${appId}. Copy the App Secret from the SAME Meta app as the App ID and access token (Meta dashboard → App Settings → Basic → App Secret).`,
+      );
+    }
+  }
+}
+
 // ---- routes ---------------------------------------------------------------
 
 export default async function whatsappRoutes(app: FastifyInstance) {
@@ -449,6 +513,22 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         // Helper: undefined = leave alone, '' = clear, else set.
         const update = <T>(v: T | undefined): T | null | undefined =>
           v === undefined ? undefined : v === '' ? null : v;
+
+        // Guard crossed Meta-app credentials BEFORE persisting. Only when the
+        // operator is actually touching a credential field; validate the
+        // EFFECTIVE values (merge of existing + incoming). existing.* are
+        // decrypted by the Prisma extension, so we compare real plaintext.
+        if (b.accessToken !== undefined || b.appId !== undefined || b.appSecret !== undefined) {
+          await assertMetaCredentialsConsistent(
+            {
+              accessToken:
+                b.accessToken === undefined ? existing.accessToken : b.accessToken || null,
+              appId: b.appId === undefined ? existing.appId : b.appId || null,
+              appSecret: b.appSecret === undefined ? existing.appSecret : b.appSecret || null,
+            },
+            req.log,
+          );
+        }
 
         const updated = await tx.whatsAppChannel.update({
           where: { id: existing.id },

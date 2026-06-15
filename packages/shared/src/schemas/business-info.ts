@@ -111,6 +111,13 @@ export const shopFormSchema = z
     // as a string (not URL-typed) so the operator can paste anything;
     // empty/null means "no menu link configured — skip the rule".
     menuUrl: z.string().trim().max(500).nullable().default(null),
+    // Serviceable delivery areas (free-text city / district / zone names,
+    // e.g. ["Salmiya", "Hawalli"]). When non-empty the bot only accepts
+    // delivery to these areas; for an out-of-area address it politely
+    // declines + offers pickup or a teammate and does NOT confirm the order.
+    // Empty = deliver anywhere (no constraint). Fixes the "Beirut address on
+    // a Kuwait shop" class where the bot blindly accepted undeliverable orders.
+    deliveryAreas: z.array(z.string().trim().min(1).max(80)).max(60).default([]),
   })
   .strict();
 export type ShopFormDto = z.infer<typeof shopFormSchema>;

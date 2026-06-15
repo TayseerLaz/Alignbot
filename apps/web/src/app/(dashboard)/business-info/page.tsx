@@ -1262,6 +1262,9 @@ interface ShopFormDraft {
   // Public menu URL — the bot sends this when the customer asks about
   // the menu. Empty string = no link configured.
   menuUrl: string;
+  // Serviceable delivery areas, comma-separated in the UI (stored as an
+  // array). Empty = deliver anywhere. The bot refuses out-of-area addresses.
+  deliveryAreas: string;
 }
 
 function defaultShopForm(): ShopFormDraft {
@@ -1287,6 +1290,7 @@ function defaultShopForm(): ShopFormDraft {
     confirmationMessage:
       "Got it! Order #{{cart_id_short}} is confirmed. Total {{total}}. We'll be in touch shortly. 🙏",
     menuUrl: '',
+    deliveryAreas: '',
   };
 }
 
@@ -1358,6 +1362,7 @@ function ShopFormPanel() {
           freeDeliveryAboveMinor?: number | null;
           confirmationMessage?: string;
           menuUrl?: string | null;
+          deliveryAreas?: string[];
         };
       } | null
     )?.shopForm;
@@ -1381,6 +1386,7 @@ function ShopFormPanel() {
         confirmationMessage:
           incoming.confirmationMessage ?? defaultShopForm().confirmationMessage,
         menuUrl: incoming.menuUrl ?? '',
+        deliveryAreas: (incoming.deliveryAreas ?? []).join(', '),
       });
       setKeywordsInput((incoming.intentKeywords ?? []).join(', '));
     } else {
@@ -1418,6 +1424,10 @@ function ShopFormPanel() {
           // Send null when blank so the engine treats the field as
           // explicitly unset instead of as an empty string.
           menuUrl: draft.menuUrl.trim() || null,
+          deliveryAreas: draft.deliveryAreas
+            .split(/[,\n]+/)
+            .map((s) => s.trim())
+            .filter(Boolean),
         },
       }),
     onSuccess: () => {
@@ -1617,6 +1627,22 @@ function ShopFormPanel() {
               Public URL to your online menu / catalog. When set, the bot sends this link
               whenever the customer asks about the menu (e.g. &quot;menu link&quot;, &quot;what do you
               have&quot;, &quot;show me your menu&quot;). Leave blank to skip the rule.
+            </p>
+          </div>
+
+          <div>
+            <Label htmlFor="shop-delivery-areas">Delivery areas (optional)</Label>
+            <Input
+              id="shop-delivery-areas"
+              value={draft.deliveryAreas}
+              onChange={(e) => setDraft((d) => ({ ...d, deliveryAreas: e.target.value }))}
+              placeholder="Salmiya, Hawalli, Kuwait City"
+            />
+            <p className="mt-1 text-xs text-foreground-muted">
+              Comma-separated areas you deliver to. When set, the bot only accepts delivery
+              to these areas — for an out-of-area address it politely declines and offers
+              pickup or a teammate (instead of confirming an undeliverable order). Leave
+              blank to deliver anywhere.
             </p>
           </div>
 

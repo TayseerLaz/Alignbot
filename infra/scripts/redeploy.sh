@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Reliable manual deploy for the Aligned/Hader server (run ON the server).
+#
+# Why this exists: the manual SSH deploy used to "git reset + restart" and skip
+# rebuilding the workspace packages that api/worker import as COMPILED dist
+# (@aligned/db, @aligned/shared, both gitignored). Skipping that shipped stale
+# Zod schemas / Prisma client — a fix would "deploy" but not take effect (the
+# 2026-06-12 overnight-hours incident). This script ALWAYS rebuilds those
+# packages, regenerates the Prisma client, runs migrations, rebuilds web only
+# when web source changed, reinstalls only when the lockfile changed, restarts
+# the services, and health-checks. One command, no skippable steps.
+#
+# Usage:  bash infra/scripts/redeploy.sh
+set -euo pipefail
+
+APP_DIR=${APP_DIR:-/opt/aligned/app}
+API_HEALTH_URL=${API_HEALTH_URL:-https://api.hader.ai/health}
+cd "$APP_DIR"
+
+echo "▶ Fetching origin/main…"
+PREV=$(git rev-parse HEAD)
+git fetch origin --quiet
+git reset --hard origin/main
+NEW=$(git rev-parse HEAD)
+echo "  $PREV → $NEW"
+
+CHANGED=$(git diff --name-only "$PREV" "$NEW" || true)
+
+# Load production env (DATABASE_URL/DIRECT_DATABASE_URL for prisma, NEXT_PUBLIC_*
+# baked into the web build, SECRET_ENCRYPTION_KEY for the crypto extension).
+set -a; . ./.env.production; set +a
+
+if echo "$CHANGED" | grep -q '^pnpm-lock.yaml$'; then
+  echo "▶ Lockfile changed — pnpm install…"
+  pnpm install --frozen-lockfile
+fi
+
+echo "▶ Regenerating Prisma client…"
+pnpm --filter @aligned/db exec prisma generate >/dev/null
+
+echo "▶ Rebuilding workspace packages consumed as dist (ALWAYS)…"
+pnpm --filter @aligned/db build
+pnpm --filter @aligned/shared build
+
+echo "▶ Applying migrations…"
+pnpm --filter @aligned/db exec prisma migrate deploy
+
+WEB_CHANGED=0
+if echo "$CHANGED" | grep -q '^apps/web/'; then
+  echo "▶ web source changed — rebuilding Next…"
+  rm -rf apps/web/.next
+  pnpm --filter @aligned/web build
+  WEB_CHANGED=1
+else
+  echo "▶ web unchanged — skipping web build."
+fi
+
+echo "▶ Restarting services…"
+sudo systemctl restart aligned-api aligned-worker
+[ "$WEB_CHANGED" = 1 ] && sudo systemctl restart aligned-web
+
+sleep 4
+echo "▶ Service status:"
+systemctl is-active aligned-api aligned-worker aligned-web || true
+
+echo "▶ Health check:"
+if curl -fsS --max-time 15 "$API_HEALTH_URL" >/dev/null; then
+  echo "  ✓ $API_HEALTH_URL OK"
+else
+  echo "  ✗ HEALTH CHECK FAILED — investigate (journalctl -u aligned-api -n 100)"
+  exit 1
+fi
+echo "✓ Deploy complete: $NEW"

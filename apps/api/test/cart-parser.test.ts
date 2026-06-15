@@ -82,3 +82,38 @@ describe('parseAddedItems — guards still hold after making quantity optional',
     expect(out).toEqual([]);
   });
 });
+
+describe('parseAddedItems — list-confirmation format (regression)', () => {
+  const SHOP = [
+    { id: 'f', sku: 'ATK-FAJITA', name: 'High Protein Beef Fajita Shaker', priceMinor: 89000000 },
+    { id: 'b', sku: 'ATK-BURGER', name: 'Lebanese Burger', priceMinor: 53000000 },
+    { id: 'd', sku: 'ATK-SOFT', name: 'Soft Drink', priceMinor: 12000000 },
+    { id: 't', sku: 'ATK-TAOUK', name: 'Light Taouk Wrap', priceMinor: 48000000 },
+  ];
+
+  it('captures every item from an Arabic "تم إضافة الطلب:" bullet list', () => {
+    const reply =
+      'تم إضافة الطلب:\n\n- High Protein Beef Fajita Shaker، 890000.00 LBP.\n- Lebanese Burger، 530000.00 LBP.\n- Soft Drink، 120000.00 LBP.\n\nالمجموع الحالي: 1540000.00 LBP.';
+    const out = parseAddedItems(reply, SHOP, {
+      userMessage: 'Add one soft drink, a fajita shaker w a burger please',
+    });
+    expect(out.map((i) => i.sku).sort()).toEqual(['ATK-BURGER', 'ATK-FAJITA', 'ATK-SOFT']);
+    expect(out.every((i) => i.quantity === 1)).toBe(true);
+  });
+
+  it('honours a leading quantity on a bullet ("2× ...")', () => {
+    const out = parseAddedItems('Added to your order:\n- 2x Lebanese Burger\n- Soft Drink', SHOP, {
+      userMessage: 'two burgers and a soft drink',
+    });
+    const burger = out.find((i) => i.sku === 'ATK-BURGER');
+    expect(burger?.quantity).toBe(2);
+    expect(out.find((i) => i.sku === 'ATK-SOFT')?.quantity).toBe(1);
+  });
+
+  it('does NOT treat a MENU listing as cart adds (no confirmation header)', () => {
+    const menu =
+      'عنا خيارات صحية رائعة! فيك تجرب:\n\n- High Protein Beef Fajita Shaker، 890000.00 LBP\n- Light Taouk Wrap، 480000.00 LBP';
+    const out = parseAddedItems(menu, SHOP, { userMessage: 'shu fe shi healthy' });
+    expect(out).toEqual([]);
+  });
+});

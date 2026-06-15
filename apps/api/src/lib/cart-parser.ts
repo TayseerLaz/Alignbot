@@ -51,6 +51,13 @@ const ADD_PATTERNS = [
   /(?:أضفت|أَضَفْتُ|تمت\s+إضافة)\s+(?:(\d{1,3})\s*[x×]?\s+)?([^\n.؛.]{2,80})/g,
 ];
 
+// Signals that a reply is CONFIRMING a cart add / showing an order summary —
+// used to gate the bullet-list pass so a plain MENU listing ("here are our
+// options: - X - Y") is never mistaken for cart additions. Must be present in
+// the reply before any bullet line is treated as an add.
+const CART_CONFIRM_HEADER_RE =
+  /(تمت?\s*(?:إضافة|اضافة)|أضفت|added to (?:your )?(?:cart|order)|added the following|i'?ve added|here'?s your order|order summary|ملخص الطلب|الطلب الحالي|طلبك)/i;
+
 // Payment-method words customers say in response to "how would you
 // like to pay?". These must NEVER be matched as products even if the
 // catalog accidentally contains a phonetically-similar item — a real
@@ -268,6 +275,57 @@ export function parseAddedItems(
   const userTextNorm = options.userMessage ? normalise(options.userMessage) : null;
 
   const bySku = new Map<string, ParsedAdd>();
+
+  // Guards 2 + 3, shared by every parsing pass. Returns true if `product` may
+  // be added given the customer's last message + the bot's prior offer.
+  const accept = (product: CatalogProduct): boolean => {
+    // Guard 3: refuse a product whose own name is a payment word (likelier an
+    // operator catalog-naming accident than a genuine order).
+    if (isProductNameAlsoPayment(product.name)) return false;
+    // Guard 2: when we have the user's last message, the user must have
+    // actually mentioned the product (full name or a meaningful token) —
+    // otherwise the bot is inventing the add. Exception: the bot OFFERED it
+    // last turn and the customer affirmed (upsell acceptance).
+    if (!userTextNorm) return true;
+    const productNorm = normalise(product.name);
+    const productTokens = productNorm.split(/\s+/).filter((t) => t.length >= 4);
+    // Typo tolerance: customers misspell ("mago icrecram"). The LLM corrects it
+    // in its reply (so findProduct matched), but this guard reads the RAW user
+    // text — fuzzy-match each product token against the user's words.
+    const userTokens = userTextNorm.split(/\s+/).filter((t) => t.length >= 3);
+    const fuzzyHit = (ptok: string) =>
+      userTokens.some((utok) => {
+        const tol = Math.max(1, Math.floor(Math.max(ptok.length, utok.length) / 4));
+        return Math.abs(ptok.length - utok.length) <= tol && levenshtein(utok, ptok) <= tol;
+      });
+    const userMentions =
+      userTextNorm.includes(productNorm) ||
+      productTokens.some((tok) => userTextNorm.includes(tok) || fuzzyHit(tok));
+    const prevBotNorm = options.previousBotReply ? normalise(options.previousBotReply) : '';
+    const botOfferedIt =
+      !!prevBotNorm &&
+      (prevBotNorm.includes(productNorm) || productTokens.some((t) => prevBotNorm.includes(t)));
+    const userAffirmed =
+      /\b(yes|yeah|yep|yup|sure|ok|okay|add (?:it|that|those|them|this)|go ahead|please|why not|definitely|of course|sounds good)\b/.test(
+        userTextNorm,
+      ) || /نعم|ايوه|أيوه|اوكي|اوك|أوكي|تمام|اضف|أضف|ضيف|ماشي|اكيد|أكيد/.test(userTextNorm);
+    return userMentions || (botOfferedIt && userAffirmed);
+  };
+
+  const record = (product: CatalogProduct, qty: number): void => {
+    const prev = bySku.get(product.sku);
+    if (!prev || qty > prev.quantity) {
+      bySku.set(product.sku, {
+        productId: product.id,
+        sku: product.sku,
+        name: product.name,
+        quantity: qty,
+        unitPriceMinor: product.priceMinor ?? 0,
+      });
+    }
+  };
+
+  // Pass 1: per-line verb-anchored "added N× X" / "أضفت X" patterns.
   for (const re of ADD_PATTERNS) {
     re.lastIndex = 0;
     let match: RegExpExecArray | null;
@@ -277,63 +335,34 @@ export function parseAddedItems(
       const qtyRaw = match[1];
       const qty = qtyRaw ? Math.max(1, Math.min(999, Number(qtyRaw))) : 1;
       if (!Number.isFinite(qty)) continue;
-      const fragment = match[2] ?? '';
-      const product = findProduct(fragment, catalog);
-      if (!product) continue;
-
-      // Guard 3: refuse to add a product whose own name is a payment
-      // word. Even an explicit ask ("add fawran") is more likely an
-      // operator catalog-naming accident than a genuine order.
-      if (isProductNameAlsoPayment(product.name)) continue;
-
-      // Guard 2: when we have the user's last message, the user must
-      // have actually mentioned the product (full name or a meaningful
-      // token from it). Otherwise the bot is inventing the add.
-      if (userTextNorm) {
-        const productNorm = normalise(product.name);
-        const productTokens = productNorm.split(/\s+/).filter((t) => t.length >= 4);
-        // Typo tolerance: customers misspell ("mago icrecram" for "mango ice
-        // cream"). The LLM corrects it in its reply (so findProduct matched),
-        // but this guard reads the RAW user text — so fuzzy-match each product
-        // token against the user's words (~1 edit per 4 chars). Without this,
-        // a single typo meant the item was never added to the draft cart and
-        // the whole checkout silently reset at the confirm step.
-        const userTokens = userTextNorm.split(/\s+/).filter((t) => t.length >= 3);
-        const fuzzyHit = (ptok: string) =>
-          userTokens.some((utok) => {
-            const tol = Math.max(1, Math.floor(Math.max(ptok.length, utok.length) / 4));
-            return Math.abs(ptok.length - utok.length) <= tol && levenshtein(utok, ptok) <= tol;
-          });
-        const userMentions =
-          userTextNorm.includes(productNorm) ||
-          productTokens.some((tok) => userTextNorm.includes(tok) || fuzzyHit(tok));
-        // Upsell acceptance: the bot OFFERED this exact product in its previous
-        // reply ("Want to add an Enstein Milkshake?") and the customer affirmed
-        // ("yes", "add that too", "sure") WITHOUT re-naming it. Without this,
-        // accepting an upsell silently dropped the item from the cart.
-        const prevBotNorm = options.previousBotReply ? normalise(options.previousBotReply) : '';
-        const botOfferedIt =
-          !!prevBotNorm &&
-          (prevBotNorm.includes(productNorm) || productTokens.some((t) => prevBotNorm.includes(t)));
-        const userAffirmed =
-          /\b(yes|yeah|yep|yup|sure|ok|okay|add (?:it|that|those|them|this)|go ahead|please|why not|definitely|of course|sounds good)\b/.test(
-            userTextNorm,
-          ) || /نعم|ايوه|أيوه|اوكي|اوك|أوكي|تمام|اضف|أضف|ضيف|ماشي|اكيد|أكيد/.test(userTextNorm);
-        if (!userMentions && !(botOfferedIt && userAffirmed)) continue;
-      }
-
-      const prev = bySku.get(product.sku);
-      if (!prev || qty > prev.quantity) {
-        bySku.set(product.sku, {
-          productId: product.id,
-          sku: product.sku,
-          name: product.name,
-          quantity: qty,
-          unitPriceMinor: product.priceMinor ?? 0,
-        });
-      }
+      const product = findProduct(match[2] ?? '', catalog);
+      if (product && accept(product)) record(product, qty);
     }
   }
+
+  // Pass 2: list-confirmation format. The bot often confirms a multi-item add
+  // (or shows an order summary) as a header + bullet list:
+  //   "تم إضافة الطلب:\n- High Protein Beef Fajita Shaker، 890000 LBP\n- Lebanese Burger…"
+  // The verb patterns above miss these (bullets don't start with added/أضفت),
+  // so the draft cart stayed empty and checkout fell back to the unreliable
+  // [CART:] marker. Gated on a confirmation header so a plain MENU listing is
+  // never parsed as adds; each bullet still passes the accept() guards.
+  if (CART_CONFIRM_HEADER_RE.test(reply)) {
+    for (const rawLine of reply.split(/\n/)) {
+      const mBullet = /^\s*(?:[-•*·–]|\d+[.)])\s+(.+)$/.exec(rawLine);
+      if (!mBullet) continue;
+      let frag = mBullet[1]!.trim();
+      let qty = 1;
+      const mQty = /^(\d{1,3})\s*[x×]\s+(.+)$/i.exec(frag);
+      if (mQty) {
+        qty = Math.max(1, Math.min(999, Number(mQty[1])));
+        frag = mQty[2]!.trim();
+      }
+      const product = findProduct(frag, catalog);
+      if (product && accept(product)) record(product, qty);
+    }
+  }
+
   return Array.from(bySku.values());
 }
 

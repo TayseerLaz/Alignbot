@@ -4188,6 +4188,15 @@ async function maybeReplyAsBot(args: {
     let metaMessageId: string | null = null;
     let sendOk = false;
 
+    // When this turn CONFIRMS an order (the LLM emitted a [CART:] marker and a
+    // shop form is configured), the platform sends ONE deterministic order
+    // receipt (order # + items + total) after the cart is captured. Suppress
+    // the LLM's own free-text "order confirmed" reply so the customer isn't
+    // double-texted with two confirmation messages. The LLM text is still
+    // persisted for the operator inbox; a fallback below re-sends it if no
+    // receipt ends up going out.
+    const suppressReplySend = !!(cartMarkerPayload && ctx.data.shopForm);
+
     // Phase 2 follow-up — kick off image sends in PARALLEL with the
     // voice/text path. Pre-this change, images sent serially AFTER the
     // voice send completed, adding 1-2s per image (even with media-cache
@@ -4341,7 +4350,7 @@ async function maybeReplyAsBot(args: {
           imagesParallelStats = { cacheHits, cacheMisses, durationMs: Date.now() - t0 };
         })();
 
-    if (wantsVoice && reply) {
+    if (wantsVoice && reply && !suppressReplySend) {
       const { transcodeToOggOpus } = await import('../../lib/audio-transcode.js');
       // Dispatch based on org's chosen provider. ElevenLabs uses voice
       // IDs (20-char strings); Google uses named voices. ttsVoiceName
@@ -4489,7 +4498,9 @@ async function maybeReplyAsBot(args: {
     }
 
     // Fallback / default: plain text reply (also runs when voice failed).
-    if (!sendOk) {
+    // Skipped for order-confirmation turns — the deterministic receipt is the
+    // single customer-facing confirmation (see suppressReplySend).
+    if (!sendOk && !suppressReplySend) {
       try {
         const payload = {
           messaging_product: 'whatsapp',
@@ -5060,6 +5071,37 @@ async function maybeReplyAsBot(args: {
           });
         } catch (err) {
           args.log.warn({ err }, '[whatsapp] order-confirmation send failed');
+        }
+      } else if (
+        suppressReplySend &&
+        reply &&
+        ctx.channel.phoneNumberId &&
+        ctx.channel.accessToken
+      ) {
+        // Safety net: we suppressed the LLM reply expecting a receipt, but none
+        // was produced (e.g. the marker resolved to no items). Send the LLM's
+        // text so the customer is never left without a reply.
+        try {
+          await fetch(
+            `https://graph.facebook.com/v20.0/${encodeURIComponent(ctx.channel.phoneNumberId)}/messages`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${ctx.channel.accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                messaging_product: 'whatsapp',
+                recipient_type: 'individual',
+                to: m.from,
+                type: 'text',
+                text: { preview_url: false, body: reply },
+              }),
+              signal: AbortSignal.timeout(10_000),
+            },
+          );
+        } catch (err) {
+          args.log.warn({ err }, '[whatsapp] suppressed-reply fallback send failed');
         }
       }
 

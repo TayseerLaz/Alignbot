@@ -43,8 +43,18 @@ export function isMyFatoorahConfigured(): boolean {
 export async function createInvoice(
   args: CreateInvoiceArgs,
   log?: { warn: (...args: unknown[]) => void },
+  // Per-tenant override. When provided, use the tenant's own MyFatoorah
+  // credentials instead of the platform-global env key (multi-tenant
+  // payments). testMode picks the sandbox vs production base URL.
+  creds?: { apiKey: string; testMode?: boolean },
 ): Promise<CreatedInvoice | null> {
-  if (!env.MYFATOORAH_API_KEY) return null;
+  const apiKey = creds?.apiKey || env.MYFATOORAH_API_KEY;
+  const baseUrl = creds
+    ? creds.testMode
+      ? 'https://apitest.myfatoorah.com'
+      : 'https://api.myfatoorah.com'
+    : env.MYFATOORAH_BASE_URL;
+  if (!apiKey) return null;
 
   const body = {
     NotificationOption: 'Lnk', // return-only link (no SMS/email triggered server-side)
@@ -60,10 +70,10 @@ export async function createInvoice(
 
   let res: Response;
   try {
-    res = await fetch(`${env.MYFATOORAH_BASE_URL}/v2/SendPayment`, {
+    res = await fetch(`${baseUrl}/v2/SendPayment`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${env.MYFATOORAH_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),

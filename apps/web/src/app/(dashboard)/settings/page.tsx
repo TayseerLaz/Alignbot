@@ -121,6 +121,12 @@ export default function SettingsPage() {
               title="Billing & plan"
               description="Subscription, usage caps, Stripe self-serve management."
             />
+            <SettingsLink
+              href="/settings/payments"
+              icon={CreditCard}
+              title="Payments"
+              description="Choose how customers pay: cash, bank transfer, a payment link, MyFatoorah, Stripe, or PayPal."
+            />
             {/* Branding is Phase 2 — hidden until logo/accent/footer
                 are wired into the actual portal layout. The /settings/branding
                 route still loads via direct URL, but no UI links to it. */}

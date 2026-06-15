@@ -158,6 +158,8 @@ ALTER TABLE provenance_suppressions FORCE ROW LEVEL SECURITY;
 SELECT _aligned_apply_tenant_rls('voice_calls');
 SELECT _aligned_apply_tenant_rls('voice_call_turns');
 SELECT _aligned_apply_tenant_rls('phone_integrations');
+-- Payments (per-tenant, multi-provider)
+SELECT _aligned_apply_tenant_rls('payment_configs');
 -- plans is GLOBAL (no organization_id) — no RLS needed; access via API only.
 
 -- ---------- pg_trgm GIN indexes for fast search (Prisma can't express) ------

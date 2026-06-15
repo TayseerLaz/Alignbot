@@ -8,6 +8,7 @@ export * from './schemas/category.js';
 export * from './schemas/product.js';
 export * from './schemas/service.js';
 export * from './schemas/business-info.js';
+export * from './schemas/payment.js';
 export * from './schemas/storage.js';
 export * from './schemas/import.js';
 export * from './schemas/connector.js';

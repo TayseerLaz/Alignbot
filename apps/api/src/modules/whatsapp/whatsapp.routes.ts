@@ -3466,60 +3466,89 @@ async function maybeReplyAsBot(args: {
       (/\bhttps?:\/\/(?:[a-z0-9-]+\.)?myfatoorah\.com\S*/i.test(rawReply) ||
         /\[PAYMENT_LINK\]/i.test(rawReply))
     ) {
-      const { createInvoice, isMyFatoorahConfigured } = await import('../../lib/myfatoorah.js');
-      if (isMyFatoorahConfigured()) {
-        try {
-          const code = cartStateForLLM.currency.toUpperCase();
-          const dec =
-            code === 'KWD' || code === 'BHD' || code === 'OMR' || code === 'JOD' ? 3 : 2;
-          const div = Math.pow(10, dec);
-          const amountMajor = Number((cartStateForLLM.subtotalMinor / div).toFixed(dec));
-          // Surface the latest draft cart id so the invoice payload
-          // can carry it as UserDefinedField for the eventual
-          // payment-webhook → cart-paid linker.
-          const draftCart = await withRlsBypass((tx) =>
-            tx.cart.findFirst({
-              where: { organizationId: args.organizationId, threadId: ctx.threadId, status: 'draft' },
-              select: { id: true, customerName: true },
-            }),
+      try {
+        const code = cartStateForLLM.currency.toUpperCase();
+        const dec =
+          code === 'KWD' || code === 'BHD' || code === 'OMR' || code === 'JOD' ? 3 : 2;
+        const div = Math.pow(10, dec);
+        const amountMinor = cartStateForLLM.subtotalMinor;
+        const amountMajor = Number((amountMinor / div).toFixed(dec));
+        const draftCart = await withRlsBypass((tx) =>
+          tx.cart.findFirst({
+            where: { organizationId: args.organizationId, threadId: ctx.threadId, status: 'draft' },
+            select: { id: true, customerName: true },
+          }),
+        );
+        if (draftCart) {
+          const payCtx = {
+            organizationId: args.organizationId,
+            threadId: ctx.threadId,
+            cartId: draftCart.id,
+            customerName:
+              draftCart.customerName ||
+              (ctx as { customerName?: string | null }).customerName ||
+              'Customer',
+            customerPhone: m.from,
+            amountMajor,
+            amountMinor,
+            currency: code,
+            displayReference: draftCart.id.slice(0, 8),
+          };
+          // Per-tenant, multi-provider resolution: load the org's payment
+          // config and dispatch to the matching adapter (cash/static-link/
+          // bank-transfer/myfatoorah/stripe/paypal). Falls back to the
+          // platform-global MyFatoorah env when no per-tenant config exists.
+          let resolution:
+            | { kind: 'url'; url: string }
+            | { kind: 'text'; text: string }
+            | null = null;
+          const pcfg = await withRlsBypass((tx) =>
+            tx.paymentConfig.findUnique({ where: { organizationId: args.organizationId } }),
           );
-          if (draftCart) {
-            const invoice = await createInvoice(
+          if (pcfg && pcfg.provider !== 'none') {
+            const { resolvePaymentLink } = await import('../../lib/payments/index.js');
+            const { decryptSecret } = await import('@aligned/db');
+            let creds: Record<string, string> = {};
+            try {
+              const j = decryptSecret(pcfg.credentials);
+              creds = j ? (JSON.parse(j) as Record<string, string>) : {};
+            } catch {
+              creds = {};
+            }
+            resolution = await resolvePaymentLink(
               {
-                organizationId: args.organizationId,
-                threadId: ctx.threadId,
-                cartId: draftCart.id,
-                customerName:
-                  draftCart.customerName ||
-                  (ctx as { customerName?: string | null }).customerName ||
-                  'Customer',
-                customerPhone: m.from,
-                amountMajor,
-                currency: code,
-                displayReference: draftCart.id.slice(0, 8),
+                provider: pcfg.provider,
+                staticLinkUrl: pcfg.staticLinkUrl,
+                bankDetails: pcfg.bankDetails,
+                testMode: pcfg.testMode,
+                credentials: creds,
               },
+              payCtx,
               args.log,
             );
-            if (invoice) {
-              rawReply = rawReply
-                .replace(/\bhttps?:\/\/(?:[a-z0-9-]+\.)?myfatoorah\.com\S*/gi, invoice.invoiceUrl)
-                .replace(/\[PAYMENT_LINK\]/gi, invoice.invoiceUrl);
-              args.log.info(
-                { invoiceId: invoice.invoiceId, threadId: ctx.threadId, cartId: draftCart.id },
-                '[whatsapp] payment link swapped for live MyFatoorah invoice',
-              );
+          }
+          if (!resolution) {
+            const { createInvoice, isMyFatoorahConfigured } = await import('../../lib/myfatoorah.js');
+            if (isMyFatoorahConfigured()) {
+              const invoice = await createInvoice(payCtx, args.log);
+              if (invoice) resolution = { kind: 'url', url: invoice.invoiceUrl };
             }
           }
-        } catch (err) {
-          args.log.warn({ err }, '[whatsapp] payment-link swap failed');
+          if (resolution?.kind === 'url') {
+            rawReply = rawReply
+              .replace(/\bhttps?:\/\/(?:[a-z0-9-]+\.)?myfatoorah\.com\S*/gi, resolution.url)
+              .replace(/\[PAYMENT_LINK\]/gi, resolution.url);
+          } else if (resolution?.kind === 'text') {
+            rawReply = rawReply.replace(/\[PAYMENT_LINK\]/gi, resolution.text);
+          } else if (/\[PAYMENT_LINK\]/i.test(rawReply)) {
+            rawReply = rawReply.replace(
+              /\[PAYMENT_LINK\]/gi,
+              'We will send you a secure payment link shortly.',
+            );
+          }
         }
-      } else if (/\[PAYMENT_LINK\]/i.test(rawReply)) {
-        // Marker emitted but no provider configured — strip the
-        // marker so the customer doesn't see literal "[PAYMENT_LINK]".
-        rawReply = rawReply.replace(
-          /\[PAYMENT_LINK\]/gi,
-          'We will send you a secure payment link shortly.',
-        );
+      } catch (err) {
+        args.log.warn({ err }, '[whatsapp] payment-link resolve failed');
       }
     }
 

@@ -89,6 +89,7 @@ describe('parseAddedItems — list-confirmation format (regression)', () => {
     { id: 'b', sku: 'ATK-BURGER', name: 'Lebanese Burger', priceMinor: 53000000 },
     { id: 'd', sku: 'ATK-SOFT', name: 'Soft Drink', priceMinor: 12000000 },
     { id: 't', sku: 'ATK-TAOUK', name: 'Light Taouk Wrap', priceMinor: 48000000 },
+    { id: 'fr', sku: 'ATK-FRIES', name: 'Imported Fries', priceMinor: 30000000 },
   ];
 
   it('captures every item from an Arabic "تم إضافة الطلب:" bullet list', () => {
@@ -108,6 +109,18 @@ describe('parseAddedItems — list-confirmation format (regression)', () => {
     const burger = out.find((i) => i.sku === 'ATK-BURGER');
     expect(burger?.quantity).toBe(2);
     expect(out.find((i) => i.sku === 'ATK-SOFT')?.quantity).toBe(1);
+  });
+
+  it('captures list items the customer named with synonyms/brands/another language', () => {
+    // Customer: "fajita w 3elbet batat w pepsi" — "batat" ≠ "Imported Fries",
+    // "pepsi" ≠ "Soft Drink". The confirmation header means the bot already
+    // agreed to add them, so all three must land (this was the 1-item bug).
+    const reply =
+      'تم إضافة الطلب:\n- High Protein Beef Fajita Shaker، 890000.00 ل.ل\n- Imported Fries، 300000.00 ل.ل\n- Soft Drink، 120000.00 ل.ل';
+    const out = parseAddedItems(reply, SHOP, {
+      userMessage: 'bade wehde fahita shaker maa 3elbet batat w wehde pepsi',
+    });
+    expect(out.map((i) => i.sku).sort()).toEqual(['ATK-FAJITA', 'ATK-FRIES', 'ATK-SOFT']);
   });
 
   it('does NOT treat a MENU listing as cart adds (no confirmation header)', () => {

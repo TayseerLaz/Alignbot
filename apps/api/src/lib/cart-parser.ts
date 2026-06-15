@@ -346,7 +346,15 @@ export function parseAddedItems(
   // The verb patterns above miss these (bullets don't start with added/أضفت),
   // so the draft cart stayed empty and checkout fell back to the unreliable
   // [CART:] marker. Gated on a confirmation header so a plain MENU listing is
-  // never parsed as adds; each bullet still passes the accept() guards.
+  // never parsed as adds.
+  //
+  // NOTE: pass 2 does NOT apply the user-mention guard (Guard 2). The
+  // confirmation header IS the evidence that the bot is restating what it
+  // added — and customers routinely order with synonyms / brands / another
+  // language ("3elbet batat" for Imported Fries, "pepsi" for Soft Drink). Re-
+  // requiring the raw user text to mention each catalog name silently dropped
+  // those items, capturing a 1-item order instead of 3. We keep only Guard 3
+  // (never treat a payment-word product as an add).
   if (CART_CONFIRM_HEADER_RE.test(reply)) {
     for (const rawLine of reply.split(/\n/)) {
       const mBullet = /^\s*(?:[-•*·–]|\d+[.)])\s+(.+)$/.exec(rawLine);
@@ -359,7 +367,7 @@ export function parseAddedItems(
         frag = mQty[2]!.trim();
       }
       const product = findProduct(frag, catalog);
-      if (product && accept(product)) record(product, qty);
+      if (product && !isProductNameAlsoPayment(product.name)) record(product, qty);
     }
   }
 

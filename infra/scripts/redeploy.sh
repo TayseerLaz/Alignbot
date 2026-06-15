@@ -36,7 +36,13 @@ if echo "$CHANGED" | grep -q '^pnpm-lock.yaml$'; then
 fi
 
 echo "▶ Regenerating Prisma client…"
-pnpm --filter @aligned/db exec prisma generate >/dev/null
+# Retry once — prisma generate occasionally flakes (transient OOM under
+# concurrent load) and `set -e` would otherwise abort the whole deploy.
+pnpm --filter @aligned/db exec prisma generate >/dev/null 2>&1 || {
+  echo "  prisma generate flaked — retrying once…"
+  sleep 2
+  pnpm --filter @aligned/db exec prisma generate >/dev/null 2>&1
+}
 
 echo "▶ Rebuilding workspace packages consumed as dist (ALWAYS)…"
 pnpm --filter @aligned/db build

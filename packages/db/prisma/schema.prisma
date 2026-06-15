@@ -2022,6 +2022,10 @@ model Contact {
   // optedInAt is informational; optedOutAt blocks future sends.
   optedInAt      DateTime?     @map("opted_in_at")
   optedOutAt     DateTime?     @map("opted_out_at")
+  // Operator block. When set, the bot never auto-replies to this contact and
+  // they're excluded from broadcasts (distinct from optedOut, which is the
+  // customer's own STOP request, and from deletedAt soft-delete).
+  blockedAt      DateTime?     @map("blocked_at")
   timezone       String? // IANA timezone (e.g. "America/Los_Angeles")
   attributes     Json          @default("{}")
   source         ContactSource @default(manual)

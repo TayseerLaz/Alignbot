@@ -262,6 +262,7 @@ export default async function segmentsRoutes(app: FastifyInstance) {
               locale: c.locale,
               optedInAt: c.optedInAt?.toISOString() ?? null,
               optedOutAt: c.optedOutAt?.toISOString() ?? null,
+              blockedAt: c.blockedAt?.toISOString() ?? null,
               timezone: c.timezone,
               attributes:
                 c.attributes && typeof c.attributes === 'object'

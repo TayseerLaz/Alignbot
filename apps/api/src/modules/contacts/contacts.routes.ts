@@ -62,6 +62,7 @@ interface ContactRow {
   locale: string | null;
   optedInAt: Date | null;
   optedOutAt: Date | null;
+  blockedAt: Date | null;
   timezone: string | null;
   attributes: unknown;
   source: ContactSource;
@@ -81,6 +82,7 @@ function toContactDto(row: ContactRow) {
     locale: row.locale,
     optedInAt: row.optedInAt?.toISOString() ?? null,
     optedOutAt: row.optedOutAt?.toISOString() ?? null,
+    blockedAt: row.blockedAt?.toISOString() ?? null,
     timezone: row.timezone,
     attributes:
       row.attributes && typeof row.attributes === 'object'
@@ -340,6 +342,8 @@ export default async function contactsRoutes(app: FastifyInstance) {
         const optedInAt = body.optedIn === true ? new Date() : body.optedIn === false ? null : undefined;
         const optedOutAt =
           body.optedOut === true ? new Date() : body.optedOut === false ? null : undefined;
+        const blockedAt =
+          body.blocked === true ? new Date() : body.blocked === false ? null : undefined;
         const upserted = await tx.contact.upsert({
           where: { organizationId_phoneE164: { organizationId: orgId, phoneE164: body.phoneE164 } },
           create: {
@@ -350,6 +354,7 @@ export default async function contactsRoutes(app: FastifyInstance) {
             timezone: body.timezone ?? null,
             optedInAt: optedInAt ?? null,
             optedOutAt: optedOutAt ?? null,
+            blockedAt: blockedAt ?? null,
             attributes: (body.attributes ?? {}) as never,
             source: 'manual',
           },
@@ -360,6 +365,7 @@ export default async function contactsRoutes(app: FastifyInstance) {
             timezone: body.timezone ?? undefined,
             optedInAt,
             optedOutAt,
+            blockedAt,
             attributes: (body.attributes ?? {}) as never,
           },
           include: { tags: { select: { tag: true } } },
@@ -428,6 +434,11 @@ export default async function contactsRoutes(app: FastifyInstance) {
             displayName: body.displayName !== undefined ? body.displayName : undefined,
             locale: body.locale !== undefined ? body.locale : undefined,
             attributes: body.attributes !== undefined ? (body.attributes as never) : undefined,
+            // Block / unblock toggle (true = block now, false = unblock).
+            blockedAt:
+              body.blocked === true ? new Date() : body.blocked === false ? null : undefined,
+            optedOutAt:
+              body.optedOut === true ? new Date() : body.optedOut === false ? null : undefined,
           },
           include: { tags: { select: { tag: true } } },
         });

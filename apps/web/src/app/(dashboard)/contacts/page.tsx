@@ -2,7 +2,7 @@
 
 import type { ContactDto } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Info, Pencil, Plus, Save, Search, Trash2, Upload, X } from 'lucide-react';
+import { Ban, Info, Pencil, Plus, Save, Search, Trash2, Upload, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -66,13 +66,13 @@ export default function ContactsPage() {
 
   // Inline edit — patches displayName or phoneE164 in one call.
   const editMutation = useMutation({
-    mutationFn: (vars: { id: string; displayName?: string | null; phoneE164?: string }) => {
+    mutationFn: (vars: { id: string; displayName?: string | null; phoneE164?: string; blocked?: boolean }) => {
       const { id, ...body } = vars;
       return api.patch(`/api/v1/contacts/${id}`, body);
     },
-    onSuccess: () => {
+    onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ['contacts'] });
-      toast.success('Saved');
+      toast.success(vars.blocked === true ? 'Contact blocked' : vars.blocked === false ? 'Contact unblocked' : 'Saved');
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
   });
@@ -226,7 +226,7 @@ function ContactRow({
   onDelete,
 }: {
   contact: ContactDto;
-  onSave: (patch: { displayName?: string | null; phoneE164?: string }) => void;
+  onSave: (patch: { displayName?: string | null; phoneE164?: string; blocked?: boolean }) => void;
   saving: boolean;
   onShowInfo: () => void;
   onDelete: () => void;
@@ -289,7 +289,14 @@ function ContactRow({
             aria-label="Name"
           />
         ) : (
-          contact.displayName ?? '—'
+          <span className="inline-flex items-center gap-2">
+            {contact.displayName ?? '—'}
+            {contact.blockedAt ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700">
+                <Ban className="size-3" /> Blocked
+              </span>
+            ) : null}
+          </span>
         )}
       </td>
       <td className="px-6 py-3">
@@ -325,6 +332,26 @@ function ContactRow({
             </Button>
             <Button size="icon" variant="ghost" onClick={() => setEditing(true)} aria-label="Edit">
               <Pencil className="size-4" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => {
+                const blocking = !contact.blockedAt;
+                if (
+                  !blocking ||
+                  window.confirm(
+                    `Block ${contact.phoneE164}? The bot will stop auto-replying to them and they’ll be excluded from broadcasts. Their messages still appear in the inbox.`,
+                  )
+                ) {
+                  onSave({ blocked: blocking });
+                }
+              }}
+              aria-label={contact.blockedAt ? 'Unblock' : 'Block'}
+              title={contact.blockedAt ? 'Unblock contact' : 'Block contact'}
+              className={contact.blockedAt ? 'text-rose-600' : undefined}
+            >
+              <Ban className="size-4" />
             </Button>
             <Button size="icon" variant="ghost" onClick={onDelete} aria-label="Delete">
               <Trash2 className="size-4" />

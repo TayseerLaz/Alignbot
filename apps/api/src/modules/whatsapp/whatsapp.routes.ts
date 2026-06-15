@@ -2692,6 +2692,30 @@ async function maybeReplyAsBot(args: {
         );
         return null;
       }
+      // Blocked contact: the operator has muted the bot for this person. We
+      // still stored the inbound message (visible in the inbox) — we just
+      // never auto-reply. Match both phone formats (+E.164 and bare digits)
+      // since contacts can be stored either way.
+      if (m.from) {
+        const phoneVariants = Array.from(
+          new Set([m.from, m.from.startsWith('+') ? m.from.slice(1) : `+${m.from}`]),
+        );
+        const blockedContact = await tx.contact.findFirst({
+          where: {
+            organizationId: args.organizationId,
+            phoneE164: { in: phoneVariants },
+            blockedAt: { not: null },
+          },
+          select: { id: true },
+        });
+        if (blockedContact) {
+          args.log.info(
+            { orgId: args.organizationId, threadId: thread.id },
+            '[whatsapp] bot skip: contact blocked',
+          );
+          return null;
+        }
+      }
 
       const ch = await tx.whatsAppChannel.findFirst({
         where: { organizationId: args.organizationId, isPrimary: true },

@@ -39,6 +39,8 @@ export const contactDtoSchema = z.object({
   locale: z.string().nullable(),
   optedInAt: z.string().datetime().nullable(),
   optedOutAt: z.string().datetime().nullable(),
+  // Operator block: bot won't auto-reply + excluded from broadcasts.
+  blockedAt: z.string().datetime().nullable(),
   timezone: z.string().nullable(),
   attributes: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
   source: z.enum(CONTACT_SOURCES as [ContactSource, ...ContactSource[]]),
@@ -57,6 +59,8 @@ export const createContactBodySchema = z.object({
   timezone: z.string().trim().max(60).optional().nullable(),
   optedIn: z.boolean().optional(),
   optedOut: z.boolean().optional(),
+  // Operator block toggle (true = block, false = unblock).
+  blocked: z.boolean().optional(),
   attributes: z
     .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
     .optional(),

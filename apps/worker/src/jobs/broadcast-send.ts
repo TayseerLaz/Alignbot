@@ -238,7 +238,7 @@ export function startBroadcastSendWorker() {
 
       const recipient = await prisma.broadcastRecipient.findUnique({
         where: { id: recipientId },
-        include: { contact: { select: { optedOutAt: true, timezone: true } } },
+        include: { contact: { select: { optedOutAt: true, blockedAt: true, timezone: true } } },
       });
       if (!recipient) return;
       if (recipient.status === 'sent' || recipient.status === 'delivered' || recipient.status === 'read') {
@@ -246,13 +246,17 @@ export function startBroadcastSendWorker() {
       }
 
       // Phase 5.3 — opt-out gate. Skip without retry; counts as failed-soft.
-      if (recipient.contact?.optedOutAt) {
+      // Blocked contacts are skipped the same way (operator block).
+      if (recipient.contact?.optedOutAt || recipient.contact?.blockedAt) {
+        const blocked = !!recipient.contact?.blockedAt;
         await prisma.broadcastRecipient.update({
           where: { id: recipientId },
           data: {
             status: 'skipped',
-            metaErrorCode: 'opted_out',
-            metaErrorMessage: 'Recipient opted out of broadcasts.',
+            metaErrorCode: blocked ? 'blocked' : 'opted_out',
+            metaErrorMessage: blocked
+              ? 'Recipient is blocked by the operator.'
+              : 'Recipient opted out of broadcasts.',
           },
         });
         return;

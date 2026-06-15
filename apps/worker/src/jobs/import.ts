@@ -12,7 +12,9 @@
 // cancelled, we stop and mark as `cancelled` (rows already written stay).
 import type { Prisma, PrismaClient } from '@aligned/db';
 import type { Readable } from 'node:stream';
+import { createHash, randomUUID } from 'node:crypto';
 
+import { assertSafeOutboundUrl, UrlGuardError } from '@aligned/shared';
 import { parse as csvParse } from 'csv-parse';
 import { Worker } from 'bullmq';
 import ExcelJS from 'exceljs';
@@ -20,7 +22,7 @@ import { z } from 'zod';
 
 import { env } from '../lib/env.js';
 import { getConnection } from '../lib/redis.js';
-import { getObjectStream } from '../lib/storage.js';
+import { getObjectStream, putObject } from '../lib/storage.js';
 
 import { prisma, withRlsBypass, withTenant } from './db.js';
 import { upsertOne } from './shared-upsert.js';
@@ -138,6 +140,72 @@ function normalizeHeader(raw: string): string {
     .replace(/^_+|_+$/g, '');
 }
 
+// Download comma-separated image URLs from a product row and attach them as
+// ProductImages. Runs OUTSIDE the row's upsert transaction (network fetches
+// must not hold a DB tx). Idempotent: only attaches when the product has no
+// images yet, so re-imports don't duplicate. Each image is best-effort — a
+// bad URL is skipped, never failing the row. SSRF-guarded (operator-supplied
+// URLs still get validated so the worker can't be used as a proxy).
+async function importProductImages(orgId: string, productId: string, urlsRaw: string): Promise<void> {
+  const urls = urlsRaw
+    .split(/[,\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  if (urls.length === 0) return;
+  const existing = await withTenant(orgId, (tx) =>
+    (tx as PrismaClient).productImage.count({ where: { productId } }),
+  );
+  if (existing > 0) return;
+
+  let order = 0;
+  for (const url of urls) {
+    try {
+      let safe: URL;
+      try {
+        safe = assertSafeOutboundUrl(url);
+      } catch (e) {
+        if (e instanceof UrlGuardError) continue; // blocked/private URL — skip
+        throw e;
+      }
+      const res = await fetch(safe, { signal: AbortSignal.timeout(15_000), redirect: 'follow' });
+      if (!res.ok) continue;
+      const contentType = (res.headers.get('content-type') ?? '').split(';')[0]!.trim() || 'image/jpeg';
+      if (!contentType.startsWith('image/')) continue;
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.byteLength === 0 || buf.byteLength > 10 * 1024 * 1024) continue; // 10 MB cap
+      const storageKey = `org/${orgId}/products/${productId}/${randomUUID()}`;
+      await putObject({ storageKey, body: buf, contentType });
+      const checksum = createHash('sha256').update(buf).digest('hex');
+      await withTenant(orgId, async (tx) => {
+        const t = tx as PrismaClient;
+        const asset = await t.asset.create({
+          data: {
+            organizationId: orgId,
+            kind: 'image',
+            storageKey,
+            contentType,
+            byteSize: buf.byteLength,
+            checksumSha256: checksum,
+          },
+        });
+        await t.productImage.create({
+          data: {
+            organizationId: orgId,
+            productId,
+            assetId: asset.id,
+            sortOrder: order,
+            isPrimary: order === 0,
+          },
+        });
+      });
+      order++;
+    } catch {
+      // Skip a bad image; never fail the whole product row over a photo.
+    }
+  }
+}
+
 // kind → { normalizedHeader → canonicalSchemaKey }. Only the synonyms
 // that don't already snake_case to the right key need listing; e.g.
 // "name" maps to "name" implicitly. Update this when a new field is
@@ -157,6 +225,10 @@ const HEADER_ALIASES: Record<string, Record<string, string>> = {
     quantity: 'stockQuantity',
     category: 'categorySlug',
     category_slug: 'categorySlug',
+    image_urls: 'imageUrls',
+    image_url: 'imageUrls',
+    images: 'imageUrls',
+    image: 'imageUrls',
   },
   service: {
     short_description: 'shortDescription',
@@ -288,6 +360,14 @@ export function startImportWorker() {
           const resultId = await withTenant(organizationId, (tx) =>
             upsertOne(tx as PrismaClient, organizationId, importJob.entityKind, raw),
           );
+          // Attach product images from the optional Image URLs column (best-
+          // effort, outside the upsert tx — see importProductImages).
+          const imgUrls = (raw as Record<string, unknown>).imageUrls;
+          if (importJob.entityKind === 'product' && typeof imgUrls === 'string' && imgUrls.trim()) {
+            await importProductImages(organizationId, resultId, imgUrls).catch(() => {
+              /* image attach failure never fails the row */
+            });
+          }
           succeeded++;
           await prisma.importJobRow.create({
             data: {

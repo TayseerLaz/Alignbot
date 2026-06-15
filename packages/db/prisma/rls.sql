@@ -139,6 +139,10 @@ SELECT _aligned_apply_tenant_rls('sequence_enrollments');
 -- Cart / Shop feature
 SELECT _aligned_apply_tenant_rls('carts');
 SELECT _aligned_apply_tenant_rls('cart_items');
+-- AI bot builder — flow candidates + test scenarios (added 2026-06-15 after
+-- the RLS drift test flagged them missing).
+SELECT _aligned_apply_tenant_rls('bot_conversation_flow_options');
+SELECT _aligned_apply_tenant_rls('bot_test_scenarios');
 -- Ultra plan — per-contact persona memory
 SELECT _aligned_apply_tenant_rls('contact_memory');
 -- Phase 8 — AI message provenance / audit trail

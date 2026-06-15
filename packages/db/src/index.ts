@@ -1,4 +1,10 @@
 export * from './client.js';
+export {
+  encryptSecret,
+  decryptSecret,
+  secretCryptoEnabled,
+  withSecretCrypto,
+} from './secret-crypto.js';
 // Runtime binding — the PrismaClient class is used by type-constrained generics
 // (e.g. `tx: PrismaClient`) in the api and worker.
 export { PrismaClient } from '@prisma/client';

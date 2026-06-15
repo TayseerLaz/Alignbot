@@ -2161,6 +2161,31 @@ export default async function whatsappRoutes(app: FastifyInstance) {
           const value = change.value;
           if (!value || !value.messages) continue;
           for (const m of value.messages) {
+            // Idempotency guard. Meta RETRIES webhook deliveries on timeout or
+            // any non-2xx — without this a retry re-persists the inbound
+            // message AND re-fires the bot, double-replying to the customer
+            // (and could double-capture a cart). Skip if this metaMessageId is
+            // already stored for the org. Backed by the
+            // (organization_id, meta_message_id) index, so it's a cheap lookup.
+            if (m.id) {
+              const already = await withRlsBypass((tx) =>
+                tx.whatsAppMessage.findFirst({
+                  where: {
+                    organizationId: channel.organizationId,
+                    metaMessageId: m.id,
+                    direction: 'inbound',
+                  },
+                  select: { id: true },
+                }),
+              );
+              if (already) {
+                req.log.info(
+                  { orgId: channel.organizationId, metaMessageId: m.id },
+                  '[whatsapp] inbound dedup — already processed, skipping retry',
+                );
+                continue;
+              }
+            }
             const bodyText = extractInboundBody(m as unknown as Record<string, unknown>);
             // Pull the Meta media id for audio/voice so the bot can
             // download + transcribe later. Both `audio` and `voice`
@@ -2492,6 +2517,34 @@ async function maybeReplyAsBot(args: {
         }
       } catch {
         /* Redis unavailable — proceed without coalescing rather than drop the reply. */
+      }
+    }
+    // (c) Per-phone flood throttle — cost-DoS protection. A single sender
+    // spamming the number could otherwise drive unbounded LLM calls + Meta
+    // sends. Cap auto-replies per phone per minute (generous: real customers
+    // never approach it). Over the cap we suppress only the AUTO-REPLY — the
+    // inbound is still stored + visible in the inbox for a human. Tunable via
+    // BOT_REPLY_PER_PHONE_PER_MINUTE (0 disables).
+    if (m.from) {
+      try {
+        const { getRedis } = await import('../../lib/redis.js');
+        const redis = getRedis();
+        const limit = Number(process.env.BOT_REPLY_PER_PHONE_PER_MINUTE ?? 20);
+        if (Number.isFinite(limit) && limit > 0) {
+          const minuteBucket = Math.floor(Date.now() / 60_000);
+          const fkey = `botflood:${args.organizationId}:${m.from}:${minuteBucket}`;
+          const n = await redis.incr(fkey);
+          if (n === 1) await redis.expire(fkey, 120);
+          if (n > limit) {
+            args.log.warn(
+              { orgId: args.organizationId, from: m.from, count: n, limit },
+              '[whatsapp] bot reply throttled — per-phone flood cap hit',
+            );
+            continue;
+          }
+        }
+      } catch {
+        /* Redis down — never block a legitimate reply on the throttle. */
       }
     }
     const stopwatch = new PipelineStopwatch();

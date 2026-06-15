@@ -1,0 +1,78 @@
+name: zz deploy test
+
+on:
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1
+        env:
+          NEW_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NEW_OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          NEW_EMAIL_SMTP_USER: ${{ secrets.EMAIL_SMTP_USER }}
+          NEW_EMAIL_SMTP_PASS: ${{ secrets.EMAIL_SMTP_PASS }}
+          NEW_EMAIL_SMTP_HOST: ${{ vars.EMAIL_SMTP_HOST }}
+          NEW_EMAIL_SMTP_PORT: ${{ vars.EMAIL_SMTP_PORT }}
+          NEW_EMAIL_SMTP_SECURE: ${{ vars.EMAIL_SMTP_SECURE }}
+          NEW_EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+          NEW_WASABI_ACCESS_KEY_ID: ${{ secrets.WASABI_ACCESS_KEY_ID }}
+          NEW_WASABI_SECRET_ACCESS_KEY: ${{ secrets.WASABI_SECRET_ACCESS_KEY }}
+          NEW_WASABI_BUCKET: ${{ vars.WASABI_BUCKET }}
+          NEW_WASABI_REGION: ${{ vars.WASABI_REGION }}
+          NEW_WASABI_ENDPOINT: ${{ vars.WASABI_ENDPOINT }}
+          NEW_WASABI_PUBLIC_URL_BASE: ${{ vars.WASABI_PUBLIC_URL_BASE }}
+          # Phase 6 — Google Cloud TTS for bot voice replies. API key is
+          # a secret; default voices are repo variables so each tenant
+          # can override without committing code.
+          NEW_GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
+          NEW_GOOGLE_TTS_DEFAULT_VOICE_EN: ${{ vars.GOOGLE_TTS_DEFAULT_VOICE_EN }}
+          NEW_GOOGLE_TTS_DEFAULT_VOICE_AR: ${{ vars.GOOGLE_TTS_DEFAULT_VOICE_AR }}
+          # ElevenLabs — alternate voice provider. Read each value from
+          # secrets first, fall back to a repo variable. Voice IDs aren't
+          # really secret (they're listed publicly under your ElevenLabs
+          # voice lab), but storing in either bucket should work.
+          NEW_ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          NEW_ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID || vars.ELEVENLABS_VOICE_ID }}
+          NEW_ELEVENLABS_MODEL: ${{ secrets.ELEVENLABS_MODEL || vars.ELEVENLABS_MODEL }}
+          # Phase 12 — optional Groq backend for chat completions. When
+          # GROQ_API_KEY is set every bot reply runs on Groq's LPU
+          # inference (sub-second). Leave the secret unset to stay on
+          # OpenAI. GROQ_MODEL defaults to `llama-3.3-70b-versatile`
+          # but can be overridden via repo variable.
+          NEW_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          NEW_GROQ_MODEL: ${{ vars.GROQ_MODEL }}
+          # Domain config — single source of truth is GH secrets. Other
+          # URLs (CORS, public URLs, cookie domain, NEXT_PUBLIC_API_URL)
+          # are DERIVED from these on the server, so a domain swap is
+          # a one-secret change followed by a redeploy.
+          NEW_WEB_DOMAIN: ${{ secrets.WEB_DOMAIN }}
+          NEW_API_DOMAIN: ${{ secrets.API_DOMAIN }}
+          NEW_ACME_EMAIL: ${{ vars.ACME_EMAIL }}
+          # Bootstrap super-admin — created/updated by infra/scripts/deploy-remote.sh.
+          INITIAL_ADMIN_EMAIL: ${{ secrets.INITIAL_ADMIN_EMAIL }}
+          INITIAL_ADMIN_PASSWORD: ${{ secrets.INITIAL_ADMIN_PASSWORD }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 20m
+          script_stop: true
+          envs: NEW_OPENAI_API_KEY,NEW_OPENAI_MODEL,NEW_EMAIL_SMTP_USER,NEW_EMAIL_SMTP_PASS,NEW_EMAIL_SMTP_HOST,NEW_EMAIL_SMTP_PORT,NEW_EMAIL_SMTP_SECURE,NEW_EMAIL_FROM,NEW_WASABI_ACCESS_KEY_ID,NEW_WASABI_SECRET_ACCESS_KEY,NEW_WASABI_BUCKET,NEW_WASABI_REGION,NEW_WASABI_ENDPOINT,NEW_WASABI_PUBLIC_URL_BASE,NEW_GOOGLE_TTS_API_KEY,NEW_GOOGLE_TTS_DEFAULT_VOICE_EN,NEW_GOOGLE_TTS_DEFAULT_VOICE_AR,NEW_ELEVENLABS_API_KEY,NEW_ELEVENLABS_VOICE_ID,NEW_ELEVENLABS_MODEL,NEW_GROQ_API_KEY,NEW_GROQ_MODEL,NEW_WEB_DOMAIN,NEW_API_DOMAIN,NEW_ACME_EMAIL,INITIAL_ADMIN_EMAIL,INITIAL_ADMIN_PASSWORD
+          script: |
+            echo "STRUCTURE TEST — env block + with + smoke step, harmless script"
+            env | grep -c NEW_ || true
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          # Give caddy/api a moment after restart
+          sleep 3
+          curl -fsS --max-time 10 https://${{ secrets.API_DOMAIN }}/health | tee /tmp/health.json
+          grep -q '"status":"ok"' /tmp/health.json
+          echo ""
+          echo "Smoke test passed."

@@ -160,6 +160,8 @@ SELECT _aligned_apply_tenant_rls('voice_call_turns');
 SELECT _aligned_apply_tenant_rls('phone_integrations');
 -- Payments (per-tenant, multi-provider)
 SELECT _aligned_apply_tenant_rls('payment_configs');
+-- Messenger / Instagram channel
+SELECT _aligned_apply_tenant_rls('messenger_channels');
 -- plans is GLOBAL (no organization_id) — no RLS needed; access via API only.
 
 -- ---------- pg_trgm GIN indexes for fast search (Prisma can't express) ------

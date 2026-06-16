@@ -38,6 +38,7 @@ import authRoutes from './modules/auth/auth.routes.js';
 import bookingsRoutes from './modules/bookings/bookings.routes.js';
 import cartsRoutes from './modules/carts/carts.routes.js';
 import paymentRoutes from './modules/payments/payment.routes.js';
+import messengerRoutes from './modules/messenger/messenger.routes.js';
 import businessInfoRoutes from './modules/catalog/business-info.routes.js';
 import categoryRoutes from './modules/catalog/category.routes.js';
 import productRoutes from './modules/catalog/product.routes.js';
@@ -318,6 +319,7 @@ export async function buildServer() {
   await app.register(serviceRoutes, { prefix: '/api/v1' });
   await app.register(businessInfoRoutes, { prefix: '/api/v1' });
   await app.register(paymentRoutes, { prefix: '/api/v1' });
+  await app.register(messengerRoutes, { prefix: '/api/v1' });
   await app.register(bookingsRoutes, { prefix: '/api/v1' });
   await app.register(cartsRoutes, { prefix: '/api/v1' });
   await app.register(importRoutes, { prefix: '/api/v1' });

@@ -354,6 +354,7 @@ model Organization {
   // Phase 1.5 / Phase 3
   whatsappChannels      WhatsAppChannel[]
   whatsappThreads       WhatsAppThread[]
+  messengerChannel      MessengerChannel?
   // Phase 2
   botConfig             BotConfig?
   // Payments (per-tenant, multi-provider)
@@ -1253,6 +1254,31 @@ model WhatsAppChannel {
   @@map("whatsapp_channels")
 }
 
+// Per-tenant Facebook Messenger + Instagram channel. Both are Meta and share
+// the Page Send API: a Facebook Page powers Messenger; an Instagram Business
+// account linked to that Page powers IG DMs. One row per org holds the page +
+// linked IG. pageAccessToken + appSecret are AES-256-GCM-encrypted at rest.
+model MessengerChannel {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String    @unique @map("organization_id") @db.Uuid
+  pageId            String?   @map("page_id")
+  pageName          String?   @map("page_name")
+  // Instagram Business account id linked to the page (for IG DMs; Phase C).
+  igAccountId       String?   @map("ig_account_id")
+  pageAccessToken   String?   @map("page_access_token")
+  appSecret         String?   @map("app_secret")
+  webhookVerifyToken String   @map("webhook_verify_token")
+  isActive          Boolean   @default(false) @map("is_active")
+  lastVerifyStatus  String?   @map("last_verify_status")
+  lastVerifiedAt    DateTime? @map("last_verified_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("messenger_channels")
+}
+
 // WhatsAppMessage — every inbound message Meta delivers to our webhook is
 // persisted here for support / debugging. Outbound replies (sent via
 // /whatsapp/test-send for now) are also persisted with direction='outbound'.
@@ -1265,6 +1291,9 @@ model WhatsAppMessage {
   // customer phone). Set by the inbound webhook + outbound send paths.
   threadId       String?   @map("thread_id") @db.Uuid
   direction      String // 'inbound' | 'outbound'
+  // Channel this message belongs to: 'whatsapp' (default) | 'messenger' |
+  // 'instagram'. Lets the unified inbox carry every channel.
+  channel        String    @default("whatsapp")
   // Meta's wamid for inbound; for outbound, the messages[0].id from the response.
   metaMessageId  String?   @map("meta_message_id")
   fromNumber     String?   @map("from_number")
@@ -1308,6 +1337,14 @@ enum WhatsAppThreadStatus {
 model WhatsAppThread {
   id                   String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId       String               @map("organization_id") @db.Uuid
+  // Channel: 'whatsapp' (default) | 'messenger' | 'instagram'. Threads for all
+  // channels live here so the inbox + provenance + carts work everywhere.
+  channel              String               @default("whatsapp")
+  // The per-customer identifier on this channel. For WhatsApp it equals the
+  // phone (also stored in customer_phone); for Messenger it's the PSID, for
+  // Instagram the IGSID. customer_phone holds this same value (generic id)
+  // so the existing (org, customer_phone) unique dedupes every channel.
+  channelUserId        String?              @map("channel_user_id")
   customerPhone        String               @map("customer_phone")
   // Operator-set nickname / business name. Free-form. Mirrored from
   // Contact.displayName on rename so /inbox and /contacts stay in sync.

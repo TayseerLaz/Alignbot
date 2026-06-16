@@ -18,13 +18,23 @@ API_HEALTH_URL=${API_HEALTH_URL:-https://api.hader.ai/health}
 cd "$APP_DIR"
 
 echo "▶ Fetching origin/main…"
-PREV=$(git rev-parse HEAD)
+# Diff against the last SUCCESSFULLY-deployed SHA, not the pre-reset HEAD. If a
+# prior run aborted (e.g. a prisma-generate flake) AFTER git reset but BEFORE
+# the web rebuild, HEAD already moved — diffing PREV→NEW would then show no
+# changes and wrongly skip the web build. .last-deployed-sha only advances on a
+# fully successful run, so this stays correct across aborted runs.
+LAST=$(cat .last-deployed-sha 2>/dev/null || true)
 git fetch origin --quiet
 git reset --hard origin/main
 NEW=$(git rev-parse HEAD)
-echo "  $PREV → $NEW"
+echo "  ${LAST:-<unknown>} → $NEW"
 
-CHANGED=$(git diff --name-only "$PREV" "$NEW" || true)
+# No known-good baseline (or invalid) → rebuild everything to be safe.
+if [ -n "$LAST" ] && git cat-file -e "$LAST^{commit}" 2>/dev/null; then
+  CHANGED=$(git diff --name-only "$LAST" "$NEW" || true)
+else
+  CHANGED="apps/web/ pnpm-lock.yaml"
+fi
 
 # Load production env (DATABASE_URL/DIRECT_DATABASE_URL for prisma, NEXT_PUBLIC_*
 # baked into the web build, SECRET_ENCRYPTION_KEY for the crypto extension).
@@ -36,13 +46,18 @@ if echo "$CHANGED" | grep -q '^pnpm-lock.yaml$'; then
 fi
 
 echo "▶ Regenerating Prisma client…"
-# Retry once — prisma generate occasionally flakes (transient OOM under
+# Retry up to 3× — prisma generate occasionally flakes (transient OOM under
 # concurrent load) and `set -e` would otherwise abort the whole deploy.
-pnpm --filter @aligned/db exec prisma generate >/dev/null 2>&1 || {
-  echo "  prisma generate flaked — retrying once…"
-  sleep 2
-  pnpm --filter @aligned/db exec prisma generate >/dev/null 2>&1
-}
+GEN_OK=0
+for attempt in 1 2 3; do
+  if pnpm --filter @aligned/db exec prisma generate >/dev/null 2>&1; then
+    GEN_OK=1
+    break
+  fi
+  echo "  prisma generate flaked (attempt $attempt) — retrying…"
+  sleep 3
+done
+[ "$GEN_OK" = 1 ] || { echo "  ✗ prisma generate failed 3× — aborting"; exit 1; }
 
 echo "▶ Rebuilding workspace packages consumed as dist (ALWAYS)…"
 pnpm --filter @aligned/db build
@@ -84,4 +99,7 @@ if [ "$HEALTHY" != 1 ]; then
   echo "  ✗ HEALTH CHECK FAILED after ~60s — investigate (journalctl -u aligned-api -n 100)"
   exit 1
 fi
+# Record the known-good SHA ONLY on full success, so an aborted future run
+# still diffs against this baseline (see top of file).
+echo "$NEW" > .last-deployed-sha
 echo "✓ Deploy complete: $NEW"

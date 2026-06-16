@@ -34,6 +34,9 @@ const threadStatusSchema = z.enum(['open', 'pending', 'resolved', 'escalated']);
 
 const threadDtoSchema = z.object({
   id: uuidSchema,
+  // 'whatsapp' | 'messenger' | 'instagram' — drives the channel badge + the
+  // channel-aware reply send.
+  channel: z.string(),
   customerPhone: z.string(),
   customerName: z.string().nullable(),
   customerWhatsappName: z.string().nullable(),
@@ -101,6 +104,7 @@ const cannedResponseDtoSchema = z.object({
 // Helper — pull the joined fields the UI needs for a thread row.
 function serializeThread(t: {
   id: string;
+  channel?: string;
   customerPhone: string;
   customerName: string | null;
   customerWhatsappName?: string | null;
@@ -125,6 +129,7 @@ function serializeThread(t: {
     | string;
   return {
     id: t.id,
+    channel: t.channel ?? 'whatsapp',
     customerPhone: t.customerPhone,
     customerName: t.customerName,
     customerWhatsappName: t.customerWhatsappName ?? null,
@@ -564,6 +569,68 @@ export default async function inboxRoutes(app: FastifyInstance) {
         });
         return { data: serializeThread(updated) };
       });
+    },
+  );
+
+  // ---------- POST /inbox/threads/:id/reply  (operator manual reply) ------
+  // Channel-aware send. WhatsApp replies still go through /whatsapp/send (the
+  // UI routes those there); this handles Messenger + Instagram threads via the
+  // Page Send API. Persists the outbound + bumps the thread.
+  r.post(
+    '/inbox/threads/:id/reply',
+    {
+      schema: {
+        tags: ['inbox'],
+        summary: 'Send an operator reply on a Messenger/Instagram thread.',
+        params: z.object({ id: uuidSchema }),
+        body: z.object({ body: z.string().trim().min(1).max(4000) }),
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const thread = await app.tenant(req, (tx) =>
+        tx.whatsAppThread.findUnique({ where: { id: req.params.id } }),
+      );
+      if (!thread) throw notFound('Thread not found.');
+      if (thread.channel === 'whatsapp') {
+        throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'Use /whatsapp/send for WhatsApp threads.');
+      }
+      const recipient = thread.channelUserId ?? thread.customerPhone;
+      const { sendMessengerText } = await import('../../lib/messenger-send.js');
+      const metaId = await sendMessengerText(orgId, recipient, req.body.body, req.log);
+      if (metaId === null) {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'Send failed — check the Messenger channel is connected and active.',
+        );
+      }
+      await app.tenant(req, async (tx) => {
+        await tx.whatsAppMessage.create({
+          data: {
+            threadId: thread.id,
+            organizationId: orgId,
+            channel: thread.channel,
+            direction: 'outbound',
+            metaMessageId: metaId,
+            toNumber: recipient,
+            messageType: 'text',
+            body: req.body.body,
+            rawPayload: { sentBy: 'operator' } as never,
+          },
+        });
+        await tx.whatsAppThread.update({
+          where: { id: thread.id },
+          data: {
+            lastMessageAt: new Date(),
+            lastMessagePreview: req.body.body.slice(0, 200),
+            outboundCount: { increment: 1 },
+            status: 'open',
+          },
+        });
+      });
+      return { ok: true as const };
     },
   );
 

@@ -12,6 +12,7 @@ import crypto from 'node:crypto';
 
 import { decryptSecret, encryptSecret } from '@aligned/db';
 import {
+  ApiErrorCode,
   itemEnvelopeSchema,
   messengerChannelSchema,
   uuidSchema,
@@ -23,10 +24,9 @@ import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
 import { withRlsBypass } from '../../lib/db.js';
+import { badRequest, notFound } from '../../lib/errors.js';
 import { env } from '../../lib/env.js';
 import { generateOpaqueToken } from '../../lib/crypto.js';
-
-const GRAPH = 'https://graph.facebook.com/v20.0';
 
 function webhookCallbackUrl(orgId: string): string {
   return `${env.API_PUBLIC_URL.replace(/\/$/, '')}/api/v1/messenger/webhook/${orgId}`;
@@ -148,6 +148,89 @@ export default async function messengerRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- POST /messenger/subscribe -----------------------------------
+  // One-click connect: validate the Page token, capture the page name, subscribe
+  // the Page to this app's `messages` webhook field so Meta delivers DMs here,
+  // and activate the channel. Mirrors the WhatsApp subscribe flow.
+  r.post(
+    '/messenger/subscribe',
+    {
+      schema: {
+        tags: ['messenger'],
+        summary: 'Validate + subscribe the Page to the app webhook, then activate.',
+        response: { 200: itemEnvelopeSchema(messengerChannelSchema) },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const channel = await app.tenant(req, (tx) =>
+        tx.messengerChannel.findUnique({ where: { organizationId: orgId } }),
+      );
+      if (!channel) throw notFound('Messenger channel not configured.');
+      if (!channel.pageAccessToken) {
+        throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'Add the Page access token first.');
+      }
+      const pageToken = decryptSecret(channel.pageAccessToken) ?? '';
+      const GRAPH = 'https://graph.facebook.com/v20.0';
+
+      // 1. Validate token + read the page id/name.
+      let pageId = channel.pageId;
+      let pageName = channel.pageName;
+      let status = 'subscribed';
+      try {
+        const meRes = await fetch(
+          `${GRAPH}/me?fields=id,name&access_token=${encodeURIComponent(pageToken)}`,
+          { signal: AbortSignal.timeout(10_000) },
+        );
+        const me = (await meRes.json()) as { id?: string; name?: string; error?: { message?: string } };
+        if (!meRes.ok || !me.id) {
+          return {
+            data: serialize({ ...channel, lastVerifyStatus: 'token_invalid', isActive: false }),
+          };
+        }
+        pageId = me.id;
+        pageName = me.name ?? pageName;
+
+        // 2. Subscribe the Page to the messaging webhook fields.
+        const subRes = await fetch(
+          `${GRAPH}/${encodeURIComponent(pageId)}/subscribed_apps`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              subscribed_fields: 'messages,messaging_postbacks,message_reads',
+              access_token: pageToken,
+            }),
+            signal: AbortSignal.timeout(10_000),
+          },
+        );
+        const sub = (await subRes.json()) as { success?: boolean; error?: { message?: string } };
+        if (!subRes.ok || sub.success !== true) {
+          status = 'subscribe_failed';
+        }
+      } catch (err) {
+        req.log.warn({ err }, '[messenger] subscribe failed');
+        status = 'network_error';
+      }
+
+      const activate = status === 'subscribed' && !!channel.appSecret;
+      const row = await app.tenant(req, (tx) =>
+        tx.messengerChannel.update({
+          where: { id: channel.id },
+          data: {
+            pageId,
+            pageName,
+            isActive: activate,
+            lastVerifyStatus: status,
+            lastVerifiedAt: new Date(),
+          },
+        }),
+      );
+      return { data: serialize(row) };
+    },
+  );
+
   // ---------- GET /messenger/webhook/:orgId  (Meta verify handshake) ------
   r.get(
     '/messenger/webhook/:orgId',
@@ -200,10 +283,14 @@ export default async function messengerRoutes(app: FastifyInstance) {
 
       // Always 200 fast; process replies fire-and-forget (Meta retries on non-2xx).
       const body = req.body as {
+        object?: string;
         entry?: { messaging?: MessengerEvent[] }[];
       };
+      // Instagram + Messenger both arrive here (same Send API); the top-level
+      // `object` distinguishes them so threads carry the right channel.
+      const channelKind = body.object === 'instagram' ? 'instagram' : 'messenger';
       const events: MessengerEvent[] = (body.entry ?? []).flatMap((e) => e.messaging ?? []);
-      void handleMessengerEvents(orgId, channel.id, events, req.log).catch((err) =>
+      void handleMessengerEvents(orgId, channel.id, channelKind, events, req.log).catch((err) =>
         req.log.error({ err }, '[messenger] event handling failed'),
       );
       reply.code(200);
@@ -223,6 +310,7 @@ type Logger = { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void
 async function handleMessengerEvents(
   orgId: string,
   channelId: string,
+  channelKind: 'messenger' | 'instagram',
   events: MessengerEvent[],
   log: Logger,
 ): Promise<void> {
@@ -248,7 +336,7 @@ async function handleMessengerEvents(
     // customer_phone — reuses the (org, customer_phone) unique).
     const thread = await withRlsBypass(async (tx) => {
       const existing = await tx.whatsAppThread.findFirst({
-        where: { organizationId: orgId, channel: 'messenger', channelUserId: psid },
+        where: { organizationId: orgId, channel: channelKind, channelUserId: psid },
       });
       const preview = text.slice(0, 200);
       if (existing) {
@@ -266,7 +354,7 @@ async function handleMessengerEvents(
       return tx.whatsAppThread.create({
         data: {
           organizationId: orgId,
-          channel: 'messenger',
+          channel: channelKind,
           channelUserId: psid,
           customerPhone: psid, // generic id slot for non-WhatsApp channels
           status: 'open',
@@ -283,7 +371,7 @@ async function handleMessengerEvents(
         data: {
           threadId: thread.id,
           organizationId: orgId,
-          channel: 'messenger',
+          channel: channelKind,
           direction: 'inbound',
           metaMessageId: mid,
           fromNumber: psid,
@@ -294,13 +382,14 @@ async function handleMessengerEvents(
       }),
     );
 
-    await maybeReplyOnMessenger(orgId, channelId, thread.id, psid, text, log);
+    await maybeReplyOnMessenger(orgId, channelId, channelKind, thread.id, psid, text, log);
   }
 }
 
 async function maybeReplyOnMessenger(
   orgId: string,
   channelId: string,
+  channelKind: 'messenger' | 'instagram',
   threadId: string,
   psid: string,
   userMessage: string,
@@ -346,7 +435,7 @@ async function maybeReplyOnMessenger(
       }));
   });
 
-  let replyText: string;
+  let rawText: string;
   try {
     const result = await buildBotResponse({
       organizationId: orgId,
@@ -355,48 +444,46 @@ async function maybeReplyOnMessenger(
       data,
       replyMode: 'text',
     });
-    replyText = stripMarkers(result.text);
+    rawText = result.text;
   } catch (err) {
     log.warn({ err }, '[messenger] buildBotResponse failed');
     return;
   }
+  const replyText = stripMarkers(rawText);
   if (!replyText) return;
 
-  // Send via the Page Send API.
-  const pageToken = decryptSecret(channel.pageAccessToken) ?? '';
-  let metaMessageId: string | null = null;
-  try {
-    const res = await fetch(`${GRAPH}/me/messages?access_token=${encodeURIComponent(pageToken)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        recipient: { id: psid },
-        messaging_type: 'RESPONSE',
-        message: { text: replyText.slice(0, 1900) },
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    const txt = await res.text();
-    if (!res.ok) {
-      log.warn({ status: res.status, body: txt.slice(0, 200) }, '[messenger] send failed');
-      return;
+  const { sendMessengerText, sendMessengerImage } = await import('../../lib/messenger-send.js');
+
+  // Send product images for any [IMAGE: <sku>] markers the bot emitted, first.
+  const imageSkus = Array.from(rawText.matchAll(/\[IMAGE:\s*([^\]\s]+)\s*\]/gi))
+    .map((m) => m[1]!.trim())
+    .slice(0, 3);
+  if (imageSkus.length > 0) {
+    const { presignGetUrl } = await import('../../lib/storage.js');
+    const products = (data as { products?: { sku: string; images?: { storageKey: string }[] }[] })
+      .products ?? [];
+    for (const sku of imageSkus) {
+      const p = products.find((x) => x.sku.toLowerCase() === sku.toLowerCase());
+      const key = p?.images?.[0]?.storageKey;
+      if (!key) continue;
+      try {
+        const url = await presignGetUrl(key, 3600);
+        await sendMessengerImage(orgId, psid, url, log);
+      } catch (err) {
+        log.warn({ err, sku }, '[messenger] product image send failed');
+      }
     }
-    try {
-      metaMessageId = (JSON.parse(txt) as { message_id?: string }).message_id ?? null;
-    } catch {
-      /* ignore */
-    }
-  } catch (err) {
-    log.warn({ err }, '[messenger] send threw');
-    return;
   }
+
+  const metaMessageId = await sendMessengerText(orgId, psid, replyText, log);
+  if (metaMessageId === null) return; // send failed — don't persist a phantom outbound
 
   await withRlsBypass((tx) =>
     tx.whatsAppMessage.create({
       data: {
         threadId,
         organizationId: orgId,
-        channel: 'messenger',
+        channel: channelKind,
         direction: 'outbound',
         metaMessageId,
         toNumber: psid,

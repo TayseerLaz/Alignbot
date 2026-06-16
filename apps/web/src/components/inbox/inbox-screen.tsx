@@ -83,6 +83,8 @@ type OpusRecorderCtor = new (opts: OpusRecorderOptions) => OpusRecorderLike;
 
 interface Thread {
   id: string;
+  // 'whatsapp' | 'messenger' | 'instagram'
+  channel?: string;
   customerPhone: string;
   customerName: string | null;
   // Read-only mirror of the customer's WhatsApp profile name from Meta.
@@ -589,8 +591,19 @@ function ThreadView({
   });
 
   const sendReply = useMutation({
-    mutationFn: ({ to, body }: { to: string; body: string }) =>
-      api.post<{ data: { ok: boolean; errorMessage: string | null } }>('/api/v1/whatsapp/send', { to, body }),
+    mutationFn: ({ to, body }: { to: string; body: string }) => {
+      // Channel-aware send: Messenger/Instagram threads go through the inbox
+      // reply endpoint (Page Send API); WhatsApp keeps using /whatsapp/send.
+      if (thread && thread.channel && thread.channel !== 'whatsapp') {
+        return api
+          .post(`/api/v1/inbox/threads/${thread.id}/reply`, { body })
+          .then(() => ({ data: { ok: true as const, errorMessage: null } }));
+      }
+      return api.post<{ data: { ok: boolean; errorMessage: string | null } }>(
+        '/api/v1/whatsapp/send',
+        { to, body },
+      );
+    },
     onSuccess: (res) => {
       if (res.data.ok) {
         toast.success('Reply sent');
@@ -1079,6 +1092,11 @@ function ThreadHeader({
           <Phone className="size-3" />
           {thread.customerPhone}
         </span>
+        {thread.channel && thread.channel !== 'whatsapp' ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium capitalize text-sky-700">
+            {thread.channel}
+          </span>
+        ) : null}
         {thread.customerWhatsappName ? (
           <span title="The customer's WhatsApp profile name (read-only)">
             WhatsApp: <span className="font-medium">{thread.customerWhatsappName}</span>

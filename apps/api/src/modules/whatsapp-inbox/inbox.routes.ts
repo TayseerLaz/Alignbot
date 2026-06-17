@@ -174,6 +174,8 @@ export default async function inboxRoutes(app: FastifyInstance) {
           status: threadStatusSchema.optional(),
           tag: z.string().trim().optional(),
           assignee: uuidSchema.optional(),
+          // 'whatsapp' | 'messenger' | 'instagram' — filter to one channel.
+          channel: z.enum(['whatsapp', 'messenger', 'instagram']).optional(),
           limit: z.coerce.number().int().min(1).max(200).default(50),
         }),
         response: { 200: listEnvelopeSchema(threadDtoSchema) },
@@ -188,6 +190,14 @@ export default async function inboxRoutes(app: FastifyInstance) {
             ...(q.status ? { status: q.status as never } : {}),
             ...(q.assignee ? { assignedToUserId: q.assignee } : {}),
             ...(q.tag ? { tags: { some: { tag: q.tag } } } : {}),
+            // Channel filter. Legacy WhatsApp rows may predate the `channel`
+            // column (null) — treat anything that isn't messenger/instagram as
+            // WhatsApp (avoids an `OR` key that would clash with search below).
+            ...(q.channel
+              ? q.channel === 'whatsapp'
+                ? { NOT: { channel: { in: ['messenger', 'instagram'] } as never } }
+                : { channel: q.channel as never }
+              : {}),
             // Search uses the rolling search_text blob OR matches the phone
             // / preview directly so users can search for `+1415` as well.
             ...(q.q

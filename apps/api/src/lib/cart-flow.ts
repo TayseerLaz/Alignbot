@@ -21,6 +21,92 @@ export interface CatalogProductLite {
   priceMinor: number | null;
 }
 
+export interface BookingFormLite {
+  enabled: boolean;
+  fields: { key: string; label: string; type: string; required: boolean }[];
+}
+
+/**
+ * Capture a booking from the bot's [BOOKING: {json}] marker (mirrors the
+ * WhatsApp booking flow, minus the LLM fallback-extractor — the marker is the
+ * primary path). Persists a Booking row + a thread note, flags the thread
+ * `pending` for operator review, and emits the `booking_created` webhook.
+ * Deduped: skips if a booking was captured for this thread in the last 30 min.
+ * Returns the new booking id, or null if nothing was captured.
+ */
+export async function captureBooking(args: {
+  orgId: string;
+  threadId: string;
+  customerId: string;
+  customerName: string | null;
+  bookingMarkerJson: string;
+  bookingForm: BookingFormLite;
+}): Promise<{ id: string } | null> {
+  if (!args.bookingForm.enabled || args.bookingForm.fields.length === 0) return null;
+  let parsed: Record<string, string>;
+  try {
+    const obj = JSON.parse(args.bookingMarkerJson) as Record<string, unknown>;
+    parsed = {};
+    for (const [k, v] of Object.entries(obj)) parsed[k] = v == null ? '' : String(v);
+  } catch {
+    return null;
+  }
+
+  const result = await withRlsBypass(async (tx) => {
+    const recent = await tx.booking.findFirst({
+      where: {
+        organizationId: args.orgId,
+        threadId: args.threadId,
+        createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
+      },
+      select: { id: true },
+    });
+    if (recent) return null;
+
+    const fields = args.bookingForm.fields.map((f) => ({
+      key: f.key,
+      label: f.label,
+      type: f.type,
+      required: f.required,
+      value: parsed[f.key] ?? null,
+    }));
+    const booking = await tx.booking.create({
+      data: {
+        organizationId: args.orgId,
+        threadId: args.threadId,
+        customerPhone: args.customerId,
+        customerName: args.customerName,
+        fields: fields as never,
+        status: 'new',
+      },
+    });
+    await tx.whatsAppNote.create({
+      data: {
+        threadId: args.threadId,
+        organizationId: args.orgId,
+        authorUserId: null,
+        body: `📅 Booking captured (id ${booking.id.slice(0, 8)}…). See /bookings.`,
+      },
+    });
+    await tx.whatsAppThread.update({
+      where: { id: args.threadId },
+      data: { status: 'pending' as never },
+    });
+    return { id: booking.id, fields };
+  });
+  if (!result) return null;
+
+  void (await import('./webhooks.js'))
+    .emitWebhookEvent({
+      organizationId: args.orgId,
+      eventKind: 'booking_created',
+      payload: { id: result.id, customerPhone: args.customerId, fields: result.fields },
+    })
+    .catch(() => undefined);
+
+  return { id: result.id };
+}
+
 function deliveryFor(subtotalMinor: number, shopForm: ShopFormLite): number {
   const base = shopForm.deliveryFeeMinor ?? 0;
   if (shopForm.freeDeliveryAboveMinor != null && subtotalMinor >= shopForm.freeDeliveryAboveMinor) {

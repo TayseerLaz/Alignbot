@@ -25,7 +25,7 @@ import { z } from 'zod';
 import { recordAudit } from '../../lib/audit.js';
 import { withRlsBypass } from '../../lib/db.js';
 import { badRequest, notFound } from '../../lib/errors.js';
-import type { CatalogProductLite, ShopFormLite } from '../../lib/cart-flow.js';
+import type { BookingFormLite, CatalogProductLite, ShopFormLite } from '../../lib/cart-flow.js';
 import { env } from '../../lib/env.js';
 import { generateOpaqueToken } from '../../lib/crypto.js';
 
@@ -303,7 +303,65 @@ export default async function messengerRoutes(app: FastifyInstance) {
 interface MessengerEvent {
   sender?: { id?: string };
   recipient?: { id?: string };
-  message?: { mid?: string; text?: string; is_echo?: boolean };
+  message?: {
+    mid?: string;
+    text?: string;
+    is_echo?: boolean;
+    attachments?: { type?: string; payload?: { url?: string } }[];
+  };
+}
+
+// Download an inbound Messenger/IG attachment from its CDN URL and persist it
+// to object storage, then point the message row at the new Asset so the inbox
+// renders the photo inline (mirrors the WhatsApp storeInboundImage, but the
+// Messenger payload gives a direct, unauthenticated URL — no media-id lookup).
+// Best-effort: every failure is swallowed + logged.
+async function storeInboundMessengerImage(args: {
+  orgId: string;
+  messageId: string;
+  url: string;
+  log: Logger;
+}): Promise<void> {
+  try {
+    const { isStorageConfigured, buildStorageKey, putObject } = await import('../../lib/storage.js');
+    if (!isStorageConfigured()) return;
+    const fileRes = await fetch(args.url, { signal: AbortSignal.timeout(20_000) });
+    if (!fileRes.ok) {
+      args.log.warn({ status: fileRes.status }, '[messenger] inbound image download failed');
+      return;
+    }
+    const buf = Buffer.from(await fileRes.arrayBuffer());
+    if (buf.length === 0 || buf.length > 10 * 1024 * 1024) return;
+    const mime = (fileRes.headers.get('content-type') ?? 'image/jpeg').split(';')[0]!.trim();
+    const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
+    const assetId = crypto.randomUUID();
+    const storageKey = buildStorageKey({
+      organizationId: args.orgId,
+      kind: 'inbound-image',
+      assetId,
+      filename: `img.${ext}`,
+    });
+    await putObject({ storageKey, body: buf, contentType: mime });
+    await withRlsBypass(async (tx) => {
+      await tx.asset.create({
+        data: {
+          id: assetId,
+          organizationId: args.orgId,
+          kind: 'image',
+          storageKey,
+          contentType: mime,
+          byteSize: buf.length,
+        },
+      });
+      await tx.whatsAppMessage.update({
+        where: { id: args.messageId },
+        data: { mediaAssetId: assetId },
+      });
+    });
+    args.log.info({ bytes: buf.length }, '[messenger] stored inbound image');
+  } catch (err) {
+    args.log.warn({ err }, '[messenger] inbound image store threw');
+  }
 }
 
 type Logger = { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
@@ -321,9 +379,15 @@ async function handleMessengerEvents(
 ): Promise<void> {
   for (const ev of events) {
     const psid = ev.sender?.id;
-    const text = ev.message?.text;
-    // Skip echoes (our own outbound) + non-text events.
-    if (!psid || ev.message?.is_echo || !text) continue;
+    // Skip echoes (our own outbound). Accept text AND/OR image attachments —
+    // a photo-only message (no text) is still ingested so the operator sees it.
+    if (!psid || ev.message?.is_echo) continue;
+    const text = ev.message?.text ?? '';
+    const imageAttachments = (ev.message?.attachments ?? []).filter(
+      (a) => a.type === 'image' && a.payload?.url,
+    );
+    const hasImage = imageAttachments.length > 0;
+    if (!text && !hasImage) continue; // nothing we can store
     const mid = ev.message?.mid ?? null;
 
     // Idempotency: skip a mid we already stored (Meta retries).
@@ -337,13 +401,26 @@ async function handleMessengerEvents(
       if (dup) continue;
     }
 
-    // Upsert the thread (channel='messenger', keyed by PSID stored in
-    // customer_phone — reuses the (org, customer_phone) unique).
-    const thread = await withRlsBypass(async (tx) => {
-      const existing = await tx.whatsAppThread.findFirst({
+    const messageType = text ? 'text' : 'image';
+    const body = text || '[image]';
+    const preview = body.slice(0, 200);
+
+    // Upsert the thread (keyed by PSID in channelUserId). On FIRST contact,
+    // fetch the customer's profile name from Graph so the inbox + /contacts
+    // show a real name instead of a raw PSID (best-effort; null on failure).
+    const existing = await withRlsBypass((tx) =>
+      tx.whatsAppThread.findFirst({
         where: { organizationId: orgId, channel: channelKind, channelUserId: psid },
-      });
-      const preview = text.slice(0, 200);
+        select: { id: true, searchText: true, customerName: true },
+      }),
+    );
+    let profileName: string | null = existing?.customerName ?? null;
+    if (!existing) {
+      const { fetchMessengerProfileName } = await import('../../lib/messenger-send.js');
+      profileName = await fetchMessengerProfileName(orgId, psid, log);
+    }
+
+    const thread = await withRlsBypass(async (tx) => {
       if (existing) {
         return tx.whatsAppThread.update({
           where: { id: existing.id },
@@ -352,7 +429,7 @@ async function handleMessengerEvents(
             lastMessageAt: new Date(),
             lastMessagePreview: preview,
             inboundCount: { increment: 1 },
-            searchText: `${existing.searchText} ${text}`.slice(0, 16000),
+            searchText: `${existing.searchText} ${body}`.slice(0, 16000),
           },
         });
       }
@@ -362,16 +439,17 @@ async function handleMessengerEvents(
           channel: channelKind,
           channelUserId: psid,
           customerPhone: psid, // generic id slot for non-WhatsApp channels
+          customerName: profileName,
           status: 'open',
           lastMessageAt: new Date(),
           lastMessagePreview: preview,
           inboundCount: 1,
-          searchText: text,
+          searchText: body,
         },
       });
     });
 
-    await withRlsBypass((tx) =>
+    const message = await withRlsBypass((tx) =>
       tx.whatsAppMessage.create({
         data: {
           threadId: thread.id,
@@ -380,38 +458,55 @@ async function handleMessengerEvents(
           direction: 'inbound',
           metaMessageId: mid,
           fromNumber: psid,
-          messageType: 'text',
-          body: text,
+          messageType,
+          body,
           rawPayload: ev as never,
         },
+        select: { id: true },
       }),
     );
+
+    // Pull down the photo (first image attachment) so the inbox renders it
+    // inline rather than an "[image]" placeholder.
+    if (hasImage) {
+      await storeInboundMessengerImage({
+        orgId,
+        messageId: message.id,
+        url: imageAttachments[0]!.payload!.url!,
+        log,
+      });
+    }
 
     // Auto-upsert a Contact (mirrors the WhatsApp inbound flow) so the
     // operator's block button + /contacts work for Messenger/Instagram too,
     // and so STOP opt-outs are honoured. The PSID lives in phoneE164 — it's a
     // long numeric string with no leading '+', so it can't collide with a real
     // WhatsApp +E.164 number. STOP keywords (multi-locale) set optedOutAt.
-    const isStop = STOP_RE.test(text);
+    const isStop = !!text && STOP_RE.test(text);
     await withRlsBypass((tx) =>
       tx.contact.upsert({
         where: { organizationId_phoneE164: { organizationId: orgId, phoneE164: psid } },
         create: {
           organizationId: orgId,
           phoneE164: psid,
-          displayName: thread.customerName ?? null,
+          displayName: profileName,
           optedOutAt: isStop ? new Date() : null,
           lastInboundAt: new Date(),
           source: 'inbox_auto',
         },
         update: {
           lastInboundAt: new Date(),
+          ...(profileName ? { displayName: profileName } : {}),
           ...(isStop ? { optedOutAt: new Date() } : {}),
         },
       }),
     ).catch((err) => log.error({ err }, '[messenger] contact upsert failed'));
 
-    await maybeReplyOnMessenger(orgId, channelId, channelKind, thread.id, psid, text, log);
+    // Only run the bot when there's actual text to answer. A photo-only
+    // inbound is stored for the operator but doesn't trigger an AI reply.
+    if (text) {
+      await maybeReplyOnMessenger(orgId, channelId, channelKind, thread.id, psid, text, log);
+    }
   }
 }
 
@@ -634,9 +729,45 @@ async function maybeReplyOnMessenger(
     }
   }
 
+  // Booking: capture an appointment from the bot's [BOOKING: {json}] marker
+  // (mirrors WhatsApp). Independent of the shop flow — an org may have either.
+  let bookingCaptured = false;
+  const bookingForm = (data as { bookingForm?: BookingFormLite | null }).bookingForm ?? null;
+  if (bookingForm?.enabled) {
+    const bookingMatch = /\[BOOKING:\s*(\{[\s\S]*?\})\s*\]/i.exec(rawText);
+    if (bookingMatch) {
+      try {
+        const { captureBooking } = await import('../../lib/cart-flow.js');
+        const customerName = await withRlsBypass((tx) =>
+          tx.whatsAppThread
+            .findUnique({ where: { id: threadId }, select: { customerName: true } })
+            .then((t) => t?.customerName ?? null),
+        );
+        const booking = await captureBooking({
+          orgId,
+          threadId,
+          customerId: psid,
+          customerName,
+          bookingMarkerJson: bookingMatch[1]!,
+          bookingForm,
+        });
+        bookingCaptured = !!booking;
+      } catch (err) {
+        log.warn({ err }, '[messenger] booking capture failed');
+      }
+    }
+  }
+
   const replyText = stripMarkers(rawText);
   // The order receipt (if any) is the single confirmation; else the bot text.
-  const customerText = orderReceiptBody ?? replyText;
+  // If a booking was captured but the marker was the whole reply (nothing left
+  // after stripping), fall back to a friendly confirmation.
+  const customerText =
+    orderReceiptBody ??
+    (replyText ||
+      (bookingCaptured
+        ? 'All set — your request has been captured. A teammate will follow up shortly.'
+        : ''));
   if (!customerText) return;
 
   const { sendMessengerText, sendMessengerImage } = await import('../../lib/messenger-send.js');

@@ -25,6 +25,7 @@ import { z } from 'zod';
 import { recordAudit } from '../../lib/audit.js';
 import { withRlsBypass } from '../../lib/db.js';
 import { badRequest, notFound } from '../../lib/errors.js';
+import type { CatalogProductLite, ShopFormLite } from '../../lib/cart-flow.js';
 import { env } from '../../lib/env.js';
 import { generateOpaqueToken } from '../../lib/crypto.js';
 
@@ -307,6 +308,10 @@ interface MessengerEvent {
 
 type Logger = { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
 
+// Multi-locale opt-out keywords (mirrors the WhatsApp STOP_RE). A lone STOP /
+// UNSUBSCRIBE / إيقاف etc. flips the contact's optedOutAt and suppresses the bot.
+const STOP_RE = /^\s*(stop|unsubscribe|quit|cancel|end|opt\s*out|alto|para|arr[eê]ter|stopper|اوقف|إيقاف)\s*\.?\s*$/i;
+
 async function handleMessengerEvents(
   orgId: string,
   channelId: string,
@@ -382,6 +387,30 @@ async function handleMessengerEvents(
       }),
     );
 
+    // Auto-upsert a Contact (mirrors the WhatsApp inbound flow) so the
+    // operator's block button + /contacts work for Messenger/Instagram too,
+    // and so STOP opt-outs are honoured. The PSID lives in phoneE164 — it's a
+    // long numeric string with no leading '+', so it can't collide with a real
+    // WhatsApp +E.164 number. STOP keywords (multi-locale) set optedOutAt.
+    const isStop = STOP_RE.test(text);
+    await withRlsBypass((tx) =>
+      tx.contact.upsert({
+        where: { organizationId_phoneE164: { organizationId: orgId, phoneE164: psid } },
+        create: {
+          organizationId: orgId,
+          phoneE164: psid,
+          displayName: thread.customerName ?? null,
+          optedOutAt: isStop ? new Date() : null,
+          lastInboundAt: new Date(),
+          source: 'inbox_auto',
+        },
+        update: {
+          lastInboundAt: new Date(),
+          ...(isStop ? { optedOutAt: new Date() } : {}),
+        },
+      }),
+    ).catch((err) => log.error({ err }, '[messenger] contact upsert failed'));
+
     await maybeReplyOnMessenger(orgId, channelId, channelKind, thread.id, psid, text, log);
   }
 }
@@ -405,6 +434,20 @@ async function maybeReplyOnMessenger(
     }),
   );
   if (!thread || thread.assignedToUserId || thread.status === 'escalated') return;
+
+  // Compliance gate: never auto-reply to a contact the operator blocked or who
+  // opted out (STOP). The inbound is still stored + visible in the inbox; we
+  // just stay silent. Keyed by PSID-in-phoneE164 (see the contact upsert above).
+  const contact = await withRlsBypass((tx) =>
+    tx.contact.findFirst({
+      where: { organizationId: orgId, phoneE164: psid },
+      select: { blockedAt: true, optedOutAt: true },
+    }),
+  );
+  if (contact?.blockedAt || contact?.optedOutAt) {
+    log.info({ orgId, threadId }, '[messenger] bot skip: contact blocked or opted out');
+    return;
+  }
 
   const channel = await withRlsBypass((tx) =>
     tx.messengerChannel.findUnique({ where: { id: channelId } }),
@@ -435,6 +478,14 @@ async function maybeReplyOnMessenger(
       }));
   });
 
+  // Commerce: load the draft cart so the bot quotes a correct running total.
+  const shopForm = (data as { shopForm?: ShopFormLite | null }).shopForm ?? null;
+  const products =
+    (data as { products?: (CatalogProductLite & { images?: { storageKey: string }[] })[] })
+      .products ?? [];
+  const { loadDraftCartState, syncDraftFromReply, captureCart } = await import('../../lib/cart-flow.js');
+  const cartState = shopForm ? await loadDraftCartState(orgId, threadId) : null;
+
   let rawText: string;
   try {
     const result = await buildBotResponse({
@@ -443,39 +494,176 @@ async function maybeReplyOnMessenger(
       history,
       data,
       replyMode: 'text',
+      cartState: cartState ?? undefined,
     });
     rawText = result.text;
   } catch (err) {
     log.warn({ err }, '[messenger] buildBotResponse failed');
     return;
   }
-  const replyText = stripMarkers(rawText);
-  if (!replyText) return;
 
-  const { sendMessengerText, sendMessengerImage } = await import('../../lib/messenger-send.js');
-
-  // Send product images for any [IMAGE: <sku>] markers the bot emitted, first.
-  const imageSkus = Array.from(rawText.matchAll(/\[IMAGE:\s*([^\]\s]+)\s*\]/gi))
-    .map((m) => m[1]!.trim())
-    .slice(0, 3);
-  if (imageSkus.length > 0) {
-    const { presignGetUrl } = await import('../../lib/storage.js');
-    const products = (data as { products?: { sku: string; images?: { storageKey: string }[] }[] })
-      .products ?? [];
-    for (const sku of imageSkus) {
-      const p = products.find((x) => x.sku.toLowerCase() === sku.toLowerCase());
-      const key = p?.images?.[0]?.storageKey;
-      if (!key) continue;
+  // Build the draft cart from "added" lines + capture an order on the [CART:]
+  // marker (reuses the shared cart-flow + the WhatsApp cart-parser). When an
+  // order is captured, a deterministic receipt becomes the SINGLE confirmation
+  // (the LLM's own "order confirmed" text is suppressed — mirrors WhatsApp).
+  let orderReceiptBody: string | null = null;
+  if (shopForm) {
+    const { parseCartMarker, formatMoney } = await import('../../lib/bot-engine.js');
+    const prevBotReply = [...history].reverse().find((h) => h.role === 'assistant')?.content ?? '';
+    try {
+      await syncDraftFromReply({
+        orgId,
+        threadId,
+        customerId: psid,
+        reply: rawText,
+        userMessage,
+        previousBotReply: prevBotReply,
+        products,
+        shopForm,
+      });
+    } catch (err) {
+      log.warn({ err }, '[messenger] draft cart sync failed');
+    }
+    const cartMarker = parseCartMarker(rawText);
+    if (cartMarker) {
       try {
-        const url = await presignGetUrl(key, 3600);
-        await sendMessengerImage(orgId, psid, url, log);
+        const customerName = await withRlsBypass((tx) =>
+          tx.whatsAppThread
+            .findUnique({ where: { id: threadId }, select: { customerName: true } })
+            .then((t) => t?.customerName ?? null),
+        );
+        const captured = await captureCart({
+          orgId,
+          threadId,
+          customerId: psid,
+          customerName,
+          cartMarkerPayload: cartMarker,
+          shopForm,
+          products,
+        });
+        if (captured) {
+          orderReceiptBody = `✅ Order #${captured.id.slice(0, 8)}\nTotal: ${formatMoney(
+            captured.totalMinor,
+            captured.currency,
+          )}`;
+          await withRlsBypass((tx) =>
+            tx.whatsAppThread.update({ where: { id: threadId }, data: { status: 'pending' } }),
+          );
+        }
       } catch (err) {
-        log.warn({ err, sku }, '[messenger] product image send failed');
+        log.warn({ err }, '[messenger] cart capture failed');
+      }
+    }
+
+    // [PAYMENT_LINK] → mint/resolve a real payable link via the tenant's
+    // payment provider (mirrors WhatsApp). Leaves the text intact on any
+    // failure so the customer never sees a broken reply.
+    if (/\[PAYMENT_LINK\]/i.test(rawText) && cartState && cartState.items.length > 0) {
+      try {
+        const code = cartState.currency.toUpperCase();
+        const dec = ['KWD', 'BHD', 'OMR', 'JOD'].includes(code) ? 3 : 2;
+        const amountMinor = cartState.subtotalMinor;
+        const amountMajor = Number((amountMinor / Math.pow(10, dec)).toFixed(dec));
+        const draftCart = await withRlsBypass((tx) =>
+          tx.cart.findFirst({
+            where: { organizationId: orgId, threadId, status: 'draft' },
+            select: { id: true, customerName: true },
+          }),
+        );
+        let resolution: { kind: 'url'; url: string } | { kind: 'text'; text: string } | null = null;
+        if (draftCart) {
+          const payCtx = {
+            organizationId: orgId,
+            threadId,
+            cartId: draftCart.id,
+            customerName: draftCart.customerName || 'Customer',
+            customerPhone: psid,
+            amountMajor,
+            amountMinor,
+            currency: code,
+            displayReference: draftCart.id.slice(0, 8),
+          };
+          const pcfg = await withRlsBypass((tx) =>
+            tx.paymentConfig.findUnique({ where: { organizationId: orgId } }),
+          );
+          if (pcfg && pcfg.provider !== 'none') {
+            const { resolvePaymentLink } = await import('../../lib/payments/index.js');
+            const { decryptSecret } = await import('@aligned/db');
+            let creds: Record<string, string> = {};
+            try {
+              const j = decryptSecret(pcfg.credentials);
+              creds = j ? (JSON.parse(j) as Record<string, string>) : {};
+            } catch {
+              creds = {};
+            }
+            resolution = await resolvePaymentLink(
+              {
+                provider: pcfg.provider,
+                staticLinkUrl: pcfg.staticLinkUrl,
+                bankDetails: pcfg.bankDetails,
+                testMode: pcfg.testMode,
+                credentials: creds,
+              },
+              payCtx,
+              log,
+            );
+          }
+          if (!resolution) {
+            const { createInvoice, isMyFatoorahConfigured } = await import(
+              '../../lib/myfatoorah.js'
+            );
+            if (isMyFatoorahConfigured()) {
+              const invoice = await createInvoice(payCtx, log);
+              if (invoice) resolution = { kind: 'url', url: invoice.invoiceUrl };
+            }
+          }
+        }
+        if (resolution?.kind === 'url') {
+          rawText = rawText.replace(/\[PAYMENT_LINK\]/gi, resolution.url);
+        } else if (resolution?.kind === 'text') {
+          rawText = rawText.replace(/\[PAYMENT_LINK\]/gi, resolution.text);
+        } else {
+          rawText = rawText.replace(
+            /\[PAYMENT_LINK\]/gi,
+            'We will send you a secure payment link shortly.',
+          );
+        }
+      } catch (err) {
+        log.warn({ err }, '[messenger] payment-link resolve failed');
       }
     }
   }
 
-  const metaMessageId = await sendMessengerText(orgId, psid, replyText, log);
+  const replyText = stripMarkers(rawText);
+  // The order receipt (if any) is the single confirmation; else the bot text.
+  const customerText = orderReceiptBody ?? replyText;
+  if (!customerText) return;
+
+  const { sendMessengerText, sendMessengerImage } = await import('../../lib/messenger-send.js');
+
+  // Send product images for [IMAGE: <sku>] markers (skip on an order-confirm
+  // turn — the receipt stands alone).
+  if (!orderReceiptBody) {
+    const imageSkus = Array.from(rawText.matchAll(/\[IMAGE:\s*([^\]\s]+)\s*\]/gi))
+      .map((m) => m[1]!.trim())
+      .slice(0, 3);
+    if (imageSkus.length > 0) {
+      const { presignGetUrl } = await import('../../lib/storage.js');
+      for (const sku of imageSkus) {
+        const p = products.find((x) => x.sku.toLowerCase() === sku.toLowerCase());
+        const key = p?.images?.[0]?.storageKey;
+        if (!key) continue;
+        try {
+          const url = await presignGetUrl(key, 3600);
+          await sendMessengerImage(orgId, psid, url, log);
+        } catch (err) {
+          log.warn({ err, sku }, '[messenger] product image send failed');
+        }
+      }
+    }
+  }
+
+  const metaMessageId = await sendMessengerText(orgId, psid, customerText, log);
   if (metaMessageId === null) return; // send failed — don't persist a phantom outbound
 
   await withRlsBypass((tx) =>
@@ -488,7 +676,7 @@ async function maybeReplyOnMessenger(
         metaMessageId,
         toNumber: psid,
         messageType: 'text',
-        body: replyText,
+        body: customerText,
         rawPayload: { sentBy: 'bot' } as never,
       },
     }),
@@ -498,7 +686,7 @@ async function maybeReplyOnMessenger(
       where: { id: threadId },
       data: {
         lastMessageAt: new Date(),
-        lastMessagePreview: replyText.slice(0, 200),
+        lastMessagePreview: customerText.slice(0, 200),
         outboundCount: { increment: 1 },
       },
     }),

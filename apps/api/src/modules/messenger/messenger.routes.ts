@@ -15,6 +15,7 @@ import {
   ApiErrorCode,
   itemEnvelopeSchema,
   messengerChannelSchema,
+  successSchema,
   uuidSchema,
   upsertMessengerChannelBodySchema,
 } from '@aligned/shared';
@@ -229,6 +230,59 @@ export default async function messengerRoutes(app: FastifyInstance) {
         }),
       );
       return { data: serialize(row) };
+    },
+  );
+
+  // ---------- DELETE /messenger -------------------------------------------
+  // Disconnect + delete the channel. Best-effort: unsubscribe the Page from the
+  // app webhook so Meta stops delivering DMs, then drop the row (encrypted creds
+  // included). Existing conversation history is untouched — threads/messages key
+  // off orgId + a channel string, not an FK to this row. After this, inbound
+  // Messenger/Instagram webhooks for the org are rejected until reconfigured.
+  r.delete(
+    '/messenger',
+    {
+      schema: {
+        tags: ['messenger'],
+        summary: 'Disconnect and delete the Messenger/Instagram channel.',
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const channel = await app.tenant(req, (tx) =>
+        tx.messengerChannel.findUnique({ where: { organizationId: orgId } }),
+      );
+      if (!channel) throw notFound('Messenger channel not configured.');
+
+      // Best-effort unsubscribe from Meta (never blocks the local delete).
+      if (channel.pageId && channel.pageAccessToken) {
+        try {
+          const pageToken = decryptSecret(channel.pageAccessToken) ?? '';
+          if (pageToken) {
+            await fetch(
+              `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.pageId)}/subscribed_apps?access_token=${encodeURIComponent(
+                pageToken,
+              )}`,
+              { method: 'DELETE', signal: AbortSignal.timeout(10_000) },
+            );
+          }
+        } catch (err) {
+          req.log.warn({ err }, '[messenger] unsubscribe on delete failed (continuing)');
+        }
+      }
+
+      await app.tenant(req, (tx) => tx.messengerChannel.delete({ where: { id: channel.id } }));
+      await recordAudit({
+        action: 'business_info_updated',
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        entityType: 'messenger_channel',
+        entityId: channel.id,
+        metadata: { event: 'messenger_channel_deleted', pageId: channel.pageId },
+      });
+      return { ok: true as const };
     },
   );
 

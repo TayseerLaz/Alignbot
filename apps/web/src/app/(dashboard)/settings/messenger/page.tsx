@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle2, Copy, MessageCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Copy, MessageCircle, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { api, ApiError } from '@/lib/api';
@@ -94,6 +95,31 @@ export default function MessengerSettingsPage() {
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Connect failed'),
   });
+
+  const disconnect = useMutation({
+    mutationFn: () => api.delete('/api/v1/messenger'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['messenger-config'] });
+      setPageId('');
+      setIgAccountId('');
+      setPageAccessToken('');
+      setAppSecret('');
+      toast.success('Disconnected — the connection was removed');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Disconnect failed'),
+  });
+
+  async function onDisconnect() {
+    const confirmed = await confirmDialog({
+      title: 'Disconnect Messenger & Instagram?',
+      body:
+        'This removes the Page connection and deletes the stored credentials. We’ll also tell Meta to stop sending messages here. ' +
+        'Your existing conversation history is kept. You can reconnect any time by entering the credentials again.',
+      confirmLabel: 'Disconnect & delete',
+      destructive: true,
+    });
+    if (confirmed) disconnect.mutate();
+  }
 
   return (
     <>
@@ -200,6 +226,24 @@ export default function MessengerSettingsPage() {
             <CopyField label="Verify token" value={cfg?.webhookVerifyToken ?? ''} />
           </CardContent>
         </Card>
+
+        {cfg && (cfg.pageId || cfg.hasPageAccessToken || cfg.hasAppSecret || cfg.igAccountId || cfg.isActive) ? (
+          <Card className="border-red-200">
+            <CardHeader>
+              <CardTitle className="text-red-700">Disconnect</CardTitle>
+              <CardDescription>
+                Remove the Facebook Page / Instagram connection and delete the stored credentials.
+                We’ll also ask Meta to stop sending messages here. Your existing conversations are
+                kept, and you can reconnect later.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="danger" loading={disconnect.isPending} onClick={onDisconnect}>
+                <Trash2 className="size-4" /> Disconnect &amp; delete
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
     </>
   );

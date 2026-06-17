@@ -468,10 +468,14 @@ async function handleMessengerEvents(
         select: { id: true, searchText: true, customerName: true },
       }),
     );
+    // Fetch the display name on first contact AND when an existing thread still
+    // has no real name (null or a bare numeric id) — this backfills IG/Messenger
+    // threads created before the name lookup worked.
     let profileName: string | null = existing?.customerName ?? null;
-    if (!existing) {
+    const needsName = !profileName || /^\d+$/.test(profileName);
+    if (needsName) {
       const { fetchMessengerProfileName } = await import('../../lib/messenger-send.js');
-      profileName = await fetchMessengerProfileName(orgId, psid, log);
+      profileName = (await fetchMessengerProfileName(orgId, psid, channelKind, log)) ?? profileName;
     }
 
     const thread = await withRlsBypass(async (tx) => {
@@ -484,6 +488,8 @@ async function handleMessengerEvents(
             lastMessagePreview: preview,
             inboundCount: { increment: 1 },
             searchText: `${existing.searchText} ${body}`.slice(0, 16000),
+            // Backfill the name once we resolve it.
+            ...(needsName && profileName ? { customerName: profileName } : {}),
           },
         });
       }

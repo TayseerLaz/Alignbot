@@ -58,6 +58,7 @@ export async function sendMessengerText(
 export async function fetchMessengerProfileName(
   orgId: string,
   psid: string,
+  channelKind: 'messenger' | 'instagram',
   log?: Logger,
 ): Promise<string | null> {
   const channel = await withRlsBypass((tx) =>
@@ -66,14 +67,24 @@ export async function fetchMessengerProfileName(
   if (!channel || !channel.pageAccessToken) return null;
   const pageToken = decryptSecret(channel.pageAccessToken) ?? '';
   if (!pageToken) return null;
+  // Instagram-scoped IDs only expose name/username — asking for the
+  // Messenger-only first_name/last_name makes Graph reject the whole request,
+  // which is why IG threads were falling back to the raw numeric id.
+  const fields = channelKind === 'instagram' ? 'name,username' : 'name,first_name,last_name';
   try {
     const res = await fetch(
-      `${GRAPH}/${encodeURIComponent(psid)}?fields=name,first_name,last_name,username&access_token=${encodeURIComponent(
+      `${GRAPH}/${encodeURIComponent(psid)}?fields=${fields}&access_token=${encodeURIComponent(
         pageToken,
       )}`,
       { signal: AbortSignal.timeout(8_000) },
     );
-    if (!res.ok) return null;
+    if (!res.ok) {
+      log?.warn?.(
+        { status: res.status, channelKind, body: (await res.text()).slice(0, 200) },
+        '[messenger] profile fetch failed',
+      );
+      return null;
+    }
     const j = (await res.json()) as {
       name?: string;
       first_name?: string;

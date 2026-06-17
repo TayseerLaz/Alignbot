@@ -52,7 +52,10 @@ echo "$CHANGED" | grep -q '^pnpm-lock.yaml$' && NEED_INSTALL=1
 [ -x packages/db/node_modules/.bin/prisma ] || NEED_INSTALL=1
 if [ "$NEED_INSTALL" = 1 ]; then
   echo "▶ Installing dependencies (incl. devDeps via --prod=false)…"
-  pnpm install --frozen-lockfile --prod=false
+  # CI=1 + confirmModulesPurge=false: switching prod↔dev makes pnpm want to wipe
+  # & reinstall node_modules, which otherwise prompts "Proceed? (Y/n)" and stalls
+  # this non-interactive deploy. Auto-confirm it.
+  CI=1 pnpm install --frozen-lockfile --prod=false --config.confirmModulesPurge=false
 fi
 
 echo "▶ Regenerating Prisma client…"

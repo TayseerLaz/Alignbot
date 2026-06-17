@@ -40,9 +40,19 @@ fi
 # baked into the web build, SECRET_ENCRYPTION_KEY for the crypto extension).
 set -a; . ./.env.production; set +a
 
-if echo "$CHANGED" | grep -q '^pnpm-lock.yaml$'; then
-  echo "▶ Lockfile changed — pnpm install…"
-  pnpm install --frozen-lockfile
+# Install when the lockfile changed OR when devDependencies are missing. The
+# build + migrate steps need `prisma` (the CLI) and `tsc`, which are BOTH
+# devDependencies — and this script sources .env.production, which sets
+# NODE_ENV=production, so a plain `pnpm install` (or anything that prunes to
+# prod deps out-of-band) strips them and the next deploy dies with
+# "tsc: not found" / "prisma not found". `--prod=false` forces devDeps back in.
+NEED_INSTALL=0
+echo "$CHANGED" | grep -q '^pnpm-lock.yaml$' && NEED_INSTALL=1
+[ -x node_modules/.bin/tsc ] || NEED_INSTALL=1
+[ -x packages/db/node_modules/.bin/prisma ] || NEED_INSTALL=1
+if [ "$NEED_INSTALL" = 1 ]; then
+  echo "▶ Installing dependencies (incl. devDeps via --prod=false)…"
+  pnpm install --frozen-lockfile --prod=false
 fi
 
 echo "▶ Regenerating Prisma client…"
@@ -59,7 +69,14 @@ for attempt in 1 2 3; do
 done
 [ "$GEN_OK" = 1 ] || { echo "  ✗ prisma generate failed 3× — aborting"; exit 1; }
 
-echo "▶ Rebuilding workspace packages consumed as dist (ALWAYS)…"
+echo "▶ Rebuilding workspace packages consumed as dist (ALWAYS, clean)…"
+# Wipe dist + the incremental tsbuildinfo first. tsc's incremental cache can go
+# stale (e.g. index.js referencing a schema whose .js was never re-emitted),
+# which surfaces downstream as a web build error like "Can't resolve
+# './schemas/user.js'". A clean emit every deploy is cheap and removes the class
+# of bug entirely.
+rm -rf packages/db/dist packages/db/tsconfig.tsbuildinfo \
+       packages/shared/dist packages/shared/tsconfig.tsbuildinfo
 pnpm --filter @aligned/db build
 pnpm --filter @aligned/shared build
 

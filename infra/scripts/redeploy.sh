@@ -48,14 +48,20 @@ set -a; . ./.env.production; set +a
 # "tsc: not found" / "prisma not found". `--prod=false` forces devDeps back in.
 NEED_INSTALL=0
 echo "$CHANGED" | grep -q '^pnpm-lock.yaml$' && NEED_INSTALL=1
+# The build/migrate steps need these per-package bins (tsc + prisma). pnpm's
+# frozen check can report "up to date" while a package's node_modules/.bin is
+# actually missing its symlinks, so check the real bins, not just the lockfile.
 [ -x node_modules/.bin/tsc ] || NEED_INSTALL=1
 [ -x packages/db/node_modules/.bin/prisma ] || NEED_INSTALL=1
+[ -x packages/db/node_modules/.bin/tsc ] || NEED_INSTALL=1
+[ -x packages/shared/node_modules/.bin/tsc ] || NEED_INSTALL=1
 if [ "$NEED_INSTALL" = 1 ]; then
-  echo "▶ Installing dependencies (incl. devDeps via --prod=false)…"
+  echo "▶ Installing dependencies (incl. devDeps via --prod=false, forced relink)…"
   # CI=1 + confirmModulesPurge=false: switching prod↔dev makes pnpm want to wipe
   # & reinstall node_modules, which otherwise prompts "Proceed? (Y/n)" and stalls
-  # this non-interactive deploy. Auto-confirm it.
-  CI=1 pnpm install --frozen-lockfile --prod=false --config.confirmModulesPurge=false
+  # this non-interactive deploy. --force re-links bins even when pnpm thinks the
+  # tree is already up to date (the failure mode that kept breaking deploys).
+  CI=1 pnpm install --prod=false --force --config.confirmModulesPurge=false
 fi
 
 echo "▶ Regenerating Prisma client…"

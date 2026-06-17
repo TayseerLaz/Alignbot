@@ -7,7 +7,17 @@ import { decryptSecret } from '@aligned/db';
 
 import { withRlsBypass } from './db.js';
 
-const GRAPH = 'https://graph.facebook.com/v20.0';
+const FB_GRAPH = 'https://graph.facebook.com/v20.0';
+const IG_GRAPH = 'https://graph.instagram.com/v21.0';
+
+// Pick the Graph host from the token shape. Instagram-Login tokens start with
+// "IG" and MUST go to graph.instagram.com — graph.facebook.com rejects them
+// ("Cannot parse access token", code 190). Facebook Page tokens (EAA…) use the
+// facebook host. This auto-adapts whether the tenant connected via a Page or
+// via Instagram Login.
+function graphBaseFor(token: string): string {
+  return token.startsWith('IG') ? IG_GRAPH : FB_GRAPH;
+}
 
 type Logger = { warn: (...a: unknown[]) => void };
 
@@ -23,13 +33,16 @@ export async function sendMessengerText(
   if (!channel || !channel.isActive || !channel.pageAccessToken) return null;
   const pageToken = decryptSecret(channel.pageAccessToken) ?? '';
   if (!pageToken) return null;
+  const base = graphBaseFor(pageToken);
+  const isIg = base === IG_GRAPH;
   try {
-    const res = await fetch(`${GRAPH}/me/messages?access_token=${encodeURIComponent(pageToken)}`, {
+    const res = await fetch(`${base}/me/messages?access_token=${encodeURIComponent(pageToken)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // Instagram's send API doesn't take messaging_type; Messenger does.
       body: JSON.stringify({
         recipient: { id: recipientId },
-        messaging_type: 'RESPONSE',
+        ...(isIg ? {} : { messaging_type: 'RESPONSE' }),
         message: { text: text.slice(0, 1900) },
       }),
       signal: AbortSignal.timeout(10_000),
@@ -71,9 +84,10 @@ export async function fetchMessengerProfileName(
   // Messenger-only first_name/last_name makes Graph reject the whole request,
   // which is why IG threads were falling back to the raw numeric id.
   const fields = channelKind === 'instagram' ? 'name,username' : 'name,first_name,last_name';
+  const base = graphBaseFor(pageToken);
   try {
     const res = await fetch(
-      `${GRAPH}/${encodeURIComponent(psid)}?fields=${fields}&access_token=${encodeURIComponent(
+      `${base}/${encodeURIComponent(psid)}?fields=${fields}&access_token=${encodeURIComponent(
         pageToken,
       )}`,
       { signal: AbortSignal.timeout(8_000) },
@@ -117,13 +131,15 @@ export async function sendMessengerImage(
   if (!channel || !channel.isActive || !channel.pageAccessToken) return null;
   const pageToken = decryptSecret(channel.pageAccessToken) ?? '';
   if (!pageToken) return null;
+  const base = graphBaseFor(pageToken);
+  const isIg = base === IG_GRAPH;
   try {
-    const res = await fetch(`${GRAPH}/me/messages?access_token=${encodeURIComponent(pageToken)}`, {
+    const res = await fetch(`${base}/me/messages?access_token=${encodeURIComponent(pageToken)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         recipient: { id: recipientId },
-        messaging_type: 'RESPONSE',
+        ...(isIg ? {} : { messaging_type: 'RESPONSE' }),
         message: { attachment: { type: 'image', payload: { url: imageUrl, is_reusable: true } } },
       }),
       signal: AbortSignal.timeout(15_000),

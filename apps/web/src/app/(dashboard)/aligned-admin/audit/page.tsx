@@ -45,6 +45,20 @@ const ENTITY_TYPES = [
 
 const humanAction = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
+// Prefer a human subject (name/email captured in metadata) over the raw entity
+// id, so member actions read "membership · John Doe" instead of "· 13ef2232".
+function auditSubtitle(row: AdminAuditEntry): string {
+  const m = row.metadata ?? {};
+  const subject =
+    (typeof m.subjectName === 'string' && m.subjectName) ||
+    (typeof m.subjectEmail === 'string' && m.subjectEmail) ||
+    (typeof m.email === 'string' && m.email) ||
+    null;
+  if (!row.entityType) return subject || '—';
+  const tail = subject || (row.entityId ? row.entityId.slice(0, 8) : '');
+  return tail ? `${row.entityType} · ${tail}` : row.entityType;
+}
+
 function toIsoStart(d: string): string | undefined {
   return d ? new Date(`${d}T00:00:00.000Z`).toISOString() : undefined;
 }
@@ -234,9 +248,7 @@ function AdminAuditRow({ row }: { row: AdminAuditEntry }) {
         </div>
         <div className="min-w-0">
           <p className="truncate font-medium">{humanAction(row.action)}</p>
-          <p className="truncate text-xs text-foreground-subtle">
-            {row.entityType ? `${row.entityType}${row.entityId ? ` · ${row.entityId.slice(0, 8)}` : ''}` : '—'}
-          </p>
+          <p className="truncate text-xs text-foreground-subtle">{auditSubtitle(row)}</p>
         </div>
         <div className="min-w-0">
           <p className="truncate font-medium">{row.actorName ?? row.actorEmail ?? 'system'}</p>

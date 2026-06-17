@@ -127,6 +127,12 @@ export default function SettingsPage() {
               title="Payments"
               description="Choose how customers pay: cash, bank transfer, a payment link, MyFatoorah, Stripe, or PayPal."
             />
+            <SettingsLink
+              href="/settings/messenger"
+              icon={MessageCircle}
+              title="Messenger & Instagram"
+              description="Let the AI bot answer your Facebook Page and Instagram DMs, not just WhatsApp."
+            />
             {/* Branding is Phase 2 — hidden until logo/accent/footer
                 are wired into the actual portal layout. The /settings/branding
                 route still loads via direct URL, but no UI links to it. */}

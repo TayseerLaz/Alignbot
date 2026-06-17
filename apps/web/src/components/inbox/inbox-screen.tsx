@@ -83,6 +83,8 @@ type OpusRecorderCtor = new (opts: OpusRecorderOptions) => OpusRecorderLike;
 
 interface Thread {
   id: string;
+  // 'whatsapp' | 'messenger' | 'instagram'
+  channel?: string;
   customerPhone: string;
   customerName: string | null;
   // Read-only mirror of the customer's WhatsApp profile name from Meta.
@@ -242,14 +244,18 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
   const [filterQ, setFilterQ] = useState('');
   const [filterStatus, setFilterStatus] = useState<ThreadStatus | 'all'>('all');
   const [filterTag, setFilterTag] = useState('');
+  const [filterChannel, setFilterChannel] = useState<'all' | 'whatsapp' | 'messenger' | 'instagram'>(
+    'all',
+  );
 
   const params = new URLSearchParams();
   if (filterQ.trim()) params.set('q', filterQ.trim());
   if (filterStatus !== 'all') params.set('status', filterStatus);
   if (filterTag.trim()) params.set('tag', filterTag.trim());
+  if (filterChannel !== 'all') params.set('channel', filterChannel);
 
   const threadsQ = useQuery({
-    queryKey: ['inbox-threads', filterQ, filterStatus, filterTag],
+    queryKey: ['inbox-threads', filterQ, filterStatus, filterTag, filterChannel],
     queryFn: () => api.get<{ data: Thread[] }>(`/api/v1/inbox/threads?${params.toString()}`),
     // 30 s background poll as a fallback. The SSE hook below invalidates
     // on every server tick so the perceived freshness is sub-2s.
@@ -359,6 +365,22 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
                 className="h-9 text-sm"
               />
             </div>
+            <Select
+              value={filterChannel}
+              onValueChange={(v) =>
+                setFilterChannel(v as 'all' | 'whatsapp' | 'messenger' | 'instagram')
+              }
+            >
+              <SelectTrigger className="h-9 text-sm" aria-label="Filter by channel">
+                <SelectValue placeholder="Channel" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All channels</SelectItem>
+                <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                <SelectItem value="messenger">Messenger</SelectItem>
+                <SelectItem value="instagram">Instagram</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <ThreadList
             threads={threads}
@@ -589,8 +611,19 @@ function ThreadView({
   });
 
   const sendReply = useMutation({
-    mutationFn: ({ to, body }: { to: string; body: string }) =>
-      api.post<{ data: { ok: boolean; errorMessage: string | null } }>('/api/v1/whatsapp/send', { to, body }),
+    mutationFn: ({ to, body }: { to: string; body: string }) => {
+      // Channel-aware send: Messenger/Instagram threads go through the inbox
+      // reply endpoint (Page Send API); WhatsApp keeps using /whatsapp/send.
+      if (thread && thread.channel && thread.channel !== 'whatsapp') {
+        return api
+          .post(`/api/v1/inbox/threads/${thread.id}/reply`, { body })
+          .then(() => ({ data: { ok: true as const, errorMessage: null } }));
+      }
+      return api.post<{ data: { ok: boolean; errorMessage: string | null } }>(
+        '/api/v1/whatsapp/send',
+        { to, body },
+      );
+    },
     onSuccess: (res) => {
       if (res.data.ok) {
         toast.success('Reply sent');
@@ -1079,6 +1112,11 @@ function ThreadHeader({
           <Phone className="size-3" />
           {thread.customerPhone}
         </span>
+        {thread.channel && thread.channel !== 'whatsapp' ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium capitalize text-sky-700">
+            {thread.channel}
+          </span>
+        ) : null}
         {thread.customerWhatsappName ? (
           <span title="The customer's WhatsApp profile name (read-only)">
             WhatsApp: <span className="font-medium">{thread.customerWhatsappName}</span>

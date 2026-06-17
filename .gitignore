@@ -54,3 +54,4 @@ tmp
 
 # TypeScript incremental build info
 *.tsbuildinfo
+.last-deployed-sha

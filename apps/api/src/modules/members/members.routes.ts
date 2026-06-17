@@ -19,6 +19,15 @@ import { prisma } from '../../lib/db.js';
 import { badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { createInvitation } from '../auth/auth.service.js';
 
+// Human-readable subject for audit metadata, so the activity log shows a name
+// ("membership · John Doe") instead of just the membership id.
+function subjectMeta(user: { firstName: string | null; lastName: string | null; email: string }) {
+  return {
+    subjectName: [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email,
+    subjectEmail: user.email,
+  };
+}
+
 export default async function memberRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
 
@@ -143,7 +152,7 @@ export default async function memberRoutes(app: FastifyInstance) {
           actorUserId: req.auth!.userId,
           entityType: 'membership',
           entityId: updated.id,
-          metadata: { from: membership.role, to: req.body.role },
+          metadata: { from: membership.role, to: req.body.role, ...subjectMeta(updated.user) },
         });
 
         return {
@@ -181,7 +190,10 @@ export default async function memberRoutes(app: FastifyInstance) {
     async (req) => {
       const orgId = req.auth!.organizationId;
       return app.tenant(req, async (tx) => {
-        const membership = await tx.membership.findUnique({ where: { id: req.params.id } });
+        const membership = await tx.membership.findUnique({
+          where: { id: req.params.id },
+          include: { user: true },
+        });
         if (!membership) throw notFound('Member not found.');
         if (membership.userId === req.auth!.userId) {
           throw forbidden(ApiErrorCode.FORBIDDEN, 'You cannot deactivate yourself.');
@@ -204,6 +216,7 @@ export default async function memberRoutes(app: FastifyInstance) {
           actorUserId: req.auth!.userId,
           entityType: 'membership',
           entityId: membership.id,
+          metadata: subjectMeta(membership.user),
         });
 
         return { ok: true as const };
@@ -226,7 +239,10 @@ export default async function memberRoutes(app: FastifyInstance) {
     async (req) => {
       const orgId = req.auth!.organizationId;
       return app.tenant(req, async (tx) => {
-        const membership = await tx.membership.findUnique({ where: { id: req.params.id } });
+        const membership = await tx.membership.findUnique({
+          where: { id: req.params.id },
+          include: { user: true },
+        });
         if (!membership) throw notFound('Member not found.');
         if (membership.isActive) {
           // Idempotent: already active — nothing to do.
@@ -239,6 +255,7 @@ export default async function memberRoutes(app: FastifyInstance) {
           actorUserId: req.auth!.userId,
           entityType: 'membership',
           entityId: membership.id,
+          metadata: subjectMeta(membership.user),
         });
         return { ok: true as const };
       });
@@ -247,10 +264,16 @@ export default async function memberRoutes(app: FastifyInstance) {
 
   // ---------- DELETE /members/:id ------------------------------------------
   // Removes the member from THIS organization (deletes the membership row).
-  // The underlying user account is left intact — they may belong to other
-  // orgs and can be re-invited. Guards mirror deactivate (no self, no last
-  // admin). Threads assigned to them in this org are unassigned, and their
-  // sessions for this org are revoked.
+  // Guards mirror deactivate (no self, no last admin). Threads assigned to them
+  // in this org are unassigned, and their sessions for this org are revoked.
+  //
+  // Email reuse: if this was the user's LAST membership anywhere, we release
+  // their email so it can be used for a fresh signup again. We do NOT hard-
+  // delete the User row — Invitation.invitedBy/acceptedBy are FK-restricted
+  // (every invited user is referenced as an acceptedBy), so a delete would
+  // fail. Instead we tombstone the email + disable the account, which frees the
+  // original address while preserving audit + invitation history. If they still
+  // belong to other orgs, the account is left fully intact.
   r.delete(
     '/members/:id',
     {
@@ -264,7 +287,7 @@ export default async function memberRoutes(app: FastifyInstance) {
     },
     async (req) => {
       const orgId = req.auth!.organizationId;
-      return app.tenant(req, async (tx) => {
+      const subject = await app.tenant(req, async (tx) => {
         const membership = await tx.membership.findUnique({
           where: { id: req.params.id },
           include: { user: true },
@@ -302,11 +325,33 @@ export default async function memberRoutes(app: FastifyInstance) {
           actorUserId: req.auth!.userId,
           entityType: 'membership',
           entityId: membership.id,
-          metadata: { email: membership.user.email },
+          metadata: subjectMeta(membership.user),
         });
 
-        return { ok: true as const };
+        return { userId: membership.userId };
       });
+
+      // Post-commit: was that their last membership anywhere? If so, release the
+      // email + disable the account so the address can be reused for signup.
+      const remaining = await prisma.membership.count({ where: { userId: subject.userId } });
+      if (remaining === 0) {
+        await prisma.user.update({
+          where: { id: subject.userId },
+          data: {
+            email: `removed+${subject.userId}@deleted.invalid`,
+            status: 'disabled',
+            passwordHash: '!', // unusable — they can no longer log in
+            emailVerificationTokenHash: null,
+            passwordResetTokenHash: null,
+            totpEnabled: false,
+            totpSecret: null,
+            // Drop all remaining sessions globally (no org context left).
+            sessions: { updateMany: { where: { revokedAt: null }, data: { revokedAt: new Date() } } },
+          },
+        });
+      }
+
+      return { ok: true as const };
     },
   );
 

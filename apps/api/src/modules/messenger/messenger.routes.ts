@@ -42,6 +42,7 @@ function stripMarkers(text: string): string {
     .replace(/\[IMAGE:[^\]]*\]/gi, '')
     .replace(/\[CART:[\s\S]*?\]/gi, '')
     .replace(/\[BOOKING:[\s\S]*?\]/gi, '')
+    .replace(/\[BUTTONS:[^\]]*\]/gi, '')
     .replace(/\[(HANDOFF|PAYMENT_LINK|CLEAR_CART)\]/gi, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -650,6 +651,7 @@ async function maybeReplyOnMessenger(
       data,
       replyMode: 'text',
       cartState: cartState ?? undefined,
+      quickRepliesEnabled: true,
     });
     rawText = result.text;
   } catch (err) {
@@ -854,7 +856,17 @@ async function maybeReplyOnMessenger(
     }
   }
 
-  const metaMessageId = await sendMessengerText(orgId, psid, customerText, log);
+  // Parse [BUTTONS: A | B | C] into native quick-reply pills (skip on an order
+  // receipt turn — a confirmation shouldn't sprout choice buttons).
+  const quickReplies = orderReceiptBody
+    ? []
+    : (/\[BUTTONS:\s*([^\]]+)\]/i.exec(rawText)?.[1] ?? '')
+        .split('|')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 11);
+
+  const metaMessageId = await sendMessengerText(orgId, psid, customerText, log, quickReplies);
   if (metaMessageId === null) return; // send failed — don't persist a phantom outbound
 
   await withRlsBypass((tx) =>

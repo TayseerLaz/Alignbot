@@ -561,6 +561,12 @@ interface BotResponseArgs {
   // re-add a previous order instead of wrongly saying it "isn't in the
   // catalog" when top-K didn't surface it for this turn.
   pinnedSkus?: string[];
+  // Channels that render tappable buttons (Instagram / Messenger quick
+  // replies). When true, the prompt invites the model to end a reply that
+  // offers a short set of choices with a [BUTTONS: A | B | C] marker, which
+  // the channel send-path turns into native quick-reply pills. WhatsApp leaves
+  // this false, so its prompt + output are byte-identical to before.
+  quickRepliesEnabled?: boolean;
 }
 
 // Provenance bundle returned alongside the bot reply text. Captures
@@ -766,6 +772,13 @@ export async function buildBotResponse(
     `# Image marker (load-bearing)`,
     `When you mention a specific catalog product by NAME — describing it, suggesting it, confirming an add, or the customer asked to see it — end the reply with: [IMAGE: <SKU>] on its own line. The marker IS the attachment; words like "here's a pic" or 📷 send NOTHING. SKU must match CATALOG exactly. Multiple products: one marker per line.`,
     `Product-mention rule: when a reply mentions a product, include its short description (the text after " — " in the catalog line), its price in ${currencyCode}, and the [IMAGE: <SKU>] marker — all in one reply. The customer should never need to ask "and the price?" or "send me the image?".`,
+    // Quick-reply buttons — only for channels that render tappable pills
+    // (Instagram / Messenger). The send-path parses [BUTTONS: ...], turns each
+    // option into a native quick-reply, and strips the marker. WhatsApp passes
+    // quickRepliesEnabled=false so this line never appears in its prompt.
+    args.quickRepliesEnabled
+      ? `# Quick-reply buttons (optional)\nThis channel shows tappable buttons. When your reply offers the customer a small, concrete set of next choices, end the reply with a marker on its OWN line: [BUTTONS: Option A | Option B | Option C]. Rules: 2–4 options max, each ≤ 20 characters, phrased as a tap-able action ("See prices", "Book a visit", "View laptops", "Talk to a human"). Put the conversational text first, then the marker. The platform renders the options as tappable buttons and removes the marker. Only use it when discrete choices genuinely help the customer move forward — never for open-ended questions.`
+      : '',
     // Menu / recommendation behaviour — load-bearing. Without this the bot
     // parrots a generic intent template ("Here's our menu…") or hands off
     // instead of actually listing what's in the Catalog.

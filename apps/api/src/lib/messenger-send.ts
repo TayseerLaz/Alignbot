@@ -26,6 +26,7 @@ export async function sendMessengerText(
   recipientId: string,
   text: string,
   log?: Logger,
+  quickReplies?: string[],
 ): Promise<string | null> {
   const channel = await withRlsBypass((tx) =>
     tx.messengerChannel.findUnique({ where: { organizationId: orgId } }),
@@ -35,6 +36,12 @@ export async function sendMessengerText(
   if (!pageToken) return null;
   const base = graphBaseFor(pageToken);
   const isIg = base === IG_GRAPH;
+  // Up to 13 are allowed; keep it tidy. Title ≤ 20 chars (Meta hard limit).
+  const qr = (quickReplies ?? [])
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 11)
+    .map((t) => ({ content_type: 'text', title: t.slice(0, 20), payload: t.slice(0, 60) }));
   try {
     const res = await fetch(`${base}/me/messages?access_token=${encodeURIComponent(pageToken)}`, {
       method: 'POST',
@@ -43,7 +50,7 @@ export async function sendMessengerText(
       body: JSON.stringify({
         recipient: { id: recipientId },
         ...(isIg ? {} : { messaging_type: 'RESPONSE' }),
-        message: { text: text.slice(0, 1900) },
+        message: { text: text.slice(0, 1900), ...(qr.length ? { quick_replies: qr } : {}) },
       }),
       signal: AbortSignal.timeout(10_000),
     });

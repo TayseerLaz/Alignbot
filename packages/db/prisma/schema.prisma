@@ -68,6 +68,8 @@ enum AuditAction {
   user_created
   user_updated
   user_deactivated
+  user_reactivated
+  user_removed
   user_role_changed
   org_created
   org_suspended

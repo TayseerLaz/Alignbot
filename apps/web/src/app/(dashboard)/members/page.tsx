@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
   DialogContent,
@@ -105,6 +106,24 @@ export default function MembersPage() {
       toast.success('Member deactivated');
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Deactivate failed'),
+  });
+
+  const reactivateMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/members/${id}/reactivate`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['members'] });
+      toast.success('Member reactivated');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Reactivate failed'),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/members/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['members'] });
+      toast.success('Member removed');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Remove failed'),
   });
 
   const revokeMutation = useMutation({
@@ -209,7 +228,7 @@ export default function MembersPage() {
                         {m.lastLoginAt ? new Date(m.lastLoginAt).toLocaleString() : '—'}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        {isAdmin && !isSelf && m.isActive ? (
+                        {isAdmin && !isSelf ? (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon">
@@ -219,11 +238,35 @@ export default function MembersPage() {
                             <DropdownMenuContent align="end">
                               <DropdownMenuLabel>Actions</DropdownMenuLabel>
                               <DropdownMenuSeparator />
+                              {m.isActive ? (
+                                <DropdownMenuItem
+                                  onSelect={() => deactivateMutation.mutate(m.membershipId)}
+                                >
+                                  Deactivate
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem
+                                  onSelect={() => reactivateMutation.mutate(m.membershipId)}
+                                >
+                                  Reactivate
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 className="text-red-600 focus:text-red-700"
-                                onSelect={() => deactivateMutation.mutate(m.membershipId)}
+                                onSelect={async () => {
+                                  const confirmed = await confirmDialog({
+                                    title: `Remove ${fullName(m.firstName, m.lastName, m.email)}?`,
+                                    body:
+                                      'They will lose access to this organization immediately and their sessions will be revoked. ' +
+                                      'Their account is not deleted — you can re-invite them later.',
+                                    confirmLabel: 'Remove member',
+                                    destructive: true,
+                                  });
+                                  if (confirmed) removeMutation.mutate(m.membershipId);
+                                }}
                               >
-                                Deactivate
+                                Remove from organization
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>

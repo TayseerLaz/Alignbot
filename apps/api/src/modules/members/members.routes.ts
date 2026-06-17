@@ -211,6 +211,105 @@ export default async function memberRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- POST /members/:id/reactivate ---------------------------------
+  r.post(
+    '/members/:id/reactivate',
+    {
+      schema: {
+        tags: ['members'],
+        summary: 'Reactivate a previously deactivated member.',
+        params: z.object({ id: uuidSchema }),
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      return app.tenant(req, async (tx) => {
+        const membership = await tx.membership.findUnique({ where: { id: req.params.id } });
+        if (!membership) throw notFound('Member not found.');
+        if (membership.isActive) {
+          // Idempotent: already active — nothing to do.
+          return { ok: true as const };
+        }
+        await tx.membership.update({ where: { id: membership.id }, data: { isActive: true } });
+        await recordAudit({
+          action: 'user_reactivated',
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          entityType: 'membership',
+          entityId: membership.id,
+        });
+        return { ok: true as const };
+      });
+    },
+  );
+
+  // ---------- DELETE /members/:id ------------------------------------------
+  // Removes the member from THIS organization (deletes the membership row).
+  // The underlying user account is left intact — they may belong to other
+  // orgs and can be re-invited. Guards mirror deactivate (no self, no last
+  // admin). Threads assigned to them in this org are unassigned, and their
+  // sessions for this org are revoked.
+  r.delete(
+    '/members/:id',
+    {
+      schema: {
+        tags: ['members'],
+        summary: 'Remove a member from the active organization.',
+        params: z.object({ id: uuidSchema }),
+        response: { 200: successSchema },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      return app.tenant(req, async (tx) => {
+        const membership = await tx.membership.findUnique({
+          where: { id: req.params.id },
+          include: { user: true },
+        });
+        if (!membership) throw notFound('Member not found.');
+        if (membership.userId === req.auth!.userId) {
+          throw forbidden(ApiErrorCode.FORBIDDEN, 'You cannot remove yourself.');
+        }
+        if (membership.role === 'admin') {
+          const adminCount = await tx.membership.count({ where: { role: 'admin', isActive: true } });
+          if (adminCount <= 1) {
+            throw badRequest(ApiErrorCode.CONFLICT, 'You cannot remove the last admin.');
+          }
+        }
+
+        // Unassign any threads owned by this user in this org so we don't leave
+        // dangling assignments pointing at a removed member.
+        await tx.whatsAppThread.updateMany({
+          where: { organizationId: orgId, assignedToUserId: membership.userId },
+          data: { assignedToUserId: null },
+        });
+
+        await tx.membership.delete({ where: { id: membership.id } });
+
+        // Revoke their sessions for this org (uses the non-tenant client; the
+        // session row carries organizationId).
+        await prisma.session.updateMany({
+          where: { userId: membership.userId, organizationId: orgId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+
+        await recordAudit({
+          action: 'user_removed',
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          entityType: 'membership',
+          entityId: membership.id,
+          metadata: { email: membership.user.email },
+        });
+
+        return { ok: true as const };
+      });
+    },
+  );
+
   // ---------- GET /invitations ---------------------------------------------
   r.get(
     '/invitations',

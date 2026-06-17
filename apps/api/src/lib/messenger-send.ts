@@ -112,6 +112,14 @@ export async function fetchMessengerProfileName(
       last_name?: string;
       username?: string;
     };
+    if (channelKind === 'instagram') {
+      // Show both the display name and the @handle, e.g. "Tayseer (@tayseer_laz)".
+      const nm = j.name?.trim() || '';
+      const un = j.username?.trim() || '';
+      if (nm && un) return `${nm} (@${un})`;
+      if (nm) return nm;
+      return un ? `@${un}` : null;
+    }
     const name =
       j.name?.trim() ||
       [j.first_name, j.last_name].filter(Boolean).join(' ').trim() ||

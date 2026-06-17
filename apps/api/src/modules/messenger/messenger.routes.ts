@@ -473,7 +473,12 @@ async function handleMessengerEvents(
     // has no real name (null or a bare numeric id) — this backfills IG/Messenger
     // threads created before the name lookup worked.
     let profileName: string | null = existing?.customerName ?? null;
-    const needsName = !profileName || /^\d+$/.test(profileName);
+    // Refetch when there's no name, it's a bare numeric id, or (Instagram) it
+    // doesn't yet include the @handle — so older threads upgrade to "Name (@user)".
+    const needsName =
+      !profileName ||
+      /^\d+$/.test(profileName) ||
+      (channelKind === 'instagram' && !profileName.includes('@'));
     if (needsName) {
       const { fetchMessengerProfileName } = await import('../../lib/messenger-send.js');
       profileName = (await fetchMessengerProfileName(orgId, psid, channelKind, log)) ?? profileName;

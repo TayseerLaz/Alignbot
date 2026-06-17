@@ -82,6 +82,10 @@ const messageDtoSchema = z.object({
   // chat renders the actual picture. Null when the image isn't stored
   // (e.g. a not-yet-downloaded inbound photo) or storage is unconfigured.
   mediaUrl: z.string().nullable(),
+  // Quick-reply button labels the bot offered with this message (Messenger /
+  // Instagram). Shown as non-interactive pills under the bubble so operators
+  // see exactly what the customer could tap. Null/[] for messages without any.
+  quickReplies: z.array(z.string()).nullable(),
 });
 
 const noteDtoSchema = z.object({
@@ -437,8 +441,12 @@ export default async function inboxRoutes(app: FastifyInstance) {
         return {
           data: messages.map((m) => {
             const raw = (m.rawPayload ?? null) as
-              | { sentBy?: unknown; kind?: unknown; sku?: unknown }
+              | { sentBy?: unknown; kind?: unknown; sku?: unknown; quickReplies?: unknown }
               | null;
+            const quickReplies =
+              raw && Array.isArray(raw.quickReplies)
+                ? raw.quickReplies.filter((x): x is string => typeof x === 'string')
+                : null;
             const sentByRaw = raw && typeof raw.sentBy === 'string' ? raw.sentBy : null;
             const sentBy: 'bot' | 'operator' | null =
               m.direction === 'outbound'
@@ -471,6 +479,7 @@ export default async function inboxRoutes(app: FastifyInstance) {
               sentBy,
               imageSource,
               mediaUrl: mediaUrlByMsgId.get(m.id) ?? null,
+              quickReplies: quickReplies && quickReplies.length ? quickReplies : null,
             };
           }),
           nextCursor: olderCursor,

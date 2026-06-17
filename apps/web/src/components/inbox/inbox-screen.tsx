@@ -119,6 +119,9 @@ interface Message {
   // Signed, directly-loadable URL for image messages so the chat renders
   // the actual photo. Null when not stored / storage unconfigured.
   mediaUrl?: string | null;
+  // Quick-reply button labels the bot offered (Messenger / Instagram). Shown
+  // as non-interactive pills under the bubble. Null/absent when none.
+  quickReplies?: string[] | null;
 }
 
 // Phase 8 / 1.3 — shape returned by GET /inbox/messages/:id/provenance.
@@ -1465,6 +1468,25 @@ function Bubble({
             {message.body ?? <em className="opacity-70">[{message.messageType ?? 'media'}]</em>}
           </p>
         )}
+        {/* Quick-reply buttons the bot offered (Messenger / Instagram). Shown
+            as non-interactive pills so the operator sees the customer's options. */}
+        {message.quickReplies && message.quickReplies.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {message.quickReplies.map((label, i) => (
+              <span
+                key={`${label}-${i}`}
+                className={cn(
+                  'rounded-full border px-2.5 py-1 text-xs font-medium',
+                  isOut
+                    ? 'border-white/30 text-white/90'
+                    : 'border-brand-300 text-brand-600',
+                )}
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        ) : null}
         <div
           className={cn(
             'mt-1.5 flex items-center gap-2 text-[11px]',

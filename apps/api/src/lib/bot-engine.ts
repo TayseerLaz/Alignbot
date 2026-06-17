@@ -736,12 +736,23 @@ export async function buildBotResponse(
   // empirically, so the prompt only has to *guide*, not repeat. Each
   // section is gated so the model sees only what applies to the turn.
   const currencyCode = biz?.currency ?? 'KWD';
+  // Current date so the model can resolve relative dates ("tomorrow",
+  // "next Monday") into explicit calendar dates — needed for bookings.
+  const todayStr = new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
   const sys = [
     ...deliveryBanner,
     // Ultra-plan persona/memory (empty for other plans — no prompt drift).
     args.persona ? args.persona : '',
-    `You are the WhatsApp customer-service bot for ${biz?.legalName ?? 'this business'}. Reply in plain text, scannable, under 60 words. No markdown headings.`,
+    `You are the customer-service bot for ${biz?.legalName ?? 'this business'}. Reply in plain text, scannable, under 60 words. No markdown headings.`,
+    `Today's date is ${todayStr}. Resolve relative dates the customer says ("today", "tomorrow", "this Friday", "next week") into an explicit calendar date based on this.`,
     `Tone: ${personalityKey}. ${personalityHint}`,
+    // Conversation continuity — never cold-restart with a greeting mid-chat.
+    `Do NOT re-greet mid-conversation. Only open with "Hi/Hello/Welcome/How can I help" on the FIRST reply of a conversation. After you've already helped — including right after confirming a booking or order — if the customer sends a short acknowledgement (ok, thanks, perfect, great, 👍), reply briefly and warmly and offer to keep helping (e.g. "Glad to help, {name}! Anything else I can do for you?"). Never reset to "How can I help you today?" as if it's a brand-new chat.`,
     greeting ? `Default greeting: "${greeting}"` : '',
     shouldGreetByName
       ? `Customer's first name on WhatsApp: "${customerFirstName}". When your reply opens with a greeting word (Hi/Hello/Hey/Welcome/مرحبا/أهلاً/سلام/Bonjour/Hola), include their name. Mid-conversation replies should NOT shoehorn the name in.`
@@ -807,25 +818,28 @@ export async function buildBotResponse(
     bookingForm
       ? `- BOOKING FLOW (load-bearing). If the customer's message asks to BOOK / SCHEDULE / RESERVE a "${bookingForm.title}" (or matches one of: ${bookingForm.intentKeywords.join(', ') || '"book", "appointment", "consultation", "reserve", "schedule"'}):\n` +
         `  Step 1: ask for the fields listed in the BOOKING FORM section below, ONE OR TWO at a time so the customer isn't overwhelmed. Use the exact LABELS shown.\n` +
-        `  Step 2: when EVERY required field has a value, summarise the captured values back to the customer and ask them to confirm.\n` +
-        `  Step 3: as SOON AS the customer affirms (yes / confirm / go ahead / ok / etc.), include the BOOKING marker. After a brief one-sentence confirmation reply, emit on a NEW LINE:\n` +
+        `  Step 2: DATE/TIME fields must be UNAMBIGUOUS. If the customer gives a vague time, clarify before continuing: always pin down AM vs PM ("5 — is that 5 PM?") and resolve relative words ("tomorrow", "Friday") to an explicit calendar date using today's date above. Store and confirm the date as an explicit date + time, e.g. "June 20, 2025 5:00 PM" — NEVER a vague phrase like "tomorrow at 5".\n` +
+        `  Step 3: when EVERY required field has a value, summarise the captured values back to the customer (using the explicit date/time) and ask them to confirm.\n` +
+        `  Step 4: as SOON AS the customer affirms (yes / confirm / go ahead / ok / etc.), include the BOOKING marker. After a brief one-sentence confirmation reply, emit on a NEW LINE:\n` +
         `    [BOOKING: ${JSON.stringify(
           Object.fromEntries(bookingForm.fields.map((f) => [f.key, `<${f.label}>`])),
         )}]\n` +
-        `  Replace each <...> with the customer's actual answer (as a string, even for dates). Missing optional answers = "". Keys EXACTLY as written. The marker is what creates the booking in the dashboard — if you don't emit it, the booking is LOST.\n` +
+        `  Replace each <...> with the customer's actual answer (as a string). For DATE/TIME answers store the explicit resolved value ("June 20, 2025 5:00 PM"), not a relative phrase. Missing optional answers = "". Keys EXACTLY as written. The marker is what creates the booking in the dashboard — if you don't emit it, the booking is LOST.\n` +
         `  Example flow (English):\n` +
         `    User: "I want to book a consultation"\n` +
         `    Bot: "Great — what's your full name?"\n` +
         `    User: "Jane Doe"\n` +
         `    Bot: "Thanks Jane. What's your email?"\n` +
         `    User: "jane@x.com"\n` +
-        `    Bot: "Got it. Preferred date?"\n` +
+        `    Bot: "Got it. What date and time works for you?"\n` +
         `    User: "Tomorrow at 5"\n` +
+        `    Bot: "Just to confirm — that's Saturday, June 21 at 5 PM?"\n` +
+        `    User: "Yes"\n` +
         `    Bot: "Anything you'd like us to know?"\n` +
         `    User: "Just IT strategy"\n` +
-        `    Bot: "I have: Jane Doe, jane@x.com, tomorrow at 5, IT strategy. Shall I book it?"\n` +
+        `    Bot: "I have: Jane Doe, jane@x.com, June 21, 2025 5:00 PM, IT strategy. Shall I book it?"\n` +
         `    User: "Yes confirm"\n` +
-        `    Bot: "All set, Jane — booking confirmed for tomorrow at 5. We'll be in touch.\\n[BOOKING: {\\"name\\":\\"Jane Doe\\",\\"email\\":\\"jane@x.com\\",\\"date\\":\\"tomorrow at 5\\",\\"notes\\":\\"IT strategy\\"}]"`
+        `    Bot: "All set, Jane — booking confirmed for June 21 at 5:00 PM. We'll be in touch.\\n[BOOKING: {\\"name\\":\\"Jane Doe\\",\\"email\\":\\"jane@x.com\\",\\"date\\":\\"June 21, 2025 5:00 PM\\",\\"notes\\":\\"IT strategy\\"}]"`
       : '',
     // Menu-link rule — when the operator has set a public menu URL on
     // the shop form, the bot shares it whenever the customer asks about

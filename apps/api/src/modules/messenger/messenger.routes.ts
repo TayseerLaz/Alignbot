@@ -861,15 +861,32 @@ async function maybeReplyOnMessenger(
     }
   }
 
-  // Parse [BUTTONS: A | B | C] into native quick-reply pills (skip on an order
-  // receipt turn — a confirmation shouldn't sprout choice buttons).
-  const quickReplies = orderReceiptBody
-    ? []
-    : (/\[BUTTONS:\s*([^\]]+)\]/i.exec(rawText)?.[1] ?? '')
-        .split('|')
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .slice(0, 11);
+  // Quick-reply pills. Prefer the buttons the model emitted via [BUTTONS: …];
+  // if it emitted none, fall back to a deterministic, context-aware default set
+  // derived from what the business offers — so customers reliably get tappable
+  // options even when gpt-4o-mini forgets the marker. Suppressed only on an
+  // order-receipt turn (a confirmation shouldn't sprout choices).
+  let quickReplies: string[] = [];
+  if (!orderReceiptBody) {
+    const fromMarker = (/\[BUTTONS:\s*([^\]]+)\]/i.exec(rawText)?.[1] ?? '')
+      .split('|')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (fromMarker.length > 0) {
+      quickReplies = fromMarker.slice(0, 11);
+    } else {
+      const hasCatalog =
+        products.length > 0 ||
+        (((data as { services?: unknown[] }).services?.length ?? 0) > 0);
+      const dq: string[] = [];
+      // shopForm is non-null only when the shop flow is enabled.
+      if (shopForm) dq.push('Order now');
+      else if (hasCatalog) dq.push('View products');
+      if (bookingForm?.enabled) dq.push('Book a meeting');
+      dq.push('Talk to a human');
+      quickReplies = dq.slice(0, 3);
+    }
+  }
 
   const metaMessageId = await sendMessengerText(orgId, psid, customerText, log, quickReplies);
   if (metaMessageId === null) return; // send failed — don't persist a phantom outbound
@@ -885,7 +902,10 @@ async function maybeReplyOnMessenger(
         toNumber: psid,
         messageType: 'text',
         body: customerText,
-        rawPayload: { sentBy: 'bot' } as never,
+        rawPayload: {
+          sentBy: 'bot',
+          ...(quickReplies.length ? { quickReplies } : {}),
+        } as never,
       },
     }),
   );

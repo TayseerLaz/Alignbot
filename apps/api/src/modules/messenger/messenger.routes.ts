@@ -30,6 +30,7 @@ import type { BookingAvailability } from '../../lib/booking-slots.js';
 import type { BookingFormLite, CatalogProductLite, ShopFormLite } from '../../lib/cart-flow.js';
 import { env } from '../../lib/env.js';
 import { generateOpaqueToken } from '../../lib/crypto.js';
+import { publishInboxEvent } from '../../lib/inbox-events.js';
 
 function webhookCallbackUrl(orgId: string): string {
   return `${env.API_PUBLIC_URL.replace(/\/$/, '')}/api/v1/messenger/webhook/${orgId}`;
@@ -569,6 +570,8 @@ async function handleMessengerEvents(
       }),
     ).catch((err) => log.error({ err }, '[messenger] contact upsert failed'));
 
+    publishInboxEvent(orgId); // show the inbound in the inbox instantly
+
     // Only run the bot when there's actual text to answer. A photo-only
     // inbound is stored for the operator but doesn't trigger an AI reply.
     if (text) {
@@ -739,6 +742,7 @@ async function maybeReplyOnMessenger(
         entityId: threadId,
       })
       .catch(() => undefined);
+    publishInboxEvent(orgId); // push the handoff message + escalation instantly
     return; // escalated — do not run cart/booking/quick-reply logic
   }
 
@@ -998,4 +1002,5 @@ async function maybeReplyOnMessenger(
       },
     }),
   );
+  publishInboxEvent(orgId); // push the bot reply to the inbox instantly
 }

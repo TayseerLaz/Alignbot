@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { recordAudit } from '../../lib/audit.js';
 import { env } from '../../lib/env.js';
 import { badRequest, notFound } from '../../lib/errors.js';
+import { publishInboxEvent } from '../../lib/inbox-events.js';
 
 // SSE handlers write raw response headers via reply.raw.writeHead(), which
 // bypasses @fastify/cors. Build the Access-Control-Allow-Origin header
@@ -586,7 +587,9 @@ export default async function inboxRoutes(app: FastifyInstance) {
           entityId: updated.id,
           metadata: { event: 'thread_updated', fields: Object.keys(req.body) },
         });
-        return { data: serializeThread(updated) };
+        const dto = serializeThread(updated);
+        publishInboxEvent(orgId); // push status/assignment changes instantly
+        return { data: dto };
       });
     },
   );
@@ -646,9 +649,16 @@ export default async function inboxRoutes(app: FastifyInstance) {
             lastMessagePreview: req.body.body.slice(0, 200),
             outboundCount: { increment: 1 },
             status: 'open',
+            // A human is now handling this chat — claim it for the replying
+            // operator so the bot PAUSES (the reply path gates on
+            // assignedToUserId). The operator clicks "AI" in the inbox to hand
+            // it back when they're done. Without this the bot would resume and
+            // talk over the human on the next customer message.
+            assignedToUserId: req.auth!.userId,
           },
         });
       });
+      publishInboxEvent(orgId); // push the operator reply to the inbox instantly
       return { ok: true as const };
     },
   );
@@ -1184,15 +1194,24 @@ export default async function inboxRoutes(app: FastifyInstance) {
       });
       reply.raw.write(`retry: 5000\n\n`);
       reply.raw.write(`event: hello\ndata: ${JSON.stringify({ orgId })}\n\n`);
-      const interval = setInterval(() => {
+      const push = () => {
         try {
           reply.raw.write(`event: tick\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
         } catch {
           /* socket likely closed */
         }
-      }, 2000);
+      };
+      // Event-driven: push the instant a message is written for this org.
+      const { subscribeInboxEvents } = await import('../../lib/inbox-events.js');
+      const unsubscribe = subscribeInboxEvents(orgId, push);
+      // Heartbeat — keep-alive through proxies + the refresh cadence for write
+      // paths that don't yet publish events (e.g. WhatsApp). Messenger/Instagram
+      // + operator replies push instantly via subscribeInboxEvents above, so
+      // this 3s tick is just the floor, not the latency for those.
+      const interval = setInterval(push, 3000);
       const cleanup = () => {
         clearInterval(interval);
+        unsubscribe();
         try {
           reply.raw.end();
         } catch {

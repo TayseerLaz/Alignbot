@@ -56,19 +56,20 @@ echo "$CHANGED" | grep -q '^pnpm-lock.yaml$' && NEED_INSTALL=1
 [ -x packages/db/node_modules/.bin/tsc ] || NEED_INSTALL=1
 [ -x packages/shared/node_modules/.bin/tsc ] || NEED_INSTALL=1
 if [ "$NEED_INSTALL" = 1 ]; then
-  echo "▶ Reinstalling dependencies (clean relink, incl. devDeps)…"
-  # Why rm + plain install instead of `pnpm install --force`:
-  #   - pnpm --frozen-lockfile alone can report "up to date" while a package's
-  #     node_modules/.bin symlinks are missing → build fails with tsc/prisma
-  #     not found.
-  #   - `--force` fixes that BUT re-extracts every package from the pnpm store,
-  #     and a corrupted store entry then aborts the whole deploy
-  #     (ENOENT copyfile … — seen in prod after an interrupted install).
-  # Removing the workspace node_modules and doing a NON-force install relinks
-  # cleanly from the store and re-fetches anything missing, without the
-  # store-wide re-extraction that --force triggers.
+  echo "▶ Reinstalling dependencies (relink bins, incl. devDeps)…"
+  # Why rm only the .bin dirs (NOT the whole node_modules) + plain install:
+  #   - The running services (aligned-api/worker/web via node/tsx) hold open
+  #     file handles inside node_modules/.pnpm, so `rm -rf node_modules` can't
+  #     finish ("Directory not empty") and leaves node_modules half-deleted →
+  #     tsc/prisma vanish mid-deploy.
+  #   - `pnpm install --force` avoids that but re-extracts the whole pnpm store
+  #     and a corrupted entry aborts the deploy (ENOENT copyfile).
+  #   - The actual failure we need to fix is missing .bin symlinks while pnpm
+  #     reports "up to date". Removing just the .bin dirs (services don't hold
+  #     those open) and running a plain install relinks them cleanly and
+  #     re-fetches anything genuinely missing.
   # CI=1 + confirmModulesPurge=false keep it non-interactive (no Y/n prompt).
-  rm -rf node_modules apps/*/node_modules packages/*/node_modules
+  rm -rf node_modules/.bin packages/*/node_modules/.bin apps/*/node_modules/.bin
   CI=1 pnpm install --frozen-lockfile --prod=false --config.confirmModulesPurge=false
 fi
 

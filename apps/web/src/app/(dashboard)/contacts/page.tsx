@@ -1,7 +1,7 @@
 'use client';
 
 import type { ContactDto } from '@aligned/shared';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ban, Info, Pencil, Plus, Save, Search, Trash2, Upload, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
@@ -36,18 +36,26 @@ export default function ContactsPage() {
   // Phone of the contact whose info slide-over is open (null = closed).
   const [infoPhone, setInfoPhone] = useState<string | null>(null);
 
-  const contactsQuery = useQuery({
+  // Cursor-paginated so EVERY contact is reachable, not just the first 100.
+  const contactsQuery = useInfiniteQuery({
     queryKey: ['contacts', { search, tag: tagFilter }],
-    queryFn: () =>
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) =>
       api.get<{ data: ContactDto[]; nextCursor: string | null }>(
         `/api/v1/contacts?` +
           new URLSearchParams({
             ...(search ? { search } : {}),
             ...(tagFilter ? { tag: tagFilter } : {}),
+            ...(pageParam ? { cursor: pageParam } : {}),
             limit: '100',
           }).toString(),
       ),
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
+  const contacts = useMemo(
+    () => contactsQuery.data?.pages.flatMap((p) => p.data) ?? [],
+    [contactsQuery.data],
+  );
 
   const tagsQuery = useQuery({
     queryKey: ['contacts', 'tags'],
@@ -77,7 +85,7 @@ export default function ContactsPage() {
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
   });
 
-  const total = contactsQuery.data?.data.length ?? 0;
+  const total = contacts.length;
   const tags = useMemo(() => tagsQuery.data?.data ?? [], [tagsQuery.data]);
 
   return (
@@ -167,14 +175,14 @@ export default function ContactsPage() {
                     </td>
                   </tr>
                 ) : null}
-                {contactsQuery.data?.data.length === 0 && !contactsQuery.isLoading ? (
+                {contacts.length === 0 && !contactsQuery.isLoading ? (
                   <tr>
                     <td colSpan={7} className="px-6 py-12 text-center text-foreground-muted">
                       No contacts yet. Add one or import a CSV to get started.
                     </td>
                   </tr>
                 ) : null}
-                {contactsQuery.data?.data.map((c) => (
+                {contacts.map((c) => (
                   <ContactRow
                     key={c.id}
                     contact={c}
@@ -189,6 +197,18 @@ export default function ContactsPage() {
               </tbody>
             </table>
           </div>
+          {contactsQuery.hasNextPage ? (
+            <div className="flex justify-center border-t border-border p-3">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => contactsQuery.fetchNextPage()}
+                loading={contactsQuery.isFetchingNextPage}
+              >
+                Load more contacts
+              </Button>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

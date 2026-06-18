@@ -316,6 +316,49 @@ export default async function contactsRoutes(app: FastifyInstance) {
       }),
   );
 
+  // ---------- GET /contacts/phones -----------------------------------------
+  // Lightweight: every matching contact's phone (E.164), no pagination, for the
+  // broadcast "select all contacts" audience. Same search/tag filters as the
+  // list. Capped at 50k (the manual-audience ceiling).
+  r.get(
+    '/contacts/phones',
+    {
+      schema: {
+        tags: ['contacts'],
+        summary: 'All matching contact phone numbers (for broadcast audiences).',
+        querystring: z.object({
+          search: z.string().trim().max(120).optional(),
+          tag: z.string().trim().max(40).optional(),
+        }),
+        response: {
+          200: z.object({ data: z.array(z.string()), total: z.number() }),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const { search, tag } = req.query;
+        const where: Record<string, unknown> = { deletedAt: null };
+        if (search) {
+          const trimmed = search.trim();
+          where.OR = [
+            { phoneE164: { contains: trimmed, mode: 'insensitive' } },
+            { displayName: { contains: trimmed, mode: 'insensitive' } },
+          ];
+        }
+        if (tag) where.tags = { some: { tag } };
+        const rows = await tx.contact.findMany({
+          where,
+          select: { phoneE164: true },
+          take: 50000,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        });
+        const phones = rows.map((r) => r.phoneE164).filter(Boolean);
+        return { data: phones, total: phones.length };
+      }),
+  );
+
   // ---------- POST /contacts ------------------------------------------------
   r.post(
     '/contacts',

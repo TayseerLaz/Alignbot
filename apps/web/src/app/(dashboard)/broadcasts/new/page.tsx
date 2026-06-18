@@ -42,7 +42,7 @@ interface Channel {
   isActive: boolean;
 }
 
-type AudienceKind = 'csv' | 'tags' | 'manual';
+type AudienceKind = 'contacts' | 'csv' | 'tags' | 'manual';
 
 const STEPS = ['Basics', 'Audience', 'Personalization', 'Review'] as const;
 
@@ -74,6 +74,14 @@ export default function NewBroadcastPage() {
   const [tagAudience, setTagAudience] = useState<string[]>([]);
   const [tagAudienceMode, setTagAudienceMode] = useState<'any' | 'all'>('any');
   const [manualPhonesRaw, setManualPhonesRaw] = useState('');
+  // Contacts audience: pick from the saved contact list (select all, or some).
+  const [contactSearch, setContactSearch] = useState('');
+  const [selectAllContacts, setSelectAllContacts] = useState(false);
+  // id → phone/name, so selections persist across searches and we have the
+  // phone to send (resolved to manualPhones on submit).
+  const [selectedContacts, setSelectedContacts] = useState<
+    Map<string, { phone: string; name: string | null }>
+  >(new Map());
 
   // Step 3 state
   const [variantAVariables, setVariantAVariables] = useState<VariableMapping>({});
@@ -108,6 +116,25 @@ export default function NewBroadcastPage() {
     queryFn: () => api.get<{ data: { tag: string; count: number }[] }>('/api/v1/contacts/tags'),
   });
 
+  // Contacts picker — first 100 matching the search box (for "select some").
+  const contactsPickerQuery = useQuery({
+    queryKey: ['contacts', 'picker', contactSearch],
+    queryFn: () =>
+      api.get<{ data: { id: string; phoneE164: string; displayName: string | null }[] }>(
+        `/api/v1/contacts?limit=100${
+          contactSearch.trim() ? `&search=${encodeURIComponent(contactSearch.trim())}` : ''
+        }`,
+      ),
+    enabled: audienceKind === 'contacts',
+  });
+  const toggleContact = (c: { id: string; phoneE164: string; displayName: string | null }) =>
+    setSelectedContacts((prev) => {
+      const next = new Map(prev);
+      if (next.has(c.id)) next.delete(c.id);
+      else next.set(c.id, { phone: c.phoneE164, name: c.displayName });
+      return next;
+    });
+
   const variantATemplate = approvedTemplates.find((t) => t.id === variantATemplateId);
   const variantBTemplate = approvedTemplates.find((t) => t.id === variantBTemplateId);
   const paramsA = variantATemplate ? extractTemplateParams(variantATemplate.bodyText) : [];
@@ -123,17 +150,34 @@ export default function NewBroadcastPage() {
 
   const sendMutation = useMutation({
     mutationFn: async () => {
-      const manualPhones =
-        audienceKind === 'manual'
-          ? manualPhonesRaw
-              .split(/[\n,;]/)
-              .map((p) => p.trim())
-              .filter(Boolean)
-          : undefined;
+      // The "contacts" picker resolves to a manual phone list: either every
+      // matching contact ("select all", fetched from /contacts/phones) or just
+      // the ticked ones. The backend has no 'contacts' kind, so we send 'manual'.
+      let manualPhones: string[] | undefined;
+      // 'contacts' is a UI-only audience; it always sends a resolved manual list.
+      const effectiveKind: CreateBroadcastBody['audienceKind'] =
+        audienceKind === 'contacts' ? 'manual' : audienceKind;
+      if (audienceKind === 'manual') {
+        manualPhones = manualPhonesRaw
+          .split(/[\n,;]/)
+          .map((p) => p.trim())
+          .filter(Boolean);
+      } else if (audienceKind === 'contacts') {
+        if (selectAllContacts) {
+          const res = await api.get<{ data: string[] }>(
+            `/api/v1/contacts/phones${
+              contactSearch.trim() ? `?search=${encodeURIComponent(contactSearch.trim())}` : ''
+            }`,
+          );
+          manualPhones = res.data;
+        } else {
+          manualPhones = [...selectedContacts.values()].map((v) => v.phone);
+        }
+      }
       const body: CreateBroadcastBody = {
         name,
         channelId: channelId!,
-        audienceKind,
+        audienceKind: effectiveKind,
         csvAssetId: audienceKind === 'csv' ? csvAssetId ?? undefined : undefined,
         audienceTags: audienceKind === 'tags' ? tagAudience : undefined,
         audienceTagsMode: audienceKind === 'tags' ? tagAudienceMode : undefined,
@@ -166,6 +210,7 @@ export default function NewBroadcastPage() {
     if (step === 1) {
       if (audienceKind === 'csv') return Boolean(csvAssetId);
       if (audienceKind === 'tags') return tagAudience.length > 0;
+      if (audienceKind === 'contacts') return selectAllContacts || selectedContacts.size > 0;
       return manualPhonesRaw.split(/[\n,;]/).filter((p) => p.trim()).length > 0;
     }
     if (step === 2) {
@@ -184,6 +229,8 @@ export default function NewBroadcastPage() {
     csvAssetId,
     tagAudience,
     manualPhonesRaw,
+    selectAllContacts,
+    selectedContacts,
     paramsA,
     paramsB,
     variantAVariables,
@@ -312,7 +359,7 @@ export default function NewBroadcastPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex gap-2">
-              {(['manual', 'csv', 'tags'] as const).map((k) => (
+              {(['contacts', 'tags', 'csv', 'manual'] as const).map((k) => (
                 <button
                   key={k}
                   onClick={() => setAudienceKind(k)}
@@ -324,15 +371,88 @@ export default function NewBroadcastPage() {
                 >
                   <div className="font-medium capitalize">{k}</div>
                   <div className="text-xs text-foreground-muted">
-                    {k === 'manual'
-                      ? 'Paste phone numbers'
-                      : k === 'csv'
-                        ? 'Upload a CSV'
-                        : 'Pick contact tags'}
+                    {k === 'contacts'
+                      ? 'Select from contacts'
+                      : k === 'manual'
+                        ? 'Paste phone numbers'
+                        : k === 'csv'
+                          ? 'Upload a CSV'
+                          : 'Pick contact tags'}
                   </div>
                 </button>
               ))}
             </div>
+
+            {audienceKind === 'contacts' ? (
+              <div className="space-y-3">
+                <label className="flex items-center gap-2 rounded-md border border-border bg-surface-muted/40 p-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-4"
+                    checked={selectAllContacts}
+                    onChange={(e) => setSelectAllContacts(e.target.checked)}
+                  />
+                  <span className="font-medium">Select ALL contacts</span>
+                  <span className="text-xs text-foreground-muted">
+                    {contactSearch.trim()
+                      ? '(all contacts matching the search below)'
+                      : '(everyone in your contact list)'}
+                  </span>
+                </label>
+
+                {!selectAllContacts ? (
+                  <>
+                    <Input
+                      placeholder="Search contacts by name or number…"
+                      value={contactSearch}
+                      onChange={(e) => setContactSearch(e.target.value)}
+                    />
+                    <div className="max-h-72 overflow-y-auto rounded-md border border-border divide-y divide-border">
+                      {contactsPickerQuery.isLoading ? (
+                        <p className="p-3 text-sm text-foreground-muted">Loading…</p>
+                      ) : (contactsPickerQuery.data?.data ?? []).length === 0 ? (
+                        <p className="p-3 text-sm italic text-foreground-muted">
+                          No contacts found. Contacts are created automatically when customers
+                          message you, or added on the Contacts page.
+                        </p>
+                      ) : (
+                        (contactsPickerQuery.data?.data ?? []).map((c) => (
+                          <label
+                            key={c.id}
+                            className="flex cursor-pointer items-center gap-3 p-2.5 text-sm hover:bg-surface-muted/50"
+                          >
+                            <input
+                              type="checkbox"
+                              className="size-4"
+                              checked={selectedContacts.has(c.id)}
+                              onChange={() => toggleContact(c)}
+                            />
+                            <span className="min-w-0 flex-1 truncate">
+                              {c.displayName || c.phoneE164}
+                            </span>
+                            <span className="font-mono text-xs text-foreground-muted">
+                              {c.phoneE164}
+                            </span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                    <p className="text-xs text-foreground-muted">
+                      {selectedContacts.size} contact{selectedContacts.size === 1 ? '' : 's'} selected
+                      {contactsPickerQuery.data?.data.length === 100
+                        ? ' · showing first 100 — use search to narrow, or pick “Select ALL contacts”.'
+                        : ''}
+                    </p>
+                  </>
+                ) : (
+                  <p className="rounded-md border border-dashed border-border bg-surface-muted/40 p-3 text-xs text-foreground-muted">
+                    Every matching contact will receive this broadcast (opted-out contacts are
+                    automatically skipped at send time). You can narrow with a search by unticking
+                    “Select ALL contacts”.
+                  </p>
+                )}
+              </div>
+            ) : null}
 
             {audienceKind === 'manual' ? (
               <div>

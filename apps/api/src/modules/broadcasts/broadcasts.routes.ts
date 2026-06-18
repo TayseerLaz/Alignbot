@@ -970,6 +970,201 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
       }),
   );
 
+  // ---------- GET /broadcasts/:id/analytics ---------------------------------
+  // Campaign analytics: the delivery funnel + rates, how many recipients
+  // REPLIED (computed from inbound messages after their send), opt-outs, a
+  // failure-reason breakdown, and an A/B variant comparison.
+  r.get(
+    '/broadcasts/:id/analytics',
+    {
+      schema: {
+        tags: ['broadcasts'],
+        summary: 'Campaign analytics: funnel, rates, responses, failures, A/B.',
+        params: z.object({ id: uuidSchema }),
+        response: {
+          200: z.object({
+            data: z.object({
+              funnel: z.object({
+                total: z.number(),
+                sent: z.number(),
+                delivered: z.number(),
+                read: z.number(),
+                failed: z.number(),
+                skipped: z.number(),
+                pending: z.number(),
+                responded: z.number(),
+              }),
+              rates: z.object({
+                deliveryRate: z.number(),
+                readRate: z.number(),
+                responseRate: z.number(),
+                failureRate: z.number(),
+              }),
+              optedOut: z.number(),
+              failureBreakdown: z.array(
+                z.object({ code: z.string(), message: z.string().nullable(), count: z.number() }),
+              ),
+              variants: z.array(
+                z.object({
+                  variant: z.string(),
+                  recipients: z.number(),
+                  delivered: z.number(),
+                  read: z.number(),
+                  responded: z.number(),
+                }),
+              ),
+              timing: z.object({
+                startedAt: z.string().nullable(),
+                completedAt: z.string().nullable(),
+                durationMs: z.number().nullable(),
+              }),
+            }),
+          }),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const id = req.params.id;
+        const broadcast = await tx.broadcast.findUnique({ where: { id } });
+        if (!broadcast) throw notFound('Broadcast not found.');
+        const since = broadcast.startedAt ?? broadcast.createdAt;
+        const digits = (s: string) => s.replace(/[^0-9]/g, '');
+
+        // Recipients (phone + send time + variant) drive both the funnel and the
+        // reply match. Capped at the send ceiling so this stays bounded.
+        const recipients = await tx.broadcastRecipient.findMany({
+          where: { broadcastId: id },
+          select: { phoneE164: true, sentAt: true, status: true, variant: true, contactId: true },
+          take: 50000,
+        });
+
+        // Funnel — cumulative: a 'read' recipient also reached delivered + sent.
+        const reached = { sent: 0, delivered: 0, read: 0, failed: 0, skipped: 0, pending: 0 };
+        for (const r of recipients) {
+          if (r.status === 'read') {
+            reached.read++;
+            reached.delivered++;
+            reached.sent++;
+          } else if (r.status === 'delivered') {
+            reached.delivered++;
+            reached.sent++;
+          } else if (r.status === 'sent') {
+            reached.sent++;
+          } else if (r.status === 'failed') reached.failed++;
+          else if (r.status === 'skipped') reached.skipped++;
+          else reached.pending++; // pending | queued
+        }
+
+        // Replies: an inbound message from a recipient AFTER we sent to them.
+        const sentByDigits = new Map<string, { sentAt: Date; variant: string }>();
+        for (const r of recipients) {
+          if (!r.sentAt) continue;
+          const d = digits(r.phoneE164);
+          const prev = sentByDigits.get(d);
+          if (!prev || r.sentAt < prev.sentAt) sentByDigits.set(d, { sentAt: r.sentAt, variant: r.variant });
+        }
+        const inbound = await tx.whatsAppMessage.findMany({
+          where: { organizationId: broadcast.organizationId, direction: 'inbound', receivedAt: { gte: since } },
+          select: { fromNumber: true, receivedAt: true },
+          take: 50000,
+        });
+        const respondedDigits = new Set<string>();
+        const respondedByVariant: Record<string, Set<string>> = { A: new Set(), B: new Set() };
+        for (const m of inbound) {
+          if (!m.fromNumber) continue;
+          const d = digits(m.fromNumber);
+          const rec = sentByDigits.get(d);
+          if (rec && m.receivedAt > rec.sentAt) {
+            respondedDigits.add(d);
+            (respondedByVariant[rec.variant] ??= new Set()).add(d);
+          }
+        }
+        const responded = respondedDigits.size;
+
+        // Opt-outs among recipients after the send started.
+        const contactIds = recipients.map((r) => r.contactId).filter((x): x is string => !!x);
+        const optedOut = contactIds.length
+          ? await tx.contact.count({
+              where: { id: { in: contactIds }, optedOutAt: { gte: since } },
+            })
+          : 0;
+
+        // Failure reasons.
+        const failGroups = await tx.broadcastRecipient.groupBy({
+          by: ['metaErrorCode'],
+          where: { broadcastId: id, status: 'failed' },
+          _count: { _all: true },
+        });
+        const failureBreakdown = await Promise.all(
+          failGroups
+            .sort((a, b) => b._count._all - a._count._all)
+            .slice(0, 10)
+            .map(async (g) => {
+              const sample = await tx.broadcastRecipient.findFirst({
+                where: { broadcastId: id, status: 'failed', metaErrorCode: g.metaErrorCode },
+                select: { metaErrorMessage: true },
+              });
+              return {
+                code: g.metaErrorCode ?? 'unknown',
+                message: sample?.metaErrorMessage ?? null,
+                count: g._count._all,
+              };
+            }),
+        );
+
+        // A/B variant comparison.
+        const variantList = broadcast.abTest ? (['A', 'B'] as const) : (['A'] as const);
+        const variants = variantList.map((v) => {
+          const rs = recipients.filter((r) => r.variant === v);
+          const delivered = rs.filter((r) => r.status === 'delivered' || r.status === 'read').length;
+          const read = rs.filter((r) => r.status === 'read').length;
+          return {
+            variant: v,
+            recipients: rs.length,
+            delivered,
+            read,
+            responded: respondedByVariant[v]?.size ?? 0,
+          };
+        });
+
+        const total = recipients.length;
+        const pct = (num: number, den: number) => (den > 0 ? Math.round((num / den) * 1000) / 1000 : 0);
+        return {
+          data: {
+            funnel: {
+              total,
+              sent: reached.sent,
+              delivered: reached.delivered,
+              read: reached.read,
+              failed: reached.failed,
+              skipped: reached.skipped,
+              pending: reached.pending,
+              responded,
+            },
+            rates: {
+              deliveryRate: pct(reached.delivered, reached.sent),
+              readRate: pct(reached.read, reached.delivered),
+              responseRate: pct(responded, reached.delivered),
+              failureRate: pct(reached.failed, total),
+            },
+            optedOut,
+            failureBreakdown,
+            variants,
+            timing: {
+              startedAt: broadcast.startedAt?.toISOString() ?? null,
+              completedAt: broadcast.completedAt?.toISOString() ?? null,
+              durationMs:
+                broadcast.startedAt && broadcast.completedAt
+                  ? broadcast.completedAt.getTime() - broadcast.startedAt.getTime()
+                  : null,
+            },
+          },
+        };
+      }),
+  );
+
   // ---------- GET /broadcasts/:id/recipients.csv ----------------------------
   // Streams a CSV of every recipient with status + Meta error codes for
   // operator triage. No pagination — even 100K rows is small enough to ship

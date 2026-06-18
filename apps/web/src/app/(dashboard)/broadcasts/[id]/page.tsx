@@ -40,11 +40,41 @@ const STATUS_CLASS: Record<RecipientStatus, string> = {
   skipped: 'bg-slate-100 text-slate-500',
 };
 
+interface BroadcastAnalytics {
+  funnel: {
+    total: number;
+    sent: number;
+    delivered: number;
+    read: number;
+    failed: number;
+    skipped: number;
+    pending: number;
+    responded: number;
+  };
+  rates: { deliveryRate: number; readRate: number; responseRate: number; failureRate: number };
+  optedOut: number;
+  failureBreakdown: { code: string; message: string | null; count: number }[];
+  variants: { variant: string; recipients: number; delivered: number; read: number; responded: number }[];
+  timing: { startedAt: string | null; completedAt: string | null; durationMs: number | null };
+}
+
+const pctLabel = (r: number) => `${Math.round(r * 100)}%`;
+
+function fmtDuration(ms: number | null): string {
+  if (ms == null) return '—';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
 export default function BroadcastDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'overview' | 'recipients' | 'timeline'>('overview');
+  const [tab, setTab] = useState<'overview' | 'analytics' | 'recipients' | 'timeline'>('overview');
   const [statusFilter, setStatusFilter] = useState<RecipientStatus | ''>('');
 
   const broadcastQuery = useQuery({
@@ -89,6 +119,13 @@ export default function BroadcastDetailPage() {
       api.get<{ data: BroadcastEventDto[] }>(`/api/v1/broadcasts/${id}/timeline`),
     enabled: tab === 'timeline',
     refetchInterval: tab === 'timeline' ? 5000 : false,
+  });
+
+  const analyticsQuery = useQuery({
+    queryKey: ['broadcast-analytics', id],
+    queryFn: () => api.get<{ data: BroadcastAnalytics }>(`/api/v1/broadcasts/${id}/analytics`),
+    enabled: tab === 'analytics',
+    refetchInterval: tab === 'analytics' ? 8000 : false,
   });
 
   const lifecycle = (action: 'pause' | 'resume' | 'cancel') =>
@@ -284,7 +321,7 @@ export default function BroadcastDetailPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-border">
-        {(['overview', 'recipients', 'timeline'] as const).map((t) => (
+        {(['overview', 'analytics', 'recipients', 'timeline'] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -332,6 +369,115 @@ export default function BroadcastDetailPage() {
             <Field label="Total recipients" value={String(b.totalRecipients)} />
           </CardContent>
         </Card>
+      ) : null}
+
+      {tab === 'analytics' ? (
+        analyticsQuery.isLoading || !analyticsQuery.data ? (
+          <Card>
+            <CardContent className="py-10 text-center text-sm text-foreground-muted">
+              Loading analytics…
+            </CardContent>
+          </Card>
+        ) : (
+          (() => {
+            const a = analyticsQuery.data.data;
+            return (
+              <div className="space-y-4">
+                {/* Funnel — headline numbers */}
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                  <MetricCard label="Recipients" value={a.funnel.total} />
+                  <MetricCard label="Delivered" value={a.funnel.delivered} sub={pctLabel(a.rates.deliveryRate) + ' of sent'} />
+                  <MetricCard label="Read" value={a.funnel.read} sub={pctLabel(a.rates.readRate) + ' of delivered'} />
+                  <MetricCard
+                    label="Responded"
+                    value={a.funnel.responded}
+                    sub={pctLabel(a.rates.responseRate) + ' of delivered'}
+                    accent
+                  />
+                  <MetricCard label="Sent" value={a.funnel.sent} />
+                  <MetricCard label="Failed" value={a.funnel.failed} sub={pctLabel(a.rates.failureRate) + ' of all'} />
+                  <MetricCard label="Opted out" value={a.optedOut} />
+                  <MetricCard label="Send duration" value={fmtDuration(a.timing.durationMs)} />
+                </div>
+
+                {/* Delivery funnel bar */}
+                <Card>
+                  <CardHeader><CardTitle>Delivery funnel</CardTitle></CardHeader>
+                  <CardContent className="space-y-2">
+                    {([
+                      ['Sent', a.funnel.sent],
+                      ['Delivered', a.funnel.delivered],
+                      ['Read', a.funnel.read],
+                      ['Responded', a.funnel.responded],
+                    ] as const).map(([label, val]) => {
+                      const w = a.funnel.total > 0 ? Math.round((val / a.funnel.total) * 100) : 0;
+                      return (
+                        <div key={label} className="flex items-center gap-3 text-sm">
+                          <span className="w-24 shrink-0 text-foreground-muted">{label}</span>
+                          <div className="h-5 flex-1 overflow-hidden rounded bg-surface-muted">
+                            <div className="h-full rounded bg-primary/70" style={{ width: `${w}%` }} />
+                          </div>
+                          <span className="w-24 shrink-0 text-right font-medium">
+                            {val} <span className="text-foreground-muted">({w}%)</span>
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+
+                {/* A/B comparison */}
+                {a.variants.length > 1 ? (
+                  <Card>
+                    <CardHeader><CardTitle>A/B comparison</CardTitle></CardHeader>
+                    <CardContent className="overflow-x-auto">
+                      <table className="w-full text-left text-sm">
+                        <thead className="text-xs uppercase text-foreground-subtle">
+                          <tr>
+                            <th className="py-2">Variant</th>
+                            <th className="py-2">Recipients</th>
+                            <th className="py-2">Delivered</th>
+                            <th className="py-2">Read</th>
+                            <th className="py-2">Responded</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {a.variants.map((v) => (
+                            <tr key={v.variant} className="border-t border-border">
+                              <td className="py-2 font-medium">{v.variant}</td>
+                              <td className="py-2">{v.recipients}</td>
+                              <td className="py-2">{v.delivered}</td>
+                              <td className="py-2">{v.read}</td>
+                              <td className="py-2">{v.responded}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </CardContent>
+                  </Card>
+                ) : null}
+
+                {/* Failure breakdown */}
+                {a.failureBreakdown.length > 0 ? (
+                  <Card>
+                    <CardHeader><CardTitle>Why messages failed</CardTitle></CardHeader>
+                    <CardContent className="space-y-1.5 text-sm">
+                      {a.failureBreakdown.map((f) => (
+                        <div key={f.code} className="flex items-start justify-between gap-3 border-b border-border py-1.5 last:border-0">
+                          <div className="min-w-0">
+                            <p className="font-medium">Error {f.code}</p>
+                            {f.message ? <p className="truncate text-xs text-foreground-muted">{f.message}</p> : null}
+                          </div>
+                          <span className="shrink-0 font-medium">{f.count}</span>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                ) : null}
+              </div>
+            );
+          })()
+        )
       ) : null}
 
       {tab === 'recipients' ? (
@@ -458,6 +604,30 @@ function Field({ label, value }: { label: string; value: string }) {
     <div>
       <div className="text-xs uppercase tracking-wide text-foreground-subtle">{label}</div>
       <div className="mt-1">{value}</div>
+    </div>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string;
+  value: number | string;
+  sub?: string;
+  accent?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-lg border p-4 ${
+        accent ? 'border-primary/40 bg-primary/5' : 'border-border bg-surface'
+      }`}
+    >
+      <div className="text-xs uppercase tracking-wide text-foreground-subtle">{label}</div>
+      <div className="mt-1 text-2xl font-semibold">{value}</div>
+      {sub ? <div className="mt-0.5 text-xs text-foreground-muted">{sub}</div> : null}
     </div>
   );
 }

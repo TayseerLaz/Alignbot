@@ -56,12 +56,20 @@ echo "$CHANGED" | grep -q '^pnpm-lock.yaml$' && NEED_INSTALL=1
 [ -x packages/db/node_modules/.bin/tsc ] || NEED_INSTALL=1
 [ -x packages/shared/node_modules/.bin/tsc ] || NEED_INSTALL=1
 if [ "$NEED_INSTALL" = 1 ]; then
-  echo "▶ Installing dependencies (incl. devDeps via --prod=false, forced relink)…"
-  # CI=1 + confirmModulesPurge=false: switching prod↔dev makes pnpm want to wipe
-  # & reinstall node_modules, which otherwise prompts "Proceed? (Y/n)" and stalls
-  # this non-interactive deploy. --force re-links bins even when pnpm thinks the
-  # tree is already up to date (the failure mode that kept breaking deploys).
-  CI=1 pnpm install --prod=false --force --config.confirmModulesPurge=false
+  echo "▶ Reinstalling dependencies (clean relink, incl. devDeps)…"
+  # Why rm + plain install instead of `pnpm install --force`:
+  #   - pnpm --frozen-lockfile alone can report "up to date" while a package's
+  #     node_modules/.bin symlinks are missing → build fails with tsc/prisma
+  #     not found.
+  #   - `--force` fixes that BUT re-extracts every package from the pnpm store,
+  #     and a corrupted store entry then aborts the whole deploy
+  #     (ENOENT copyfile … — seen in prod after an interrupted install).
+  # Removing the workspace node_modules and doing a NON-force install relinks
+  # cleanly from the store and re-fetches anything missing, without the
+  # store-wide re-extraction that --force triggers.
+  # CI=1 + confirmModulesPurge=false keep it non-interactive (no Y/n prompt).
+  rm -rf node_modules apps/*/node_modules packages/*/node_modules
+  CI=1 pnpm install --frozen-lockfile --prod=false --config.confirmModulesPurge=false
 fi
 
 echo "▶ Regenerating Prisma client…"

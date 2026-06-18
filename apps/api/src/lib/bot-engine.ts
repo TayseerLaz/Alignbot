@@ -128,6 +128,17 @@ export interface BotData {
     title: string;
     intentKeywords: string[];
     fields: { key: string; label: string; type: string; required: boolean }[];
+    // Weekly recurring availability. When enabled, callers compute the open
+    // slots and the bot offers only those (full slots are hidden).
+    availability: {
+      enabled: boolean;
+      timezone: string;
+      slotMinutes: number;
+      capacityPerSlot: number;
+      leadMinutes: number;
+      horizonDays: number;
+      windows: { day: number; start: string; end: string }[];
+    } | null;
   } | null;
   // Operator-defined shop form (BusinessInfo.shopForm). Same shape as
   // bookingForm, plus delivery + minimum-order fees + a confirmation
@@ -422,6 +433,35 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
           })))
       : [];
     if (b.enabled === true && fields.length > 0) {
+      // Parse optional weekly availability.
+      const rawAv = (b as { availability?: unknown }).availability;
+      let availability: NonNullable<BotData['bookingForm']>['availability'] = null;
+      if (rawAv && typeof rawAv === 'object') {
+        const a = rawAv as Record<string, unknown>;
+        const windows = Array.isArray(a.windows)
+          ? (a.windows as unknown[])
+              .filter(
+                (w): w is { day: number; start: string; end: string } =>
+                  !!w &&
+                  typeof w === 'object' &&
+                  typeof (w as { day: unknown }).day === 'number' &&
+                  typeof (w as { start: unknown }).start === 'string' &&
+                  typeof (w as { end: unknown }).end === 'string',
+              )
+              .map((w) => ({ day: w.day, start: w.start, end: w.end }))
+          : [];
+        if (a.enabled === true && windows.length > 0) {
+          availability = {
+            enabled: true,
+            timezone: typeof a.timezone === 'string' && a.timezone.trim() ? a.timezone : 'UTC',
+            slotMinutes: typeof a.slotMinutes === 'number' ? a.slotMinutes : 30,
+            capacityPerSlot: typeof a.capacityPerSlot === 'number' ? a.capacityPerSlot : 1,
+            leadMinutes: typeof a.leadMinutes === 'number' ? a.leadMinutes : 0,
+            horizonDays: typeof a.horizonDays === 'number' ? a.horizonDays : 14,
+            windows,
+          };
+        }
+      }
       bookingForm = {
         enabled: true,
         title: typeof b.title === 'string' && b.title.trim() ? b.title : 'Booking',
@@ -429,6 +469,7 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
           ? (b.intentKeywords as unknown[]).filter((x): x is string => typeof x === 'string')
           : [],
         fields,
+        availability,
       };
     }
   }
@@ -572,6 +613,11 @@ interface BotResponseArgs {
   // never claims to be on the wrong platform (e.g. calling itself the
   // "WhatsApp agent" inside an Instagram DM). Omit → no platform claim.
   channelLabel?: string;
+  // Open booking slot labels (already filtered for capacity + lead time) the
+  // bot may offer, in order. Only set when the booking form has weekly
+  // availability enabled. The bot must offer ONLY these and store the chosen
+  // one verbatim as the date field.
+  openSlots?: string[];
 }
 
 // Provenance bundle returned alongside the bot reply text. Captures
@@ -827,7 +873,11 @@ export async function buildBotResponse(
     bookingForm
       ? `- BOOKING FLOW (load-bearing). If the customer's message asks to BOOK / SCHEDULE / RESERVE a "${bookingForm.title}" (or matches one of: ${bookingForm.intentKeywords.join(', ') || '"book", "appointment", "consultation", "reserve", "schedule"'}):\n` +
         `  Step 1: ask for the fields listed in the BOOKING FORM section below, ONE OR TWO at a time so the customer isn't overwhelmed. Use the exact LABELS shown.\n` +
-        `  Step 2: DATE/TIME fields must be UNAMBIGUOUS. If the customer gives a vague time, clarify before continuing: always pin down AM vs PM ("5 — is that 5 PM?") and resolve relative words ("tomorrow", "Friday") to an explicit calendar date using today's date above. Store and confirm the date as an explicit date + time, e.g. "June 20, 2025 5:00 PM" — NEVER a vague phrase like "tomorrow at 5".\n` +
+        (args.openSlots && args.openSlots.length > 0
+          ? `  Step 2 (AVAILABILITY — load-bearing): For the date/time field you may ONLY offer these open slots (already filtered for availability + capacity), and store the chosen one VERBATIM:\n` +
+            args.openSlots.map((s) => `      • ${s}`).join('\n') +
+            `\n     Present a few of these as the options. If the customer asks for a time that is NOT in this list, tell them it's unavailable and offer the closest open slots instead. NEVER invent or accept a slot that isn't listed here. Store the date field as the EXACT slot text shown above (e.g. "${args.openSlots[0]}").\n`
+          : `  Step 2: DATE/TIME fields must be UNAMBIGUOUS. If the customer gives a vague time, clarify before continuing: always pin down AM vs PM ("5 — is that 5 PM?") and resolve relative words ("tomorrow", "Friday") to an explicit calendar date using today's date above. Store and confirm the date as an explicit date + time, e.g. "June 20, 2025 5:00 PM" — NEVER a vague phrase like "tomorrow at 5".\n`) +
         `  Step 3: when EVERY required field has a value, summarise the captured values back to the customer (using the explicit date/time) and ask them to confirm.\n` +
         `  Step 4: as SOON AS the customer affirms (yes / confirm / go ahead / ok / etc.), include the BOOKING marker. After a brief one-sentence confirmation reply, emit on a NEW LINE:\n` +
         `    [BOOKING: ${JSON.stringify(

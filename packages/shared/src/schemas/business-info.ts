@@ -46,12 +46,43 @@ export const bookingFormFieldSchema = z.object({
   required: z.boolean().default(true),
 });
 
+// Weekly recurring availability for bookings. When enabled, the bot offers
+// only OPEN slots (generated from these windows, minus any at/over capacity)
+// and resolves the chosen slot to an exact appointment time.
+export const bookingAvailabilityWindowSchema = z.object({
+  // 0 = Sunday … 6 = Saturday
+  day: z.number().int().min(0).max(6),
+  start: z.string().regex(/^\d{2}:\d{2}$/, 'HH:MM'),
+  end: z.string().regex(/^\d{2}:\d{2}$/, 'HH:MM'),
+});
+
+export const bookingAvailabilitySchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    // IANA timezone the windows are expressed in (e.g. "Asia/Beirut").
+    timezone: z.string().trim().min(1).max(64).default('UTC'),
+    // Length of each bookable slot, in minutes.
+    slotMinutes: z.number().int().min(5).max(480).default(30),
+    // How many bookings fit in one slot before it's hidden as full.
+    capacityPerSlot: z.number().int().min(1).max(1000).default(1),
+    // Minimum notice before a slot can be booked (minutes).
+    leadMinutes: z.number().int().min(0).max(43200).default(0),
+    // How many days ahead to offer slots.
+    horizonDays: z.number().int().min(1).max(120).default(14),
+    windows: z.array(bookingAvailabilityWindowSchema).max(100).default([]),
+  })
+  .strict();
+export type BookingAvailabilityDto = z.infer<typeof bookingAvailabilitySchema>;
+
 export const bookingFormSchema = z
   .object({
     enabled: z.boolean().default(false),
     title: z.string().trim().min(1).max(200).default('Book a consultation'),
     intentKeywords: z.array(z.string().trim().min(1).max(60)).max(40).default([]),
     fields: z.array(bookingFormFieldSchema).max(40).default([]),
+    // Optional weekly availability. Null/absent = old behaviour (bot collects a
+    // free-text date with no slot/capacity enforcement).
+    availability: bookingAvailabilitySchema.nullable().default(null),
   })
   .strict();
 export type BookingFormDto = z.infer<typeof bookingFormSchema>;

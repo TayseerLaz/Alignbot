@@ -3272,6 +3272,16 @@ async function maybeReplyAsBot(args: {
     }
     stopwatch.lap('persona');
 
+    // Booking availability — open slots the bot may offer (capacity-filtered).
+    const bookingAvail = ctx.data.bookingForm?.availability ?? null;
+    let openSlots: string[] = [];
+    if (bookingAvail?.enabled) {
+      const { computeOpenSlots } = await import('../../lib/booking-slots.js');
+      openSlots = (await computeOpenSlots(args.organizationId, bookingAvail, new Date(), 6)).map(
+        (s) => s.label,
+      );
+    }
+
     // OpenAI call — outside the tx. Safe to be slow.
     const result = await buildBotResponse({
       organizationId: args.organizationId,
@@ -3288,6 +3298,7 @@ async function maybeReplyAsBot(args: {
       persona: personaBlock,
       pinnedSkus,
       channelLabel: 'WhatsApp',
+      openSlots,
     }).catch((err) => {
       args.log.warn({ err }, '[whatsapp] bot-engine failed');
       return null;
@@ -4724,6 +4735,23 @@ async function maybeReplyAsBot(args: {
             required: f.required,
             value: parsedBooking![f.key] ?? null,
           }));
+          // When weekly availability is on, resolve the chosen slot label →
+          // exact appointment instant (pure match, no extra query).
+          let bkAppointmentAt: Date | null = null;
+          if (bookingAvail?.enabled) {
+            const { resolveSlotFromText } = await import('../../lib/booking-slots.js');
+            const dateField = ctx.data.bookingForm?.fields.find((f) => f.type === 'date');
+            const cands = dateField
+              ? [parsedBooking![dateField.key]]
+              : Object.values(parsedBooking!);
+            for (const v of cands) {
+              const s = resolveSlotFromText(v ?? '', bookingAvail, new Date());
+              if (s) {
+                bkAppointmentAt = s;
+                break;
+              }
+            }
+          }
           const booking = await tx.booking.create({
             data: {
               organizationId: args.organizationId,
@@ -4732,6 +4760,7 @@ async function maybeReplyAsBot(args: {
               customerName: thread.customerName ?? thread.customerWhatsappName ?? null,
               fields: fields as never,
               status: 'new',
+              appointmentAt: bkAppointmentAt,
             },
           });
           await tx.whatsAppNote.create({

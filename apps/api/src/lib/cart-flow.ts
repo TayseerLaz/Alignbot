@@ -4,6 +4,8 @@
 // reuses the battle-tested cart-parser (parseAddedItems — synonym/list-format
 // aware) so the WhatsApp hot path is NOT touched. Cart rows are per-thread, so
 // everything keys off threadId + a generic customerId (PSID for Messenger).
+import type { BookingAvailability } from './booking-slots.js';
+import { resolveSlotFromText, slotHasRoom } from './booking-slots.js';
 import { parseAddedItems } from './cart-parser.js';
 import { withRlsBypass } from './db.js';
 
@@ -41,6 +43,7 @@ export async function captureBooking(args: {
   customerName: string | null;
   bookingMarkerJson: string;
   bookingForm: BookingFormLite;
+  availability?: BookingAvailability | null;
 }): Promise<{ id: string } | null> {
   if (!args.bookingForm.enabled || args.bookingForm.fields.length === 0) return null;
   let parsed: Record<string, string>;
@@ -50,6 +53,29 @@ export async function captureBooking(args: {
     for (const [k, v] of Object.entries(obj)) parsed[k] = v == null ? '' : String(v);
   } catch {
     return null;
+  }
+
+  // Resolve the chosen slot → exact appointment instant when availability is on.
+  // We try the explicit 'date'-type field first, then any field value that
+  // matches an offered slot label. Capacity is re-checked at capture so a rare
+  // race only overshoots by one (and gets flagged for the operator).
+  const av = args.availability ?? null;
+  let appointmentAt: Date | null = null;
+  let slotWasFull = false;
+  if (av?.enabled) {
+    const now = new Date();
+    const dateField = args.bookingForm.fields.find((f) => f.type === 'date');
+    const candidates = dateField ? [parsed[dateField.key]] : Object.values(parsed);
+    for (const v of candidates) {
+      const slot = resolveSlotFromText(v, av, now);
+      if (slot) {
+        appointmentAt = slot;
+        break;
+      }
+    }
+    if (appointmentAt) {
+      slotWasFull = !(await slotHasRoom(args.orgId, appointmentAt, av.capacityPerSlot));
+    }
   }
 
   const result = await withRlsBypass(async (tx) => {
@@ -78,6 +104,8 @@ export async function captureBooking(args: {
         customerName: args.customerName,
         fields: fields as never,
         status: 'new',
+        appointmentAt,
+        ...(slotWasFull ? { notes: '⚠ Slot was at capacity when booked — please review.' } : {}),
       },
     });
     await tx.whatsAppNote.create({
@@ -85,7 +113,7 @@ export async function captureBooking(args: {
         threadId: args.threadId,
         organizationId: args.orgId,
         authorUserId: null,
-        body: `📅 Booking captured (id ${booking.id.slice(0, 8)}…). See /bookings.`,
+        body: `📅 Booking captured (id ${booking.id.slice(0, 8)}…)${slotWasFull ? ' ⚠ slot was full' : ''}. See /bookings.`,
       },
     });
     await tx.whatsAppThread.update({

@@ -957,11 +957,44 @@ interface BookingFieldDraft {
   required: boolean;
 }
 
+interface AvailabilityWindowDraft {
+  day: number; // 0=Sun..6=Sat
+  start: string; // HH:MM
+  end: string; // HH:MM
+}
+
+interface BookingAvailabilityDraft {
+  enabled: boolean;
+  timezone: string;
+  slotMinutes: number;
+  capacityPerSlot: number;
+  leadMinutes: number;
+  horizonDays: number;
+  windows: AvailabilityWindowDraft[];
+}
+
 interface BookingFormDraft {
   enabled: boolean;
   title: string;
   intentKeywords: string[];
   fields: BookingFieldDraft[];
+  availability: BookingAvailabilityDraft;
+}
+
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function defaultAvailability(): BookingAvailabilityDraft {
+  return {
+    enabled: false,
+    timezone:
+      (typeof Intl !== 'undefined' && Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC',
+    slotMinutes: 30,
+    capacityPerSlot: 1,
+    leadMinutes: 60,
+    horizonDays: 14,
+    // Default Mon–Fri 09:00–17:00.
+    windows: [1, 2, 3, 4, 5].map((day) => ({ day, start: '09:00', end: '17:00' })),
+  };
 }
 
 function defaultBookingForm(): BookingFormDraft {
@@ -975,6 +1008,7 @@ function defaultBookingForm(): BookingFormDraft {
       { key: 'date', label: 'Preferred date', type: 'date', required: true },
       { key: 'notes', label: 'Anything else?', type: 'long_text', required: false },
     ],
+    availability: defaultAvailability(),
   };
 }
 
@@ -991,9 +1025,14 @@ function BookingFormPanel() {
 
   useEffect(() => {
     if (!infoQuery.data || loaded) return;
-    const incoming = (infoQuery.data.data as { bookingForm?: BookingFormDraft } | null)
-      ?.bookingForm;
+    const incoming = (
+      infoQuery.data.data as {
+        bookingForm?: BookingFormDraft & { availability?: Partial<BookingAvailabilityDraft> | null };
+      } | null
+    )?.bookingForm;
     if (incoming && Array.isArray(incoming.fields)) {
+      const av = incoming.availability;
+      const baseAv = defaultAvailability();
       setDraft({
         enabled: !!incoming.enabled,
         title: incoming.title || 'Book a consultation',
@@ -1006,6 +1045,17 @@ function BookingFormPanel() {
             : 'text',
           required: f.required !== false,
         })),
+        availability: av
+          ? {
+              enabled: !!av.enabled,
+              timezone: av.timezone || baseAv.timezone,
+              slotMinutes: av.slotMinutes ?? baseAv.slotMinutes,
+              capacityPerSlot: av.capacityPerSlot ?? baseAv.capacityPerSlot,
+              leadMinutes: av.leadMinutes ?? baseAv.leadMinutes,
+              horizonDays: av.horizonDays ?? baseAv.horizonDays,
+              windows: Array.isArray(av.windows) ? (av.windows as AvailabilityWindowDraft[]) : baseAv.windows,
+            }
+          : baseAv,
       });
       setKeywordsInput((incoming.intentKeywords ?? []).join(', '));
     } else {
@@ -1027,6 +1077,15 @@ function BookingFormPanel() {
             .map((s) => s.trim())
             .filter(Boolean),
           fields: draft.fields,
+          availability: {
+            enabled: draft.availability.enabled,
+            timezone: draft.availability.timezone.trim() || 'UTC',
+            slotMinutes: draft.availability.slotMinutes,
+            capacityPerSlot: draft.availability.capacityPerSlot,
+            leadMinutes: draft.availability.leadMinutes,
+            horizonDays: draft.availability.horizonDays,
+            windows: draft.availability.windows,
+          },
         },
       }),
     onSuccess: () => {
@@ -1072,6 +1131,29 @@ function BookingFormPanel() {
       return { ...d, fields: next };
     });
   };
+
+  // ----- availability setters -----
+  const setAv = (patch: Partial<BookingAvailabilityDraft>) =>
+    setDraft((d) => ({ ...d, availability: { ...d.availability, ...patch } }));
+  const setWindow = (i: number, patch: Partial<AvailabilityWindowDraft>) =>
+    setDraft((d) => {
+      const next = [...d.availability.windows];
+      next[i] = { ...next[i]!, ...patch };
+      return { ...d, availability: { ...d.availability, windows: next } };
+    });
+  const addWindow = () =>
+    setDraft((d) => ({
+      ...d,
+      availability: {
+        ...d.availability,
+        windows: [...d.availability.windows, { day: 1, start: '09:00', end: '17:00' }],
+      },
+    }));
+  const removeWindow = (i: number) =>
+    setDraft((d) => ({
+      ...d,
+      availability: { ...d.availability, windows: d.availability.windows.filter((_, idx) => idx !== i) },
+    }));
 
   return (
     <div className="space-y-4">
@@ -1213,6 +1295,132 @@ function BookingFormPanel() {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* ---- Availability (weekly recurring) ---- */}
+          <div className="space-y-4 rounded-lg border border-border p-4">
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                className="mt-1 size-4"
+                checked={draft.availability.enabled}
+                onChange={(e) => setAv({ enabled: e.target.checked })}
+              />
+              <span>
+                <p className="font-medium">Limit bookings to my availability</p>
+                <p className="text-sm text-foreground-muted">
+                  When on, the AI offers only open time slots from your weekly schedule and hides any
+                  slot that's already full. Off = the AI just collects a free-text date.
+                </p>
+              </span>
+            </label>
+
+            {draft.availability.enabled ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label>Timezone (IANA)</Label>
+                    <Input
+                      value={draft.availability.timezone}
+                      onChange={(e) => setAv({ timezone: e.target.value })}
+                      placeholder="Asia/Beirut"
+                    />
+                  </div>
+                  <div>
+                    <Label>Slot length (minutes)</Label>
+                    <Input
+                      type="number"
+                      min={5}
+                      max={480}
+                      value={draft.availability.slotMinutes}
+                      onChange={(e) => setAv({ slotMinutes: Math.max(5, Number(e.target.value) || 30) })}
+                    />
+                  </div>
+                  <div>
+                    <Label>Capacity per slot</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={1000}
+                      value={draft.availability.capacityPerSlot}
+                      onChange={(e) =>
+                        setAv({ capacityPerSlot: Math.max(1, Number(e.target.value) || 1) })
+                      }
+                    />
+                    <p className="mt-1 text-xs text-foreground-muted">
+                      How many bookings fit one slot before it's hidden as full (1 = exclusive).
+                    </p>
+                  </div>
+                  <div>
+                    <Label>Minimum notice (minutes)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={draft.availability.leadMinutes}
+                      onChange={(e) => setAv({ leadMinutes: Math.max(0, Number(e.target.value) || 0) })}
+                    />
+                  </div>
+                  <div>
+                    <Label>Offer up to (days ahead)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={120}
+                      value={draft.availability.horizonDays}
+                      onChange={(e) => setAv({ horizonDays: Math.max(1, Number(e.target.value) || 14) })}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Weekly hours</Label>
+                  {draft.availability.windows.length === 0 ? (
+                    <p className="text-sm text-foreground-muted">
+                      No hours yet — add at least one window.
+                    </p>
+                  ) : null}
+                  {draft.availability.windows.map((w, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <select
+                        className="h-9 rounded-md border border-border bg-surface px-2 text-sm"
+                        value={w.day}
+                        onChange={(e) => setWindow(i, { day: Number(e.target.value) })}
+                      >
+                        {DOW.map((name, idx) => (
+                          <option key={idx} value={idx}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                      <Input
+                        type="time"
+                        value={w.start}
+                        onChange={(e) => setWindow(i, { start: e.target.value })}
+                        className="w-32"
+                      />
+                      <span className="text-foreground-muted">–</span>
+                      <Input
+                        type="time"
+                        value={w.end}
+                        onChange={(e) => setWindow(i, { end: e.target.value })}
+                        className="w-32"
+                      />
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => removeWindow(i)}
+                        aria-label="Remove window"
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button variant="secondary" size="sm" onClick={addWindow}>
+                    + Add hours
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="flex justify-end">

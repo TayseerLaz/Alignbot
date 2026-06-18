@@ -26,6 +26,7 @@ import { z } from 'zod';
 import { recordAudit } from '../../lib/audit.js';
 import { withRlsBypass } from '../../lib/db.js';
 import { badRequest, notFound } from '../../lib/errors.js';
+import type { BookingAvailability } from '../../lib/booking-slots.js';
 import type { BookingFormLite, CatalogProductLite, ShopFormLite } from '../../lib/cart-flow.js';
 import { env } from '../../lib/env.js';
 import { generateOpaqueToken } from '../../lib/crypto.js';
@@ -647,6 +648,16 @@ async function maybeReplyOnMessenger(
   const { loadDraftCartState, syncDraftFromReply, captureCart } = await import('../../lib/cart-flow.js');
   const cartState = shopForm ? await loadDraftCartState(orgId, threadId) : null;
 
+  // Booking availability — compute the open slots the bot may offer.
+  const bookingAvail =
+    (data as { bookingForm?: { availability?: BookingAvailability | null } | null }).bookingForm
+      ?.availability ?? null;
+  let openSlots: string[] = [];
+  if (bookingAvail?.enabled) {
+    const { computeOpenSlots } = await import('../../lib/booking-slots.js');
+    openSlots = (await computeOpenSlots(orgId, bookingAvail, new Date(), 6)).map((s) => s.label);
+  }
+
   let rawText: string;
   try {
     const result = await buildBotResponse({
@@ -658,6 +669,7 @@ async function maybeReplyOnMessenger(
       cartState: cartState ?? undefined,
       quickRepliesEnabled: true,
       channelLabel: channelKind === 'instagram' ? 'Instagram' : 'Facebook Messenger',
+      openSlots,
     });
     rawText = result.text;
   } catch (err) {
@@ -818,6 +830,7 @@ async function maybeReplyOnMessenger(
           customerName,
           bookingMarkerJson: bookingMatch[1]!,
           bookingForm,
+          availability: bookingAvail,
         });
         bookingCaptured = !!booking;
       } catch (err) {

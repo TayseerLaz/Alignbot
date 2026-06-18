@@ -567,6 +567,11 @@ interface BotResponseArgs {
   // the channel send-path turns into native quick-reply pills. WhatsApp leaves
   // this false, so its prompt + output are byte-identical to before.
   quickRepliesEnabled?: boolean;
+  // Human-readable channel the customer is messaging on ("WhatsApp",
+  // "Instagram", "Facebook Messenger"). Injected into the prompt so the bot
+  // never claims to be on the wrong platform (e.g. calling itself the
+  // "WhatsApp agent" inside an Instagram DM). Omit → no platform claim.
+  channelLabel?: string;
 }
 
 // Provenance bundle returned alongside the bot reply text. Captures
@@ -749,13 +754,17 @@ export async function buildBotResponse(
     // Ultra-plan persona/memory (empty for other plans — no prompt drift).
     args.persona ? args.persona : '',
     `You are the customer-service bot for ${biz?.legalName ?? 'this business'}. Reply in plain text, scannable, under 60 words. No markdown headings.`,
+    // Platform identity — keep the bot from claiming the wrong channel.
+    args.channelLabel
+      ? `You are talking to the customer on ${args.channelLabel}. If you ever refer to the channel, call it "${args.channelLabel}". NEVER describe yourself as a "WhatsApp" agent/bot or mention WhatsApp${args.channelLabel.toLowerCase() === 'whatsapp' ? '' : ' (you are NOT on WhatsApp right now)'} unless the customer is actually on WhatsApp. Usually you don't need to name the platform at all — just help.`
+      : '',
     `Today's date is ${todayStr}. Resolve relative dates the customer says ("today", "tomorrow", "this Friday", "next week") into an explicit calendar date based on this.`,
     `Tone: ${personalityKey}. ${personalityHint}`,
     // Conversation continuity — never cold-restart with a greeting mid-chat.
     `Do NOT re-greet mid-conversation. Only open with "Hi/Hello/Welcome/How can I help" on the FIRST reply of a conversation. After you've already helped — including right after confirming a booking or order — if the customer sends a short acknowledgement (ok, thanks, perfect, great, 👍), reply briefly and warmly and offer to keep helping (e.g. "Glad to help, {name}! Anything else I can do for you?"). Never reset to "How can I help you today?" as if it's a brand-new chat.`,
     greeting ? `Default greeting: "${greeting}"` : '',
     shouldGreetByName
-      ? `Customer's first name on WhatsApp: "${customerFirstName}". When your reply opens with a greeting word (Hi/Hello/Hey/Welcome/مرحبا/أهلاً/سلام/Bonjour/Hola), include their name. Mid-conversation replies should NOT shoehorn the name in.`
+      ? `Customer's first name: "${customerFirstName}". When your reply opens with a greeting word (Hi/Hello/Hey/Welcome/مرحبا/أهلاً/سلام/Bonjour/Hola), include their name. Mid-conversation replies should NOT shoehorn the name in.`
       : '',
     // Name pre-fill — the bot already knows who it's talking to, so checkout /
     // booking must NOT re-ask "what's your full name?". Use the known name.

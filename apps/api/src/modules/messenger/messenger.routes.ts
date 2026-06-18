@@ -657,6 +657,7 @@ async function maybeReplyOnMessenger(
       replyMode: 'text',
       cartState: cartState ?? undefined,
       quickRepliesEnabled: true,
+      channelLabel: channelKind === 'instagram' ? 'Instagram' : 'Facebook Messenger',
     });
     rawText = result.text;
   } catch (err) {

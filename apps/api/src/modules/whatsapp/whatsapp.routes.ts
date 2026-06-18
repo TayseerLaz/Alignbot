@@ -3287,6 +3287,7 @@ async function maybeReplyAsBot(args: {
       cartState: cartStateForLLM,
       persona: personaBlock,
       pinnedSkus,
+      channelLabel: 'WhatsApp',
     }).catch((err) => {
       args.log.warn({ err }, '[whatsapp] bot-engine failed');
       return null;

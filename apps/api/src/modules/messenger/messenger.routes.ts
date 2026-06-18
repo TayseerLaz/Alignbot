@@ -677,6 +677,71 @@ async function maybeReplyOnMessenger(
     return;
   }
 
+  // Human handoff — supersedes everything. Trips on the [HANDOFF] marker OR an
+  // explicit "talk to a human / agent / support" request (covers the tappable
+  // "Talk to a human" quick reply, whose text arrives verbatim). Escalates the
+  // thread so the bot goes silent, posts an internal note, and pings the team.
+  const HANDOFF_INTENT_RE =
+    /\b(talk|speak|connect|chat)\b.{0,20}\b(human|agent|person|someone|representative|rep|operator|staff|team|support)\b|\b(human|real person|live agent|customer support|customer service)\b|تحدث.*انسان|موظف|خدمة العملاء/i;
+  const wantsHandoff = /\[HANDOFF\]/i.test(rawText) || HANDOFF_INTENT_RE.test(userMessage);
+  if (wantsHandoff) {
+    const escalation = (data as { config?: { escalationRules?: { fallback?: unknown } } }).config
+      ?.escalationRules;
+    const fallback =
+      typeof escalation?.fallback === 'string' && escalation.fallback.trim()
+        ? escalation.fallback.trim()
+        : "Sure — I'm connecting you with a member of our team. They'll reply right here shortly. 🙌";
+    const { sendMessengerText: sendHandoff } = await import('../../lib/messenger-send.js');
+    const mid = await sendHandoff(orgId, psid, fallback, log);
+    await withRlsBypass(async (tx) => {
+      if (mid) {
+        await tx.whatsAppMessage.create({
+          data: {
+            threadId,
+            organizationId: orgId,
+            channel: channelKind,
+            direction: 'outbound',
+            metaMessageId: mid,
+            toNumber: psid,
+            messageType: 'text',
+            body: fallback,
+            rawPayload: { sentBy: 'bot', reason: 'handoff' } as never,
+          },
+        });
+      }
+      await tx.whatsAppThread.update({
+        where: { id: threadId },
+        data: {
+          status: 'escalated',
+          lastMessageAt: new Date(),
+          lastMessagePreview: fallback.slice(0, 200),
+          ...(mid ? { outboundCount: { increment: 1 } } : {}),
+        },
+      });
+      await tx.whatsAppNote.create({
+        data: {
+          threadId,
+          organizationId: orgId,
+          authorUserId: null,
+          body: '🤖 → 👤 Bot flagged this chat for human support (customer asked for an agent).',
+        },
+      });
+    });
+    void (await import('../../lib/notifications.js'))
+      .createNotification({
+        organizationId: orgId,
+        kind: 'cart_received',
+        severity: 'warning',
+        title: 'Customer needs a human',
+        body: `A ${channelKind} customer asked to talk to a human — reply in the inbox.`,
+        link: `/inbox?thread=${threadId}`,
+        entityType: 'whatsapp_thread',
+        entityId: threadId,
+      })
+      .catch(() => undefined);
+    return; // escalated — do not run cart/booking/quick-reply logic
+  }
+
   // Build the draft cart from "added" lines + capture an order on the [CART:]
   // marker (reuses the shared cart-flow + the WhatsApp cart-parser). When an
   // order is captured, a deterministic receipt becomes the SINGLE confirmation

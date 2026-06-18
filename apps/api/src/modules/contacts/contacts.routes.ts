@@ -339,22 +339,33 @@ export default async function contactsRoutes(app: FastifyInstance) {
     async (req) =>
       app.tenant(req, async (tx) => {
         const { search, tag } = req.query;
-        const where: Record<string, unknown> = { deletedAt: null };
+        // Only real, WhatsApp-able numbers: E.164 starts with "+". This excludes
+        // Instagram/Messenger contacts (their PSID is stored in phoneE164) and
+        // blocked contacts — broadcasts go over WhatsApp.
+        const where: Record<string, unknown> = {
+          deletedAt: null,
+          blockedAt: null,
+          phoneE164: { startsWith: '+' },
+        };
         if (search) {
           const trimmed = search.trim();
-          where.OR = [
-            { phoneE164: { contains: trimmed, mode: 'insensitive' } },
-            { displayName: { contains: trimmed, mode: 'insensitive' } },
+          where.AND = [
+            {
+              OR: [
+                { phoneE164: { contains: trimmed, mode: 'insensitive' } },
+                { displayName: { contains: trimmed, mode: 'insensitive' } },
+              ],
+            },
           ];
         }
         if (tag) where.tags = { some: { tag } };
         const rows = await tx.contact.findMany({
           where,
           select: { phoneE164: true },
-          take: 50000,
+          take: 10000, // matches the broadcast manualPhones cap
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         });
-        const phones = rows.map((r) => r.phoneE164).filter(Boolean);
+        const phones = rows.map((r) => r.phoneE164).filter((p) => p && p.startsWith('+'));
         return { data: phones, total: phones.length };
       }),
   );

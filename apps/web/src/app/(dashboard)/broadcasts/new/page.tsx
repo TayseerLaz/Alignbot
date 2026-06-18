@@ -171,7 +171,10 @@ export default function NewBroadcastPage() {
           );
           manualPhones = res.data;
         } else {
-          manualPhones = [...selectedContacts.values()].map((v) => v.phone);
+          // Only real phone numbers — IG/Messenger contacts store a PSID here.
+          manualPhones = [...selectedContacts.values()]
+            .map((v) => v.phone)
+            .filter((p) => p.startsWith('+'));
         }
       }
       const body: CreateBroadcastBody = {
@@ -410,13 +413,17 @@ export default function NewBroadcastPage() {
                     <div className="max-h-72 overflow-y-auto rounded-md border border-border divide-y divide-border">
                       {contactsPickerQuery.isLoading ? (
                         <p className="p-3 text-sm text-foreground-muted">Loading…</p>
-                      ) : (contactsPickerQuery.data?.data ?? []).length === 0 ? (
+                      ) : (contactsPickerQuery.data?.data ?? []).filter((c) =>
+                          c.phoneE164.startsWith('+'),
+                        ).length === 0 ? (
                         <p className="p-3 text-sm italic text-foreground-muted">
-                          No contacts found. Contacts are created automatically when customers
-                          message you, or added on the Contacts page.
+                          No contacts with a phone number found. (Instagram/Messenger-only contacts
+                          can't receive WhatsApp broadcasts.)
                         </p>
                       ) : (
-                        (contactsPickerQuery.data?.data ?? []).map((c) => (
+                        (contactsPickerQuery.data?.data ?? [])
+                          .filter((c) => c.phoneE164.startsWith('+'))
+                          .map((c) => (
                           <label
                             key={c.id}
                             className="flex cursor-pointer items-center gap-3 p-2.5 text-sm hover:bg-surface-muted/50"

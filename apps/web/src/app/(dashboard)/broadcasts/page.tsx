@@ -204,6 +204,11 @@ function BroadcastsTab() {
                   </td>
                   <td className="px-6 py-4 font-mono text-sm text-foreground-muted">
                     {b.sentCount} / {b.deliveredCount} / {b.readCount}
+                    {b.respondedCount > 0 ? (
+                      <span className="ml-2 font-sans text-emerald-600">
+                        · {b.respondedCount} replied
+                      </span>
+                    ) : null}
                     {b.failedCount > 0 ? (
                       <span className="ml-2 text-red-600">· {b.failedCount} failed</span>
                     ) : null}

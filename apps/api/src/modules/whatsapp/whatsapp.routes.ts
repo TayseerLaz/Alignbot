@@ -40,6 +40,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
+import { attributeBroadcastResponse } from '../../lib/broadcast-response.js';
 import { generateOpaqueToken } from '../../lib/crypto.js';
 import { withRlsBypass } from '../../lib/db.js';
 import { env } from '../../lib/env.js';
@@ -2462,6 +2463,10 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 });
               }
             }).catch((err) => req.log.error({ err }, '[whatsapp] persist failed'));
+
+            // Credit this reply to the most recent campaign that reached the
+            // sender within the attribution window (per-campaign "responded").
+            if (m.from) void attributeBroadcastResponse(channel.organizationId, m.from, new Date());
           }
         }
       }

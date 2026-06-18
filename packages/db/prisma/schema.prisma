@@ -2198,6 +2198,9 @@ model Broadcast {
   deliveredCount      Int                   @default(0) @map("delivered_count")
   readCount           Int                   @default(0) @map("read_count")
   failedCount         Int                   @default(0) @map("failed_count")
+  // How many recipients replied within the attribution window after this
+  // campaign reached them (set on inbound; see lib/broadcast-response.ts).
+  respondedCount      Int                   @default(0) @map("responded_count")
   // The user who clicked Send. May be NULL if the user is later deleted.
   createdByUserId     String?               @map("created_by_user_id") @db.Uuid
   createdAt           DateTime              @default(now()) @map("created_at")
@@ -2232,6 +2235,9 @@ model BroadcastRecipient {
   deliveredAt      DateTime?        @map("delivered_at")
   readAt           DateTime?        @map("read_at")
   failedAt         DateTime?        @map("failed_at")
+  // Set when this recipient replied within the attribution window after their
+  // send — the per-campaign "responded" signal.
+  respondedAt      DateTime?        @map("responded_at")
   attemptCount     Int              @default(0) @map("attempt_count")
   createdAt        DateTime         @default(now()) @map("created_at")
 
@@ -2242,6 +2248,8 @@ model BroadcastRecipient {
   @@index([broadcastId, status])
   @@index([organizationId, metaMessageId])
   @@index([broadcastId, createdAt(sort: Asc)])
+  // Reply attribution looks up recent sends to a phone.
+  @@index([organizationId, phoneE164, sentAt])
   @@map("broadcast_recipients")
 }
 

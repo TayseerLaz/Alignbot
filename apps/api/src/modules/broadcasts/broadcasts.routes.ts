@@ -82,6 +82,7 @@ interface BroadcastRow {
   deliveredCount: number;
   readCount: number;
   failedCount: number;
+  respondedCount: number;
   createdByUserId: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -128,6 +129,7 @@ function toDto(row: BroadcastRow) {
     deliveredCount: row.deliveredCount,
     readCount: row.readCount,
     failedCount: row.failedCount,
+    respondedCount: row.respondedCount,
     createdByUserId: row.createdByUserId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -1030,13 +1032,19 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
         const broadcast = await tx.broadcast.findUnique({ where: { id } });
         if (!broadcast) throw notFound('Broadcast not found.');
         const since = broadcast.startedAt ?? broadcast.createdAt;
-        const digits = (s: string) => s.replace(/[^0-9]/g, '');
 
         // Recipients (phone + send time + variant) drive both the funnel and the
         // reply match. Capped at the send ceiling so this stays bounded.
         const recipients = await tx.broadcastRecipient.findMany({
           where: { broadcastId: id },
-          select: { phoneE164: true, sentAt: true, status: true, variant: true, contactId: true },
+          select: {
+            phoneE164: true,
+            sentAt: true,
+            status: true,
+            variant: true,
+            contactId: true,
+            respondedAt: true,
+          },
           take: 50000,
         });
 
@@ -1057,31 +1065,9 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
           else reached.pending++; // pending | queued
         }
 
-        // Replies: an inbound message from a recipient AFTER we sent to them.
-        const sentByDigits = new Map<string, { sentAt: Date; variant: string }>();
-        for (const r of recipients) {
-          if (!r.sentAt) continue;
-          const d = digits(r.phoneE164);
-          const prev = sentByDigits.get(d);
-          if (!prev || r.sentAt < prev.sentAt) sentByDigits.set(d, { sentAt: r.sentAt, variant: r.variant });
-        }
-        const inbound = await tx.whatsAppMessage.findMany({
-          where: { organizationId: broadcast.organizationId, direction: 'inbound', receivedAt: { gte: since } },
-          select: { fromNumber: true, receivedAt: true },
-          take: 50000,
-        });
-        const respondedDigits = new Set<string>();
-        const respondedByVariant: Record<string, Set<string>> = { A: new Set(), B: new Set() };
-        for (const m of inbound) {
-          if (!m.fromNumber) continue;
-          const d = digits(m.fromNumber);
-          const rec = sentByDigits.get(d);
-          if (rec && m.receivedAt > rec.sentAt) {
-            respondedDigits.add(d);
-            (respondedByVariant[rec.variant] ??= new Set()).add(d);
-          }
-        }
-        const responded = respondedDigits.size;
+        // Replies are attributed at inbound time (lib/broadcast-response.ts),
+        // stored on the recipient row — just count them here.
+        const responded = recipients.filter((r) => r.respondedAt != null).length;
 
         // Opt-outs among recipients after the send started.
         const contactIds = recipients.map((r) => r.contactId).filter((x): x is string => !!x);
@@ -1125,7 +1111,7 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
             recipients: rs.length,
             delivered,
             read,
-            responded: respondedByVariant[v]?.size ?? 0,
+            responded: rs.filter((r) => r.respondedAt != null).length,
           };
         });
 

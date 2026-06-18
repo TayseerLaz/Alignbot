@@ -202,6 +202,7 @@ export const broadcastDtoSchema = z.object({
   deliveredCount: z.number().int().nonnegative(),
   readCount: z.number().int().nonnegative(),
   failedCount: z.number().int().nonnegative(),
+  respondedCount: z.number().int().nonnegative().default(0),
   createdByUserId: uuidSchema.nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

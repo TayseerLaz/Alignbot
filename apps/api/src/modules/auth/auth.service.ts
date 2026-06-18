@@ -351,7 +351,12 @@ export async function issueSession(args: {
 // later than 10s after the foreground tab rotated. The client now also
 // serializes refreshes across tabs (Web Locks) + shares tokens, so this is
 // a belt-and-suspenders margin for slow networks — not the primary guard.
-const REUSE_GRACE_WINDOW_MS = 60_000;
+// Widened 60s → 10 min on 2026-06-18. Tenants were still getting logged out:
+// a slept laptop/phone or a backgrounded tab fires a refresh carrying the
+// just-rotated token minutes later, and the 60s cutoff treated that as theft
+// and revoked the session. 10 min covers real-world tab/device wake-ups while
+// still catching a token replayed long after the fact.
+const REUSE_GRACE_WINDOW_MS = 10 * 60_000;
 
 export async function refreshSession(refreshToken: string, meta: RequestMeta) {
   const tokenHash = hashToken(refreshToken);

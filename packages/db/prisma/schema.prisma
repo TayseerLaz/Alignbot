@@ -2066,6 +2066,10 @@ model Contact {
   // customer's own STOP request, and from deletedAt soft-delete).
   blockedAt      DateTime?     @map("blocked_at")
   timezone       String? // IANA timezone (e.g. "America/Los_Angeles")
+  // Origin channel: 'whatsapp' (phoneE164 is a real number, broadcast-able),
+  // 'instagram' / 'messenger' (phoneE164 holds the PSID/IGSID, NOT a phone —
+  // excluded from WhatsApp broadcasts; the UI shows the username instead).
+  channel        String        @default("whatsapp")
   attributes     Json          @default("{}")
   source         ContactSource @default(manual)
   lastInboundAt  DateTime?     @map("last_inbound_at")

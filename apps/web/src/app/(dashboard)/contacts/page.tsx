@@ -31,6 +31,7 @@ export default function ContactsPage() {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [channelFilter, setChannelFilter] = useState<'all' | 'whatsapp' | 'instagram'>('all');
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   // Phone of the contact whose info slide-over is open (null = closed).
@@ -38,7 +39,7 @@ export default function ContactsPage() {
 
   // Cursor-paginated so EVERY contact is reachable, not just the first 100.
   const contactsQuery = useInfiniteQuery({
-    queryKey: ['contacts', { search, tag: tagFilter }],
+    queryKey: ['contacts', { search, tag: tagFilter, channel: channelFilter }],
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) =>
       api.get<{ data: ContactDto[]; nextCursor: string | null }>(
@@ -46,6 +47,7 @@ export default function ContactsPage() {
           new URLSearchParams({
             ...(search ? { search } : {}),
             ...(tagFilter ? { tag: tagFilter } : {}),
+            ...(channelFilter !== 'all' ? { channel: channelFilter } : {}),
             ...(pageParam ? { cursor: pageParam } : {}),
             limit: '100',
           }).toString(),
@@ -116,6 +118,22 @@ export default function ContactsPage() {
             className="w-72 pl-9"
           />
         </div>
+        {/* Channel filter — split WhatsApp vs Instagram contacts. */}
+        <div className="flex items-center gap-1 rounded-md border border-border p-0.5 text-xs">
+          {(['all', 'whatsapp', 'instagram'] as const).map((c) => (
+            <button
+              key={c}
+              onClick={() => setChannelFilter(c)}
+              className={`rounded px-2.5 py-1 capitalize ${
+                channelFilter === c
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-foreground-muted hover:bg-surface-muted'
+              }`}
+            >
+              {c === 'all' ? 'All channels' : c}
+            </button>
+          ))}
+        </div>
         {tags.length > 0 ? (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs uppercase tracking-wide text-foreground-subtle">Tags</span>
@@ -153,7 +171,7 @@ export default function ContactsPage() {
             <table className="w-full text-left text-sm">
               <thead className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
                 <tr>
-                  <th className="px-6 py-3">Phone</th>
+                  <th className="px-6 py-3">Phone / Account</th>
                   <th
                     className="px-6 py-3"
                     title="The customer's WhatsApp profile name — what they set in WhatsApp → Settings → Profile → Name. Read-only; auto-fills when they message you."
@@ -255,6 +273,12 @@ function ContactRow({
   const [phone, setPhone] = useState(contact.phoneE164);
   const [name, setName] = useState(contact.displayName ?? '');
 
+  // Instagram/Messenger contacts: phoneE164 holds a PSID, not a real number.
+  // Show the @username (parsed from the display name) + a channel badge instead.
+  const isSocial = (contact.channel ?? 'whatsapp') !== 'whatsapp';
+  const handleMatch = (contact.displayName ?? '').match(/\(@([^)]+)\)/);
+  const igHandle = handleMatch ? `@${handleMatch[1]}` : null;
+
   // Reset draft when the row identity changes (after save → refetch).
   if (!editing && (phone !== contact.phoneE164 || name !== (contact.displayName ?? ''))) {
     setPhone(contact.phoneE164);
@@ -283,17 +307,24 @@ function ContactRow({
   // it on every inbound; renaming it here would just get overwritten.
   return (
     <tr className="border-b border-border last:border-0">
-      <td className="px-6 py-3 font-mono text-sm">
-        {editing ? (
+      <td className="px-6 py-3 text-sm">
+        {isSocial ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="rounded-full bg-fuchsia-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-fuchsia-700">
+              {contact.channel}
+            </span>
+            <span>{igHandle ?? 'account'}</span>
+          </span>
+        ) : editing ? (
           <Input
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
             placeholder="+14155551234"
-            className="h-8 max-w-[14rem] text-sm font-mono"
+            className="h-8 max-w-[14rem] font-mono text-sm"
             aria-label="Phone"
           />
         ) : (
-          contact.phoneE164
+          <span className="font-mono">{contact.phoneE164}</span>
         )}
       </td>
       <td className="px-6 py-3 text-sm text-foreground-muted">

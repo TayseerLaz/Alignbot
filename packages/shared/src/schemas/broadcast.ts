@@ -42,6 +42,8 @@ export const contactDtoSchema = z.object({
   // Operator block: bot won't auto-reply + excluded from broadcasts.
   blockedAt: z.string().datetime().nullable(),
   timezone: z.string().nullable(),
+  // Origin channel: 'whatsapp' (real number) | 'instagram' | 'messenger'.
+  channel: z.string().default('whatsapp'),
   attributes: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
   source: z.enum(CONTACT_SOURCES as [ContactSource, ...ContactSource[]]),
   tags: z.array(z.string()),
@@ -74,6 +76,7 @@ export type UpdateContactBody = z.infer<typeof updateContactBodySchema>;
 export const listContactsQuerySchema = z.object({
   search: z.string().trim().max(120).optional(),
   tag: z.string().trim().max(40).optional(),
+  channel: z.enum(['whatsapp', 'instagram', 'messenger']).optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });

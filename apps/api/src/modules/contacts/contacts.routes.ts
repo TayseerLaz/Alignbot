@@ -64,6 +64,7 @@ interface ContactRow {
   optedOutAt: Date | null;
   blockedAt: Date | null;
   timezone: string | null;
+  channel?: string;
   attributes: unknown;
   source: ContactSource;
   lastInboundAt: Date | null;
@@ -84,6 +85,7 @@ function toContactDto(row: ContactRow) {
     optedOutAt: row.optedOutAt?.toISOString() ?? null,
     blockedAt: row.blockedAt?.toISOString() ?? null,
     timezone: row.timezone,
+    channel: row.channel ?? 'whatsapp',
     attributes:
       row.attributes && typeof row.attributes === 'object'
         ? (row.attributes as Record<string, string | number | boolean | null>)
@@ -288,7 +290,7 @@ export default async function contactsRoutes(app: FastifyInstance) {
     },
     async (req) =>
       app.tenant(req, async (tx) => {
-        const { search, tag, cursor, limit } = req.query;
+        const { search, tag, channel, cursor, limit } = req.query;
         const where: Record<string, unknown> = { deletedAt: null };
         if (search) {
           const trimmed = search.trim();
@@ -299,6 +301,12 @@ export default async function contactsRoutes(app: FastifyInstance) {
         }
         if (tag) {
           where.tags = { some: { tag } };
+        }
+        // Channel filter. Legacy rows predating the column are 'whatsapp'.
+        if (channel === 'whatsapp') {
+          where.NOT = { channel: { in: ['instagram', 'messenger'] } };
+        } else if (channel) {
+          where.channel = channel;
         }
         const rows = await tx.contact.findMany({
           where,

@@ -557,12 +557,14 @@ async function handleMessengerEvents(
         create: {
           organizationId: orgId,
           phoneE164: psid,
+          channel: channelKind, // 'instagram' | 'messenger' — not a phone number
           displayName: profileName,
           optedOutAt: isStop ? new Date() : null,
           lastInboundAt: new Date(),
           source: 'inbox_auto',
         },
         update: {
+          channel: channelKind,
           lastInboundAt: new Date(),
           ...(profileName ? { displayName: profileName } : {}),
           ...(isStop ? { optedOutAt: new Date() } : {}),

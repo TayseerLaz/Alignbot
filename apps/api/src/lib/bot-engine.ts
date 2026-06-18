@@ -53,6 +53,8 @@ export interface BotData {
     languages: string | null;
     // Optional Wasabi key for an image attached alongside greeting replies.
     greetingImageStorageKey?: string | null;
+    // Operator toggle for tappable quick-reply buttons on both channels.
+    quickRepliesEnabled?: boolean | null;
   } | null;
   kb: { question: string; answer: string }[];
   products: {
@@ -842,8 +844,8 @@ export async function buildBotResponse(
     // (Instagram / Messenger). The send-path parses [BUTTONS: ...], turns each
     // option into a native quick-reply, and strips the marker. WhatsApp passes
     // quickRepliesEnabled=false so this line never appears in its prompt.
-    args.quickRepliesEnabled
-      ? `# Quick-reply buttons (LOAD-BEARING — you MUST use these)\nThis channel renders tappable buttons. END NEARLY EVERY reply with a marker on its OWN line: [BUTTONS: Option A | Option B | Option C]. Offer 2–4 short next-step options, each ≤ 20 characters, phrased as a tappable action (e.g. "See laptops", "See prices", "Book a visit", "Talk to a human"). ALWAYS add buttons when: greeting the customer, listing products/categories, answering a question (offer logical follow-ups), or asking the customer what they want. Write the conversational text first, then put the marker on its own final line. The platform turns each option into a tappable button and strips the marker, so the customer never sees the raw "[BUTTONS: …]" text — it is NOT optional decoration, it is how choices are presented on this channel. Only skip the marker when the customer is mid-checkout/booking or explicitly asked you to stop. Never invent options the business doesn't actually offer; base them on the catalog/services/FAQs above.`
+    config?.quickRepliesEnabled !== false
+      ? `# Quick-reply buttons (LOAD-BEARING — you MUST use these)\nThis channel renders tappable buttons. END NEARLY EVERY reply with a marker on its OWN line: [BUTTONS: Option A | Option B | Option C]. Offer 2 OR 3 short next-step options (max 3), each ≤ 20 characters, phrased as a tappable action (e.g. "See laptops", "See prices", "Book a visit", "Talk to a human"). ALWAYS add buttons when: greeting the customer, listing products/categories, answering a question (offer logical follow-ups), or asking the customer what they want. Write the conversational text first, then put the marker on its own final line. The platform turns each option into a tappable button and strips the marker, so the customer never sees the raw "[BUTTONS: …]" text — it is NOT optional decoration, it is how choices are presented on this channel. Only skip the marker when the customer is mid-checkout/booking or explicitly asked you to stop. Never invent options the business doesn't actually offer; base them on the catalog/services/FAQs above.`
       : '',
     // Menu / recommendation behaviour — load-bearing. Without this the bot
     // parrots a generic intent template ("Here's our menu…") or hands off

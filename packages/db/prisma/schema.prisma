@@ -1606,6 +1606,9 @@ model BotConfig {
   // are unaffected. Defaults off so existing tenants don't see new
   // behaviour without opting in.
   greetByName             Boolean   @default(false) @map("greet_by_name")
+  // Tappable quick-reply buttons under bot replies (WhatsApp interactive
+  // buttons + Instagram/Messenger quick replies). Operator toggle on /bot.
+  quickRepliesEnabled     Boolean   @default(true) @map("quick_replies_enabled")
   // Comma-separated language codes the bot replies in. Default 'en'.
   languages               String    @default("en")
   // Escalation rules — what triggers a handoff to a human, business hours, etc.

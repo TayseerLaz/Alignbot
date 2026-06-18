@@ -672,7 +672,6 @@ async function maybeReplyOnMessenger(
       data,
       replyMode: 'text',
       cartState: cartState ?? undefined,
-      quickRepliesEnabled: true,
       channelLabel: channelKind === 'instagram' ? 'Instagram' : 'Facebook Messenger',
       openSlots,
     });
@@ -951,8 +950,11 @@ async function maybeReplyOnMessenger(
   // derived from what the business offers — so customers reliably get tappable
   // options even when gpt-4o-mini forgets the marker. Suppressed only on an
   // order-receipt turn (a confirmation shouldn't sprout choices).
+  const quickRepliesOn =
+    (data as { config?: { quickRepliesEnabled?: boolean | null } }).config?.quickRepliesEnabled !==
+    false;
   let quickReplies: string[] = [];
-  if (!orderReceiptBody) {
+  if (!orderReceiptBody && quickRepliesOn) {
     const fromMarker = (/\[BUTTONS:\s*([^\]]+)\]/i.exec(rawText)?.[1] ?? '')
       .split('|')
       .map((s) => s.trim())

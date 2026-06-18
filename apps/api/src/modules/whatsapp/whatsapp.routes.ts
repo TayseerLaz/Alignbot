@@ -3892,8 +3892,33 @@ async function maybeReplyAsBot(args: {
         .replace(imageMarkerRe, '')
         .replace(handoffMarkerRe, '')
         .replace(bookingMarkerRe, '')
+        .replace(/\[BUTTONS:[^\]]*\]/gi, '')
         .replace(/\[CLEAR_CART\]/gi, ''),
     ).trim();
+
+    // Quick-reply buttons (WhatsApp interactive, max 3). Parse the model's
+    // [BUTTONS: A | B | C] marker; if it emitted none and the feature is on,
+    // fall back to a context-aware default set. Gated by the bot-builder toggle
+    // and skipped on handoff turns.
+    const quickRepliesOn = ctx.data.config?.quickRepliesEnabled !== false;
+    let botButtons: string[] = [];
+    if (quickRepliesOn) {
+      const fromMarker = (/\[BUTTONS:\s*([^\]]+)\]/i.exec(rawReply)?.[1] ?? '')
+        .split('|')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (fromMarker.length > 0) {
+        botButtons = fromMarker.slice(0, 3);
+      } else if (!wantsHandoff) {
+        const hasCatalog = ctx.data.products.length > 0 || ctx.data.services.length > 0;
+        const dq: string[] = [];
+        if (ctx.data.shopForm) dq.push('Order now');
+        else if (hasCatalog) dq.push('View products');
+        if (ctx.data.bookingForm?.enabled) dq.push('Book a meeting');
+        dq.push('Talk to a human');
+        botButtons = dq.slice(0, 3);
+      }
+    }
     // Resolve every emitted SKU against the catalog. Dedupe by product
     // id so multiple markers for the same SKU collapse to one send.
     const imageSends: { sku: string; name: string; storageKey: string; productImageId?: string; kind?: 'product' | 'greeting' }[] = [];
@@ -4519,13 +4544,32 @@ async function maybeReplyAsBot(args: {
     // single customer-facing confirmation (see suppressReplySend).
     if (!sendOk && !suppressReplySend) {
       try {
-        const payload = {
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: m.from,
-          type: 'text',
-          text: { preview_url: false, body: reply || 'Here:' },
-        };
+        // Interactive reply buttons when the bot offered choices; else plain text.
+        const payload =
+          botButtons.length > 0
+            ? {
+                messaging_product: 'whatsapp',
+                recipient_type: 'individual',
+                to: m.from,
+                type: 'interactive',
+                interactive: {
+                  type: 'button',
+                  body: { text: (reply || 'Please choose:').slice(0, 1024) },
+                  action: {
+                    buttons: botButtons.slice(0, 3).map((t, i) => ({
+                      type: 'reply',
+                      reply: { id: `qr_${i}`, title: t.slice(0, 20) },
+                    })),
+                  },
+                },
+              }
+            : {
+                messaging_product: 'whatsapp',
+                recipient_type: 'individual',
+                to: m.from,
+                type: 'text',
+                text: { preview_url: false, body: reply || 'Here:' },
+              };
         const res = await fetch(
           `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.phoneNumberId!)}/messages`,
           {

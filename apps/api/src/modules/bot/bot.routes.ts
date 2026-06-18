@@ -43,6 +43,7 @@ const botConfigDto = z.object({
   // When true, the bot's first reply in a thread opens with the
   // customer's WhatsApp profile name. Off by default.
   greetByName: z.boolean(),
+  quickRepliesEnabled: z.boolean(),
   languages: z.string(),
   escalationRules: z.record(z.string(), z.unknown()).nullable(),
   conversationFlow: z.record(z.string(), z.unknown()).nullable(),
@@ -361,6 +362,7 @@ function serializeConfig(c: {
   detectedTone: string | null;
   greeting: string | null;
   greetByName?: boolean | null;
+  quickRepliesEnabled?: boolean | null;
   languages: string;
   escalationRules: unknown;
   conversationFlow: unknown;
@@ -384,6 +386,7 @@ function serializeConfig(c: {
     detectedTone: c.detectedTone,
     greeting: c.greeting,
     greetByName: Boolean(c.greetByName),
+    quickRepliesEnabled: c.quickRepliesEnabled !== false,
     languages: c.languages,
     escalationRules: (c.escalationRules ?? null) as Record<string, unknown> | null,
     conversationFlow: (c.conversationFlow ?? null) as Record<string, unknown> | null,
@@ -547,6 +550,7 @@ export default async function botRoutes(app: FastifyInstance) {
           customPersonality: z.string().trim().max(2000).nullable().optional(),
           greeting: z.string().trim().max(2000).nullable().optional(),
           greetByName: z.boolean().optional(),
+          quickRepliesEnabled: z.boolean().optional(),
           languages: z.string().trim().max(120).optional(),
           escalationRules: z.record(z.string(), z.unknown()).nullable().optional(),
           conversationFlow: z.record(z.string(), z.unknown()).nullable().optional(),
@@ -577,6 +581,7 @@ export default async function botRoutes(app: FastifyInstance) {
               req.body.customPersonality === undefined ? undefined : req.body.customPersonality,
             greeting: req.body.greeting === undefined ? undefined : req.body.greeting,
             greetByName: req.body.greetByName ?? undefined,
+            quickRepliesEnabled: req.body.quickRepliesEnabled ?? undefined,
             languages: req.body.languages ?? undefined,
             escalationRules: (req.body.escalationRules ?? undefined) as never,
             conversationFlow: (req.body.conversationFlow ?? undefined) as never,

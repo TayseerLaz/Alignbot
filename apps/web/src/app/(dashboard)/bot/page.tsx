@@ -43,6 +43,7 @@ interface BotConfig {
   detectedTone: string | null;
   greeting: string | null;
   greetByName: boolean;
+  quickRepliesEnabled: boolean;
   languages: string;
   escalationRules: Record<string, unknown> | null;
   conversationFlow: Record<string, unknown> | null;
@@ -995,6 +996,9 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
   const [personality, setPersonality] = useState<string>(config?.personality ?? 'friendly');
   const [greeting, setGreeting] = useState<string>(config?.greeting ?? '');
   const [greetByName, setGreetByName] = useState<boolean>(config?.greetByName ?? false);
+  const [quickRepliesEnabled, setQuickRepliesEnabled] = useState<boolean>(
+    config?.quickRepliesEnabled ?? true,
+  );
   const [languages, setLanguages] = useState<string>(config?.languages ?? 'en');
   const [fallback, setFallback] = useState<string>(
     (config?.escalationRules as Record<string, string> | null)?.fallback ?? '',
@@ -1011,6 +1015,7 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
     setPersonality(config.personality ?? config.detectedTone ?? 'friendly');
     setGreeting(config.greeting ?? '');
     setGreetByName(config.greetByName ?? false);
+    setQuickRepliesEnabled(config.quickRepliesEnabled ?? true);
     setLanguages(config.languages ?? 'en');
     setFallback((config.escalationRules as Record<string, string> | null)?.fallback ?? '');
     setGreetingImageKey(config.greetingImageStorageKey ?? null);
@@ -1046,6 +1051,7 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
         personality,
         greeting,
         greetByName,
+        quickRepliesEnabled,
         languages,
         escalationRules: fallback ? { fallback } : null,
         greetingImageStorageKey: greetingImageKey,
@@ -1142,6 +1148,25 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
                 includes their first name (e.g. &quot;Hi Razan, welcome to …&quot;). Mid-conversation
                 replies don&apos;t shoehorn the name in. If WhatsApp didn&apos;t share a name, the
                 greeting is used unchanged — no awkward empty placeholder.
+              </span>
+            </span>
+          </label>
+          {/* Tappable quick-reply buttons under bot replies — WhatsApp
+              interactive buttons + Instagram/Messenger quick replies. */}
+          <label className="flex items-start gap-2 pt-1 text-sm">
+            <input
+              type="checkbox"
+              checked={quickRepliesEnabled}
+              onChange={(e) => setQuickRepliesEnabled(e.target.checked)}
+              className="mt-1 size-4 cursor-pointer accent-brand-600"
+            />
+            <span>
+              <span className="font-medium">Show tappable quick-reply buttons</span>
+              <span className="block text-[11px] text-foreground-muted">
+                The bot adds tappable choice buttons under its replies (e.g. &quot;View
+                products&quot;, &quot;Book a meeting&quot;, &quot;Talk to a human&quot;) so customers
+                can answer with one tap. Works on WhatsApp (interactive buttons, up to 3) and
+                Instagram/Messenger (quick replies). Turn off for plain-text replies only.
               </span>
             </span>
           </label>

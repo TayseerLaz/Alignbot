@@ -88,6 +88,13 @@ interface SystemHealth {
 
 export default function AlignedAdminPage() {
   const { session } = useSession();
+  // The admin's own org(s) are protected: access/suspend/delete are disabled so
+  // an admin can't lock themselves out of (or restrict) their own admin account.
+  const ownOrgIds = new Set<string>(
+    [session?.organization?.id, ...(session?.availableOrganizations?.map((o) => o.id) ?? [])].filter(
+      (x): x is string => !!x,
+    ),
+  );
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -325,6 +332,8 @@ export default function AlignedAdminPage() {
                           <Button
                             size="sm"
                             variant="ghost"
+                            disabled={ownOrgIds.has(o.id)}
+                            title={ownOrgIds.has(o.id) ? 'You cannot suspend your own account.' : undefined}
                             onClick={async () => {
                               if (
                                 await confirmDialog({
@@ -369,7 +378,12 @@ export default function AlignedAdminPage() {
                           size="sm"
                           variant="ghost"
                           onClick={() => setAccessOpenFor(o)}
-                          title="Control which pages, features, and the AI this tenant can use."
+                          disabled={ownOrgIds.has(o.id)}
+                          title={
+                            ownOrgIds.has(o.id)
+                              ? "This is your own admin account — its access is locked and can't be changed."
+                              : 'Control which pages, features, and the AI this tenant can use.'
+                          }
                         >
                           <Lock className="size-4" /> Access
                           {o.disabledFeatures.length > 0 ? (
@@ -395,6 +409,8 @@ export default function AlignedAdminPage() {
                           size="icon"
                           variant="ghost"
                           aria-label="Delete"
+                          disabled={ownOrgIds.has(o.id)}
+                          title={ownOrgIds.has(o.id) ? 'You cannot delete your own account.' : 'Delete'}
                           onClick={async () => {
                             if (
                               await confirmDialog({
@@ -481,6 +497,20 @@ function AccessDialog({
             Turning OFF “AI auto-reply” makes them a social-media handler with manual replies only.
           </DialogDescription>
         </DialogHeader>
+        {/* Presets — one-click common configurations. */}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setDisabled(['ai', 'catalog', 'broadcasts', 'bookings', 'analytics'])}
+            title="Disable AI + Catalog + Broadcasts + Bookings + Analytics — leaves a manual social inbox."
+          >
+            Manual inbox only
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => setDisabled([])}>
+            Full access
+          </Button>
+        </div>
         <div className="space-y-2.5">
           {ORG_FEATURES.map((f) => {
             const enabled = !disabled.includes(f.key);

@@ -1880,6 +1880,21 @@ export default async function adminRoutes(app: FastifyInstance) {
     async (req) => {
       const orgId = req.params.id;
       const next = Array.from(new Set(req.body.disabledFeatures));
+      // Self-lockout guard: an admin can't change access on an org they belong
+      // to (their own admin account stays fixed — can't disable their own pages
+      // or hand themselves a restricted view).
+      const ownMembership = await withRlsBypass((tx) =>
+        tx.membership.findFirst({
+          where: { organizationId: orgId, userId: req.auth!.userId },
+          select: { id: true },
+        }),
+      );
+      if (ownMembership) {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'You cannot change access on an organisation you belong to (e.g. your own admin account).',
+        );
+      }
       const row = await withRlsBypass(async (tx) => {
         const existing = await tx.organization.findUnique({
           where: { id: orgId },

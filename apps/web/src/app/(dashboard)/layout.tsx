@@ -17,12 +17,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [status, router]);
 
   // ALIGNED-admin per-tenant access control: if the current page belongs to a
-  // feature the admin disabled for this org, bounce to the dashboard. (Sidebar
-  // already hides it; this stops direct-URL access.)
+  // feature the admin disabled for this org, bounce away. (Sidebar already
+  // hides it; this stops direct-URL access.) Manual-inbox tenants (AI off, not
+  // a platform admin) land on the inbox instead of the empty dashboard.
   useEffect(() => {
     if (status !== 'authenticated' || !pathname) return;
     const disabled = session?.organization?.disabledFeatures ?? [];
-    if (isHrefDisabled(pathname, disabled)) router.replace('/dashboard');
+    const isAdmin = session?.user.isAlignedAdmin === true;
+    const manualInbox = !isAdmin && disabled.includes('ai');
+    if (manualInbox && (pathname === '/dashboard' || pathname === '/')) {
+      router.replace('/inbox');
+      return;
+    }
+    if (isHrefDisabled(pathname, disabled)) {
+      router.replace(manualInbox ? '/inbox' : '/dashboard');
+    }
   }, [status, pathname, session, router]);
 
   if (status !== 'authenticated') {

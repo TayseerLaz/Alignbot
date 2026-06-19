@@ -10,6 +10,7 @@ import {
   Cpu,
   Eye,
   KeyRound,
+  Lock,
   Pause,
   Pencil,
   Play,
@@ -19,6 +20,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import { ORG_FEATURES } from '@aligned/shared';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -55,6 +57,7 @@ interface OrgRow {
   serviceCount: number;
   lastActivityAt: string | null;
   aiPlan: AiPlan;
+  disabledFeatures: string[];
 }
 
 export const AI_PLAN_LABEL: Record<AiPlan, string> = {
@@ -159,6 +162,7 @@ export default function AlignedAdminPage() {
   // opened it so the dialog can show the org name in its header.
   const [detailsOpenFor, setDetailsOpenFor] = useState<OrgRow | null>(null);
   const [aiOpenFor, setAiOpenFor] = useState<OrgRow | null>(null);
+  const [accessOpenFor, setAccessOpenFor] = useState<OrgRow | null>(null);
 
   if (!session?.user.isAlignedAdmin) {
     return (
@@ -364,6 +368,19 @@ export default function AlignedAdminPage() {
                         <Button
                           size="sm"
                           variant="ghost"
+                          onClick={() => setAccessOpenFor(o)}
+                          title="Control which pages, features, and the AI this tenant can use."
+                        >
+                          <Lock className="size-4" /> Access
+                          {o.disabledFeatures.length > 0 ? (
+                            <span className="ml-1 rounded-full bg-amber-100 px-1.5 text-[10px] font-semibold text-amber-700">
+                              {o.disabledFeatures.length}
+                            </span>
+                          ) : null}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
                           onClick={() => controlOrg.mutate(o)}
                           disabled={controlOrg.isPending || o.status !== 'active'}
                           title={
@@ -416,7 +433,86 @@ export default function AlignedAdminPage() {
           queryClient.invalidateQueries({ queryKey: ['admin-orgs'] });
         }}
       />
+      <AccessDialog
+        org={accessOpenFor}
+        onClose={() => setAccessOpenFor(null)}
+        onChanged={() => queryClient.invalidateQueries({ queryKey: ['admin-orgs'] })}
+      />
     </>
+  );
+}
+
+// ---------- Access (per-tenant feature/page control) dialog ---------------
+function AccessDialog({
+  org,
+  onClose,
+  onChanged,
+}: {
+  org: OrgRow | null;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [disabled, setDisabled] = useState<string[]>([]);
+  useEffect(() => {
+    if (org) setDisabled(org.disabledFeatures ?? []);
+  }, [org]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.put(`/api/v1/aligned-admin/orgs/${org!.id}/features`, { disabledFeatures: disabled }),
+    onSuccess: () => {
+      toast.success('Access updated');
+      onChanged();
+      onClose();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Update failed'),
+  });
+
+  const toggle = (key: string, enabled: boolean) =>
+    setDisabled((prev) => (enabled ? prev.filter((k) => k !== key) : [...new Set([...prev, key])]));
+
+  return (
+    <Dialog open={!!org} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Access — {org?.name}</DialogTitle>
+          <DialogDescription>
+            Turn features on or off for this tenant. Off = the page is hidden from their portal.
+            Turning OFF “AI auto-reply” makes them a social-media handler with manual replies only.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2.5">
+          {ORG_FEATURES.map((f) => {
+            const enabled = !disabled.includes(f.key);
+            return (
+              <label
+                key={f.key}
+                className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 text-sm"
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5 size-4"
+                  checked={enabled}
+                  onChange={(e) => toggle(f.key, e.target.checked)}
+                />
+                <span className="min-w-0">
+                  <span className="font-medium">{f.label}</span>
+                  <span className="mt-0.5 block text-xs text-foreground-muted">{f.description}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        <div className="mt-2 flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={() => save.mutate()} loading={save.isPending}>
+            Save access
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

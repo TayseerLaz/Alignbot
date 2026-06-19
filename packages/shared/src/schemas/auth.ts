@@ -54,6 +54,8 @@ export const loginResponseSchema = z.object({
     slug: slugSchema,
     name: z.string(),
     role: z.nativeEnum(OrgRole),
+    // ALIGNED-admin per-tenant access control (disabled feature keys).
+    disabledFeatures: z.array(z.string()).default([]),
   }),
   availableOrganizations: z.array(
     z.object({
@@ -159,6 +161,8 @@ export const sessionResponseSchema = z.object({
     slug: slugSchema,
     name: z.string(),
     role: z.nativeEnum(OrgRole),
+    // ALIGNED-admin per-tenant access control (disabled feature keys).
+    disabledFeatures: z.array(z.string()).default([]),
   }),
   availableOrganizations: z.array(
     z.object({

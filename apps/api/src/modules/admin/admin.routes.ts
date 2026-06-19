@@ -8,6 +8,7 @@ import {
   adminUpdateLeadBodySchema,
   adminUpdateOrgBodySchema,
   ApiErrorCode,
+  ORG_FEATURE_KEYS,
   itemEnvelopeSchema,
   leadSchema,
   listEnvelopeSchema,
@@ -66,6 +67,8 @@ export default async function adminRoutes(app: FastifyInstance) {
               // tenants table at /aligned-admin can render a colored
               // badge per row + sort by plan.
               aiPlan: z.enum(['basic', 'middle', 'max', 'ultra']),
+              // ALIGNED-admin per-tenant access control: disabled feature keys.
+              disabledFeatures: z.array(z.string()),
             }),
           ),
         },
@@ -114,6 +117,8 @@ export default async function adminRoutes(app: FastifyInstance) {
               serviceCount,
               lastActivityAt: lastAudit?.createdAt.toISOString() ?? null,
               aiPlan: (o as { aiPlan?: 'basic' | 'middle' | 'max' | 'ultra' }).aiPlan ?? 'basic',
+              disabledFeatures:
+                (o as { disabledFeatures?: string[] }).disabledFeatures ?? [],
             };
           }),
         );
@@ -1846,6 +1851,57 @@ export default async function adminRoutes(app: FastifyInstance) {
         });
       }
       return { data: { id: updated.id, aiPlan: updated.aiPlan } };
+    },
+  );
+
+  // ---------- PUT /aligned-admin/orgs/:id/features ----------------------
+  // ALIGNED-admin sets which features a tenant can access. The keys here are
+  // DISABLED: their portal pages are hidden + route-guarded, and 'ai' turns off
+  // the bot's auto-reply (manual social-media handler). Validated against the
+  // shared ORG_FEATURES registry so unknown keys are rejected.
+  r.put(
+    '/aligned-admin/orgs/:id/features',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Set a tenant\'s disabled features (page/AI access control).',
+        params: z.object({ id: uuidSchema }),
+        body: z.object({
+          disabledFeatures: z.array(z.enum(ORG_FEATURE_KEYS as [string, ...string[]])).max(20),
+        }),
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({ id: uuidSchema, disabledFeatures: z.array(z.string()) }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const orgId = req.params.id;
+      const next = Array.from(new Set(req.body.disabledFeatures));
+      const row = await withRlsBypass(async (tx) => {
+        const existing = await tx.organization.findUnique({
+          where: { id: orgId },
+          select: { id: true, disabledFeatures: true },
+        });
+        if (!existing) return null;
+        return tx.organization.update({
+          where: { id: orgId },
+          data: { disabledFeatures: next },
+          select: { id: true, disabledFeatures: true },
+        });
+      });
+      if (!row) throw notFound('Organization not found');
+      await recordAudit({
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        action: 'org_suspended', // reuse: closest existing admin audit action
+        entityType: 'organization',
+        entityId: orgId,
+        metadata: { event: 'features_changed', disabledFeatures: next },
+      });
+      return { data: { id: row.id, disabledFeatures: row.disabledFeatures } };
     },
   );
 

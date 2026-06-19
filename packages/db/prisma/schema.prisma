@@ -322,6 +322,11 @@ model Organization {
   // `max` = Anthropic Claude Sonnet; `ultra` = Haiku-assisted Sonnet with
   // per-contact persona memory). Editable from /aligned-admin.
   aiPlan    AiPlan    @default(basic) @map("ai_plan")
+  // ALIGNED-admin per-tenant access control. Feature keys listed here are
+  // DISABLED for this org: their portal pages are hidden + route-guarded, and
+  // 'ai' additionally turns off the bot's auto-reply (manual inbox only — a
+  // pure social-media handler). Empty = full access. See ORG_FEATURES in shared.
+  disabledFeatures String[] @default([]) @map("disabled_features")
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
 

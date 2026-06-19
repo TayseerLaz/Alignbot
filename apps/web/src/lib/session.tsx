@@ -29,6 +29,9 @@ export interface SessionOrganization {
   slug: string;
   name: string;
   role: OrgRole;
+  // ALIGNED-admin per-tenant access control (disabled feature keys). Absent on
+  // availableOrganizations entries (only the active org carries it).
+  disabledFeatures?: string[];
 }
 
 export interface SessionState {

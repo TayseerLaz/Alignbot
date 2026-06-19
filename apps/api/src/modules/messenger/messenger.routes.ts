@@ -616,6 +616,16 @@ async function maybeReplyOnMessenger(
     return;
   }
 
+  // ALIGNED-admin per-tenant access control: 'ai' disabled → manual replies
+  // only (the DM is stored + shown in the inbox; the bot stays silent).
+  const orgFeatures = await withRlsBypass((tx) =>
+    tx.organization.findUnique({ where: { id: orgId }, select: { disabledFeatures: true } }),
+  );
+  if (orgFeatures?.disabledFeatures?.includes('ai')) {
+    log.info({ orgId, threadId }, '[messenger] bot skip: AI disabled for tenant');
+    return;
+  }
+
   const channel = await withRlsBypass((tx) =>
     tx.messengerChannel.findUnique({ where: { id: channelId } }),
   );

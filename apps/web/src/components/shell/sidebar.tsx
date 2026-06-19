@@ -26,6 +26,8 @@ import {
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+import { isHrefDisabled } from '@aligned/shared';
+
 import { AlignedLogo } from '@/components/brand/logo';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -179,6 +181,13 @@ export function Sidebar({
 
   const isActive = (item: NavItem) => (item.exact ? pathname === item.href : pathname.startsWith(item.href));
 
+  // ALIGNED-admin per-tenant access control: hide nav items for features the
+  // admin disabled for this org.
+  const disabledFeatures = session?.organization?.disabledFeatures ?? [];
+  const visibleGroups = groups
+    .map((g) => ({ ...g, items: g.items.filter((it) => !isHrefDisabled(it.href, disabledFeatures)) }))
+    .filter((g) => g.items.length > 0);
+
   // When collapsed: the row strips down to a centred icon with the
   // label rendered as a native tooltip via `title=` so the operator
   // can still identify each link without giving up screen real estate.
@@ -246,7 +255,7 @@ export function Sidebar({
         <AlignedLogo iconOnly={collapsed} />
       </div>
       <nav className="flex-1 space-y-6 overflow-y-auto p-3">
-        {groups.map((group) => (
+        {visibleGroups.map((group) => (
           <div key={group.label} className="space-y-1">
             {/* Hide group headers when collapsed — the icons themselves
                 are the only grouping the operator needs at that width. */}

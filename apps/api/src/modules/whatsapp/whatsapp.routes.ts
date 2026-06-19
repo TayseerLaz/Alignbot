@@ -2697,6 +2697,21 @@ async function maybeReplyAsBot(args: {
         );
         return null;
       }
+      // ALIGNED-admin per-tenant access control: when 'ai' is disabled this
+      // tenant is a manual social-media handler — store the inbound (visible in
+      // the inbox) but never auto-reply.
+      const orgFeatures = await tx.organization.findUnique({
+        where: { id: args.organizationId },
+        select: { disabledFeatures: true },
+      });
+      if (orgFeatures?.disabledFeatures?.includes('ai')) {
+        args.log.info(
+          { orgId: args.organizationId, threadId: thread.id },
+          '[whatsapp] bot skip: AI disabled for tenant',
+        );
+        return null;
+      }
+
       // Blocked contact: the operator has muted the bot for this person. We
       // still stored the inbound message (visible in the inbox) — we just
       // never auto-reply. Match both phone formats (+E.164 and bare digits)

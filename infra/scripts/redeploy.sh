@@ -17,6 +17,23 @@ APP_DIR=${APP_DIR:-/opt/aligned/app}
 API_HEALTH_URL=${API_HEALTH_URL:-https://api.hader.ai/health}
 cd "$APP_DIR"
 
+# Ensure swap exists. `next build` is memory-hungry and has repeatedly OOM'd
+# this box (taking the whole server down mid-deploy). A swapfile lets the build
+# spill instead of the kernel killing processes. Idempotent: only creates it if
+# there's no active swap.
+if [ "$(swapon --show --noheadings 2>/dev/null | wc -l)" = "0" ]; then
+  echo "▶ No swap found — creating a 4G swapfile…"
+  if sudo fallocate -l 4G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 2>/dev/null; then
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile >/dev/null 2>&1 || true
+    sudo swapon /swapfile 2>/dev/null || true
+    grep -q '^/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
+    echo "  ✓ swap on: $(free -h | awk '/Swap/{print $2}')"
+  else
+    echo "  ⚠ could not create swap (continuing) — the build may still OOM."
+  fi
+fi
+
 echo "▶ Fetching origin/main…"
 # Diff against the last SUCCESSFULLY-deployed SHA, not the pre-reset HEAD. If a
 # prior run aborted (e.g. a prisma-generate flake) AFTER git reset but BEFORE
@@ -105,7 +122,9 @@ WEB_CHANGED=0
 if echo "$CHANGED" | grep -q '^apps/web/'; then
   echo "▶ web source changed — rebuilding Next…"
   rm -rf apps/web/.next
-  pnpm --filter @aligned/web build
+  # Bound Node's heap so a single build can't balloon and OOM the box (paired
+  # with the swapfile above). 2 GB is comfortably enough for this app's build.
+  NODE_OPTIONS="--max-old-space-size=2048" pnpm --filter @aligned/web build
   WEB_CHANGED=1
 else
   echo "▶ web unchanged — skipping web build."

@@ -34,7 +34,13 @@ if [ "$(swapon --show --noheadings 2>/dev/null | wc -l)" = "0" ]; then
   fi
 fi
 
-echo "▶ Fetching origin/main…"
+# Which ref to deploy. Defaults to origin/main (production), but can be
+# overridden to deploy a branch, e.g. while shipping the UX redesign:
+#   DEPLOY_REF=origin/ux-redesign bash infra/scripts/redeploy.sh
+# (Previously this was hardcoded to origin/main, which silently bounced a
+# branch checkout back to main — that's the bug this fixes.)
+DEPLOY_REF=${DEPLOY_REF:-origin/main}
+echo "▶ Fetching ${DEPLOY_REF}…"
 # Diff against the last SUCCESSFULLY-deployed SHA, not the pre-reset HEAD. If a
 # prior run aborted (e.g. a prisma-generate flake) AFTER git reset but BEFORE
 # the web rebuild, HEAD already moved — diffing PREV→NEW would then show no
@@ -42,7 +48,7 @@ echo "▶ Fetching origin/main…"
 # fully successful run, so this stays correct across aborted runs.
 LAST=$(cat .last-deployed-sha 2>/dev/null || true)
 git fetch origin --quiet
-git reset --hard origin/main
+git reset --hard "$DEPLOY_REF"
 NEW=$(git rev-parse HEAD)
 echo "  ${LAST:-<unknown>} → $NEW"
 

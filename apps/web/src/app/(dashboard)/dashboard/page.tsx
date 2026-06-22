@@ -4,6 +4,7 @@ import { Check, Pencil, Plus } from 'lucide-react';
 import { useState } from 'react';
 
 import { AddWidgetDialog } from '@/components/dashboard/add-widget-dialog';
+import { AdminPlatformDashboard } from '@/components/dashboard/admin-platform-dashboard';
 import { EditModeProvider, useEditMode } from '@/components/dashboard/edit-mode-context';
 import { useDashboardLayout } from '@/components/dashboard/use-dashboard-layout';
 import { WIDGETS_BY_ID, type WidgetDef, type WidgetId } from '@/components/dashboard/widget-registry';
@@ -28,6 +29,20 @@ export default function DashboardPage() {
   const greeting = session
     ? fullName(session.user.firstName, session.user.lastName, '').split(' ')[0] ?? ''
     : '';
+
+  // ALIGNED HQ gets a platform overview instead of the per-org widget board.
+  // Gate: the user is an ALIGNED admin AND the active org is one of their real
+  // memberships. While "controlling" a tenant (impersonation mints a
+  // no-membership session for that org), the active org is NOT in
+  // availableOrganizations — so the admin sees that tenant's normal dashboard,
+  // which is what they want when managing the tenant's data.
+  const inOwnHqAsAdmin =
+    !!session?.user.isAlignedAdmin &&
+    session.availableOrganizations.some((o) => o.id === session.organization.id);
+
+  if (inOwnHqAsAdmin) {
+    return <AdminPlatformDashboard greeting={greeting} />;
+  }
 
   return (
     <EditModeProvider layout={layout}>

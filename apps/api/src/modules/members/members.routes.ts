@@ -146,6 +146,27 @@ export default async function memberRoutes(app: FastifyInstance) {
           include: { user: true },
         });
 
+        // Make the change take effect immediately on a DOWNGRADE. Roles are
+        // enforced server-side from the JWT `role` claim, and the refresh flow
+        // re-reads the role from the DB — so any change propagates on the next
+        // token refresh (≤ the 15-min access-token TTL). For a demotion that
+        // lag is a privilege-persistence window, so we revoke the member's
+        // sessions in this org: their next refresh fails, they re-authenticate,
+        // and the new (lower) role is in force right away. Promotions don't need
+        // this — the extra power simply appears on the next refresh, no logout.
+        const RANK: Record<string, number> = { viewer: 1, editor: 2, admin: 3 };
+        const isDowngrade = (RANK[req.body.role] ?? 0) < (RANK[membership.role] ?? 0);
+        if (isDowngrade) {
+          await prisma.session.updateMany({
+            where: {
+              userId: updated.userId,
+              organizationId: req.auth!.organizationId,
+              revokedAt: null,
+            },
+            data: { revokedAt: new Date() },
+          });
+        }
+
         await recordAudit({
           action: 'user_role_changed',
           organizationId: req.auth!.organizationId,

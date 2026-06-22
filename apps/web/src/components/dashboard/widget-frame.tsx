@@ -16,9 +16,12 @@ import type { WidgetId } from './widget-registry';
 // is whatever the project token resolves these to.
 export type WidgetAccent = 'blue' | 'green' | 'none';
 
+// Accent is carried by the header ICON colour (see below), not a left-border
+// stripe — colored card stripes read as a generic admin-template tell. Kept as
+// a no-op map so the `accent` prop still drives the icon colour.
 const ACCENT_BORDER: Record<WidgetAccent, string> = {
-  blue: 'border-l-4 border-l-brand-500',
-  green: 'border-l-4 border-l-emerald-500',
+  blue: '',
+  green: '',
   none: '',
 };
 

@@ -244,11 +244,16 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
   const searchParams = useSearchParams();
   const initialThreadId = searchParams?.get('thread') ?? null;
   const [activeId, setActiveId] = useState<string | null>(initialThreadId);
-  const [filterQ, setFilterQ] = useState('');
-  const [filterStatus, setFilterStatus] = useState<ThreadStatus | 'all'>('all');
-  const [filterTag, setFilterTag] = useState('');
+  // Phase 7 — filters initialise FROM the URL so a refresh, a shared link, or a
+  // deep link like /inbox?status=escalated (from the top-bar status strip)
+  // preserves them; they sync back to the URL as they change (effect below).
+  const [filterQ, setFilterQ] = useState(searchParams?.get('q') ?? '');
+  const [filterStatus, setFilterStatus] = useState<ThreadStatus | 'all'>(
+    (searchParams?.get('status') as ThreadStatus | 'all') ?? 'all',
+  );
+  const [filterTag, setFilterTag] = useState(searchParams?.get('tag') ?? '');
   const [filterChannel, setFilterChannel] = useState<'all' | 'whatsapp' | 'messenger' | 'instagram'>(
-    'all',
+    (searchParams?.get('channel') as 'all' | 'whatsapp' | 'messenger' | 'instagram') ?? 'all',
   );
 
   const params = new URLSearchParams();
@@ -296,6 +301,43 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
   useEffect(() => {
     if (!activeId && threads.length > 0) setActiveId(threads[0]!.id);
   }, [activeId, threads]);
+
+  // Phase 7 — keep the URL in sync with filters + the open thread (refresh-safe,
+  // shareable). replaceState avoids a Next navigation (the inbox is heavy).
+  useEffect(() => {
+    const sp = new URLSearchParams();
+    if (filterQ.trim()) sp.set('q', filterQ.trim());
+    if (filterStatus !== 'all') sp.set('status', filterStatus);
+    if (filterTag.trim()) sp.set('tag', filterTag.trim());
+    if (filterChannel !== 'all') sp.set('channel', filterChannel);
+    if (activeId) sp.set('thread', activeId);
+    const qs = sp.toString();
+    window.history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname);
+  }, [filterQ, filterStatus, filterTag, filterChannel, activeId]);
+
+  // Phase 7 — arrow-key / j-k thread navigation (operators live here, keyboard-
+  // first). Ignored while typing in a field or with a modifier held. Scrolls the
+  // newly-active row into view.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      const down = e.key === 'ArrowDown' || e.key === 'j';
+      const up = e.key === 'ArrowUp' || e.key === 'k';
+      if ((!down && !up) || threads.length === 0) return;
+      e.preventDefault();
+      const idx = threads.findIndex((t) => t.id === activeId);
+      const next = idx < 0 ? 0 : Math.min(Math.max(idx + (down ? 1 : -1), 0), threads.length - 1);
+      const id = threads[next]!.id;
+      setActiveId(id);
+      requestAnimationFrame(() =>
+        document.querySelector(`[data-thread-id="${id}"]`)?.scrollIntoView({ block: 'nearest' }),
+      );
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [threads, activeId]);
 
   return (
     <div
@@ -431,7 +473,16 @@ function ThreadList({
   return (
     <ul className="min-h-0 flex-1 overflow-y-auto" aria-label="Conversations">
       {loading ? (
-        <li className="px-4 py-6 text-center text-sm text-foreground-muted">Loading…</li>
+        // Skeleton that mirrors the real row layout → no shift when data lands.
+        Array.from({ length: 7 }).map((_, i) => (
+          <li key={i} className="flex items-center gap-3 border-b border-border px-3 py-3">
+            <div className="size-9 shrink-0 animate-pulse rounded-full bg-surface-elevated" />
+            <div className="flex-1 space-y-2">
+              <div className="h-3.5 w-1/2 animate-pulse rounded bg-surface-elevated" />
+              <div className="h-3 w-3/4 animate-pulse rounded bg-surface-elevated" />
+            </div>
+          </li>
+        ))
       ) : threads.length === 0 ? (
         <li>
           <EmptyState
@@ -445,22 +496,22 @@ function ThreadList({
           <li key={t.id}>
             <button
               type="button"
+              data-thread-id={t.id}
               onClick={() => onSelect(t.id)}
               aria-current={activeId === t.id}
               className={cn(
-                'flex w-full items-start gap-3 border-b border-l-4 border-border border-l-transparent px-4 py-4 text-left hover:bg-surface-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400',
-                // Bot-flagged "needs human" threads get a tinted background +
-                // a red left bar so operators can spot them at a glance.
-                t.status === 'escalated' &&
-                  'border-l-red-500 bg-red-50/60 hover:bg-red-50/80',
-                activeId === t.id && t.status !== 'escalated' && 'bg-brand-50/60',
-                activeId === t.id && t.status === 'escalated' && 'bg-red-100/70',
+                'flex w-full items-start gap-3 border-b border-border px-3 py-3 text-left transition-colors hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400',
+                // Escalated "needs human" threads get a tint (no banned left
+                // stripe) — the Escalated badge + the coral dot carry the signal.
+                t.status === 'escalated' && 'bg-coral-50/70 hover:bg-coral-50',
+                activeId === t.id && t.status !== 'escalated' && 'bg-surface-elevated',
+                activeId === t.id && t.status === 'escalated' && 'bg-coral-100/70',
               )}
             >
               {/* Avatar — first letter of the visible name (WhatsApp-style) */}
               <div
                 aria-hidden
-                className="flex size-11 shrink-0 items-center justify-center rounded-full bg-brand-100 text-base font-semibold text-brand-700"
+                className="flex size-9 shrink-0 items-center justify-center rounded-full bg-surface-elevated text-sm font-semibold text-foreground-muted"
               >
                 {(t.customerName ?? t.customerWhatsappName ?? t.customerPhone)
                   .replace(/[^\p{L}\p{N}]/gu, '')

@@ -20,6 +20,7 @@ import { fullName, initials } from '@/lib/utils';
 import { ThemeToggle } from '../theme-toggle';
 
 import { NotificationsBell } from './notifications-bell';
+import { StatusStrip } from './status-strip';
 
 export function TopBar() {
   const { session, signOut, switchOrg } = useSession();
@@ -29,6 +30,7 @@ export function TopBar() {
 
   return (
     <div className="flex flex-1 items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-1">
       {/* Org switcher */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -66,6 +68,8 @@ export function TopBar() {
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+        <StatusStrip />
+      </div>
 
       <div className="flex items-center gap-1">
         <ThemeToggle />

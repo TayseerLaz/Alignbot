@@ -110,7 +110,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <TopBar />
           </header>
           <main className="flex-1 overflow-y-auto">
-            <div className="container-page space-y-5 py-6">{children}</div>
+            <div className="container-page space-y-5 py-6 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
+              {children}
+            </div>
           </main>
         </div>
       </div>

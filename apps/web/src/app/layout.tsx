@@ -1,19 +1,27 @@
 import type { Metadata } from 'next';
-import { Plus_Jakarta_Sans } from 'next/font/google';
+import { Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
 import { headers } from 'next/headers';
 
 import { Providers } from '@/components/providers';
 import '@/styles/globals.css';
 
-// Single-font system: Plus Jakarta Sans across the entire Hader panel
-// (body, UI, headings, SKUs, prices, code blocks). The Fraunces (display
-// serif) and JetBrains Mono (mono numerics) loaders that used to live
-// here were dropped — saves ~100 KB of woff2 on every page load and
-// gives every surface a consistent typographic feel.
+// Two-font system (neutral-minimal design language):
+//   • Plus Jakarta Sans — all UI, body, headings.
+//   • JetBrains Mono — SKUs, prices, IDs, quantities, timestamps (tabular).
+// Mono numerics make data read as *precise* — a core part of the
+// "professional instrument" feel. Scoped to numerics/IDs via the `font-mono`
+// utility, so the woff2 only matters where data density lives.
 const jakarta = Plus_Jakarta_Sans({
   subsets: ['latin'],
   weight: ['300', '400', '500', '600', '700', '800'],
   variable: '--font-jakarta',
+  display: 'swap',
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500', '600'],
+  variable: '--font-jetbrains-mono',
   display: 'swap',
 });
 
@@ -50,7 +58,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html
       lang="en"
-      className={jakarta.variable}
+      className={`${jakarta.variable} ${jetbrainsMono.variable}`}
       suppressHydrationWarning
     >
       <head>

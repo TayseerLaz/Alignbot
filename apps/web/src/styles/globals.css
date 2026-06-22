@@ -16,13 +16,33 @@
    ============================================================================ */
 
 @theme {
-  /* Single-font system. Every UI surface, every heading, every SKU /
-     price / code block uses Plus Jakarta Sans. The system stack only
-     kicks in if the woff2 fails to load. Tabular numerals are still
-     available through the `tabular-nums` utility for price columns. */
+  /* Two-font system (neutral-minimal). Plus Jakarta Sans for all UI/body;
+     JetBrains Mono for SKUs / prices / IDs / quantities / timestamps via the
+     `font-mono` utility — tabular numerics so data reads precise. */
   --font-sans:  var(--font-jakarta), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-serif: var(--font-jakarta), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-mono:  var(--font-jakarta), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono:  var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  /* ---- Spacing scale (4pt, semantic) ------------------------------------ */
+  --space-1: 0.125rem;  /* 2  */
+  --space-2: 0.25rem;   /* 4  */
+  --space-3: 0.375rem;  /* 6  */
+  --space-4: 0.5rem;    /* 8  */
+  --space-5: 0.75rem;   /* 12 */
+  --space-6: 1rem;      /* 16 — default page/section padding (was 24–32) */
+  --space-7: 1.5rem;    /* 24 */
+  --space-8: 2rem;      /* 32 */
+  --space-9: 3rem;      /* 48 */
+
+  /* ---- Density (compact): shared sizing for rows/controls/fields --------- */
+  --density-row: 2.25rem;  /* 36px table/list row */
+  --control-h:   2rem;     /* 32px buttons/segmented */
+  --field-h:     2.125rem; /* 34px inputs/selects */
+
+  /* ---- Motion: transform/opacity only, smooth deceleration -------------- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 120ms;
+  --dur:      180ms;
 
   /* "On-brand" — the text/icon colour to use ON TOP of bg-brand-500.
      Light mode: white (over oxblood). Dark mode flips this to oxblood
@@ -65,20 +85,20 @@
   --color-sand-500: #b39d7f;
   --color-sand-700: #6f5f48;
 
-  /* Surfaces — cream-tinted neutral (brand-book bg #faf9f5). */
-  --color-surface:          #ffffff;
-  --color-surface-muted:    #faf9f5;
-  --color-surface-elevated: #f5f3ed;
-  --color-border:           #e8e4d8;
-  --color-border-strong:    #cfc0a9;
+  /* Surfaces — neutral-minimal (OKLCH). Near-monochrome with only a WHISPER
+     of warmth (chroma ~0.004) so the canvas feels cohesive with oxblood
+     without reading as "cream". Oxblood is demoted to a rare accent. */
+  --color-surface:          oklch(99.2% 0.003 50);   /* cards / raised */
+  --color-surface-muted:    oklch(97.6% 0.004 60);   /* page background */
+  --color-surface-elevated: oklch(96.2% 0.005 55);   /* wells / hover fills */
+  --color-border:           oklch(91.5% 0.005 55);   /* hairline 1px */
+  --color-border-strong:    oklch(85% 0.007 55);
 
-  /* Foreground — Oxblood-tinted instead of near-black. The brand-book
-     pair is body text in oxblood, not literal black; the muted +
-     subtle variants step toward warm gray with the oxblood undertone
-     preserved. */
-  --color-foreground:        #360516;
-  --color-foreground-muted:  #5c2b2e;
-  --color-foreground-subtle: #846872;
+  /* Foreground — neutral ink (NOT oxblood). Very dark warm-gray for body;
+     muted + subtle step up in lightness for secondary/tertiary text. */
+  --color-foreground:        oklch(24% 0.01 40);
+  --color-foreground-muted:  oklch(46% 0.012 45);
+  --color-foreground-subtle: oklch(60% 0.01 50);
 
   /* Semantic — warmth-matched. */
   --color-success: #2e8849;
@@ -90,19 +110,21 @@
   --color-info: #1b4f72;
   --color-info-100: #dceeff;
 
-  /* Radii — kept rounder than the old slate-navy system. */
-  --radius-xs: 0.5rem;
-  --radius-sm: 0.875rem;
-  --radius-md: 1.25rem;
-  --radius-lg: 1.75rem;
-  --radius-xl: 2.25rem;
+  /* Radii — tight (Linear-class). Was 8/14/20/28/36 — too soft/round; the
+     literal source of the "doesn't feel like the best SaaS" feeling. */
+  --radius-xs: 0.25rem;   /* 4  */
+  --radius-sm: 0.375rem;  /* 6  */
+  --radius-md: 0.5rem;    /* 8  */
+  --radius-lg: 0.75rem;   /* 12 */
+  --radius-xl: 1rem;      /* 16 */
 
-  /* Shadows — oxblood-tinted so elevated cards read as part of the palette. */
-  --shadow-sm: 0 1px 2px rgba(54, 5, 22, 0.05), 0 2px 8px rgba(54, 5, 22, 0.04);
-  --shadow-md: 0 4px 16px rgba(54, 5, 22, 0.07), 0 1px 3px rgba(54, 5, 22, 0.04);
-  --shadow-lg: 0 14px 40px rgba(54, 5, 22, 0.10), 0 4px 12px rgba(54, 5, 22, 0.05);
-  --shadow-brand: 0 10px 26px rgba(54, 5, 22, 0.32);
-  --shadow-coral: 0 10px 26px rgba(229, 62, 52, 0.30);
+  /* Shadows — restrained. Borders carry structure; shadows are reserved for
+     true overlays (popover/dialog/command). Much lighter than before. */
+  --shadow-sm: 0 1px 2px rgba(20, 14, 16, 0.04);
+  --shadow-md: 0 4px 12px rgba(20, 14, 16, 0.06), 0 1px 2px rgba(20, 14, 16, 0.04);
+  --shadow-lg: 0 12px 32px rgba(20, 14, 16, 0.10), 0 2px 6px rgba(20, 14, 16, 0.05);
+  --shadow-brand: 0 6px 18px rgba(54, 5, 22, 0.20);
+  --shadow-coral: 0 6px 18px rgba(229, 62, 52, 0.20);
 }
 
 /* ============================================================================
@@ -133,17 +155,18 @@
   --color-brand-800: #dedede;
   --color-brand-900: #c8c8c8;
 
-  /* Surfaces — near-black with a hint of oxblood depth. */
-  --color-surface:          #161013;
-  --color-surface-muted:    #0a0b0e;
-  --color-surface-elevated: #211a1d;
-  --color-border:           #2d2528;
-  --color-border-strong:    #3f3438;
+  /* Surfaces — neutral near-black (OKLCH), whisper-warm only. Neutral-minimal:
+     no oxblood-tinted chrome; the dark canvas is calm graphite. */
+  --color-surface:          oklch(20% 0.004 60);   /* cards */
+  --color-surface-muted:    oklch(16% 0.004 60);   /* page background */
+  --color-surface-elevated: oklch(24% 0.005 60);   /* wells / hover */
+  --color-border:           oklch(30% 0.005 60);
+  --color-border-strong:    oklch(38% 0.006 60);
 
-  /* Foreground — warm off-whites paired with sand undertones. */
-  --color-foreground:        #f5f1ea;
-  --color-foreground-muted:  #b8b0a1;
-  --color-foreground-subtle: #82796d;
+  /* Foreground — neutral off-whites (not sand). */
+  --color-foreground:        oklch(95% 0.004 70);
+  --color-foreground-muted:  oklch(72% 0.006 65);
+  --color-foreground-subtle: oklch(58% 0.006 65);
 
   /* Sand on dark — pulled darker so it doesn't shout next to the brand. */
   --color-sand-50:  #2a2620;
@@ -239,25 +262,22 @@
     color: var(--color-foreground);
     font-family: var(--font-sans);
     font-weight: 400;
-    line-height: 1.55;
-    letter-spacing: -0.005em;
+    line-height: 1.5;
+    letter-spacing: -0.006em;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
-  /* Hader brand: display headlines in Fraunces (optical-size enabled
-     via next/font), body + UI text in Plus Jakarta Sans. Smaller UI
-     surfaces (h3/h4 in cards, table headers) stay on sans so the
-     density is comparable to the old type system. */
-  h1, h2 {
-    font-family: var(--font-serif);
-    font-weight: 500;
-    font-feature-settings: "ss01", "ss02";
-  }
-  h1 { line-height: 1.1;  letter-spacing: -0.03em; }
-  h2 { line-height: 1.18; letter-spacing: -0.022em; }
-  h3, h4 { line-height: 1.3; letter-spacing: -0.015em; }
-  p { line-height: 1.6; }
-  td, th { line-height: 1.45; }
+  /* Neutral-minimal: no display serif. Headings are Plus Jakarta Sans with
+     more WEIGHT (not size) for hierarchy, tight tracking for a crisp,
+     professional feel. Mono (JetBrains) is applied per-element via font-mono. */
+  h1, h2, h3, h4 { font-weight: 600; }
+  h1 { line-height: 1.15; letter-spacing: -0.025em; }
+  h2 { line-height: 1.2;  letter-spacing: -0.02em; }
+  h3, h4 { line-height: 1.3; letter-spacing: -0.014em; }
+  p { line-height: 1.55; }
+  td, th { line-height: 1.4; }
+  /* Tabular numerics wherever mono is used (prices, IDs, quantities). */
+  .font-mono { font-feature-settings: "tnum", "zero"; letter-spacing: -0.01em; }
   :focus-visible {
     outline: 2px solid var(--color-brand-500);
     outline-offset: 2px;

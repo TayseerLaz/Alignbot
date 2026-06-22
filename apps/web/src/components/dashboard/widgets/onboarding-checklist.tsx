@@ -1,21 +1,20 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, Circle, ListChecks, X } from 'lucide-react';
+import { ArrowRight, Check, X } from 'lucide-react';
 import Link from 'next/link';
 
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { getOnboardingChecklist } from '@/lib/dashboard-api';
 
 import { useEditMode } from '../edit-mode-context';
 
-// Onboarding banner has TWO independent dismiss paths per spec:
-//   1) Edit mode's KEEP/ADD toggle (removes it from the layout entirely)
-//   2) The X button on the banner itself (hides it for this user even
-//      if the widget stays in their layout — they may still want it
-//      back later but don't want it nagging today)
-// Both states persist in localStorage so the next visit honours them.
-
+// First-run golden path. The #1 felt-quality gap was "new tenants hit a blank
+// canvas; the core loop is invisible." This presents setup as an opinionated,
+// numbered path with visible progress and a clear next action — shown only
+// while setup is incomplete. Reuses the existing onboarding data + the two
+// dismiss paths (edit-mode KEEP + the X), so all the plumbing is unchanged.
 export function OnboardingChecklistWidget() {
   const { editing, layout } = useEditMode();
   const q = useQuery({
@@ -28,70 +27,120 @@ export function OnboardingChecklistWidget() {
 
   if (q.isLoading) {
     return (
-      <div className="h-[80px] animate-pulse rounded-lg border-2 border-dashed border-brand-200 bg-brand-50/40" />
+      <div className="rounded-lg border border-border bg-surface p-5">
+        <Skeleton className="h-5 w-40" />
+        <div className="mt-4 space-y-3">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-2/3" />
+        </div>
+      </div>
     );
   }
   if (q.isError || !q.data) return null;
 
   const { steps, complete } = q.data;
-  if (complete && !editing) return null; // spec: "Only show when onboarding is incomplete"
+  if (complete && !editing) return null; // only while incomplete
+
+  const done = steps.filter((s) => s.completed).length;
+  const total = steps.length;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  // The first not-yet-done step is the "next action" — gets the primary CTA.
+  const nextId = steps.find((s) => !s.completed)?.id;
 
   return (
     <div
       role="region"
-      aria-label="Getting-started checklist"
-      className="relative flex flex-col gap-3 rounded-lg border-2 border-dashed border-brand-200 bg-brand-50/40 p-4 sm:flex-row sm:items-center"
+      aria-label="Set up Hader"
+      className="relative overflow-hidden rounded-lg border border-border bg-surface"
     >
-      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-        <ListChecks className="size-5 text-brand-500" aria-hidden />
-        <span>Getting-started checklist:</span>
-      </div>
-      <ol className="flex flex-1 flex-wrap items-center gap-x-1 gap-y-2 text-sm">
-        {steps.map((step, i) => (
-          <li key={step.id} className="flex items-center gap-1.5">
-            {i > 0 ? <span className="text-foreground-subtle" aria-hidden>→</span> : null}
-            <Link
-              href={step.href}
-              className={cn(
-                'inline-flex items-center gap-1 rounded-full px-2 py-0.5 transition hover:bg-brand-100',
-                step.completed
-                  ? 'text-emerald-700 line-through decoration-emerald-300'
-                  : 'text-foreground',
-              )}
-              aria-label={`${step.label} — ${step.completed ? 'done' : 'not done'}`}
+      <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3.5">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-foreground">Set up your bot</h2>
+          <p className="text-xs text-foreground-muted">
+            Three steps to a live AI assistant — about 10 minutes.
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="hidden items-center gap-2 sm:flex">
+            <div className="h-1.5 w-28 overflow-hidden rounded-full bg-surface-elevated">
+              <div
+                className="h-full rounded-full bg-brand-500 transition-[width] duration-500"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <span className="font-mono text-xs text-foreground-subtle">{done}/{total}</span>
+          </div>
+          {editing ? (
+            <button
+              type="button"
+              onClick={() => layout.remove('onboarding')}
+              className="rounded bg-surface-elevated px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-foreground-muted transition hover:text-foreground"
+              aria-label="Remove from dashboard"
             >
-              {step.completed ? (
-                <CheckCircle2 className="size-3.5 text-emerald-600" aria-hidden />
-              ) : (
-                <Circle className="size-3.5 text-foreground-subtle" aria-hidden />
-              )}
-              {step.label}
-            </Link>
-          </li>
-        ))}
-      </ol>
-      <div className="flex items-center gap-2">
-        {editing ? (
+              Keep
+            </button>
+          ) : null}
           <button
             type="button"
-            onClick={() => layout.remove('onboarding')}
-            className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700 transition hover:bg-emerald-200"
-            aria-label="Remove onboarding checklist widget"
+            onClick={() => layout.dismissOnboarding()}
+            className="rounded p-1 text-foreground-subtle transition hover:bg-surface-muted hover:text-foreground"
+            aria-label="Dismiss setup guide"
+            title="Dismiss"
           >
-            KEEP <X className="size-3" aria-hidden />
+            <X className="size-4" aria-hidden />
           </button>
-        ) : null}
-        <button
-          type="button"
-          onClick={() => layout.dismissOnboarding()}
-          className="inline-flex items-center gap-1 rounded-full p-1 text-foreground-subtle hover:bg-brand-100 hover:text-foreground"
-          aria-label="Hide getting-started checklist"
-          title="Hide"
-        >
-          <X className="size-4" aria-hidden />
-        </button>
+        </div>
       </div>
+
+      <ol className="divide-y divide-border">
+        {steps.map((step, i) => {
+          const isNext = step.id === nextId;
+          return (
+            <li key={step.id}>
+              <Link
+                href={step.href}
+                className={cn(
+                  'group flex items-center gap-3 px-5 py-3 transition-colors',
+                  isNext ? 'bg-brand-50/60' : 'hover:bg-surface-muted',
+                )}
+              >
+                <span
+                  className={cn(
+                    'flex size-6 shrink-0 items-center justify-center rounded-full font-mono text-xs font-semibold',
+                    step.completed
+                      ? 'bg-success text-white'
+                      : isNext
+                        ? 'bg-brand-500 text-on-brand'
+                        : 'border border-border-strong text-foreground-subtle',
+                  )}
+                >
+                  {step.completed ? <Check className="size-3.5" aria-hidden /> : i + 1}
+                </span>
+                <span
+                  className={cn(
+                    'flex-1 text-sm',
+                    step.completed ? 'text-foreground-muted line-through' : 'font-medium text-foreground',
+                  )}
+                >
+                  {step.label}
+                </span>
+                {!step.completed ? (
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1 text-xs font-medium',
+                      isNext ? 'text-brand-600' : 'text-foreground-subtle group-hover:text-foreground',
+                    )}
+                  >
+                    {isNext ? 'Start' : 'Open'}
+                    <ArrowRight className="size-3.5" aria-hidden />
+                  </span>
+                ) : null}
+              </Link>
+            </li>
+          );
+        })}
+      </ol>
     </div>
   );
 }
-

@@ -29,6 +29,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { CustomerInfoSheet } from '@/components/customer/customer-info-sheet';
+import { CannedManager } from '@/components/inbox/canned-manager';
 import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -255,6 +256,9 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
   const [filterChannel, setFilterChannel] = useState<'all' | 'whatsapp' | 'messenger' | 'instagram'>(
     (searchParams?.get('channel') as 'all' | 'whatsapp' | 'messenger' | 'instagram') ?? 'all',
   );
+  // Canned-reply management now lives in the inbox itself (a dialog), not a
+  // separate sidebar page.
+  const [cannedOpen, setCannedOpen] = useState(false);
 
   const params = new URLSearchParams();
   if (filterQ.trim()) params.set('q', filterQ.trim());
@@ -358,15 +362,23 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
           <Badge variant="muted" className="gap-1">
             <MessageCircle className="size-3" /> {threads.length} thread{threads.length === 1 ? '' : 's'}
           </Badge>
+          <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setCannedOpen(true)}>
+            <FileText className="size-4" /> Canned replies
+          </Button>
         </div>
       ) : (
         <PageHeader
           title="Inbox"
           description="Every WhatsApp conversation. Status, tags, assignment, internal notes — all here."
           actions={
-            <Badge variant="muted" className="gap-1">
-              <MessageCircle className="size-3" /> {threads.length} thread{threads.length === 1 ? '' : 's'}
-            </Badge>
+            <>
+              <Badge variant="muted" className="gap-1">
+                <MessageCircle className="size-3" /> {threads.length} thread{threads.length === 1 ? '' : 's'}
+              </Badge>
+              <Button variant="secondary" size="sm" onClick={() => setCannedOpen(true)}>
+                <FileText className="size-4" /> Canned replies
+              </Button>
+            </>
           }
         />
       )}
@@ -450,6 +462,21 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
           currentUserId={session?.user.id ?? null}
         />
       </div>
+
+      {/* Canned-reply management — now a feature inside the inbox (was a separate
+          sidebar page). Insertion into the reply box still happens in ReplyBox. */}
+      <Dialog open={cannedOpen} onOpenChange={setCannedOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Canned replies</DialogTitle>
+            <DialogDescription>
+              Manage quick-reply templates. Insert them in the reply box by typing{' '}
+              <span className="font-mono">/shortcut</span>.
+            </DialogDescription>
+          </DialogHeader>
+          <CannedManager />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

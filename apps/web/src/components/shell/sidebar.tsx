@@ -11,13 +11,10 @@ import {
   Contact as ContactIcon,
   ExternalLink,
   Inbox,
-  KeyRound,
   LayoutDashboard,
   type LucideIcon,
   Megaphone,
-  MessageSquareText,
   Package,
-  Plug,
   Settings,
   ShieldCheck,
   ShoppingCart,
@@ -25,7 +22,6 @@ import {
   Upload,
   UserPlus,
   Users,
-  Webhook,
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -71,11 +67,13 @@ const groups: NavGroup[] = [
       { href: '/inbox-full', label: 'Inbox', icon: Inbox, badgeKey: 'inboxEscalated', newTab: true },
       { href: '/contacts', label: 'Contacts', icon: ContactIcon },
       { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone },
-      { href: '/inbox/canned', label: 'Canned replies', icon: MessageSquareText },
+      // Canned replies moved INTO the inbox (a dialog from the inbox header),
+      // so it's no longer a separate nav item. The /inbox/canned route still
+      // resolves for deep links + the command palette.
     ],
   },
   {
-    label: 'Catalog',
+    label: 'Business',
     items: [
       { href: '/products', label: 'Products', icon: Package },
       { href: '/services', label: 'Services', icon: Briefcase },
@@ -95,11 +93,11 @@ const groups: NavGroup[] = [
     items: [
       { href: '/bot', label: 'AI bot builder', icon: Bot },
       { href: '/imports', label: 'Imports', icon: Upload },
-      { href: '/connectors', label: 'Connectors', icon: Plug },
-      { href: '/webhooks', label: 'Webhooks', icon: Webhook },
-      { href: '/api-keys', label: 'API keys', icon: KeyRound },
       { href: '/members', label: 'Members', icon: Users },
       { href: '/audit-log', label: 'Activity log', icon: Activity },
+      // Developer integrations (Connectors / Webhooks / API keys) live under
+      // Settings now, not the nav. Routes still resolve + the command palette
+      // (⌘K) still reaches them.
       { href: '/settings', label: 'Settings', icon: Settings },
     ],
   },

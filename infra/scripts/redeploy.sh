@@ -150,10 +150,40 @@ for i in $(seq 1 20); do
   sleep 3
 done
 if [ "$HEALTHY" != 1 ]; then
-  echo "  ✗ HEALTH CHECK FAILED after ~60s — investigate (journalctl -u aligned-api -n 100)"
+  echo "  ✗ HEALTH CHECK FAILED after ~60s"
+  # ---- Tier 3: automatic rollback to the last known-good SHA ----------------
+  # The new code is unhealthy. If we have a known-good baseline that differs,
+  # roll the code back and restart so the outage is seconds, not "until someone
+  # wakes up". DB migrations are forward-only and (by our convention) additive/
+  # backward-compatible, so reverting the CODE is safe; we do NOT auto-revert
+  # migrations. If rollback also fails, leave it for a human.
+  if [ -n "${LAST:-}" ] && [ "$LAST" != "$NEW" ] && [ "${NO_AUTO_ROLLBACK:-0}" != 1 ]; then
+    echo "  ↩ AUTO-ROLLBACK → $LAST (set NO_AUTO_ROLLBACK=1 to disable)"
+    git reset --hard "$LAST"
+    rm -rf packages/db/dist packages/db/tsconfig.tsbuildinfo \
+           packages/shared/dist packages/shared/tsconfig.tsbuildinfo
+    pnpm --filter @aligned/db exec prisma generate >/dev/null 2>&1 || true
+    pnpm --filter @aligned/shared build && pnpm --filter @aligned/db build
+    if echo "${CHANGED:-}" | grep -q '^apps/web/'; then
+      rm -rf apps/web/.next
+      NODE_OPTIONS="--max-old-space-size=2048" pnpm --filter @aligned/web build || true
+    fi
+    sudo systemctl restart aligned-api aligned-worker aligned-web
+    for i in $(seq 1 20); do
+      if curl -fsS --max-time 10 "$API_HEALTH_URL" >/dev/null 2>&1; then
+        echo "  ✓ rolled back to $LAST and healthy. Investigate $NEW before redeploying."
+        echo "    (.last-deployed-sha left at $LAST)"
+        exit 1   # still non-zero: the intended deploy did NOT succeed
+      fi
+      sleep 3
+    done
+    echo "  ✗✗ ROLLBACK ALSO UNHEALTHY — manual intervention required (journalctl -u aligned-api -n 100)"
+    exit 2
+  fi
+  echo "    no known-good baseline to roll back to — investigate (journalctl -u aligned-api -n 100)"
   exit 1
 fi
 # Record the known-good SHA ONLY on full success, so an aborted future run
-# still diffs against this baseline (see top of file).
+# (and the auto-rollback above) still diffs against this baseline.
 echo "$NEW" > .last-deployed-sha
 echo "✓ Deploy complete: $NEW"

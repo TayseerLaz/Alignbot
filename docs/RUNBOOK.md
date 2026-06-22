@@ -15,6 +15,14 @@ Keep it up to date when procedures change.
 > - The `docker compose …` commands that remain in the sections below are
 >   **historical** and refer to the dev stack only (`docker-compose.yml`:
 >   Postgres/Redis/PgBouncer/Mailpit). Do not use them for production deploys.
+>
+> 🏗 **Scaling to enterprise HA (no single point of failure):** the full multi-VM
+> blueprint — Postgres primary/standby + Patroni auto-failover + PITR to Wasabi,
+> app-tier load balancing, Redis Sentinel, deploy hardening, alerting, and
+> big-data partitioning — lives in [infra/ha/README.md](../infra/ha/README.md).
+> The deploy script now **auto-rolls-back** to the last known-good SHA if
+> `/health` fails after a deploy. Rehearse restores with
+> [infra/scripts/pg-restore-drill.sh](../infra/scripts/pg-restore-drill.sh).
 
 ---
 

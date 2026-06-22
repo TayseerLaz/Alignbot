@@ -43,6 +43,13 @@ export const ORG_FEATURES = [
     description: 'The analytics dashboard.',
     hrefs: ['/analytics'],
   },
+  {
+    key: 'inbox',
+    label: 'Inbox & canned replies',
+    description:
+      'The conversation inbox + canned replies. Disable for accounts that should not handle conversations at all (e.g. an admin-only HQ).',
+    hrefs: ['/inbox', '/inbox-full'],
+  },
 ] as const;
 
 export type OrgFeatureKey = (typeof ORG_FEATURES)[number]['key'];

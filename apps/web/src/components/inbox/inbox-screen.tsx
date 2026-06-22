@@ -870,7 +870,12 @@ function ThreadView({
         }
       >
         {messagesQ.isLoading ? (
-          <p className="text-center text-sm text-foreground-muted">Loading…</p>
+          <div className="space-y-3 px-2 py-3" aria-label="Loading messages">
+            <div className="ml-auto h-10 w-2/3 animate-pulse rounded-lg bg-surface-elevated" />
+            <div className="h-12 w-3/4 animate-pulse rounded-lg bg-surface-elevated" />
+            <div className="ml-auto h-8 w-1/2 animate-pulse rounded-lg bg-surface-elevated" />
+            <div className="h-10 w-2/3 animate-pulse rounded-lg bg-surface-elevated" />
+          </div>
         ) : timeline.length === 0 ? (
           <p className="text-center text-sm text-foreground-muted">No messages yet.</p>
         ) : (
@@ -2986,7 +2991,7 @@ function TemplateSendDialog({
           <div className="space-y-1.5">
             <Label htmlFor="tpl-pick">Template</Label>
             {templatesQ.isLoading ? (
-              <p className="text-xs text-foreground-muted">Loading…</p>
+              <div className="h-9 w-full animate-pulse rounded-md bg-surface-elevated" />
             ) : templates.length === 0 ? (
               <p className="text-xs text-foreground-muted">
                 No approved templates yet. Create + submit one on{' '}

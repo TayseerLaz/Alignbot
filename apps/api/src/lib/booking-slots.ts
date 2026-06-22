@@ -9,7 +9,9 @@
 //
 // No date library — timezone math uses Intl.DateTimeFormat (same approach as
 // the broadcast send-window code).
-import { withRlsBypass } from './db.js';
+// F-02: bot booking reads run under withTenant (RLS backstop) with an explicit
+// organizationId filter retained as defence-in-depth.
+import { withTenant } from './db.js';
 
 export interface BookingAvailability {
   enabled: boolean;
@@ -140,7 +142,7 @@ async function bookedCounts(orgId: string, slots: Date[]): Promise<Map<number, n
   if (slots.length === 0) return counts;
   const min = new Date(Math.min(...slots.map((s) => s.getTime())));
   const max = new Date(Math.max(...slots.map((s) => s.getTime())));
-  const rows = await withRlsBypass((tx) =>
+  const rows = await withTenant(orgId, (tx) =>
     tx.booking.findMany({
       where: {
         organizationId: orgId,
@@ -216,7 +218,7 @@ export async function slotHasRoom(
   slotUtc: Date,
   capacity: number,
 ): Promise<boolean> {
-  const count = await withRlsBypass((tx) =>
+  const count = await withTenant(orgId, (tx) =>
     tx.booking.count({
       where: { organizationId: orgId, appointmentAt: slotUtc, status: { not: 'cancelled' } },
     }),

@@ -25,6 +25,7 @@ import { capCheck } from '../../lib/billing.js';
 import { prisma as rootPrisma } from '../../lib/db.js';
 import { embedProductAndStore } from '../../lib/embedding.js';
 import { conflict, notFound } from '../../lib/errors.js';
+import { invalidateReadCache } from '../../lib/read-cache.js';
 import { recordRevision } from '../../lib/versioning.js';
 import { emitWebhookEvent } from '../../lib/webhooks.js';
 import { decodeCursor, encodeCursor, resolveAssetUrl, slugify } from './shared.js';
@@ -434,7 +435,10 @@ export default async function productRoutes(app: FastifyInstance) {
             });
           }
         }
-        return { data: await loadProduct(tx, product.id) };
+        const data = await loadProduct(tx, product.id);
+        // Variants affect read-API product payloads — invalidate the cache (F).
+        void invalidateReadCache(orgId);
+        return { data };
       });
     },
   );
@@ -474,7 +478,9 @@ export default async function productRoutes(app: FastifyInstance) {
             isPrimary: req.body.isPrimary ?? false,
           },
         });
-        return { data: await loadProduct(tx, product.id) };
+        const data = await loadProduct(tx, product.id);
+        void invalidateReadCache(orgId); // images appear in read-API payloads
+        return { data };
       });
     },
   );
@@ -496,7 +502,9 @@ export default async function productRoutes(app: FastifyInstance) {
         await tx.productImage.deleteMany({
           where: { id: req.params.imageId, productId: req.params.id },
         });
-        return { data: await loadProduct(tx, req.params.id) };
+        const data = await loadProduct(tx, req.params.id);
+        void invalidateReadCache(req.auth!.organizationId);
+        return { data };
       });
     },
   );
@@ -524,6 +532,7 @@ export default async function productRoutes(app: FastifyInstance) {
             }),
           ),
         );
+        void invalidateReadCache(req.auth!.organizationId); // image order is read-visible
         return { ok: true as const };
       });
     },
@@ -565,6 +574,7 @@ export default async function productRoutes(app: FastifyInstance) {
             count: result.count,
           },
         });
+        void invalidateReadCache(req.auth!.organizationId);
         return { data: { deleted: result.count } };
       });
     },
@@ -591,6 +601,7 @@ export default async function productRoutes(app: FastifyInstance) {
             ...(req.body.categoryId !== undefined ? { categoryId: req.body.categoryId } : {}),
           },
         });
+        void invalidateReadCache(req.auth!.organizationId);
         return { data: { updated: result.count } };
       });
     },

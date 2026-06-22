@@ -38,6 +38,7 @@ import authRoutes from './modules/auth/auth.routes.js';
 import bookingsRoutes from './modules/bookings/bookings.routes.js';
 import cartsRoutes from './modules/carts/carts.routes.js';
 import paymentRoutes from './modules/payments/payment.routes.js';
+import paymentWebhookRoutes from './modules/payments/payment-webhook.routes.js';
 import messengerRoutes from './modules/messenger/messenger.routes.js';
 import businessInfoRoutes from './modules/catalog/business-info.routes.js';
 import categoryRoutes from './modules/catalog/category.routes.js';
@@ -104,16 +105,32 @@ export async function buildServer() {
           'req.headers.authorization',
           'req.headers.cookie',
           'req.headers["x-aligned-api-key"]',
+          'req.headers["x-hub-signature-256"]',
+          'req.headers["x-aligned-signature"]',
           'req.body.password',
           'req.body.newPassword',
           'req.body.currentPassword',
           'req.body.token',
+          'req.body.accessToken',
+          'req.body.appSecret',
+          'req.body.pageAccessToken',
+          'req.body.authConfig',
+          'req.body.credentials',
           '*.passwordHash',
           '*.refreshTokenHash',
           '*.tokenHash',
           '*.keyHash',
           '*.signingSecret',
           '*.webhookSecret',
+          // Tenant integration secrets — Meta/WhatsApp/Messenger tokens, connector
+          // auth blobs. Without these a single logged Prisma row or request body
+          // leaks the ability to act as the tenant on their channels (F-08).
+          '*.accessToken',
+          '*.appSecret',
+          '*.pageAccessToken',
+          '*.authConfig',
+          '*.credentials',
+          '*.verifyToken',
         ],
         remove: true,
       },
@@ -349,6 +366,9 @@ export async function buildServer() {
 
   // Routes — public (HMAC-verified, no JWT)
   await app.register(inboundWebhookRoutes, { prefix: '/api/v1' });
+
+  // Routes — public payment-confirmation webhooks (gateway-signed, no JWT)
+  await app.register(paymentWebhookRoutes, { prefix: '/api/v1' });
 
   // Routes — public marketing lead capture (no auth, per-IP rate limited)
   await app.register(leadsRoutes, { prefix: '/api/v1' });

@@ -5,10 +5,17 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "comment:exports": "The `source` condition points tsx (api/worker runtime, run with --conditions=source) straight at the TypeScript source so the running app never loads compiled dist — removes the stale-dist footgun. Default conditions still resolve to dist for tsc + dist consumers. `source` MUST be first.",
   "exports": {
     ".": {
+      "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./ssrf": {
+      "source": "./src/util-ssrf.ts",
+      "types": "./dist/util-ssrf.d.ts",
+      "import": "./dist/util-ssrf.js"
     }
   },
   "scripts": {

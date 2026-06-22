@@ -20,6 +20,7 @@ import { z } from 'zod';
 import type { Prisma } from '../../lib/db.js';
 import { recordAudit } from '../../lib/audit.js';
 import { conflict, notFound } from '../../lib/errors.js';
+import { invalidateReadCache } from '../../lib/read-cache.js';
 import { recordRevision } from '../../lib/versioning.js';
 import { emitWebhookEvent } from '../../lib/webhooks.js';
 import { decodeCursor, encodeCursor, slugify } from './shared.js';
@@ -368,7 +369,9 @@ export default async function serviceRoutes(app: FastifyInstance) {
             });
           }
         }
-        return { data: await loadService(tx, service.id) };
+        const data = await loadService(tx, service.id);
+        void invalidateReadCache(req.auth!.organizationId); // tiers are read-visible
+        return { data };
       });
     },
   );
@@ -406,7 +409,9 @@ export default async function serviceRoutes(app: FastifyInstance) {
             })),
           });
         }
-        return { data: await loadService(tx, service.id) };
+        const data = await loadService(tx, service.id);
+        void invalidateReadCache(req.auth!.organizationId); // availability is read-visible
+        return { data };
       });
     },
   );
@@ -445,6 +450,7 @@ export default async function serviceRoutes(app: FastifyInstance) {
             count: result.count,
           },
         });
+        void invalidateReadCache(req.auth!.organizationId);
         return { data: { deleted: result.count } };
       });
     },

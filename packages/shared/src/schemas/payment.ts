@@ -28,6 +28,15 @@ export const upsertPaymentConfigBodySchema = z.object({
   stripeSecretKey: z.string().trim().max(2000).optional(),
   paypalClientId: z.string().trim().max(2000).optional(),
   paypalSecret: z.string().trim().max(2000).optional(),
+  // Webhook-verification secrets (write-only) — authenticate inbound payment-
+  // confirmation webhooks (F-04). Without these the platform cannot safely mark
+  // an order paid, so it stays 'pending' until manually reconciled.
+  //   stripe:     the endpoint signing secret (whsec_…)
+  //   myfatoorah: the dashboard "Webhook Secret Key"
+  //   paypal:     the configured Webhook ID (used with PayPal's verify API)
+  stripeWebhookSecret: z.string().trim().max(2000).optional(),
+  myfatoorahWebhookSecret: z.string().trim().max(2000).optional(),
+  paypalWebhookId: z.string().trim().max(2000).optional(),
 });
 export type UpsertPaymentConfigBody = z.infer<typeof upsertPaymentConfigBodySchema>;
 
@@ -41,8 +50,15 @@ export const paymentConfigSchema = z.object({
   hasMyfatoorahKey: z.boolean(),
   hasStripeKey: z.boolean(),
   hasPaypalCreds: z.boolean(),
+  // Whether a webhook-verification secret is configured for the active gateway.
+  hasStripeWebhookSecret: z.boolean(),
+  hasMyfatoorahWebhookSecret: z.boolean(),
+  hasPaypalWebhookId: z.boolean(),
   // True when the selected provider has everything it needs to mint a link.
   ready: z.boolean(),
+  // True when inbound payments for the active provider can be auto-confirmed
+  // (a webhook secret is set). False ⇒ orders need manual reconciliation.
+  paymentConfirmationReady: z.boolean(),
   updatedAt: z.string(),
 });
 export type PaymentConfigDto = z.infer<typeof paymentConfigSchema>;

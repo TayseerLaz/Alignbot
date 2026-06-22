@@ -16,6 +16,7 @@ import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
 import { conflict, notFound } from '../../lib/errors.js';
+import { invalidateReadCache } from '../../lib/read-cache.js';
 import { slugify } from './shared.js';
 
 export default async function categoryRoutes(app: FastifyInstance) {
@@ -99,6 +100,8 @@ export default async function categoryRoutes(app: FastifyInstance) {
             sortOrder: req.body.sortOrder ?? 0,
           },
         });
+        // Category names ride along in read-API product payloads.
+        void invalidateReadCache(req.auth!.organizationId);
         await recordAudit({
           action: 'category_created',
           organizationId: req.auth!.organizationId,
@@ -155,6 +158,7 @@ export default async function categoryRoutes(app: FastifyInstance) {
             isActive: req.body.isActive ?? undefined,
           },
         });
+        void invalidateReadCache(req.auth!.organizationId);
         await recordAudit({
           action: 'category_updated',
           organizationId: req.auth!.organizationId,
@@ -233,6 +237,7 @@ export default async function categoryRoutes(app: FastifyInstance) {
           where = { id: { in: req.body.ids ?? [] } };
         }
         const result = await tx.category.deleteMany({ where });
+        void invalidateReadCache(req.auth!.organizationId);
         await recordAudit({
           action: 'category_deleted',
           organizationId: req.auth!.organizationId,
@@ -265,6 +270,7 @@ export default async function categoryRoutes(app: FastifyInstance) {
         const existing = await tx.category.findUnique({ where: { id: req.params.id } });
         if (!existing) throw notFound('Category not found.');
         await tx.category.delete({ where: { id: existing.id } });
+        void invalidateReadCache(req.auth!.organizationId);
         await recordAudit({
           action: 'category_deleted',
           organizationId: req.auth!.organizationId,
@@ -299,6 +305,7 @@ export default async function categoryRoutes(app: FastifyInstance) {
             }),
           ),
         );
+        void invalidateReadCache(req.auth!.organizationId);
         return { ok: true as const };
       });
     },

@@ -34,7 +34,10 @@ export interface ResolvedPaymentConfig {
 //   null → no online payment (cash/none, or the provider failed) — caller
 //          falls back to a soft "we'll send a link / pay on delivery" line.
 export type PaymentResolution =
-  | { kind: 'url'; url: string }
+  // `ref` is the gateway's external id (e.g. MyFatoorah InvoiceId) we persist
+  // on the cart so the inbound payment webhook can correlate it back (F-04).
+  // Stripe/PayPal echo our cart id in their webhook, so they need no ref here.
+  | { kind: 'url'; url: string; ref?: string | null }
   | { kind: 'text'; text: string }
   | null;
 
@@ -69,7 +72,7 @@ export async function resolvePaymentLink(
         log,
         { apiKey, testMode: cfg.testMode },
       );
-      return inv ? { kind: 'url', url: inv.invoiceUrl } : null;
+      return inv ? { kind: 'url', url: inv.invoiceUrl, ref: String(inv.invoiceId) } : null;
     }
 
     case 'stripe': {

@@ -70,7 +70,32 @@ const envSchema = z.object({
   WEB_PUBLIC_URL: z.string().url().default('http://localhost:3000'),
 
   DATA_EXPORT_CONCURRENCY: z.coerce.number().int().positive().default(1),
-});
+
+  // Must match the API's key — the worker shares the same Prisma client +
+  // secret-crypto extension, so it has to decrypt the same tenant secrets.
+  // Optional in dev/test, REQUIRED in production (F-06).
+  SECRET_ENCRYPTION_KEY: z.string().optional(),
+})
+  .superRefine((cfg, ctx) => {
+    if (cfg.NODE_ENV !== 'production') return;
+    const raw = cfg.SECRET_ENCRYPTION_KEY;
+    if (!raw) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SECRET_ENCRYPTION_KEY'],
+        message: 'SECRET_ENCRYPTION_KEY is required in production.',
+      });
+      return;
+    }
+    const key = /^[0-9a-fA-F]{64}$/.test(raw) ? Buffer.from(raw, 'hex') : Buffer.from(raw, 'base64');
+    if (key.length !== 32) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SECRET_ENCRYPTION_KEY'],
+        message: 'SECRET_ENCRYPTION_KEY must decode to exactly 32 bytes.',
+      });
+    }
+  });
 
 export type Env = z.infer<typeof envSchema>;
 

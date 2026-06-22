@@ -3,6 +3,19 @@
 This document is the source of truth for operating the platform in production.
 Keep it up to date when procedures change.
 
+> ⚠️ **DEPLOY MODEL: NATIVE, NOT DOCKER.** Production runs `api`/`worker` via
+> `tsx` and `web` via `next start`, all under **systemd** (unit files in
+> [infra/systemd/](../infra/systemd/)). The prod Docker stack
+> (`docker-compose.prod.yml` + per-app Dockerfiles) was **removed** — it
+> contradicted the live model (it compiled to `dist/` and ran `node dist/…`).
+>
+> - **Deploy / rollback:** `cd /opt/aligned/app && git pull && bash infra/scripts/redeploy.sh`
+>   (rollback = `git checkout <good-sha>` then re-run). See **Deploys** / **Rollback** below.
+> - **Restart a service:** `sudo systemctl restart aligned-api aligned-worker aligned-web`.
+> - The `docker compose …` commands that remain in the sections below are
+>   **historical** and refer to the dev stack only (`docker-compose.yml`:
+>   Postgres/Redis/PgBouncer/Mailpit). Do not use them for production deploys.
+
 ---
 
 ## Topology

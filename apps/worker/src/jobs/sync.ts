@@ -11,10 +11,20 @@
 // minutes" simple specs in the API's repeatable-job registration; arbitrary cron
 // is handled by BullMQ's repeat option set when the connector is created.
 import type { ApiConnector, ImportEntityKind, PrismaClient, SyncRun } from '@aligned/db';
+import { decryptJsonSecret } from '@aligned/db';
 import { assertSafeOutboundUrl, UrlGuardError } from '@aligned/shared';
+import { ssrfSafeLookup } from '@aligned/shared/ssrf';
 
 import { Worker } from 'bullmq';
-import { request as undiciRequest } from 'undici';
+import { Agent, request as undiciRequest } from 'undici';
+
+// DNS-resolving + IP-pinning dispatcher: refuses to connect to private/
+// loopback IPs even when a public hostname resolves to one (F-05 rebinding).
+let ssrfDispatcher: Agent | null = null;
+function getSsrfDispatcher(): Agent {
+  if (!ssrfDispatcher) ssrfDispatcher = new Agent({ connect: { lookup: ssrfSafeLookup } });
+  return ssrfDispatcher;
+}
 import { z } from 'zod';
 
 import { env } from '../lib/env.js';
@@ -45,7 +55,7 @@ import {
 
 function buildHeaders(connector: ApiConnector): Record<string, string> {
   const headers: Record<string, string> = { Accept: 'application/json' };
-  const cfg = (connector.authConfig ?? {}) as Record<string, string>;
+  const cfg = decryptJsonSecret<Record<string, string>>(connector.authConfig) ?? {};
   switch (connector.authKind) {
     case 'bearer':
       if (cfg.token) headers.Authorization = `Bearer ${cfg.token}`;
@@ -202,6 +212,7 @@ export function startSyncWorker() {
           method: 'GET',
           headers: buildHeaders(connector),
           signal: AbortSignal.timeout(60_000),
+          dispatcher: getSsrfDispatcher(),
         });
         if (res.statusCode < 200 || res.statusCode >= 300) {
           throw new Error(`Upstream returned ${res.statusCode}`);

@@ -30,6 +30,8 @@ export const NotificationKind = {
   org_suspended_for_billing: 'org_suspended_for_billing',
   // Cart flow — bot or operator creates a cart → bell ping for admins.
   cart_received: 'cart_received',
+  // Payments (F-04) — a gateway webhook confirmed an order was paid.
+  order_paid: 'order_paid',
 } as const;
 export type NotificationKind = (typeof NotificationKind)[keyof typeof NotificationKind];
 

@@ -100,6 +100,8 @@ export const WebhookEventKind = {
   cart_created: 'cart_created',
   cart_status_changed: 'cart_status_changed',
   cart_item_added: 'cart_item_added',
+  // Payments (F-04) — a gateway webhook confirmed an order was paid.
+  order_paid: 'order_paid',
 } as const;
 export type WebhookEventKind = (typeof WebhookEventKind)[keyof typeof WebhookEventKind];
 

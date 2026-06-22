@@ -34,6 +34,17 @@ jobs:
       JWT_REFRESH_SECRET: test-refresh-secret-change-me-in-production-please-32+chars
       NODE_ENV: test
       LOG_LEVEL: error
+      # Dummy values so the import/storage tests pass their isStorageConfigured()
+      # gate instead of 400ing (the gate only checks presence, not validity).
+      WASABI_ACCESS_KEY_ID: test-wasabi-key
+      WASABI_SECRET_ACCESS_KEY: test-wasabi-secret
+      WASABI_BUCKET: test-bucket
+      WASABI_REGION: us-east-1
+      WASABI_ENDPOINT: https://s3.test.invalid
+      # 32-byte hex key so the secret-encryption path (F-01) is exercised in
+      # tests. Required only in production (NODE_ENV=production); set here so the
+      # encrypt/decrypt round-trip + connector-secret tests get real coverage.
+      SECRET_ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
 
     steps:
       - uses: actions/checkout@v4

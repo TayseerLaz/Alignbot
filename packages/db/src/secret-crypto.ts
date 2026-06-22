@@ -18,6 +18,20 @@ import type { PrismaClient } from '@prisma/client';
 
 const PREFIX = 'enc:v1:';
 
+/**
+ * Thrown when a value that IS encrypted (carries the enc:v1: prefix) cannot be
+ * decrypted — wrong/missing key, GCM auth-tag mismatch, or corruption. We
+ * deliberately do NOT swallow this and return the ciphertext: a ciphertext
+ * returned in place of a token gets used as a live credential against Meta /
+ * Stripe / an upstream, masking tampering and key-rotation mistakes (F-09).
+ */
+export class SecretDecryptError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'SecretDecryptError';
+  }
+}
+
 function getKey(): Buffer | null {
   const raw = process.env.SECRET_ENCRYPTION_KEY;
   if (!raw) return null;
@@ -49,7 +63,12 @@ export function decryptSecret<T extends string | null | undefined>(value: T): T 
   if (value == null) return value;
   if (!(value as string).startsWith(PREFIX)) return value; // plaintext passthrough
   const key = getKey();
-  if (!key) return value;
+  if (!key) {
+    // The value is encrypted but no key is configured to read it. That is a
+    // hard misconfiguration (key unset, lost, or rotated away) — fail loud
+    // rather than hand back ciphertext that would be used as a credential.
+    throw new SecretDecryptError('encrypted value present but SECRET_ENCRYPTION_KEY is unset');
+  }
   try {
     const [, , ivB64, tagB64, ctB64] = (value as string).split(':');
     const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivB64!, 'base64'));
@@ -60,11 +79,46 @@ export function decryptSecret<T extends string | null | undefined>(value: T): T 
     ]).toString('utf8');
     return out as T;
   } catch (err) {
-    // Never crash a request on a decrypt failure — log loudly and return the
-    // stored value (a wrong token then fails at Meta, surfaced in logs).
-    console.error('[secret-crypto] decrypt failed', err);
-    return value;
+    // A prefixed value that fails GCM authentication is tampering, corruption,
+    // or a wrong key. Throw — never silently return the raw ciphertext (F-09).
+    throw new SecretDecryptError(
+      'failed to decrypt secret (auth-tag mismatch, wrong key, or corruption)',
+      { cause: err },
+    );
   }
+}
+
+/**
+ * Encrypt a structured secret (object) for storage in a JSON/text column.
+ * Returns null for null/undefined input, and a single encrypted string
+ * otherwise (the JSON column then holds an opaque `enc:v1:…` string value).
+ * Inert (returns the JSON string in plaintext) when no key is configured.
+ */
+export function encryptJsonSecret(value: unknown): string | null {
+  if (value == null) return null;
+  return encryptSecret(JSON.stringify(value));
+}
+
+/**
+ * Inverse of {@link encryptJsonSecret}. Transparently handles three shapes so
+ * encrypted + not-yet-backfilled rows coexist during rollout:
+ *   • an `enc:v1:…` string  → decrypt, then JSON.parse
+ *   • a legacy plaintext object (pre-encryption rows read straight from JSONB)
+ *   • a plaintext JSON string
+ */
+export function decryptJsonSecret<T = unknown>(value: unknown): T | null {
+  if (value == null) return null;
+  if (typeof value === 'string') {
+    const plain = decryptSecret(value);
+    try {
+      return JSON.parse(plain) as T;
+    } catch {
+      // Not JSON — return as-is so a single odd row can't crash a read.
+      return plain as unknown as T;
+    }
+  }
+  // Legacy plaintext object stored directly in the JSONB column.
+  return value as T;
 }
 
 // Per-model field lists to crypt. Scoped to the highest-value secrets first.

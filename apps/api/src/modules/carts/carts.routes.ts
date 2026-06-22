@@ -64,6 +64,9 @@ function serializeCart(
     status: c.status as (typeof CART_STATUSES)[number],
     notes: c.notes,
     itemsCount: c.itemsCount,
+    paymentProvider: c.paymentProvider,
+    paymentStatus: c.paymentStatus,
+    paidAt: c.paidAt ? c.paidAt.toISOString() : null,
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
   };

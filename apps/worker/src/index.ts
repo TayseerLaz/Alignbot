@@ -12,6 +12,7 @@ import { startBroadcastFanoutWorker } from './jobs/broadcast-fanout.js';
 import { startBroadcastSendWorker } from './jobs/broadcast-send.js';
 import { startCrawlWorker } from './jobs/crawl.js';
 import { startDataExportWorker } from './jobs/data-export.js';
+import { startEmailWorker } from './jobs/email.js';
 import { startDunningTick } from './jobs/dunning-tick.js';
 import { startImportWorker } from './jobs/import.js';
 import { startSequenceTick } from './jobs/sequence-tick.js';
@@ -151,6 +152,7 @@ async function main() {
     startDataExportWorker(),
     startBroadcastFanoutWorker(),
     startBroadcastSendWorker(),
+    startEmailWorker(),
   ];
 
   for (const w of workers) {

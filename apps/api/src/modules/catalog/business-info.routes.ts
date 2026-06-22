@@ -24,6 +24,7 @@ import { z } from 'zod';
 import type { Prisma } from '../../lib/db.js';
 import { recordAudit } from '../../lib/audit.js';
 import { conflict, notFound } from '../../lib/errors.js';
+import { invalidateReadCache } from '../../lib/read-cache.js';
 import { recordRevision } from '../../lib/versioning.js';
 import { emitWebhookEvent } from '../../lib/webhooks.js';
 
@@ -262,6 +263,7 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
           },
         });
         reply.code(201);
+        void invalidateReadCache(req.auth!.organizationId); // locations are in read payload
         return {
           data: {
             id: l.id,
@@ -320,6 +322,7 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
             isPrimary: req.body.isPrimary ?? undefined,
           },
         });
+        void invalidateReadCache(req.auth!.organizationId);
         return {
           data: {
             id: l.id,
@@ -355,6 +358,7 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
     async (req) =>
       app.tenant(req, async (tx) => {
         await tx.location.deleteMany({ where: { id: req.params.id } });
+        void invalidateReadCache(req.auth!.organizationId);
         return { ok: true as const };
       }),
   );
@@ -416,6 +420,7 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
           },
         });
         reply.code(201);
+        void invalidateReadCache(orgId); // contact channels are in read payload
         return {
           data: {
             id: c.id,
@@ -444,6 +449,7 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
     async (req) =>
       app.tenant(req, async (tx) => {
         await tx.contactChannel.deleteMany({ where: { id: req.params.id } });
+        void invalidateReadCache(req.auth!.organizationId);
         return { ok: true as const };
       }),
   );
@@ -607,6 +613,7 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
       const orgId = req.auth!.organizationId;
       return app.tenant(req, async (tx) => {
         await tx.fAQ.deleteMany({ where: { id: req.params.id } });
+        void invalidateReadCache(orgId);
         await recordAudit({
           action: 'faq_deleted',
           organizationId: orgId,
@@ -640,6 +647,7 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
             }),
           ),
         );
+        void invalidateReadCache(req.auth!.organizationId);
         return { ok: true as const };
       }),
   );
@@ -748,6 +756,7 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
       const orgId = req.auth!.organizationId;
       return app.tenant(req, async (tx) => {
         await tx.policy.deleteMany({ where: { id: req.params.id } });
+        void invalidateReadCache(orgId);
         await recordAudit({
           action: 'policy_deleted',
           organizationId: orgId,

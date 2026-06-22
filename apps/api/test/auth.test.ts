@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { seedOrgAndLogin, TEST_PASSWORD } from './helpers.js';
-import { getApp } from './setup.js';
+import { getApp, prisma } from './setup.js';
 
 describe('auth flow', () => {
   it('signs up an org + admin user and rejects duplicates', async () => {
@@ -68,11 +68,11 @@ describe('auth flow', () => {
     expect(newRefreshHeader).toBeTruthy();
   });
 
-  it('Sprint 1 M-2 — replaying the rotated refresh token revokes the session', async () => {
+  it('Sprint 1 M-2 — rotated-token reuse: grace window, then revoke', async () => {
     const app = getApp();
     const session = await seedOrgAndLogin(app, 'rotrefreshtest');
 
-    // First refresh rotates the cookie. The OLD cookie should now be invalid.
+    // First refresh rotates the cookie (hash(T1)→previous, hash(T2)→current).
     const r1 = await app.inject({
       method: 'POST',
       url: '/api/v1/auth/refresh',
@@ -80,13 +80,32 @@ describe('auth flow', () => {
     });
     expect(r1.statusCode).toBe(200);
 
-    // Re-present the original (now rotated) refresh cookie. Reuse detection
-    // should trip and the response should be 401.
-    const replay = await app.inject({
+    // Multi-tab grace window (auth.service REUSE_GRACE_WINDOW_MS): re-presenting
+    // the JUST-rotated token within the window is a benign race (a second tab
+    // refreshing in parallel), not theft — it succeeds WITHOUT rotating again so
+    // both tabs stay logged in. (Pre-2026-06-01 this revoked the session and
+    // logged users out across tabs.)
+    const replayInWindow = await app.inject({
       method: 'POST',
       url: '/api/v1/auth/refresh',
       headers: { cookie: session.refreshCookie },
     });
-    expect(replay.statusCode).toBe(401);
+    expect(replayInWindow.statusCode).toBe(200);
+
+    // Now simulate the grace window having elapsed by ageing the rotation
+    // timestamp. A replay of the old token AFTER the window is treated as
+    // genuine reuse/theft — reuse detection trips and the response is 401.
+    await prisma.$executeRawUnsafe(`SET app.bypass_rls = 'on'`);
+    await prisma.session.updateMany({
+      where: { userId: session.userId },
+      data: { previousTokenRotatedAt: new Date(Date.now() - 30 * 60_000) },
+    });
+
+    const replayAfterWindow = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/refresh',
+      headers: { cookie: session.refreshCookie },
+    });
+    expect(replayAfterWindow.statusCode).toBe(401);
   });
 });

@@ -52,6 +52,11 @@ export const cartSchema = z.object({
   status: z.enum(CART_STATUSES),
   notes: z.string().nullable(),
   itemsCount: z.number().int().nonnegative(),
+  // Payment confirmation (F-04). paymentStatus: null = no online payment,
+  // 'pending' = link issued, 'paid' = gateway webhook confirmed.
+  paymentProvider: z.string().nullable(),
+  paymentStatus: z.string().nullable(),
+  paidAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

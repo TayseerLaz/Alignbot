@@ -182,7 +182,36 @@ const envSchema = z.object({
     .string()
     .default('false')
     .transform((s) => s === 'true'),
-});
+
+  // Envelope-encryption key for tenant secrets at rest (WhatsApp tokens,
+  // Messenger page tokens, connector auth blobs). 32 bytes as 64 hex chars
+  // or base64. Optional in dev/test (secret-crypto then passes through as
+  // plaintext — fine for local work), but REQUIRED in production: shipping
+  // prod without it silently stores every tenant's channel credentials in
+  // plaintext, and rotating it later orphans already-encrypted rows (F-06).
+  SECRET_ENCRYPTION_KEY: z.string().optional(),
+})
+  .superRefine((cfg, ctx) => {
+    if (cfg.NODE_ENV !== 'production') return;
+    const raw = cfg.SECRET_ENCRYPTION_KEY;
+    if (!raw) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SECRET_ENCRYPTION_KEY'],
+        message:
+          'SECRET_ENCRYPTION_KEY is required in production (tenant channel/connector secrets would otherwise be stored in plaintext).',
+      });
+      return;
+    }
+    const key = /^[0-9a-fA-F]{64}$/.test(raw) ? Buffer.from(raw, 'hex') : Buffer.from(raw, 'base64');
+    if (key.length !== 32) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SECRET_ENCRYPTION_KEY'],
+        message: 'SECRET_ENCRYPTION_KEY must decode to exactly 32 bytes (64 hex chars or base64).',
+      });
+    }
+  });
 
 export type Env = z.infer<typeof envSchema>;
 

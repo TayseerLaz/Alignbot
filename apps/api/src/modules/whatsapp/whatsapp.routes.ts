@@ -42,7 +42,7 @@ import { z } from 'zod';
 import { recordAudit } from '../../lib/audit.js';
 import { attributeBroadcastResponse } from '../../lib/broadcast-response.js';
 import { generateOpaqueToken } from '../../lib/crypto.js';
-import { withRlsBypass } from '../../lib/db.js';
+import { withRlsBypass, withTenant, type Tx } from '../../lib/db.js';
 import { env } from '../../lib/env.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 import { getRedis } from '../../lib/redis.js';
@@ -2553,7 +2553,14 @@ async function maybeReplyAsBot(args: {
   const { isOpenAIConfigured } = await import('../../lib/openai.js');
   if (!isOpenAIConfigured()) return;
 
-  const { withRlsBypass } = await import('../../lib/db.js');
+  // F-02: the whole bot hot path runs under the tenant role so Postgres RLS is
+  // a real backstop, not just the explicit org filters in each WHERE clause.
+  // We bind the local name `withRlsBypass` to a tenant-scoped wrapper so every
+  // call site below is unchanged while now running RLS-ON (org is always known
+  // here as args.organizationId). A forgotten org filter can no longer leak
+  // cross-tenant — the tenant_isolation policy blocks it at the database.
+  const withRlsBypass = <T>(fn: (tx: Tx) => Promise<T>): Promise<T> =>
+    withTenant(args.organizationId, fn);
   const { buildBotResponse, gatherBotData } = await import('../../lib/bot-engine.js');
 
   // Phase 13 — pipeline stopwatch (one per inbound message). Threaded
@@ -3555,9 +3562,10 @@ async function maybeReplyAsBot(args: {
           // bank-transfer/myfatoorah/stripe/paypal). Falls back to the
           // platform-global MyFatoorah env when no per-tenant config exists.
           let resolution:
-            | { kind: 'url'; url: string }
+            | { kind: 'url'; url: string; ref?: string | null }
             | { kind: 'text'; text: string }
             | null = null;
+          let payProvider = 'none';
           const pcfg = await withRlsBypass((tx) =>
             tx.paymentConfig.findUnique({ where: { organizationId: args.organizationId } }),
           );
@@ -3582,13 +3590,28 @@ async function maybeReplyAsBot(args: {
               payCtx,
               args.log,
             );
+            if (resolution) payProvider = pcfg.provider;
           }
           if (!resolution) {
             const { createInvoice, isMyFatoorahConfigured } = await import('../../lib/myfatoorah.js');
             if (isMyFatoorahConfigured()) {
               const invoice = await createInvoice(payCtx, args.log);
-              if (invoice) resolution = { kind: 'url', url: invoice.invoiceUrl };
+              if (invoice) {
+                resolution = { kind: 'url', url: invoice.invoiceUrl, ref: String(invoice.invoiceId) };
+                payProvider = 'myfatoorah';
+              }
             }
+          }
+          // F-04: record the gateway + external ref so the inbound payment
+          // webhook can correlate this order back and mark it paid.
+          if (resolution?.kind === 'url' && payProvider !== 'none') {
+            const { recordPaymentIntent } = await import('../../lib/payments/confirm.js');
+            await recordPaymentIntent({
+              organizationId: args.organizationId,
+              cartId: draftCart.id,
+              provider: payProvider,
+              ref: resolution.ref ?? null,
+            });
           }
           if (resolution?.kind === 'url') {
             rawReply = rawReply

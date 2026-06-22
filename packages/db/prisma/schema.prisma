@@ -183,6 +183,8 @@ enum NotificationKind {
   // Cart flow — pings admins when a new cart lands so the inbox stays
   // out of the kitchen's way.
   cart_received
+  // Payment confirmation (F-04) — a gateway webhook confirmed an order paid.
+  order_paid
 }
 
 enum NotificationSeverity {
@@ -276,6 +278,8 @@ enum WebhookEventKind {
   cart_created
   cart_status_changed
   cart_item_added
+  // Payments (F-04)
+  order_paid
 }
 
 enum AssetKind {
@@ -1467,6 +1471,16 @@ model Cart {
   // Denormalized count for fast list rendering — kept in sync by the
   // route layer (no Prisma middleware to do it implicitly).
   itemsCount     Int      @default(0) @map("items_count")
+  // ---- Payment confirmation (F-04) ---------------------------------------
+  // The gateway that minted the order's payment link, and the external
+  // reference we correlate inbound payment webhooks against (e.g. the
+  // MyFatoorah InvoiceId). paymentStatus: null = no online payment expected,
+  // 'pending' = link issued/awaiting payment, 'paid' = webhook confirmed,
+  // 'failed' = gateway reported a failed/expired payment. paidAt is set once.
+  paymentProvider String?   @map("payment_provider")
+  paymentRef      String?   @map("payment_ref")
+  paymentStatus   String?   @map("payment_status")
+  paidAt          DateTime? @map("paid_at")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
@@ -1476,6 +1490,8 @@ model Cart {
 
   @@index([organizationId, status, createdAt(sort: Desc)])
   @@index([organizationId, customerPhone])
+  // Fast webhook correlation: look up the order by gateway + external ref.
+  @@index([organizationId, paymentProvider, paymentRef])
   @@map("carts")
 }
 

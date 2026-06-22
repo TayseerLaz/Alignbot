@@ -7,8 +7,8 @@
   "scripts": {
     "build": "echo 'worker: no build step — running via tsx at runtime'",
     "clean": "rm -rf dist .turbo",
-    "dev": "tsx watch --env-file=../../.env --clear-screen=false src/index.ts",
-    "start": "tsx src/index.ts",
+    "dev": "tsx watch --conditions=source --env-file=../../.env --clear-screen=false src/index.ts",
+    "start": "tsx --conditions=source src/index.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },

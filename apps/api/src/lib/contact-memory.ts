@@ -14,12 +14,12 @@
 //             latest turn into the stored persona. Fire-and-forget AFTER the
 //             reply has been sent, so it never adds latency for the customer.
 //
-// Both paths use withRlsBypass (the bot runs outside a tenant tx) and
-// therefore ALWAYS scope by organizationId in the where-clause.
+// Both paths run under withTenant (F-02 — RLS is the backstop) and ALSO scope
+// by organizationId in the where-clause as defence-in-depth.
 
 import type { Prisma } from '@aligned/db';
 
-import { withRlsBypass } from './db.js';
+import { withTenant } from './db.js';
 import { completeFast } from './openai.js';
 import { getRedis } from './redis.js';
 
@@ -36,7 +36,7 @@ export async function loadPersonaBlock(
   phoneE164: string,
 ): Promise<PersonaBlock | null> {
   try {
-    const row = await withRlsBypass((tx) =>
+    const row = await withTenant(organizationId, (tx) =>
       tx.contactMemory.findUnique({
         where: { organizationId_phoneE164: { organizationId, phoneE164 } },
         select: { persona: true, language: true },
@@ -98,7 +98,7 @@ export async function loadRecentOrders(
   limit = 3,
 ): Promise<PastOrder[]> {
   try {
-    const rows = await withRlsBypass((tx) =>
+    const rows = await withTenant(organizationId, (tx) =>
       tx.cart.findMany({
         where: {
           organizationId,
@@ -173,7 +173,7 @@ export async function updateContactMemory(args: {
     } catch {
       /* redis unavailable — proceed without throttling */
     }
-    const existing = await withRlsBypass((tx) =>
+    const existing = await withTenant(args.organizationId, (tx) =>
       tx.contactMemory.findUnique({
         where: {
           organizationId_phoneE164: {
@@ -231,7 +231,7 @@ export async function updateContactMemory(args: {
         ? result.facts
         : (existing?.facts as Record<string, unknown> | undefined) ?? {};
 
-    await withRlsBypass((tx) =>
+    await withTenant(args.organizationId, (tx) =>
       tx.contactMemory.upsert({
         where: {
           organizationId_phoneE164: {

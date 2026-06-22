@@ -21,7 +21,27 @@ type Creds = {
   stripeSecretKey?: string;
   paypalClientId?: string;
   paypalSecret?: string;
+  // Webhook-verification secrets (F-04) — authenticate inbound payment events.
+  stripeWebhookSecret?: string;
+  myfatoorahWebhookSecret?: string;
+  paypalWebhookId?: string;
 };
+
+// Whether inbound payments for the active provider can be auto-confirmed —
+// i.e. a webhook-verification secret is configured. Gateways that have no
+// online callback (cash/bank/static) are considered "n/a" → true.
+function confirmationReady(provider: PaymentProvider, creds: Creds): boolean {
+  switch (provider) {
+    case 'stripe':
+      return !!creds.stripeWebhookSecret;
+    case 'myfatoorah':
+      return !!creds.myfatoorahWebhookSecret;
+    case 'paypal':
+      return !!creds.paypalWebhookId;
+    default:
+      return true; // no async confirmation needed for none/cash/bank/static
+  }
+}
 
 function parseCreds(encrypted: string | null): Creds {
   if (!encrypted) return {};
@@ -71,7 +91,11 @@ function serialize(row: {
     hasMyfatoorahKey: !!creds.myfatoorahApiKey,
     hasStripeKey: !!creds.stripeSecretKey,
     hasPaypalCreds: !!(creds.paypalClientId && creds.paypalSecret),
+    hasStripeWebhookSecret: !!creds.stripeWebhookSecret,
+    hasMyfatoorahWebhookSecret: !!creds.myfatoorahWebhookSecret,
+    hasPaypalWebhookId: !!creds.paypalWebhookId,
     ready: isReady(provider, creds, row.staticLinkUrl, row.bankDetails),
+    paymentConfirmationReady: confirmationReady(provider, creds),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
@@ -138,6 +162,9 @@ export default async function paymentRoutes(app: FastifyInstance) {
         applyCred('stripeSecretKey', b.stripeSecretKey);
         applyCred('paypalClientId', b.paypalClientId);
         applyCred('paypalSecret', b.paypalSecret);
+        applyCred('stripeWebhookSecret', b.stripeWebhookSecret);
+        applyCred('myfatoorahWebhookSecret', b.myfatoorahWebhookSecret);
+        applyCred('paypalWebhookId', b.paypalWebhookId);
 
         const encryptedCreds =
           Object.keys(creds).length > 0 ? encryptSecret(JSON.stringify(creds)) : null;

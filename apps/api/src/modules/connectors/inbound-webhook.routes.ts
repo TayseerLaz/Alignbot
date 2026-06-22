@@ -7,6 +7,7 @@
 // Header: X-Aligned-Signature: sha256=<hex(hmac(secret, timestamp + "." + body))>
 //         X-Aligned-Timestamp: <unix-seconds>
 import { ApiErrorCode } from '@aligned/shared';
+import { decryptSecret } from '@aligned/db';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -75,8 +76,16 @@ export default async function inboundWebhookRoutes(app: FastifyInstance) {
       );
       if (!connector || !connector.webhookSecret) throw notFound('Connector not found or webhook disabled.');
 
-      const rawBody = JSON.stringify(req.body ?? {});
-      if (!verifySignature(connector.webhookSecret, rawBody, timestamp, signature)) {
+      // Hash the ORIGINAL bytes Fastify received (captured at req.rawBody by the
+      // content-type parser in server.ts), never a Node re-serialization. A
+      // JSON.stringify(req.body) round-trip reorders keys and changes escaping,
+      // so it both breaks legitimate senders whose serialization differs and
+      // weakens the integrity guarantee the HMAC is supposed to provide (F-03).
+      const rawBody =
+        (req as unknown as { rawBody?: string }).rawBody ?? JSON.stringify(req.body ?? {});
+      // webhookSecret is encrypted at rest (F-01) — decrypt before HMAC compare.
+      const webhookSecret = decryptSecret(connector.webhookSecret);
+      if (!verifySignature(webhookSecret, rawBody, timestamp, signature)) {
         throw unauthorized(ApiErrorCode.AUTH_TOKEN_INVALID, 'Invalid signature.');
       }
 

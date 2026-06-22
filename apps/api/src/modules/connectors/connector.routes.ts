@@ -22,11 +22,14 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
+import { decryptJsonSecret, encryptJsonSecret, encryptSecret } from '@aligned/db';
+
 import { recordAudit } from '../../lib/audit.js';
 import { generateOpaqueToken } from '../../lib/crypto.js';
 import { env } from '../../lib/env.js';
 import { badRequest, conflict, notFound } from '../../lib/errors.js';
 import { getSyncQueue } from '../../lib/queues.js';
+import { safeFetch } from '../../lib/safe-fetch.js';
 import { assertSafeOutboundUrl, UrlGuardError } from '@aligned/shared';
 
 function webhookUrlFor(connectorId: string, hasSecret: boolean): string | null {
@@ -116,10 +119,11 @@ export default async function connectorRoutes(app: FastifyInstance) {
             entityKind: req.body.entityKind,
             endpointUrl: req.body.endpointUrl ?? null,
             authKind: req.body.authKind ?? 'none',
-            authConfig: req.body.authConfig as never,
+            // Encrypted at rest (F-01) — bearer tokens / API keys / basic creds.
+            authConfig: encryptJsonSecret(req.body.authConfig) as never,
             scheduleCron: req.body.scheduleCron ?? null,
             columnMapping: req.body.columnMapping as never,
-            webhookSecret,
+            webhookSecret: encryptSecret(webhookSecret),
             createdById: req.auth!.userId,
           },
         });
@@ -192,7 +196,9 @@ export default async function connectorRoutes(app: FastifyInstance) {
             endpointUrl: req.body.endpointUrl === undefined ? undefined : req.body.endpointUrl,
             authKind: req.body.authKind ?? undefined,
             authConfig:
-              req.body.authConfig === undefined ? undefined : (req.body.authConfig as never),
+              req.body.authConfig === undefined
+                ? undefined
+                : (encryptJsonSecret(req.body.authConfig) as never),
             scheduleCron: req.body.scheduleCron === undefined ? undefined : req.body.scheduleCron,
             columnMapping:
               req.body.columnMapping === undefined ? undefined : (req.body.columnMapping as never),
@@ -324,7 +330,7 @@ export default async function connectorRoutes(app: FastifyInstance) {
           },
         };
       }
-      const cfg = (connector.authConfig ?? {}) as Record<string, string>;
+      const cfg = decryptJsonSecret<Record<string, string>>(connector.authConfig) ?? {};
       const headers: Record<string, string> = { Accept: 'application/json' };
       switch (connector.authKind) {
         case 'bearer':
@@ -342,7 +348,7 @@ export default async function connectorRoutes(app: FastifyInstance) {
           break;
       }
       try {
-        const res = await fetch(connector.endpointUrl, {
+        const res = await safeFetch(connector.endpointUrl, {
           method: 'GET',
           headers,
           signal: AbortSignal.timeout(15000),

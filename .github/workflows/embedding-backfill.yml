@@ -57,7 +57,12 @@ jobs:
             cd /opt/aligned/app
             echo "=== running product embedding backfill ==="
             echo "    flags: ${ORG_FLAG} ${LIMIT_FLAG} ${DRY_RUN_FLAG}"
-            docker compose -f docker-compose.prod.yml exec -T api \
-              pnpm --filter @aligned/api exec tsx scripts/backfill-product-embeddings.ts \
+            # Production runs natively (systemd + tsx), NOT Docker — so run the
+            # script directly with the prod env sourced. --conditions=source so
+            # it imports @aligned/db/@aligned/shared from source like the
+            # services do (no stale-dist dependency).
+            set -a; . ./.env.production; set +a
+            pnpm --filter @aligned/api exec tsx --conditions=source \
+              scripts/backfill-product-embeddings.ts \
                 ${ORG_FLAG} ${LIMIT_FLAG} ${DRY_RUN_FLAG}
             echo "=== backfill complete ==="

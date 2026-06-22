@@ -24,7 +24,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
-import { withRlsBypass } from '../../lib/db.js';
+import { withRlsBypass, type Tx } from '../../lib/db.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 import type { BookingAvailability } from '../../lib/booking-slots.js';
 import type { BookingFormLite, CatalogProductLite, ShopFormLite } from '../../lib/cart-flow.js';
@@ -593,6 +593,13 @@ async function maybeReplyOnMessenger(
 ): Promise<void> {
   const { gatherBotData, buildBotResponse } = await import('../../lib/bot-engine.js');
 
+  // F-02: run the Messenger bot path under the tenant role so RLS is a real
+  // backstop. Bind the local name `withRlsBypass` to a tenant-scoped wrapper so
+  // every call below runs RLS-ON (orgId is always known here) without touching
+  // call sites; explicit org filters stay as defence-in-depth.
+  const { withTenant } = await import('../../lib/db.js');
+  const withRlsBypass = <T>(fn: (tx: Tx) => Promise<T>): Promise<T> => withTenant(orgId, fn);
+
   // Gate: bot must be deployed + the thread not human-owned / escalated.
   const thread = await withRlsBypass((tx) =>
     tx.whatsAppThread.findUnique({
@@ -632,7 +639,6 @@ async function maybeReplyOnMessenger(
   if (!channel || !channel.isActive || !channel.pageAccessToken) return;
 
   // Gather tenant data + run the channel-agnostic engine (org-scoped tx).
-  const { withTenant } = await import('../../lib/db.js');
   const data = await withTenant(orgId, (tx) => gatherBotData(tx, orgId));
   const config = (data as { config?: { deployedAt?: Date | null } }).config;
   if (!config?.deployedAt) return; // bot not deployed
@@ -825,7 +831,11 @@ async function maybeReplyOnMessenger(
             select: { id: true, customerName: true },
           }),
         );
-        let resolution: { kind: 'url'; url: string } | { kind: 'text'; text: string } | null = null;
+        let resolution:
+          | { kind: 'url'; url: string; ref?: string | null }
+          | { kind: 'text'; text: string }
+          | null = null;
+        let payProvider = 'none';
         if (draftCart) {
           const payCtx = {
             organizationId: orgId,
@@ -862,6 +872,7 @@ async function maybeReplyOnMessenger(
               payCtx,
               log,
             );
+            if (resolution) payProvider = pcfg.provider;
           }
           if (!resolution) {
             const { createInvoice, isMyFatoorahConfigured } = await import(
@@ -869,8 +880,22 @@ async function maybeReplyOnMessenger(
             );
             if (isMyFatoorahConfigured()) {
               const invoice = await createInvoice(payCtx, log);
-              if (invoice) resolution = { kind: 'url', url: invoice.invoiceUrl };
+              if (invoice) {
+                resolution = { kind: 'url', url: invoice.invoiceUrl, ref: String(invoice.invoiceId) };
+                payProvider = 'myfatoorah';
+              }
             }
+          }
+          // F-04: record which gateway + external ref this order is awaiting,
+          // so the inbound payment webhook can correlate it back and mark paid.
+          if (resolution?.kind === 'url' && payProvider !== 'none') {
+            const { recordPaymentIntent } = await import('../../lib/payments/confirm.js');
+            await recordPaymentIntent({
+              organizationId: orgId,
+              cartId: draftCart.id,
+              provider: payProvider,
+              ref: resolution.ref ?? null,
+            });
           }
         }
         if (resolution?.kind === 'url') {

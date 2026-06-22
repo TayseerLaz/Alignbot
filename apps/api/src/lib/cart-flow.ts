@@ -7,7 +7,11 @@
 import type { BookingAvailability } from './booking-slots.js';
 import { resolveSlotFromText, slotHasRoom } from './booking-slots.js';
 import { parseAddedItems } from './cart-parser.js';
-import { withRlsBypass } from './db.js';
+// F-02: the bot hot path runs under withTenant (RLS as a backstop), not
+// withRlsBypass. Every query still carries an explicit organizationId filter as
+// defence-in-depth, but a forgotten filter can no longer leak cross-tenant —
+// the aligned_app role + tenant_isolation policy block it at the database.
+import { withTenant } from './db.js';
 
 export interface ShopFormLite {
   currency: string;
@@ -78,7 +82,7 @@ export async function captureBooking(args: {
     }
   }
 
-  const result = await withRlsBypass(async (tx) => {
+  const result = await withTenant(args.orgId, async (tx) => {
     const recent = await tx.booking.findFirst({
       where: {
         organizationId: args.orgId,
@@ -156,7 +160,7 @@ export async function loadDraftCartState(
     }
   | null
 > {
-  return withRlsBypass(async (tx) => {
+  return withTenant(orgId, async (tx) => {
     const draft = await tx.cart.findFirst({
       where: { organizationId: orgId, threadId, status: 'draft' },
       include: { items: true },
@@ -198,7 +202,7 @@ export async function syncDraftFromReply(args: {
   );
   if (parsed.length === 0) return;
 
-  await withRlsBypass(async (tx) => {
+  await withTenant(args.orgId, async (tx) => {
     let draft = await tx.cart.findFirst({
       where: { organizationId: args.orgId, threadId: args.threadId, status: 'draft' },
       include: { items: true },
@@ -273,7 +277,7 @@ export async function captureCart(args: {
   shopForm: ShopFormLite;
   products: CatalogProductLite[];
 }): Promise<{ id: string; itemsCount: number; totalMinor: number; currency: string } | null> {
-  return withRlsBypass(async (tx) => {
+  return withTenant(args.orgId, async (tx) => {
     const draft = await tx.cart.findFirst({
       where: { organizationId: args.orgId, threadId: args.threadId, status: 'draft' },
       include: { items: true },

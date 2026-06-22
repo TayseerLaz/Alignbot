@@ -1,8 +1,26 @@
 name: Deploy
 
+# ⚠️ AUTO-DEPLOY IS DISABLED ON PURPOSE.
+#
+# The push-to-main trigger is intentionally removed: this GitHub account cannot
+# run the SSH deploy step (an account-level Actions restriction outside this
+# repo's control), so every push produced a RED, misleading "deploy failed"
+# run. Until that account issue is resolved, production is deployed MANUALLY:
+#
+#     ssh <server>            # host/port live in repo GitHub secrets
+#     cd /opt/aligned/app && git pull
+#     bash infra/scripts/redeploy.sh
+#
+# redeploy.sh rebuilds the workspace packages, runs `prisma migrate deploy`
+# (now self-sufficient on a fresh DB — see migration 20260421082152_rls_helpers),
+# applies rls.sql, rebuilds web, and restarts the systemd services (canonical
+# unit files now live in infra/systemd/). Do NOT run deploy-remote.sh by hand —
+# it does heavier first-time bootstrap and is meant to run from this Action.
+#
+# This workflow is kept (workflow_dispatch only) so it can be triggered manually
+# the moment the account-level blocker is lifted — re-add the `push:` trigger
+# below to restore auto-deploy.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 # Native deploy: SSH to the server, git pull, pnpm build, systemctl restart.

@@ -1,7 +1,7 @@
 'use client';
 
-import { Menu, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Menu, Search } from 'lucide-react';
+import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/kbd';
@@ -9,9 +9,6 @@ import { Kbd } from '@/components/ui/kbd';
 import { CommandPaletteProvider, useCommandPalette } from './command-palette';
 import { Sidebar } from './sidebar';
 import { TopBar } from './top-bar';
-
-// localStorage key for the persisted collapse preference.
-const COLLAPSED_KEY = 'aligned:sidebar:collapsed';
 
 // The ⌘K trigger — a search-box affordance so the command palette is
 // discoverable (not just a hidden hotkey). Full pill on desktop, icon on mobile.
@@ -37,36 +34,13 @@ function CommandTrigger() {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(COLLAPSED_KEY);
-      if (saved === '1') setCollapsed(true);
-    } catch {
-      /* localStorage blocked → keep default */
-    }
-  }, []);
-  const toggleCollapsed = () => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      try {
-        window.localStorage.setItem(COLLAPSED_KEY, next ? '1' : '0');
-      } catch {
-        /* noop */
-      }
-      return next;
-    });
-  };
 
   return (
     <CommandPaletteProvider>
       <div className="flex h-dvh bg-surface-muted">
-        <aside
-          className={`hidden h-dvh shrink-0 border-r border-border bg-surface transition-[width] duration-200 ease-in-out lg:block ${
-            collapsed ? 'w-[4.25rem]' : 'w-60'
-          }`}
-        >
-          <Sidebar collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
+        {/* Desktop sidebar — fixed width, always expanded. */}
+        <aside className="hidden h-dvh w-60 shrink-0 border-r border-border bg-surface lg:block">
+          <Sidebar />
         </aside>
 
         {/* Mobile sidebar drawer */}
@@ -96,20 +70,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               <Menu className="size-5" />
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={toggleCollapsed}
-              className="hidden lg:inline-flex"
-              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            >
-              {collapsed ? <PanelLeftOpen className="size-5" /> : <PanelLeftClose className="size-5" />}
-            </Button>
             <CommandTrigger />
             <TopBar />
           </header>
-          <main className="flex-1 overflow-y-auto">
+          {/* overscroll-none stops the rubber-band/scroll-chaining at the top and
+              bottom of the content — the page stops exactly at its ends. */}
+          <main className="flex-1 overflow-y-auto overscroll-none">
             <div className="container-page space-y-5 py-6 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
               {children}
             </div>

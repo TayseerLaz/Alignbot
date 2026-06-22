@@ -266,6 +266,8 @@
     letter-spacing: -0.006em;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    /* Stop the page rubber-banding past the top/bottom (and scroll-chaining). */
+    overscroll-behavior: none;
   }
   /* Neutral-minimal: no display serif. Headings are Plus Jakarta Sans with
      more WEIGHT (not size) for hierarchy, tight tracking for a crisp,

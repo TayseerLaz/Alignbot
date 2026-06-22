@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 
 interface Category {
@@ -212,11 +213,31 @@ export default function CategoriesPage() {
               </tr>
             </thead>
             <tbody>
-              {cats.isLoading ? (
-                <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-foreground-muted">Loading…</td>
-                </tr>
-              ) : null}
+              {cats.isLoading
+                ? Array.from({ length: 5 }).map((_, i) => (
+                    <tr key={`skeleton-${i}`} className="border-b border-border last:border-0">
+                      <td className="px-4 py-4">
+                        <Skeleton className="h-4 w-4" />
+                      </td>
+                      <td className="px-4 py-4">
+                        <Skeleton className="h-4 w-4" />
+                      </td>
+                      <td className="px-6 py-4">
+                        <Skeleton className="h-4 w-32" />
+                      </td>
+                      <td className="px-6 py-4">
+                        <Skeleton className="h-4 w-24" />
+                      </td>
+                      <td className="px-6 py-4">
+                        <Skeleton className="h-4 w-8" />
+                      </td>
+                      <td className="px-6 py-4">
+                        <Skeleton className="h-4 w-8" />
+                      </td>
+                      <td className="px-6 py-4" />
+                    </tr>
+                  ))
+                : null}
               {categories.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-6 py-12 text-center text-foreground-muted">No categories yet.</td>
@@ -400,7 +421,7 @@ function CategoryLinkedList({
         {title}
       </p>
       {loading ? (
-        <p className="text-xs text-foreground-muted">Loading…</p>
+        <Skeleton className="h-4 w-24" />
       ) : empty ? (
         <p className="text-xs italic text-foreground-subtle">{emptyHint}</p>
       ) : items.length === 0 ? (

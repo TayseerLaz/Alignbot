@@ -28,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 
@@ -161,9 +162,11 @@ export default function SuppressionsPage() {
               <ShieldOff className="size-4" /> Suppression list
             </CardTitle>
             <CardDescription className="text-xs">
-              {listQ.isLoading
-                ? 'Loading…'
-                : `${rows.length} row${rows.length === 1 ? '' : 's'}`}
+              {listQ.isLoading ? (
+                <Skeleton className="h-3.5 w-16" />
+              ) : (
+                `${rows.length} row${rows.length === 1 ? '' : 's'}`
+              )}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">

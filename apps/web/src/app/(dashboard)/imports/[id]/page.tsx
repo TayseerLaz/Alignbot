@@ -26,6 +26,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Skeleton, SkeletonRows } from '@/components/ui/skeleton';
 import { api, ApiError, getAccessToken } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -65,7 +66,14 @@ export default function ImportDetailPage() {
   });
 
   if (job.isLoading || !job.data) {
-    return <div className="text-sm text-foreground-muted">Loading…</div>;
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-4 w-1/3" />
+        <Skeleton className="h-3.5 w-full" />
+        <Skeleton className="h-3.5 w-full" />
+        <Skeleton className="h-3.5 w-2/3" />
+      </div>
+    );
   }
   const j = job.data.data;
   const inProgress = ['pending', 'validating', 'processing'].includes(j.status);
@@ -149,7 +157,9 @@ export default function ImportDetailPage() {
         </CardHeader>
         <CardContent className="p-0">
           {rows.isLoading ? (
-            <p className="px-6 py-8 text-center text-sm text-foreground-muted">Loading rows…</p>
+            <div className="py-2">
+              <SkeletonRows rows={5} cols={3} />
+            </div>
           ) : (rows.data?.data ?? []).length === 0 ? (
             <p className="px-6 py-8 text-center text-sm text-foreground-muted">
               {showFailedOnly ? 'No failed rows. Nice!' : 'No rows recorded yet.'}

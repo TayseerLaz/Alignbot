@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { api, ApiError, getAccessToken } from '@/lib/api';
 
 interface TagBucket {
@@ -188,8 +189,8 @@ export default function ContactsPage() {
               <tbody>
                 {contactsQuery.isLoading ? (
                   <tr>
-                    <td colSpan={7} className="px-6 py-8 text-center text-foreground-muted">
-                      Loading…
+                    <td colSpan={7} className="p-0">
+                      <SkeletonRows rows={5} cols={5} />
                     </td>
                   </tr>
                 ) : null}

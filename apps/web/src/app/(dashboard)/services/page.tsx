@@ -23,6 +23,7 @@ import {
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 import { formatMoney, formatRelative } from '@/lib/format';
 
@@ -247,7 +248,9 @@ export default function ServicesPage() {
 
         <CardContent className="p-0">
           {servicesQuery.isLoading ? (
-            <div className="px-6 py-12 text-center text-sm text-foreground-muted">Loading…</div>
+            <div className="py-2">
+              <SkeletonRows rows={6} cols={5} />
+            </div>
           ) : services.length === 0 ? (
             <EmptyState
               icon={Briefcase}

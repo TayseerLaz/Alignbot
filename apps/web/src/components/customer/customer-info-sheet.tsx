@@ -19,6 +19,7 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -168,7 +169,22 @@ export function CustomerInfoSheet({
         </div>
 
         {q.isLoading ? (
-          <div className="p-8 text-center text-sm text-foreground-muted">Loading…</div>
+          <div className="space-y-6 p-5">
+            <div className="space-y-2">
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-3/4" />
+            </div>
+            <div className="space-y-2">
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="h-4 w-2/3" />
+            </div>
+            <div className="space-y-2">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-1/2" />
+            </div>
+          </div>
         ) : (
           <>
             {/* Profile */}

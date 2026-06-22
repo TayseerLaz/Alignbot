@@ -22,6 +22,7 @@ import {
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -71,7 +72,7 @@ export default function ApiKeysPage() {
         </CardHeader>
         <CardContent className="p-0">
           {list.isLoading ? (
-            <p className="px-6 py-8 text-center text-sm text-foreground-muted">Loading…</p>
+            <SkeletonRows rows={5} cols={3} className="px-3 py-2" />
           ) : (list.data?.data ?? []).length === 0 ? (
             <EmptyState
               icon={KeyRound}

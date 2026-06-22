@@ -17,6 +17,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -195,7 +196,19 @@ export function AdminPlatformDashboard({ greeting }: { greeting: string }) {
           </CardHeader>
           <CardContent className="p-0">
             {orgs.isLoading ? (
-              <p className="px-6 py-8 text-center text-sm text-foreground-muted">Loading…</p>
+              <ul className="divide-y divide-border">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <li key={i} className="flex items-center justify-between gap-4 px-4 py-3">
+                    <div className="space-y-1.5">
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="h-3 w-20" />
+                    </div>
+                    <Skeleton className="h-5 w-16 rounded-full" />
+                    <Skeleton className="hidden h-4 w-12 sm:block" />
+                    <Skeleton className="h-4 w-24" />
+                  </li>
+                ))}
+              </ul>
             ) : ranked.length === 0 ? (
               <p className="px-6 py-8 text-center text-sm text-foreground-muted">No tenants yet.</p>
             ) : (

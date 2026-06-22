@@ -31,6 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 
 const FIELD_OPTIONS = [
@@ -113,8 +114,8 @@ export default function SegmentsManager({ showHeader = true }: { showHeader?: bo
               <tbody>
                 {segmentsQuery.isLoading ? (
                   <tr>
-                    <td colSpan={5} className="px-6 py-8 text-center text-foreground-muted">
-                      Loading…
+                    <td colSpan={5} className="p-0">
+                      <SkeletonRows rows={5} cols={4} />
                     </td>
                   </tr>
                 ) : null}

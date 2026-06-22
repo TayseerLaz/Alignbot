@@ -26,6 +26,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 
@@ -269,7 +270,11 @@ export default function AlignedAdminSystemPage() {
         </CardHeader>
         <CardContent className="space-y-2">
           {!h ? (
-            <p className="text-sm text-foreground-muted">Loading…</p>
+            <div className="space-y-2">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
           ) : (
             <>
               <QueueRow name="Imports" icon={Inbox} w={h.queues.import.waiting} a={h.queues.import.active} f={h.queues.import.failed} />
@@ -410,7 +415,12 @@ export default function AlignedAdminSystemPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {!traffic.data ? (
-            <p className="text-sm text-foreground-muted">Loading…</p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+            </div>
           ) : (
             <>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">

@@ -21,6 +21,7 @@ import {
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError } from '@/lib/api';
 
@@ -76,7 +77,17 @@ export default function CannedResponsesPage() {
         </CardHeader>
         <CardContent className="p-0">
           {list.isLoading ? (
-            <p className="px-6 py-8 text-center text-sm text-foreground-muted">Loading…</p>
+            <ul className="divide-y divide-border">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <li key={i} className="flex items-start justify-between gap-3 px-6 py-3">
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Skeleton className="h-4 w-24" />
+                    <Skeleton className="h-4 w-3/4" />
+                  </div>
+                  <Skeleton className="h-8 w-8 shrink-0" />
+                </li>
+              ))}
+            </ul>
           ) : rows.length === 0 ? (
             <EmptyState
               icon={Clock}

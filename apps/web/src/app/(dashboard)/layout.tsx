@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 
 import { AppShell } from '@/components/shell/app-shell';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useSession } from '@/lib/session';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -36,8 +37,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (status !== 'authenticated') {
     return (
-      <div className="grid min-h-dvh place-items-center text-sm text-foreground-muted">
-        Loading…
+      <div className="grid min-h-dvh place-items-center">
+        <div className="w-48 space-y-3">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-2/3" />
+        </div>
       </div>
     );
   }

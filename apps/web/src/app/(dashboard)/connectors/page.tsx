@@ -43,6 +43,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -126,7 +127,7 @@ export default function ConnectorsPage() {
         </CardHeader>
         <CardContent className="p-0">
           {list.isLoading ? (
-            <p className="px-6 py-8 text-center text-sm text-foreground-muted">Loading…</p>
+            <SkeletonRows rows={5} cols={4} className="px-3 py-2" />
           ) : (list.data?.data ?? []).length === 0 ? (
             <EmptyState
               icon={PlugZap}
@@ -321,7 +322,7 @@ function RunHistory({ connectorId }: { connectorId: string }) {
   return (
     <div className="mt-4 overflow-hidden rounded-md border border-border bg-surface-muted/30">
       {runs.isLoading ? (
-        <p className="px-4 py-4 text-center text-xs text-foreground-muted">Loading runs…</p>
+        <SkeletonRows rows={3} cols={4} className="px-3 py-2" />
       ) : (runs.data?.data ?? []).length === 0 ? (
         <p className="px-4 py-4 text-center text-xs text-foreground-muted">No runs yet.</p>
       ) : (

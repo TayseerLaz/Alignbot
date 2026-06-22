@@ -31,6 +31,7 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
@@ -168,7 +169,13 @@ export default function WhatsAppPage() {
   });
 
   if (!channel || !form) {
-    return <div className="text-sm text-foreground-muted">Loading…</div>;
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-7 w-48" />
+        <Skeleton className="h-4 w-full max-w-md" />
+        <Skeleton className="h-32 w-full" />
+      </div>
+    );
   }
 
   const credsComplete = channel.hasAccessToken && !!channel.phoneNumberId;

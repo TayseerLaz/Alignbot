@@ -20,6 +20,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import TemplatesPage from '@/app/(dashboard)/whatsapp/templates/page';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { api, ApiError } from '@/lib/api';
 
@@ -161,8 +162,8 @@ function BroadcastsTab() {
             <tbody>
               {broadcastsQuery.isLoading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-foreground-muted">
-                    Loading…
+                  <td colSpan={7} className="p-0">
+                    <SkeletonRows rows={5} cols={5} />
                   </td>
                 </tr>
               ) : null}

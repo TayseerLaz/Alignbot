@@ -39,6 +39,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { SkeletonRows, SkeletonText } from '@/components/ui/skeleton';
 import { api, ApiError, setAccessToken } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 import { useSession } from '@/lib/session';
@@ -279,7 +280,7 @@ export default function AlignedAdminPage() {
         </CardHeader>
         <CardContent className="p-0">
           {orgs.isLoading ? (
-            <p className="px-6 py-8 text-center text-sm text-foreground-muted">Loading…</p>
+            <SkeletonRows rows={6} cols={5} className="px-3 py-2" />
           ) : orgRows.length === 0 ? (
             <p className="px-6 py-8 text-center text-sm text-foreground-muted">No organisations.</p>
           ) : (
@@ -634,7 +635,7 @@ function OrgDetailsDialog({ org, onClose }: { org: OrgRow | null; onClose: () =>
           </DialogDescription>
         </DialogHeader>
         {details.isLoading ? (
-          <p className="text-sm text-foreground-muted">Loading…</p>
+          <SkeletonText lines={4} className="py-2" />
         ) : details.isError || !d ? (
           <p className="text-sm text-amber-700">Could not load details.</p>
         ) : (

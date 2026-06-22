@@ -36,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { fullName, initials } from '@/lib/utils';
@@ -166,13 +167,31 @@ export default function MembersPage() {
                 </tr>
               </thead>
               <tbody>
-                {membersQuery.isLoading ? (
-                  <tr>
-                    <td colSpan={5} className="px-6 py-8 text-center text-foreground-muted">
-                      Loading…
-                    </td>
-                  </tr>
-                ) : null}
+                {membersQuery.isLoading
+                  ? Array.from({ length: 5 }).map((_, i) => (
+                      <tr key={`s-${i}`} className="border-b border-border last:border-0">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <Skeleton className="size-9 rounded-full" />
+                            <div className="space-y-1.5">
+                              <Skeleton className="h-4 w-32" />
+                              <Skeleton className="h-3 w-40" />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <Skeleton className="h-4 w-20" />
+                        </td>
+                        <td className="px-6 py-4">
+                          <Skeleton className="h-5 w-16 rounded-full" />
+                        </td>
+                        <td className="px-6 py-4">
+                          <Skeleton className="h-4 w-24" />
+                        </td>
+                        <td className="px-6 py-4" />
+                      </tr>
+                    ))
+                  : null}
 
                 {membersQuery.data?.data.map((m) => {
                   const badge = STATUS_BADGE[m.status];

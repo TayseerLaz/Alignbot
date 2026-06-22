@@ -11,13 +11,21 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 
 export default function ResetPasswordPage() {
   // useSearchParams triggers a CSR bailout that Next 15 now requires to be
   // wrapped in Suspense so the build can render a safe fallback.
   return (
-    <Suspense fallback={<div className="p-8 text-sm text-foreground-muted">Loading…</div>}>
+    <Suspense
+      fallback={
+        <div className="space-y-3">
+          <Skeleton className="h-7 w-48" />
+          <Skeleton className="h-4 w-full" />
+        </div>
+      }
+    >
       <ResetPasswordForm />
     </Suspense>
   );

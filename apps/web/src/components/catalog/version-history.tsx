@@ -17,6 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Skeleton } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -66,7 +67,17 @@ export function VersionHistory({
         </CardHeader>
         <CardContent className="p-0">
           {list.isLoading ? (
-            <p className="px-6 py-6 text-center text-xs text-foreground-muted">Loading…</p>
+            <ol className="divide-y divide-border">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <li key={i} className="flex items-start gap-3 px-4 py-3">
+                  <Skeleton className="mt-0.5 size-4 shrink-0" />
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <Skeleton className="h-4 w-20" />
+                    <Skeleton className="h-3 w-32" />
+                  </div>
+                </li>
+              ))}
+            </ol>
           ) : (list.data?.data ?? []).length === 0 ? (
             <p className="px-6 py-6 text-center text-xs text-foreground-muted">No revisions yet.</p>
           ) : (
@@ -142,7 +153,11 @@ function RevisionPreview({
         </DialogHeader>
         <div className="max-h-96 overflow-auto rounded-md border border-border bg-surface-muted p-3">
           {detail.isLoading ? (
-            <p className="text-center text-sm text-foreground-muted">Loading…</p>
+            <div className="space-y-2">
+              <Skeleton className="h-3.5 w-full" />
+              <Skeleton className="h-3.5 w-5/6" />
+              <Skeleton className="h-3.5 w-2/3" />
+            </div>
           ) : (
             <pre className="whitespace-pre-wrap break-words font-mono text-xs">
               {JSON.stringify(detail.data?.data.snapshot ?? null, null, 2)}

@@ -27,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError } from '@/lib/api';
 
@@ -104,7 +105,9 @@ export default function SequencesManager({ showHeader = true }: { showHeader?: b
               <tbody>
                 {sequencesQuery.isLoading ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-foreground-muted">Loading…</td>
+                    <td colSpan={6} className="p-0">
+                      <SkeletonRows rows={5} cols={5} />
+                    </td>
                   </tr>
                 ) : null}
                 {sequencesQuery.data?.data.length === 0 ? (

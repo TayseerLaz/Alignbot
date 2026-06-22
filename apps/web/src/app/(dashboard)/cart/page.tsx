@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -216,8 +217,8 @@ export default function CartPage() {
             <tbody>
               {list.isLoading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-foreground-muted">
-                    Loading…
+                  <td colSpan={7} className="p-0">
+                    <SkeletonRows rows={5} cols={5} />
                   </td>
                 </tr>
               ) : null}

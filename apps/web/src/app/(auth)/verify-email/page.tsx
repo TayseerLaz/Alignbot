@@ -5,13 +5,21 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 
 type State = 'idle' | 'loading' | 'success' | 'error';
 
 export default function VerifyEmailPage() {
   return (
-    <Suspense fallback={<div className="p-8 text-sm text-foreground-muted">Loading…</div>}>
+    <Suspense
+      fallback={
+        <div className="space-y-3">
+          <Skeleton className="h-7 w-48" />
+          <Skeleton className="h-4 w-full" />
+        </div>
+      }
+    >
       <VerifyEmailInner />
     </Suspense>
   );

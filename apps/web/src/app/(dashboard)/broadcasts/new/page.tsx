@@ -24,6 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError, getAccessToken } from '@/lib/api';
 
@@ -412,7 +413,11 @@ export default function NewBroadcastPage() {
                     />
                     <div className="max-h-72 overflow-y-auto rounded-md border border-border divide-y divide-border">
                       {contactsPickerQuery.isLoading ? (
-                        <p className="p-3 text-sm text-foreground-muted">Loading…</p>
+                        <div className="space-y-2 p-3">
+                          <Skeleton className="h-4 w-3/4" />
+                          <Skeleton className="h-4 w-2/3" />
+                          <Skeleton className="h-4 w-4/5" />
+                        </div>
                       ) : (contactsPickerQuery.data?.data ?? []).filter((c) =>
                           c.phoneE164.startsWith('+'),
                         ).length === 0 ? (

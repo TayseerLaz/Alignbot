@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -127,7 +128,7 @@ export default function LeadsPage() {
       <Card>
         <CardContent className="p-0">
           {leads.isLoading ? (
-            <div className="p-10 text-center text-sm text-muted-foreground">Loading…</div>
+            <SkeletonRows rows={6} cols={5} className="px-3 py-2" />
           ) : rows.length === 0 ? (
             <div className="p-10 text-center text-sm text-muted-foreground">
               No leads yet. Numbers submitted on the landing page appear here.

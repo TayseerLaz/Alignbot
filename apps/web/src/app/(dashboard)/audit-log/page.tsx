@@ -10,6 +10,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -181,7 +182,23 @@ export default function AuditLogPage() {
       <Card className="mt-6">
         <CardContent className="p-0">
           {list.isLoading ? (
-            <p className="px-6 py-8 text-center text-sm text-foreground-muted">Loading…</p>
+            <ul className="divide-y divide-border">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <li key={i} className="flex items-center justify-between gap-3 px-6 py-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Skeleton className="size-4 shrink-0" />
+                    <div className="space-y-1.5">
+                      <Skeleton className="h-4 w-40" />
+                      <Skeleton className="h-3 w-28" />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5 text-right">
+                    <Skeleton className="ml-auto h-3.5 w-24" />
+                    <Skeleton className="ml-auto h-3 w-16" />
+                  </div>
+                </li>
+              ))}
+            </ul>
           ) : rows.length === 0 ? (
             <p className="px-6 py-8 text-center text-sm text-foreground-muted">
               No activity matches your filters.

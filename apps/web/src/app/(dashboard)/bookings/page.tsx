@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { api, ApiError } from '@/lib/api';
 
@@ -423,8 +424,8 @@ export default function BookingsPage() {
             <tbody>
               {list.isLoading ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center text-foreground-muted">
-                    Loading…
+                  <td colSpan={8} className="p-0">
+                    <SkeletonRows rows={5} cols={6} />
                   </td>
                 </tr>
               ) : null}

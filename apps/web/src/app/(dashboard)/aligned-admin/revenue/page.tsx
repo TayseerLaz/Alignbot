@@ -6,6 +6,7 @@ import { TrendingDown, TrendingUp, Users } from 'lucide-react';
 import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
 
 interface Revenue {
@@ -36,7 +37,11 @@ export default function RevenuePage() {
         description="MRR, plan distribution, churn over the last 30 days. Reads live from Stripe-mirrored subscription state."
       />
       {!r ? (
-        <p className="text-sm text-foreground-muted">Loading…</p>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-32 w-full" />
+        </div>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

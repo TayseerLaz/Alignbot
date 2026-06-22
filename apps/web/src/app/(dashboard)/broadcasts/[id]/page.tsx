@@ -27,6 +27,7 @@ import { toast } from 'sonner';
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton, SkeletonRows } from '@/components/ui/skeleton';
 import { api, ApiError, getAccessToken } from '@/lib/api';
 import { connectSse } from '@/lib/sse';
 
@@ -213,7 +214,7 @@ export default function BroadcastDetailPage() {
         description={
           b
             ? `${BROADCAST_STATUS_LABELS[b.status]} · ${b.totalRecipients} recipient${b.totalRecipients === 1 ? '' : 's'}`
-            : 'Loading…'
+            : <Skeleton className="h-4 w-48" />
         }
         actions={
           <div className="flex gap-2">
@@ -374,8 +375,11 @@ export default function BroadcastDetailPage() {
       {tab === 'analytics' ? (
         analyticsQuery.isLoading || !analyticsQuery.data ? (
           <Card>
-            <CardContent className="py-10 text-center text-sm text-foreground-muted">
-              Loading analytics…
+            <CardContent className="space-y-3 py-6">
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-4 w-2/3" />
             </CardContent>
           </Card>
         ) : (
@@ -514,8 +518,8 @@ export default function BroadcastDetailPage() {
                 <tbody>
                   {recipientsQuery.isLoading ? (
                     <tr>
-                      <td colSpan={7} className="px-6 py-8 text-center text-foreground-muted">
-                        Loading…
+                      <td colSpan={7} className="p-0">
+                        <SkeletonRows rows={5} cols={5} />
                       </td>
                     </tr>
                   ) : null}

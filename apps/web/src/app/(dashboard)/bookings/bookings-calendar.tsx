@@ -20,6 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
 // Booking shape is duplicated locally rather than imported from the page
@@ -272,10 +273,12 @@ export function BookingsCalendar({
             {STATUS_COLOR[s].label}
           </span>
         ))}
-        <span className="ml-auto italic">
-          {isLoading
-            ? 'Loading…'
-            : `${bookings.filter((b) => b.appointmentAt || resolveAppointmentIso(b.fields, b.createdAt)).length} bookings with date+time`}
+        <span className="ml-auto inline-flex items-center italic">
+          {isLoading ? (
+            <Skeleton className="h-4 w-40" />
+          ) : (
+            `${bookings.filter((b) => b.appointmentAt || resolveAppointmentIso(b.fields, b.createdAt)).length} bookings with date+time`
+          )}
         </span>
       </div>
 

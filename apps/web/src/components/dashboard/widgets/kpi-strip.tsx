@@ -14,6 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   getIncompleteServices,
   getKpiStrip,
@@ -176,7 +177,10 @@ function MissingServicesHint({ subtext }: { subtext: string }) {
         <DropdownMenuLabel>Missing a description or base price</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {q.isLoading ? (
-          <p className="px-2 py-2 text-xs text-foreground-subtle">Loading…</p>
+          <div className="space-y-2 px-2 py-2">
+            <Skeleton className="h-3.5 w-40" />
+            <Skeleton className="h-3.5 w-32" />
+          </div>
         ) : q.isError ? (
           <p className="px-2 py-2 text-xs text-red-700">Couldn’t load the list.</p>
         ) : services.length === 0 ? (

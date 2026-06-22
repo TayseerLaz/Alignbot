@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MarkdownEditor } from '@/components/ui/rich-text-editor';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError } from '@/lib/api';
 import { minorToMajorString, parseMoneyMajor } from '@/lib/format';
@@ -52,7 +53,14 @@ export default function ProductEditPage() {
   const product = productQuery.data?.data;
 
   if (productQuery.isLoading || !product) {
-    return <div className="text-sm text-foreground-muted">Loading…</div>;
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-4 w-1/3" />
+        <Skeleton className="h-3.5 w-full" />
+        <Skeleton className="h-3.5 w-full" />
+        <Skeleton className="h-3.5 w-2/3" />
+      </div>
+    );
   }
 
   return (

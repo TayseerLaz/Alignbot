@@ -30,6 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 
@@ -238,9 +239,11 @@ export default function AlignedAdminProvenancePage() {
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
             <MessageCircle className="size-4" />
-            {provQ.isLoading
-              ? 'Loading…'
-              : `${rows.length} repl${rows.length === 1 ? 'y' : 'ies'}`}
+            {provQ.isLoading ? (
+              <Skeleton className="h-4 w-24" />
+            ) : (
+              `${rows.length} repl${rows.length === 1 ? 'y' : 'ies'}`
+            )}
             {provQ.data?.nextCursor ? (
               <Badge variant="muted" className="text-[10px]">
                 more available
@@ -350,7 +353,11 @@ function ProvenanceRowItem({
       {expanded ? (
         <div className="border-t border-border bg-surface-muted/30 px-3 py-2 text-xs">
           {detailQ.isLoading ? (
-            <p className="text-foreground-muted">Loading…</p>
+            <div className="space-y-2 py-1">
+              <Skeleton className="h-3.5 w-1/3" />
+              <Skeleton className="h-3.5 w-full" />
+              <Skeleton className="h-3.5 w-2/3" />
+            </div>
           ) : detailQ.error || !detailQ.data?.data ? (
             <p className="text-foreground-muted">Could not load details.</p>
           ) : (

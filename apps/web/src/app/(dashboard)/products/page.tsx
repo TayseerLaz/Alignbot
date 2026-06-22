@@ -24,6 +24,7 @@ import {
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 import { formatMoney, formatRelative } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -290,7 +291,9 @@ export default function ProductsPage() {
 
         <CardContent className="p-0">
           {productsQuery.isLoading ? (
-            <div className="px-6 py-12 text-center text-sm text-foreground-muted">Loading…</div>
+            <div className="py-2">
+              <SkeletonRows rows={6} cols={5} />
+            </div>
           ) : products.length === 0 ? (
             <EmptyState
               icon={Package}

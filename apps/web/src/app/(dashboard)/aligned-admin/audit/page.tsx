@@ -10,6 +10,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -198,7 +199,7 @@ export default function AdminAuditPage() {
       <Card className="mt-6">
         <CardContent className="p-0">
           {list.isLoading ? (
-            <p className="px-6 py-8 text-center text-sm text-foreground-muted">Loading…</p>
+            <SkeletonRows rows={6} cols={4} className="px-3 py-2" />
           ) : rows.length === 0 ? (
             <p className="px-6 py-8 text-center text-sm text-foreground-muted">No events match your filters.</p>
           ) : (

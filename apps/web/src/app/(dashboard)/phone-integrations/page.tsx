@@ -30,6 +30,7 @@ import {
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -111,7 +112,7 @@ export default function PhoneIntegrationsPage() {
         </CardHeader>
         <CardContent className="p-0">
           {list.isLoading ? (
-            <p className="px-6 py-8 text-center text-sm text-foreground-muted">Loading…</p>
+            <SkeletonRows rows={5} cols={3} className="px-3 py-2" />
           ) : (list.data?.data ?? []).length === 0 ? (
             <EmptyState
               icon={Phone}
@@ -223,7 +224,7 @@ function CallHistory({ phoneIntegrationId }: { phoneIntegrationId: string }) {
   return (
     <div className="mt-3 rounded-md border border-border bg-surface-muted/40 p-3">
       {calls.isLoading ? (
-        <p className="py-2 text-center text-xs text-foreground-muted">Loading calls…</p>
+        <SkeletonRows rows={3} cols={3} className="px-1 py-1" />
       ) : rows.length === 0 ? (
         <p className="py-2 text-center text-xs text-foreground-muted">No calls on this line yet.</p>
       ) : (

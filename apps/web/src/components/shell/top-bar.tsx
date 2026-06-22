@@ -1,8 +1,7 @@
 'use client';
 
-import { Building2, ChevronsUpDown, LogOut, Settings, User } from 'lucide-react';
+import { LogOut, Settings, User } from 'lucide-react';
 import Link from 'next/link';
-import { toast } from 'sonner';
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -23,51 +22,15 @@ import { NotificationsBell } from './notifications-bell';
 import { StatusStrip } from './status-strip';
 
 export function TopBar() {
-  const { session, signOut, switchOrg } = useSession();
+  const { session, signOut } = useSession();
   if (!session) return null;
 
-  const { user, organization, availableOrganizations } = session;
+  const { user } = session;
 
   return (
     <div className="flex flex-1 items-center justify-between gap-3">
+      {/* Org switcher removed — switch orgs via the ⌘K command palette. */}
       <div className="flex min-w-0 items-center gap-1">
-      {/* Org switcher */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="gap-2 px-2 text-sm">
-            <Building2 className="size-4 text-foreground-muted" />
-            <span className="font-medium">{organization.name}</span>
-            <span className="hidden text-xs text-foreground-subtle sm:inline">
-              {organization.role}
-            </span>
-            <ChevronsUpDown className="size-3.5 text-foreground-subtle" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="min-w-64">
-          <DropdownMenuLabel>Switch organization</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          {availableOrganizations.map((org) => (
-            <DropdownMenuItem
-              key={org.id}
-              disabled={org.id === organization.id}
-              onSelect={async () => {
-                if (org.id === organization.id) return;
-                try {
-                  await switchOrg(org.id);
-                  toast.success(`Switched to ${org.name}`);
-                } catch {
-                  toast.error('Could not switch organization.');
-                }
-              }}
-            >
-              <div className="flex flex-1 items-center justify-between">
-                <span>{org.name}</span>
-                <span className="text-xs text-foreground-subtle">{org.role}</span>
-              </div>
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
         <StatusStrip />
       </div>
 

@@ -3,14 +3,12 @@
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 
-import { getBotPerformanceToday } from '@/lib/dashboard-api';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/lib/session';
 
 // "The system reports its own state." A compact, always-visible strip so the
-// operator never has to hunt to know the platform is working: open threads,
-// escalations needing a human, and how many replies the bot handled today.
+// operator can see open conversations and anything escalated without hunting.
 // Reuses the sidebar's inbox-counts query (same key → shared cache, no extra
 // network). Hidden on small screens to keep the mobile top bar clean.
 export function StatusStrip() {
@@ -25,17 +23,9 @@ export function StatusStrip() {
     staleTime: 5_000,
   });
 
-  const bot = useQuery({
-    enabled: !!session,
-    queryKey: ['dashboard', 'bot-performance'], // shared with the dashboard widget
-    queryFn: getBotPerformanceToday,
-    staleTime: 60_000,
-  });
-
   if (!session) return null;
   const open = counts.data?.data.open ?? 0;
   const escalated = counts.data?.data.escalated ?? 0;
-  const handled = bot.data?.botHandledMessages ?? null;
 
   return (
     <div className="hidden items-center gap-1 text-xs text-foreground-muted md:flex">
@@ -46,7 +36,7 @@ export function StatusStrip() {
       >
         <span className={cn('size-1.5 rounded-full', open > 0 ? 'bg-success' : 'bg-foreground-subtle/40')} />
         <span className="font-mono tabular-nums">{open}</span>
-        <span className="text-foreground-subtle">open</span>
+        <span className="text-foreground-subtle">chats open</span>
       </Link>
 
       {escalated > 0 ? (
@@ -59,14 +49,6 @@ export function StatusStrip() {
           <span className="font-mono tabular-nums">{escalated}</span>
           <span>escalated</span>
         </Link>
-      ) : null}
-
-      {handled != null ? (
-        <span className="flex items-center gap-1.5 px-2 py-1" title="Messages the bot handled today">
-          <span className="text-foreground-subtle">bot</span>
-          <span className="font-mono tabular-nums">{handled}</span>
-          <span className="text-foreground-subtle">today</span>
-        </span>
       ) : null}
     </div>
   );

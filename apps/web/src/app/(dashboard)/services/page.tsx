@@ -3,7 +3,7 @@
 import type { Category, ServiceListItem } from '@aligned/shared';
 import { PRICE_UNIT_LABELS } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Briefcase, Clock, MoreHorizontal, Plus, Search, Trash2 } from 'lucide-react';
+import { Briefcase, Clock, MoreHorizontal, Plus, Search, Trash2, Upload } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
@@ -173,6 +173,11 @@ export default function ServicesPage() {
               }}
             >
               <Trash2 className="size-4" /> Delete all
+            </Button>
+            <Button variant="secondary" asChild>
+              <Link href="/imports?kind=service">
+                <Upload className="size-4" /> Bulk import
+              </Link>
             </Button>
             <Button onClick={createDraft} loading={creating}>
               <Plus className="size-4" /> New service

@@ -14,7 +14,8 @@ import {
   FaqVisibility,
 } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, Building2, CalendarCheck, CheckCircle2, ChevronDown, MessageSquare, Plus, Save, ScrollText, ShoppingCart, Trash2, Users } from 'lucide-react';
+import { ArrowDown, ArrowUp, Building2, CalendarCheck, CheckCircle2, ChevronDown, MessageSquare, Plus, Save, ScrollText, ShoppingCart, Trash2, Upload, Users } from 'lucide-react';
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -45,6 +46,20 @@ export default function BusinessInfoPage() {
       <PageHeader
         title="Business info"
         description="The profile, hours, FAQs, and policies the chatbot reads from. Team-only data lives in its own tab so operators can tell what the bot sees at a glance."
+        actions={
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" asChild>
+              <Link href="/imports?kind=business_info">
+                <Upload className="size-4" /> Bulk import
+              </Link>
+            </Button>
+            <Button variant="secondary" asChild>
+              <Link href="/imports?kind=faq">
+                <Upload className="size-4" /> Import FAQs
+              </Link>
+            </Button>
+          </div>
+        }
       />
       <Tabs defaultValue="profile">
         <TabsList>

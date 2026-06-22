@@ -12,7 +12,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
-import SequencesManager from '@/components/sequences/sequences-manager';
 import { PageHeader } from '@/components/shell/page-header';
 // Templates page exports its own component as default — we reuse it
 // here in embedded mode (showHeader=false) so the sidebar's collapsed
@@ -34,7 +33,7 @@ const STATUS_CLASS: Record<BroadcastStatus, string> = {
   failed: 'bg-red-50 text-red-700',
 };
 
-type TabValue = 'broadcasts' | 'templates' | 'sequences';
+type TabValue = 'broadcasts' | 'templates';
 
 export default function BroadcastsPage() {
   const router = useRouter();
@@ -42,8 +41,7 @@ export default function BroadcastsPage() {
   // Segments tab was removed (audiences are now driven by contact tags).
   // Legacy ?tab=segments deep-links fall through to the broadcasts tab.
   const rawTab = searchParams.get('tab');
-  const initialTab: TabValue =
-    rawTab === 'sequences' ? 'sequences' : rawTab === 'templates' ? 'templates' : 'broadcasts';
+  const initialTab: TabValue = rawTab === 'templates' ? 'templates' : 'broadcasts';
   const [tab, setTab] = useState<TabValue>(initialTab);
 
   // Keep the URL in sync as the user clicks between tabs so deep-links
@@ -86,7 +84,6 @@ export default function BroadcastsPage() {
         <TabsList>
           <TabsTrigger value="templates">Templates</TabsTrigger>
           <TabsTrigger value="broadcasts">Broadcasts</TabsTrigger>
-          <TabsTrigger value="sequences">Sequences</TabsTrigger>
         </TabsList>
 
         <TabsContent value="templates">
@@ -95,10 +92,6 @@ export default function BroadcastsPage() {
 
         <TabsContent value="broadcasts">
           <BroadcastsTab />
-        </TabsContent>
-
-        <TabsContent value="sequences">
-          <SequencesManager showHeader={false} />
         </TabsContent>
       </Tabs>
     </>

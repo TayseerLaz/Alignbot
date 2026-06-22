@@ -19,7 +19,7 @@ import {
   Upload,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shell/page-header';
@@ -58,6 +58,17 @@ const STATUS_BADGE: Record<
 
 export default function ImportsPage() {
   const [wizardOpen, setWizardOpen] = useState(false);
+  // When arriving via a contextual "Bulk import" button (e.g. /imports?kind=
+  // product from the Products page), pre-scope the wizard to that entity and
+  // open it automatically.
+  const [initialKind, setInitialKind] = useState<ImportEntityKind>('product');
+  useEffect(() => {
+    const k = new URLSearchParams(window.location.search).get('kind');
+    if (k && (IMPORT_ENTITY_KINDS as string[]).includes(k)) {
+      setInitialKind(k as ImportEntityKind);
+      setWizardOpen(true);
+    }
+  }, []);
   const queryClient = useQueryClient();
 
   const list = useQuery({
@@ -285,6 +296,8 @@ export default function ImportsPage() {
       </Card>
 
       <ImportWizard
+        key={initialKind}
+        initialKind={initialKind}
         open={wizardOpen}
         onOpenChange={setWizardOpen}
         onCreated={() => {
@@ -392,13 +405,15 @@ function ImportWizard({
   open,
   onOpenChange,
   onCreated,
+  initialKind = 'product',
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onCreated: () => void;
+  initialKind?: ImportEntityKind;
 }) {
   const [step, setStep] = useState<WizardStep>('pick');
-  const [entityKind, setEntityKind] = useState<ImportEntityKind>('product');
+  const [entityKind, setEntityKind] = useState<ImportEntityKind>(initialKind);
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [uploadedHeaders, setUploadedHeaders] = useState<string[] | null>(null);
@@ -415,7 +430,7 @@ function ImportWizard({
   const reset = () => {
     setStep('pick');
     setFile(null);
-    setEntityKind('product');
+    setEntityKind(initialKind);
     setUploadedHeaders(null);
     setMapping({});
     if (fileInput.current) fileInput.current.value = '';

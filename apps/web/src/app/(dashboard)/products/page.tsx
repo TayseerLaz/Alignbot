@@ -2,7 +2,7 @@
 
 import type { Category, ProductListItem } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Eye, EyeOff, MoreHorizontal, Package, Plus, Search, Trash2 } from 'lucide-react';
+import { CheckCircle2, Eye, EyeOff, MoreHorizontal, Package, Plus, Search, Trash2, Upload } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
@@ -198,6 +198,11 @@ export default function ProductsPage() {
               }}
             >
               <Trash2 className="size-4" /> Delete all
+            </Button>
+            <Button variant="secondary" asChild>
+              <Link href="/imports?kind=product">
+                <Upload className="size-4" /> Bulk import
+              </Link>
             </Button>
             <Button onClick={createDraft} loading={creating}>
               <Plus className="size-4" /> New product

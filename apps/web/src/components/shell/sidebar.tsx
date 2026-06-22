@@ -19,7 +19,6 @@ import {
   ShieldCheck,
   ShoppingCart,
   Tags,
-  Upload,
   UserPlus,
   Users,
 } from 'lucide-react';
@@ -92,7 +91,8 @@ const groups: NavGroup[] = [
     label: 'Configure',
     items: [
       { href: '/bot', label: 'AI bot builder', icon: Bot },
-      { href: '/imports', label: 'Imports', icon: Upload },
+      // Bulk import lives contextually on Products / Services / Business info now
+      // (a "Bulk import" button per page). /imports route + ⌘K still work.
       { href: '/members', label: 'Members', icon: Users },
       { href: '/audit-log', label: 'Activity log', icon: Activity },
       // Developer integrations (Connectors / Webhooks / API keys) live under

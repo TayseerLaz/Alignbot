@@ -444,9 +444,15 @@ async function assertMetaCredentialsConsistent(
     return;
   }
   if (tokenAppId && tokenAppId !== appId) {
+    // Keep the specific app ids in the server log for ops debugging — never in
+    // the tenant-facing error (it would leak another app's id).
+    log.warn(
+      { tokenAppId, enteredAppId: appId },
+      '[whatsapp] credential mismatch: token app id != entered app id',
+    );
     throw badRequest(
       ApiErrorCode.VALIDATION_ERROR,
-      `The access token belongs to Meta app ${tokenAppId}, but the App ID you entered is ${appId}. The access token, App ID, and App Secret must ALL come from the same Meta app — inbound message verification fails otherwise. Copy all three from the same app in the Meta dashboard.`,
+      "These WhatsApp credentials don't all belong to the same Meta app. Your access token, App ID, and App Secret must come from one and the same app — please re-copy all three from the same app in the Meta dashboard.",
     );
   }
 
@@ -467,7 +473,7 @@ async function assertMetaCredentialsConsistent(
     if (secretMismatch) {
       throw badRequest(
         ApiErrorCode.VALIDATION_ERROR,
-        `The App Secret doesn't match App ID ${appId}. Copy the App Secret from the SAME Meta app as the App ID and access token (Meta dashboard → App Settings → Basic → App Secret).`,
+        "The App Secret doesn't match your App ID. Please copy the App Secret from the same Meta app as your App ID and access token (Meta dashboard → App Settings → Basic).",
       );
     }
   }

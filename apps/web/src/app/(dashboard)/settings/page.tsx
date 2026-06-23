@@ -61,12 +61,14 @@ export default function SettingsPage() {
 
   async function deleteOrganization() {
     const confirmed = await confirmDialog({
-      title: `Permanently delete ${organization?.name ?? 'this organization'}?`,
+      title: `Are you sure you want to delete ${organization?.name ?? 'this organization'}?`,
       body:
         'This is irreversible. Every product, service, FAQ, audit entry, member, API key, webhook endpoint, connector, and WhatsApp message will be deleted. ' +
         'Other organizations are unaffected. You will be signed out.',
       confirmLabel: 'Delete organization',
       destructive: true,
+      // Force the admin to type "delete" before the button enables.
+      requireText: 'delete',
     });
     if (!confirmed) return;
     setDeleting(true);
@@ -148,27 +150,6 @@ export default function SettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <User className="size-4" /> Your account
-            </CardTitle>
-            <CardDescription>
-              {user
-                ? `Signed in as ${user.email}.`
-                : 'Your personal account.'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <SettingsLink
-              href="/settings/profile"
-              icon={User}
-              title="Profile & password"
-              description="Update your name, change your password."
-            />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
               <Key className="size-4" /> Integrations
             </CardTitle>
             <CardDescription>
@@ -209,22 +190,42 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        {isOrgAdmin ? (
-          <Card className="border-red-200">
-            <CardHeader>
-              <CardTitle className="text-red-700">Delete organization</CardTitle>
-              <CardDescription>
-                Hard-delete this organisation and every entity inside it. Other organisations are
-                unaffected. Refused if a member of this org is the last admin somewhere else.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button variant="danger" loading={deleting} onClick={deleteOrganization}>
-                <Trash2 className="size-4" /> Delete organization
-              </Button>
-            </CardContent>
-          </Card>
-        ) : null}
+        {/* Account + the danger zone (delete org) live together in one box. */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <User className="size-4" /> Your account
+            </CardTitle>
+            <CardDescription>
+              {user
+                ? `Signed in as ${user.email}.`
+                : 'Your personal account.'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <SettingsLink
+              href="/settings/profile"
+              icon={User}
+              title="Profile & password"
+              description="Update your name, change your password."
+            />
+
+            {isOrgAdmin ? (
+              <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/40 p-3 dark:border-red-400/30 dark:bg-red-400/10">
+                <div>
+                  <p className="text-sm font-semibold text-red-700">Delete organization</p>
+                  <p className="mt-0.5 text-xs text-foreground-muted">
+                    Hard-delete this organisation and every entity inside it. Other organisations are
+                    unaffected. Refused if a member of this org is the last admin somewhere else.
+                  </p>
+                </div>
+                <Button variant="danger" loading={deleting} onClick={deleteOrganization}>
+                  <Trash2 className="size-4" /> Delete organization
+                </Button>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
       </div>
     </>
   );

@@ -18,12 +18,12 @@ function CommandTrigger() {
     <>
       <button
         onClick={open}
-        className="hidden h-8 items-center gap-2 rounded-md border border-border bg-surface-muted pl-2.5 pr-1.5 text-sm text-foreground-subtle transition-colors hover:border-border-strong hover:text-foreground-muted sm:flex"
+        className="hidden h-8 items-center gap-2 rounded-md border border-border bg-surface-muted pl-2.5 pr-1.5 text-sm text-foreground-subtle transition-colors hover:border-border-strong hover:text-foreground-muted sm:flex sm:w-72 lg:w-80"
         aria-label="Open command palette"
       >
         <Search className="size-4" />
         <span>Search…</span>
-        <Kbd className="ml-2">⌘K</Kbd>
+        <Kbd className="ml-auto">⌘K</Kbd>
       </button>
       <Button variant="ghost" size="icon" onClick={open} className="sm:hidden" aria-label="Search">
         <Search className="size-5" />

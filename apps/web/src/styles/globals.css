@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* Dark mode is driven by a `.dark` class on <html> (see theme-provider.tsx),
+   NOT the OS preference. Bind Tailwind's `dark:` variant to that class so
+   `dark:*` utilities track the in-app theme toggle instead of prefers-color-
+   scheme (otherwise a light app on a dark-OS machine wrongly gets dark styles —
+   e.g. the oxblood sidebar showing as white). */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ============================================================================
    Hader AI design tokens — Oxblood + Sand + Signal palette.
    Brand book at /Hader AI Brand Book _standalone_.html:

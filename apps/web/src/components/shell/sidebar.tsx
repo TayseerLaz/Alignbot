@@ -228,7 +228,7 @@ export function Sidebar({
             h-7 shrinks the wordmark from the 36px default. */}
         <AlignedLogo iconOnly={collapsed} className="h-7 text-[#f7eef0]" />
       </div>
-      <nav className="flex-1 space-y-4 overflow-y-auto p-2.5">
+      <nav className="flex-1 space-y-4 overflow-y-auto overscroll-none p-2.5">
         {visibleGroups.map((group) => (
           <div key={group.label} className="space-y-0.5">
             {!collapsed ? (

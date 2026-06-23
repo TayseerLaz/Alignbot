@@ -201,7 +201,7 @@ export default function AlignedAdminSystemPage() {
   if (!session?.user.isAlignedAdmin) {
     return (
       <>
-        <PageHeader title="System health" />
+        <PageHeader backHref="/aligned-admin" backLabel="Tenants" title="System health" />
         <Card>
           <CardContent className="p-6 text-sm text-foreground-muted">
             ALIGNED admin role required.
@@ -220,13 +220,10 @@ export default function AlignedAdminSystemPage() {
   return (
     <>
       <PageHeader
+        backHref="/aligned-admin"
+        backLabel="Tenants"
         title="System health"
         description="Queue depth, Redis, and tenant counts across the platform."
-        actions={
-          <Button asChild variant="secondary">
-            <Link href="/aligned-admin">Tenants</Link>
-          </Button>
-        }
       />
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">

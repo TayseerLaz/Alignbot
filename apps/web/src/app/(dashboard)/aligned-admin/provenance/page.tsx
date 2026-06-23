@@ -145,7 +145,7 @@ export default function AlignedAdminProvenancePage() {
   if (!session?.user.isAlignedAdmin) {
     return (
       <>
-        <PageHeader title="AI provenance" />
+        <PageHeader backHref="/aligned-admin" backLabel="Tenants" title="AI provenance" />
         <Card>
           <CardContent className="p-6 text-sm text-foreground-muted">
             ALIGNED admin role required.
@@ -161,6 +161,8 @@ export default function AlignedAdminProvenancePage() {
   return (
     <>
       <PageHeader
+        backHref="/aligned-admin"
+        backLabel="Tenants"
         title="AI provenance"
         description="Every persisted bot reply, across all tenants. Click a row to inline-expand its full audit trail."
       />

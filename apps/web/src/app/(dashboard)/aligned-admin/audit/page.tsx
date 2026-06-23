@@ -108,6 +108,8 @@ export default function AdminAuditPage() {
   return (
     <>
       <PageHeader
+        backHref="/aligned-admin"
+        backLabel="Tenants"
         title="Cross-tenant audit"
         description="Every audit event across every tenant. Gated by ALIGNED super-admin."
       />

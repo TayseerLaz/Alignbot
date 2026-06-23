@@ -1,3 +1,6 @@
+import { ArrowLeft } from 'lucide-react';
+import Link from 'next/link';
+
 import { Breadcrumbs, type Crumb } from '@/components/ui/breadcrumbs';
 import { cn } from '@/lib/utils';
 
@@ -7,6 +10,10 @@ interface PageHeaderProps {
   actions?: React.ReactNode;
   /** Optional "you are here" trail above the title. */
   breadcrumbs?: Crumb[];
+  /** Optional back link shown above the title — use on any sub/detail page. */
+  backHref?: string;
+  /** Label for the back link (defaults to "Back"). */
+  backLabel?: string;
   /** Optional row below the header — filters, tabs, a segmented control. */
   children?: React.ReactNode;
   className?: string;
@@ -21,6 +28,8 @@ export function PageHeader({
   description,
   actions,
   breadcrumbs,
+  backHref,
+  backLabel,
   children,
   className,
 }: PageHeaderProps) {
@@ -28,6 +37,14 @@ export function PageHeader({
     <div className={cn('flex flex-col gap-3', className)}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1">
+          {backHref ? (
+            <Link
+              href={backHref}
+              className="-ml-1 inline-flex items-center gap-1 rounded text-xs font-medium text-foreground-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
+            >
+              <ArrowLeft className="size-3.5" /> {backLabel ?? 'Back'}
+            </Link>
+          ) : null}
           {breadcrumbs && breadcrumbs.length > 0 ? <Breadcrumbs items={breadcrumbs} /> : null}
           <h1 className="truncate text-xl font-semibold leading-tight tracking-[-0.02em] text-foreground">
             {title}

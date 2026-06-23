@@ -130,7 +130,7 @@ export default function SuppressionsPage() {
   if (!session?.user.isAlignedAdmin) {
     return (
       <>
-        <PageHeader title="Suppression list" />
+        <PageHeader backHref="/aligned-admin/provenance" backLabel="Provenance" title="Suppression list" />
         <Card>
           <CardContent className="p-6 text-sm text-foreground-muted">
             ALIGNED admin role required.
@@ -151,6 +151,8 @@ export default function SuppressionsPage() {
   return (
     <>
       <PageHeader
+        backHref="/aligned-admin/provenance"
+        backLabel="Provenance"
         title="Hallucination suppressions"
         description="Phrases the scanner should NOT flag. Global rows apply to every tenant; per-org rows apply to one tenant only. Each ✓ Not a problem click in /inbox adds a row here automatically."
       />

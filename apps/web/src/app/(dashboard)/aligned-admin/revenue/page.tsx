@@ -33,6 +33,8 @@ export default function RevenuePage() {
   return (
     <>
       <PageHeader
+        backHref="/aligned-admin"
+        backLabel="Tenants"
         title="Revenue"
         description="MRR, plan distribution, churn over the last 30 days. Reads live from Stripe-mirrored subscription state."
       />

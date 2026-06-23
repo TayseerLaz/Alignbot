@@ -86,6 +86,8 @@ export default function LeadsPage() {
   return (
     <>
       <PageHeader
+        backHref="/aligned-admin"
+        backLabel="Tenants"
         title="Leads"
         description="WhatsApp numbers captured from the hader.ai landing page."
       />

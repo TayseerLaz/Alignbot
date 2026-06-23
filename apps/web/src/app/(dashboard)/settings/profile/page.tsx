@@ -134,6 +134,8 @@ export default function ProfilePage() {
   return (
     <>
       <PageHeader
+        backHref="/settings"
+        backLabel="Settings"
         title="Profile"
         description={`Signed in as ${displayName}.`}
       />

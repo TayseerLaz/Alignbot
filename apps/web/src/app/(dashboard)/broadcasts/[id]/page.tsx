@@ -210,6 +210,8 @@ export default function BroadcastDetailPage() {
   return (
     <>
       <PageHeader
+        backHref="/broadcasts"
+        backLabel="Broadcasts"
         title={b?.name ?? 'Broadcast'}
         description={
           b

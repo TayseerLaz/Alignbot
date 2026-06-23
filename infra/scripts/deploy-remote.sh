@@ -78,7 +78,9 @@ updates = {
     'ACME_EMAIL':       os.environ.get('NEW_ACME_EMAIL', '') or DEFAULTS['ACME_EMAIL'],
     # Derived from web/api domain — keep these aligned so we
     # never end up with a CORS or cookie scope mismatch.
-    'WEB_PUBLIC_URL':   f'https://{web_domain}',
+    # NOTE: the portal runs under Next.js basePath '/app' (next.config.ts),
+    # so all email/redirect links the API mints must carry the /app prefix.
+    'WEB_PUBLIC_URL':   f'https://{web_domain}/app',
     'API_PUBLIC_URL':   f'https://{api_domain}',
     'NEXT_PUBLIC_API_URL': f'https://{api_domain}',
     'CORS_ORIGINS':     f'https://{web_domain}',

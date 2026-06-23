@@ -39,7 +39,9 @@ interface Template {
 
 interface Channel {
   id: string;
+  label: string | null;
   displayPhoneNumber: string | null;
+  isPrimary: boolean;
   isActive: boolean;
 }
 
@@ -61,7 +63,11 @@ export default function NewBroadcastPage() {
 
   // Step 1 state
   const [name, setName] = useState('');
-  const [channelId, setChannelId] = useState<string | null>(null);
+  // Multi-number: the set of numbers to send from. channelId (derived) is the
+  // first selected number; when > 1 selected the server splits recipients
+  // round-robin across them.
+  const [channelIds, setChannelIds] = useState<string[]>([]);
+  const channelId = channelIds[0] ?? null;
   const [variantATemplateId, setVariantATemplateId] = useState<string | null>(null);
   const [abTest, setAbTest] = useState(false);
   const [variantBTemplateId, setVariantBTemplateId] = useState<string | null>(null);
@@ -94,13 +100,21 @@ export default function NewBroadcastPage() {
 
   // Data
   const channelsQuery = useQuery({
-    queryKey: ['whatsapp-channel'],
-    queryFn: () => api.get<{ data: Channel }>('/api/v1/whatsapp'),
+    queryKey: ['whatsapp-numbers'],
+    queryFn: async () => {
+      await api.get('/api/v1/whatsapp'); // ensure the primary stub exists
+      return api.get<{ data: Channel[] }>('/api/v1/whatsapp/numbers');
+    },
   });
+  const channels = channelsQuery.data?.data ?? [];
 
+  // Default to the primary number once loaded.
   useEffect(() => {
-    if (channelsQuery.data?.data.id && !channelId) setChannelId(channelsQuery.data.data.id);
-  }, [channelsQuery.data, channelId]);
+    if (channels.length > 0 && channelIds.length === 0) {
+      const primary = channels.find((c) => c.isPrimary) ?? channels[0]!;
+      setChannelIds([primary.id]);
+    }
+  }, [channels, channelIds.length]);
 
   const templatesQuery = useQuery({
     queryKey: ['whatsapp-templates'],
@@ -181,6 +195,7 @@ export default function NewBroadcastPage() {
       const body: CreateBroadcastBody = {
         name,
         channelId: channelId!,
+        channelIds,
         audienceKind: effectiveKind,
         csvAssetId: audienceKind === 'csv' ? csvAssetId ?? undefined : undefined,
         audienceTags: audienceKind === 'tags' ? tagAudience : undefined,
@@ -284,12 +299,55 @@ export default function NewBroadcastPage() {
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Spring sale" />
             </div>
             <div>
-              <Label>Channel</Label>
-              <Input
-                disabled
-                value={channelsQuery.data?.data.displayPhoneNumber ?? 'Loading…'}
-                className="font-mono text-sm"
-              />
+              <Label>Send from {channels.length > 1 ? 'number(s)' : 'number'}</Label>
+              {channels.length <= 1 ? (
+                <Input
+                  disabled
+                  value={
+                    channels[0]
+                      ? channels[0].label || channels[0].displayPhoneNumber || 'WhatsApp number'
+                      : 'Loading…'
+                  }
+                  className="font-mono text-sm"
+                />
+              ) : (
+                <div className="space-y-1.5 rounded-md border border-border p-2">
+                  {channels.map((c) => {
+                    const checked = channelIds.includes(c.id);
+                    const name = c.label || c.displayPhoneNumber || 'WhatsApp number';
+                    return (
+                      <label
+                        key={c.id}
+                        className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-surface-muted"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) =>
+                            setChannelIds((prev) =>
+                              e.target.checked
+                                ? [...prev, c.id]
+                                : prev.filter((id) => id !== c.id),
+                            )
+                          }
+                        />
+                        <span className="font-medium">{name}</span>
+                        {c.isPrimary ? (
+                          <span className="text-xs text-foreground-subtle">(primary)</span>
+                        ) : null}
+                        {!c.isActive ? (
+                          <span className="text-xs text-amber-600">· not live</span>
+                        ) : null}
+                      </label>
+                    );
+                  })}
+                  <p className="px-1.5 pt-1 text-xs text-foreground-subtle">
+                    {channelIds.length > 1
+                      ? 'Recipients are split round-robin across the selected numbers — each contact is messaged once.'
+                      : 'Pick one or more numbers to send from.'}
+                  </p>
+                </div>
+              )}
             </div>
             <div>
               <Label>Template (variant A)</Label>

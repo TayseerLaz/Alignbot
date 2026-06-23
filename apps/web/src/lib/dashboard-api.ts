@@ -252,3 +252,90 @@ export async function getRecentActivity(): Promise<ActivityEvent[]> {
   );
   return res.data.events;
 }
+
+// ---------- 9. Sales & revenue · 7d ----------------------------------------
+
+export interface SalesData {
+  currency: string;
+  orders7d: number;
+  ordersToday: number;
+  revenue7dMinor: number;
+  paid7d: number;
+  aovMinor: number;
+}
+
+export async function getSales(): Promise<SalesData> {
+  const res = await api.get<{ data: SalesData }>('/api/v1/dashboard/widgets/sales');
+  return res.data;
+}
+
+// ---------- 10. Conversion funnel · 7d -------------------------------------
+
+export interface ConversionFunnelData {
+  conversations: number;
+  cartsStarted: number;
+  ordersPlaced: number;
+  ordersPaid: number;
+}
+
+export async function getConversionFunnel(): Promise<ConversionFunnelData> {
+  const res = await api.get<{ data: ConversionFunnelData }>(
+    '/api/v1/dashboard/widgets/conversion-funnel',
+  );
+  return res.data;
+}
+
+// ---------- 11. Channel mix · 7d -------------------------------------------
+
+export interface ChannelMixData {
+  channels: { channel: string; conversations: number }[];
+  voiceCalls: number;
+}
+
+export async function getChannelMix(): Promise<ChannelMixData> {
+  const res = await api.get<{ data: ChannelMixData }>('/api/v1/dashboard/widgets/channel-mix');
+  return res.data;
+}
+
+// ---------- 12. Audience & compliance --------------------------------------
+
+export interface AudienceData {
+  total: number;
+  newThisWeek: number;
+  optedOut: number;
+  blocked: number;
+}
+
+export async function getAudience(): Promise<AudienceData> {
+  const res = await api.get<{ data: AudienceData }>('/api/v1/dashboard/widgets/audience');
+  return res.data;
+}
+
+// ---------- 13. Reply quality · 7d -----------------------------------------
+
+export interface ReplyQualityData {
+  total: number;
+  flagged: number;
+}
+
+export async function getReplyQuality(): Promise<ReplyQualityData> {
+  const res = await api.get<{ data: ReplyQualityData }>(
+    '/api/v1/dashboard/widgets/reply-quality',
+  );
+  return res.data;
+}
+
+// ---------- 14. Voice calls · 7d -------------------------------------------
+
+export interface VoiceData {
+  total: number;
+  completed: number;
+  handoff: number;
+  dropped: number;
+  inProgress: number;
+}
+
+export async function getVoice(): Promise<VoiceData> {
+  const res = await api.get<{ data: VoiceData }>('/api/v1/dashboard/widgets/voice');
+  return res.data;
+}

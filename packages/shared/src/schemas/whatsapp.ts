@@ -12,6 +12,11 @@ const maskedSecretSchema = z.string().nullable();
 
 export const whatsappChannelSchema = z.object({
   id: uuidSchema,
+  // Multi-number fields: a human label, which number is the org default, and
+  // whether the AI bot auto-replies on this number.
+  label: z.string().nullable(),
+  isPrimary: z.boolean(),
+  botEnabled: z.boolean(),
   wabaId: z.string().nullable(),
   phoneNumberId: z.string().nullable(),
   displayPhoneNumber: z.string().nullable(),
@@ -41,6 +46,9 @@ export type WhatsAppChannelDto = z.infer<typeof whatsappChannelSchema>;
 // Upsert body — every field optional so the page can save partial progress.
 // Empty strings are treated as "clear this field"; omitted = "leave alone".
 export const upsertWhatsappChannelBodySchema = z.object({
+  label: z.string().trim().max(80).optional().nullable(),
+  // Per-number AI bot switch (multi-number). Omitted = leave as-is.
+  botEnabled: z.boolean().optional(),
   wabaId: z.string().trim().max(64).optional().nullable(),
   phoneNumberId: z.string().trim().max(64).optional().nullable(),
   displayPhoneNumber: z
@@ -111,6 +119,8 @@ export type WhatsAppSubscribeResult = z.infer<typeof whatsappSubscribeResultSche
 //                       Pass an empty string for URL buttons that don't
 //                       contain a placeholder.
 export const whatsappTestSendBodySchema = z.object({
+  // Multi-number: send the test from this number; omitted ⇒ the primary.
+  channelId: uuidSchema.optional(),
   to: z
     .string()
     .trim()
@@ -139,6 +149,9 @@ export const whatsappSendTextBodySchema = z.object({
     .trim()
     .regex(/^\+?[0-9]{6,16}$/, 'Use E.164 digits only, e.g. +14155551234.'),
   body: z.string().trim().min(1).max(4096),
+  // Multi-number: when set, the reply is sent FROM the number this thread
+  // belongs to (thread.whatsAppChannelId). Omitted ⇒ the org's primary number.
+  threadId: uuidSchema.optional(),
 });
 export type WhatsAppSendTextBody = z.infer<typeof whatsappSendTextBodySchema>;
 

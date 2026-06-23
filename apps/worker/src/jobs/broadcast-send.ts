@@ -78,9 +78,12 @@ function msUntilHour(tz: string, targetHour: number): number {
   return Math.max(60_000, Math.min(ms, 24 * 3600 * 1000));
 }
 
-async function consumeSendToken(orgId: string): Promise<{ ok: boolean; retryAfterMs: number }> {
+// Keyed PER NUMBER (phone_number_id) — Meta's throughput limit is per-number,
+// so with multi-number sending each number gets its own bucket. Falls back to
+// the org id when no phone number id is available.
+async function consumeSendToken(bucketKey: string): Promise<{ ok: boolean; retryAfterMs: number }> {
   const redis = getConnection();
-  const key = `wasend:${orgId}:${Math.floor(Date.now() / 1000)}`;
+  const key = `wasend:${bucketKey}:${Math.floor(Date.now() / 1000)}`;
   const count = await redis.incr(key);
   if (count === 1) await redis.expire(key, 2);
   if (count > TOKEN_LIMIT) return { ok: false, retryAfterMs: 1000 };
@@ -230,12 +233,6 @@ export function startBroadcastSendWorker() {
         throw new DelayedError();
       }
 
-      // Token bucket — if exhausted, throw to let BullMQ retry with backoff.
-      const tok = await consumeSendToken(organizationId);
-      if (!tok.ok) {
-        throw new Error(`token-bucket: retry in ${tok.retryAfterMs}ms`);
-      }
-
       const recipient = await prisma.broadcastRecipient.findUnique({
         where: { id: recipientId },
         include: { contact: { select: { optedOutAt: true, blockedAt: true, timezone: true } } },
@@ -283,8 +280,11 @@ export function startBroadcastSendWorker() {
         }
       }
 
+      // Multi-number: send from the number this recipient was assigned at
+      // fanout; fall back to the broadcast's primary number for legacy rows.
+      const sendChannelId = recipient.whatsAppChannelId ?? broadcast.channelId;
       const channel = await prisma.whatsAppChannel.findUnique({
-        where: { id: broadcast.channelId },
+        where: { id: sendChannelId },
       });
       if (!channel || !channel.accessToken || !channel.phoneNumberId) {
         await prisma.broadcastRecipient.update({
@@ -301,6 +301,15 @@ export function startBroadcastSendWorker() {
           data: { failedCount: { increment: 1 } },
         });
         return;
+      }
+
+      // Token bucket (per number — Meta limits throughput per phone_number_id).
+      // Consumed only once we know the send will actually go out (after the
+      // opt-out / send-window gates), so skips/delays don't waste tokens. If
+      // exhausted, throw to let BullMQ retry with backoff.
+      const tok = await consumeSendToken(channel.phoneNumberId ?? organizationId);
+      if (!tok.ok) {
+        throw new Error(`token-bucket: retry in ${tok.retryAfterMs}ms`);
       }
 
       const templateId = recipient.variant === 'B' && broadcast.variantBTemplateId
@@ -363,6 +372,7 @@ export function startBroadcastSendWorker() {
           toNumber: recipient.phoneE164,
           metaMessageId: out.metaMessageId,
           templateName: template.name,
+          whatsAppChannelId: sendChannelId,
         });
         await clearFailureBurst(broadcastId);
         return;

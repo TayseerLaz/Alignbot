@@ -176,7 +176,10 @@ export const broadcastDtoSchema = z.object({
   id: uuidSchema,
   name: z.string(),
   status: z.enum(BROADCAST_STATUSES as [BroadcastStatus, ...BroadcastStatus[]]),
+  // The number(s) this broadcast sends from. channelId = first/back-compat;
+  // channelIds = full selected set (recipients split round-robin when > 1).
   channelId: uuidSchema,
+  channelIds: z.array(uuidSchema).default([]),
   audienceKind: z.enum(
     BROADCAST_AUDIENCE_KINDS as [BroadcastAudienceKind, ...BroadcastAudienceKind[]],
   ),
@@ -215,6 +218,10 @@ export type BroadcastDto = z.infer<typeof broadcastDtoSchema>;
 export const createBroadcastBodySchema = z.object({
   name: z.string().trim().min(1).max(120),
   channelId: uuidSchema,
+  // Optional extra numbers to send from. When provided (with channelId), the
+  // fanout splits recipients round-robin across all of them. Defaults to just
+  // [channelId].
+  channelIds: z.array(uuidSchema).min(1).max(20).optional(),
   audienceKind: z.enum(
     BROADCAST_AUDIENCE_KINDS as [BroadcastAudienceKind, ...BroadcastAudienceKind[]],
   ),

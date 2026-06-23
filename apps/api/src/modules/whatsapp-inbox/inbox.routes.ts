@@ -38,6 +38,11 @@ const threadDtoSchema = z.object({
   // 'whatsapp' | 'messenger' | 'instagram' — drives the channel badge + the
   // channel-aware reply send.
   channel: z.string(),
+  // Multi-number: which WhatsApp number this thread belongs to + its label so
+  // the inbox can show a separate inbox per number and replies go from it.
+  whatsAppChannelId: uuidSchema.nullable(),
+  whatsAppChannelLabel: z.string().nullable(),
+  whatsAppChannelPhone: z.string().nullable(),
   customerPhone: z.string(),
   customerName: z.string().nullable(),
   customerWhatsappName: z.string().nullable(),
@@ -110,6 +115,8 @@ const cannedResponseDtoSchema = z.object({
 function serializeThread(t: {
   id: string;
   channel?: string;
+  whatsAppChannelId?: string | null;
+  whatsAppChannel?: { label: string | null; displayPhoneNumber: string | null } | null;
   customerPhone: string;
   customerName: string | null;
   customerWhatsappName?: string | null;
@@ -135,6 +142,9 @@ function serializeThread(t: {
   return {
     id: t.id,
     channel: t.channel ?? 'whatsapp',
+    whatsAppChannelId: t.whatsAppChannelId ?? null,
+    whatsAppChannelLabel: t.whatsAppChannel?.label ?? null,
+    whatsAppChannelPhone: t.whatsAppChannel?.displayPhoneNumber ?? null,
     customerPhone: t.customerPhone,
     customerName: t.customerName,
     customerWhatsappName: t.customerWhatsappName ?? null,
@@ -181,6 +191,8 @@ export default async function inboxRoutes(app: FastifyInstance) {
           assignee: uuidSchema.optional(),
           // 'whatsapp' | 'messenger' | 'instagram' — filter to one channel.
           channel: z.enum(['whatsapp', 'messenger', 'instagram']).optional(),
+          // Multi-number: filter to a single WhatsApp number (its inbox).
+          whatsAppChannelId: uuidSchema.optional(),
           limit: z.coerce.number().int().min(1).max(200).default(50),
         }),
         response: { 200: listEnvelopeSchema(threadDtoSchema) },
@@ -203,6 +215,8 @@ export default async function inboxRoutes(app: FastifyInstance) {
                 ? { NOT: { channel: { in: ['messenger', 'instagram'] } as never } }
                 : { channel: q.channel as never }
               : {}),
+            // Per-number inbox: restrict to one WhatsApp number.
+            ...(q.whatsAppChannelId ? { whatsAppChannelId: q.whatsAppChannelId } : {}),
             // Search uses the rolling search_text blob OR matches the phone
             // / preview directly so users can search for `+1415` as well.
             ...(q.q
@@ -220,6 +234,7 @@ export default async function inboxRoutes(app: FastifyInstance) {
           take: q.limit,
           include: {
             assignedTo: { select: { firstName: true, lastName: true, email: true } },
+            whatsAppChannel: { select: { label: true, displayPhoneNumber: true } },
             tags: { select: { tag: true } },
             _count: { select: { notes: true } },
           },
@@ -279,6 +294,7 @@ export default async function inboxRoutes(app: FastifyInstance) {
           where: { id: req.params.id },
           include: {
             assignedTo: { select: { firstName: true, lastName: true, email: true } },
+            whatsAppChannel: { select: { label: true, displayPhoneNumber: true } },
             tags: { select: { tag: true } },
             _count: { select: { notes: true } },
           },

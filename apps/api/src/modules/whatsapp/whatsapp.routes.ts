@@ -44,15 +44,19 @@ import { attributeBroadcastResponse } from '../../lib/broadcast-response.js';
 import { generateOpaqueToken } from '../../lib/crypto.js';
 import { withRlsBypass, withTenant, type Tx } from '../../lib/db.js';
 import { env } from '../../lib/env.js';
+import { upsertWaThread } from '../../lib/wa-thread.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 import { getRedis } from '../../lib/redis.js';
 
-// Outbound token-bucket rate limiter — 80 messages per second per org by
-// default (Meta's default is 80 mps for tier 1 numbers; clients tier up
-// over time). Backed by Redis INCR + EXPIRE so it survives restarts.
-async function consumeSendToken(orgId: string): Promise<{ ok: boolean; retryAfterMs: number }> {
+// Outbound token-bucket rate limiter — 80 messages per second by default
+// (Meta's default is 80 mps for tier 1 numbers; clients tier up over time).
+// Keyed PER NUMBER (phone_number_id) because Meta's throughput limit is
+// per-number — with multi-number sending, each number gets its own bucket.
+// Falls back to the org id when no phone number id is available. Backed by
+// Redis INCR + EXPIRE so it survives restarts.
+async function consumeSendToken(bucketKey: string): Promise<{ ok: boolean; retryAfterMs: number }> {
   const redis = getRedis();
-  const key = `wasend:${orgId}:${Math.floor(Date.now() / 1000)}`;
+  const key = `wasend:${bucketKey}:${Math.floor(Date.now() / 1000)}`;
   const limit = 80;
   const count = await redis.incr(key);
   if (count === 1) {
@@ -347,6 +351,9 @@ function webhookCallbackUrl(orgId: string): string {
 
 function serializeChannel(c: {
   id: string;
+  label: string | null;
+  isPrimary: boolean;
+  botEnabled: boolean;
   wabaId: string | null;
   phoneNumberId: string | null;
   displayPhoneNumber: string | null;
@@ -368,6 +375,9 @@ function serializeChannel(c: {
 }) {
   return {
     id: c.id,
+    label: c.label,
+    isPrimary: c.isPrimary,
+    botEnabled: c.botEnabled,
     wabaId: c.wabaId,
     phoneNumberId: c.phoneNumberId,
     displayPhoneNumber: c.displayPhoneNumber,
@@ -534,6 +544,8 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         const updated = await tx.whatsAppChannel.update({
           where: { id: existing.id },
           data: {
+            label: update(b.label ?? undefined),
+            botEnabled: b.botEnabled ?? undefined,
             wabaId: update(b.wabaId ?? undefined),
             phoneNumberId: update(b.phoneNumberId ?? undefined),
             displayPhoneNumber: update(b.displayPhoneNumber ?? undefined),
@@ -617,14 +629,19 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       schema: {
         tags: ['whatsapp'],
         summary: 'Probe Meta to confirm the configured token + phone number id work.',
+        // Multi-number: target a specific number; omitted ⇒ the primary.
+        body: z.object({ channelId: uuidSchema.optional() }).optional(),
         response: { 200: itemEnvelopeSchema(whatsappVerifyResultSchema) },
       },
       preHandler: [app.requireRole('admin')],
     },
     async (req) => {
       const orgId = req.auth!.organizationId;
+      const channelId = req.body?.channelId;
       const channel = await app.tenant(req, (tx) =>
-        tx.whatsAppChannel.findFirst({ where: { organizationId: orgId, isPrimary: true } }),
+        channelId
+          ? tx.whatsAppChannel.findFirst({ where: { id: channelId, organizationId: orgId } })
+          : tx.whatsAppChannel.findFirst({ where: { organizationId: orgId, isPrimary: true } }),
       );
       if (!channel) throw notFound('WhatsApp channel not configured.');
       if (!channel.accessToken || !channel.phoneNumberId) {
@@ -923,8 +940,11 @@ export default async function whatsappRoutes(app: FastifyInstance) {
     },
     async (req) => {
       const orgId = req.auth!.organizationId;
+      const channelId = req.body.channelId;
       const channel = await app.tenant(req, (tx) =>
-        tx.whatsAppChannel.findFirst({ where: { organizationId: orgId, isPrimary: true } }),
+        channelId
+          ? tx.whatsAppChannel.findFirst({ where: { id: channelId, organizationId: orgId } })
+          : tx.whatsAppChannel.findFirst({ where: { organizationId: orgId, isPrimary: true } }),
       );
       if (!channel) throw notFound('WhatsApp channel not configured.');
       if (!channel.accessToken || !channel.phoneNumberId) {
@@ -1152,11 +1172,11 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         ? `${tagLine} · ${parameters.join(' / ')}`
         : tagLine;
       await withRlsBypass(async (tx) => {
-        const thread = await tx.whatsAppThread.upsert({
-          where: { organizationId_customerPhone: { organizationId: orgId, customerPhone: to } },
+        const thread = await upsertWaThread(tx, {
+          organizationId: orgId,
+          customerPhone: to,
+          whatsAppChannelId: channel.id,
           create: {
-            organizationId: orgId,
-            customerPhone: to,
             status: 'open',
             lastMessageAt: new Date(),
             lastMessagePreview: previewBody.slice(0, 200),
@@ -1208,9 +1228,24 @@ export default async function whatsappRoutes(app: FastifyInstance) {
     },
     async (req) => {
       const orgId = req.auth!.organizationId;
-      const channel = await app.tenant(req, (tx) =>
-        tx.whatsAppChannel.findFirst({ where: { organizationId: orgId, isPrimary: true } }),
-      );
+      // Multi-number: reply FROM the number the thread belongs to. The inbox
+      // passes threadId; we resolve its whatsAppChannelId. Falls back to the
+      // primary number when there's no thread or the thread isn't number-bound.
+      const channel = await app.tenant(req, async (tx) => {
+        if (req.body.threadId) {
+          const t = await tx.whatsAppThread.findFirst({
+            where: { id: req.body.threadId, organizationId: orgId },
+            select: { whatsAppChannelId: true },
+          });
+          if (t?.whatsAppChannelId) {
+            const bound = await tx.whatsAppChannel.findFirst({
+              where: { id: t.whatsAppChannelId, organizationId: orgId },
+            });
+            if (bound) return bound;
+          }
+        }
+        return tx.whatsAppChannel.findFirst({ where: { organizationId: orgId, isPrimary: true } });
+      });
       if (!channel) throw notFound('WhatsApp channel not configured.');
       if (!channel.accessToken || !channel.phoneNumberId) {
         throw badRequest(
@@ -1228,7 +1263,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       const { capCheck } = await import('../../lib/billing.js');
       await app.tenant(req, (tx) => capCheck(tx as never, orgId, 'monthly_message', { actorIsAlignedAdmin: req.auth!.isAlignedAdmin }));
 
-      const bucket = await consumeSendToken(orgId);
+      const bucket = await consumeSendToken(channel.phoneNumberId ?? orgId);
       if (!bucket.ok) {
         throw badRequest(
           ApiErrorCode.RATE_LIMITED,
@@ -1316,11 +1351,11 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       const metaMessageId = messages[0]?.id ?? null;
 
       await withRlsBypass(async (tx) => {
-        const thread = await tx.whatsAppThread.upsert({
-          where: { organizationId_customerPhone: { organizationId: orgId, customerPhone: to } },
+        const thread = await upsertWaThread(tx, {
+          organizationId: orgId,
+          customerPhone: to,
+          whatsAppChannelId: channel.id,
           create: {
-            organizationId: orgId,
-            customerPhone: to,
             status: 'open',
             lastMessageAt: new Date(),
             lastMessagePreview: req.body.body.slice(0, 200),
@@ -1477,7 +1512,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       const { capCheck, bumpUsage } = await import('../../lib/billing.js');
       const { prisma } = await import('../../lib/db.js');
       await app.tenant(req, (tx) => capCheck(tx as never, orgId, 'monthly_message', { actorIsAlignedAdmin: req.auth!.isAlignedAdmin }));
-      const bucket = await consumeSendToken(orgId);
+      const bucket = await consumeSendToken(channel.phoneNumberId ?? orgId);
       if (!bucket.ok) {
         throw badRequest(
           ApiErrorCode.RATE_LIMITED,
@@ -1745,11 +1780,11 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       const metaMessageId = messages[0]?.id ?? null;
 
       await withRlsBypass(async (tx) => {
-        const thread = await tx.whatsAppThread.upsert({
-          where: { organizationId_customerPhone: { organizationId: orgId, customerPhone: to } },
+        const thread = await upsertWaThread(tx, {
+          organizationId: orgId,
+          customerPhone: to,
+          whatsAppChannelId: channel.id,
           create: {
-            organizationId: orgId,
-            customerPhone: to,
             status: 'open',
             lastMessageAt: new Date(),
             lastMessagePreview: `[${req.body.mediaType}] ${req.body.caption ?? ''}`.slice(0, 200),
@@ -1800,13 +1835,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         const rows = await tx.whatsAppChannel.findMany({
           orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
         });
-        return {
-          data: rows.map((c) => ({
-            ...serializeChannel(c),
-            isPrimary: c.isPrimary,
-            label: c.label,
-          })),
-        };
+        return { data: rows.map((c) => serializeChannel(c)) };
       }),
   );
 
@@ -1844,7 +1873,86 @@ export default async function whatsappRoutes(app: FastifyInstance) {
             label: req.body.label ?? null,
           },
         });
-        return { data: { ...serializeChannel(created), isPrimary: false, label: created.label } };
+        return { data: serializeChannel(created) };
+      });
+    },
+  );
+
+  // ---------- PUT /whatsapp/numbers/:id --------------------------------
+  // Edit a specific number's config (label, credentials, bot switch, live
+  // toggle). Same body semantics as PUT /whatsapp but targets one channel by
+  // id — the multi-number editor.
+  r.put(
+    '/whatsapp/numbers/:id',
+    {
+      schema: {
+        tags: ['whatsapp'],
+        summary: 'Update a specific WhatsApp number. Send empty string to clear a secret.',
+        params: z.object({ id: uuidSchema }),
+        body: upsertWhatsappChannelBodySchema,
+        response: { 200: itemEnvelopeSchema(whatsappChannelSchema) },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const b = req.body;
+      return app.tenant(req, async (tx) => {
+        const existing = await tx.whatsAppChannel.findFirst({
+          where: { id: req.params.id, organizationId: orgId },
+        });
+        if (!existing) throw notFound('Channel not found.');
+
+        const update = <T>(v: T | undefined): T | null | undefined =>
+          v === undefined ? undefined : v === '' ? null : v;
+
+        if (b.accessToken !== undefined || b.appId !== undefined || b.appSecret !== undefined) {
+          await assertMetaCredentialsConsistent(
+            {
+              accessToken:
+                b.accessToken === undefined ? existing.accessToken : b.accessToken || null,
+              appId: b.appId === undefined ? existing.appId : b.appId || null,
+              appSecret: b.appSecret === undefined ? existing.appSecret : b.appSecret || null,
+            },
+            req.log,
+          );
+        }
+
+        const updated = await tx.whatsAppChannel.update({
+          where: { id: existing.id },
+          data: {
+            label: update(b.label ?? undefined),
+            botEnabled: b.botEnabled ?? undefined,
+            wabaId: update(b.wabaId ?? undefined),
+            phoneNumberId: update(b.phoneNumberId ?? undefined),
+            displayPhoneNumber: update(b.displayPhoneNumber ?? undefined),
+            appId: update(b.appId ?? undefined),
+            accessToken: update(b.accessToken),
+            appSecret: update(b.appSecret),
+            greetingMessage: update(b.greetingMessage ?? undefined),
+            businessName: update(b.businessName ?? undefined),
+            businessAbout: update(b.businessAbout ?? undefined),
+            businessAddress: update(b.businessAddress ?? undefined),
+            businessEmail: update(b.businessEmail ?? undefined),
+            isActive: b.isActive ?? undefined,
+          },
+        });
+
+        await recordAudit({
+          action: 'business_info_updated',
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          entityType: 'whatsapp_channel',
+          entityId: updated.id,
+          metadata: {
+            event: 'whatsapp_channel_updated',
+            isActive: updated.isActive,
+            botEnabled: updated.botEnabled,
+            fieldsTouched: Object.keys(b).filter((k) => b[k as keyof typeof b] !== undefined),
+          },
+        });
+
+        return { data: serializeChannel(updated) };
       });
     },
   );
@@ -2386,16 +2494,11 @@ export default async function whatsappRoutes(app: FastifyInstance) {
               );
               const waProfileName = inboundContact?.profile?.name ?? null;
               const preview = (bodyText || `[${m.type ?? 'media'}]`).slice(0, 200);
-              const thread = await tx.whatsAppThread.upsert({
-                where: {
-                  organizationId_customerPhone: {
-                    organizationId: channel.organizationId,
-                    customerPhone: phone,
-                  },
-                },
+              const thread = await upsertWaThread(tx, {
+                organizationId: channel.organizationId,
+                customerPhone: phone,
+                whatsAppChannelId: channel.id,
                 create: {
-                  organizationId: channel.organizationId,
-                  customerPhone: phone,
                   customerWhatsappName: waProfileName,
                   status: 'open',
                   lastMessageAt: new Date(),
@@ -2494,6 +2597,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
         try {
           await maybeReplyAsBot({
             organizationId: channel.organizationId,
+            channelId: channel.id,
             messages: persisted,
             log: req.log,
           });
@@ -2540,6 +2644,9 @@ function emptyReplyFallback(userMessage: string | null | undefined): string {
 //   - the inbound message has no text (image/template/system event)
 async function maybeReplyAsBot(args: {
   organizationId: string;
+  // The WhatsApp number this inbound arrived on. The bot replies from this
+  // number and only when this number has bot_enabled (multi-number routing).
+  channelId?: string | null;
   messages: {
     from: string;
     type: string;
@@ -2744,13 +2851,30 @@ async function maybeReplyAsBot(args: {
         }
       }
 
-      const ch = await tx.whatsAppChannel.findFirst({
-        where: { organizationId: args.organizationId, isPrimary: true },
-      });
-      if (!ch || !ch.accessToken || !ch.phoneNumberId || !ch.isActive) {
+      // Multi-number: reply from the EXACT number this inbound arrived on
+      // (args.channelId, resolved by the webhook from metadata.phone_number_id).
+      // Fall back to the primary number for legacy callers that don't pass it.
+      const ch = args.channelId
+        ? await tx.whatsAppChannel.findFirst({
+            where: { id: args.channelId, organizationId: args.organizationId },
+          })
+        : await tx.whatsAppChannel.findFirst({
+            where: { organizationId: args.organizationId, isPrimary: true },
+          });
+      // The per-number AI bot switch: the bot only auto-replies on numbers the
+      // tenant has deployed it on (bot_enabled), and the number must be active
+      // with valid credentials.
+      if (!ch || !ch.accessToken || !ch.phoneNumberId || !ch.isActive || !ch.botEnabled) {
         args.log.info(
-          { orgId: args.organizationId, threadId: thread.id, channelExists: Boolean(ch), isActive: ch?.isActive },
-          '[whatsapp] bot skip: channel missing or inactive',
+          {
+            orgId: args.organizationId,
+            threadId: thread.id,
+            channelId: args.channelId ?? null,
+            channelExists: Boolean(ch),
+            isActive: ch?.isActive,
+            botEnabled: ch?.botEnabled,
+          },
+          '[whatsapp] bot skip: channel missing, inactive, or bot disabled on this number',
         );
         return null;
       }

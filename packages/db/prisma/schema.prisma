@@ -1254,12 +1254,18 @@ model WhatsAppChannel {
   businessEmail      String?   @map("business_email")
   // ---- Operational state ---------------------------------------------------
   isActive           Boolean   @default(false) @map("is_active")
+  // Per-number AI bot switch. The bot auto-replies on this number only when the
+  // org's BotConfig.deployedAt is set AND isActive AND botEnabled. Lets a tenant
+  // run several numbers but deploy the bot on a chosen subset (1 → all).
+  botEnabled         Boolean   @default(false) @map("bot_enabled")
   lastVerifiedAt     DateTime? @map("last_verified_at")
   lastVerifyStatus   String?   @map("last_verify_status") // 'success' | 'token_invalid' | 'phone_not_found' | network error string
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  threads             WhatsAppThread[]
+  broadcastRecipients BroadcastRecipient[]
 
   @@index([organizationId])
   @@map("whatsapp_channels")
@@ -1356,6 +1362,14 @@ model WhatsAppThread {
   // Instagram the IGSID. customer_phone holds this same value (generic id)
   // so the existing (org, customer_phone) unique dedupes every channel.
   channelUserId        String?              @map("channel_user_id")
+  // The specific WhatsApp number this thread belongs to (multi-number support).
+  // NULL for Messenger/Instagram threads and any WhatsApp thread whose number
+  // couldn't be resolved. Drives the per-number inbox filter + reply routing
+  // (the bot/operator always replies from this number). Dedup is enforced by
+  // two partial unique indexes in the migration, not a Prisma @@unique:
+  //   (org, customer_phone) WHERE whatsapp_channel_id IS NULL   — messenger/IG/legacy
+  //   (org, customer_phone, whatsapp_channel_id) WHERE NOT NULL — multi-number WA
+  whatsAppChannelId    String?              @map("whatsapp_channel_id") @db.Uuid
   customerPhone        String               @map("customer_phone")
   // Operator-set nickname / business name. Free-form. Mirrored from
   // Contact.displayName on rename so /inbox and /contacts stay in sync.
@@ -1383,15 +1397,20 @@ model WhatsAppThread {
   createdAt            DateTime             @default(now()) @map("created_at")
   updatedAt            DateTime             @updatedAt @map("updated_at")
 
-  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  assignedTo   User?               @relation("WhatsAppThreadAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
-  messages     WhatsAppMessage[]
-  tags         WhatsAppThreadTag[]
-  notes        WhatsAppNote[]
-  bookings     Booking[]
-  carts        Cart[]
+  organization    Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  whatsAppChannel WhatsAppChannel?    @relation(fields: [whatsAppChannelId], references: [id], onDelete: SetNull)
+  assignedTo      User?               @relation("WhatsAppThreadAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  messages        WhatsAppMessage[]
+  tags            WhatsAppThreadTag[]
+  notes           WhatsAppNote[]
+  bookings        Booking[]
+  carts           Cart[]
 
-  @@unique([organizationId, customerPhone])
+  // NOTE: uniqueness is enforced by two PARTIAL unique indexes created in the
+  // migration (see whatsAppChannelId comment above) so the same customer can
+  // have a separate thread per WhatsApp number. No Prisma @@unique here →
+  // inbound thread resolution uses findFirst + create (not upsert).
+  @@index([organizationId, whatsAppChannelId, lastMessageAt(sort: Desc)])
   @@index([organizationId, lastMessageAt(sort: Desc)])
   @@index([organizationId, status, lastMessageAt(sort: Desc)])
   @@map("whatsapp_threads")
@@ -2190,7 +2209,13 @@ model Broadcast {
   organizationId      String                @map("organization_id") @db.Uuid
   name                String
   status              BroadcastStatus       @default(draft)
+  // The number(s) this broadcast sends from. `channelId` is the first/back-compat
+  // single number; `channelIds` is the full selected set. When > 1, the fanout
+  // worker splits recipients round-robin across them (each contact messaged once)
+  // and stamps BroadcastRecipient.whatsAppChannelId. Empty set ⇒ falls back to
+  // channelId.
   channelId           String                @map("channel_id") @db.Uuid
+  channelIds          String[]              @default([]) @map("channel_ids") @db.Uuid
   audienceKind        BroadcastAudienceKind @map("audience_kind")
   csvAssetId          String?               @map("csv_asset_id") @db.Uuid
   segmentId           String?               @map("segment_id") @db.Uuid
@@ -2249,6 +2274,10 @@ model BroadcastRecipient {
   organizationId   String           @map("organization_id") @db.Uuid
   broadcastId      String           @map("broadcast_id") @db.Uuid
   contactId        String?          @map("contact_id") @db.Uuid
+  // The WhatsApp number this recipient is sent from. Assigned at fanout (round-
+  // robin across Broadcast.channelIds). NULL ⇒ send worker falls back to
+  // Broadcast.channelId.
+  whatsAppChannelId String?         @map("whatsapp_channel_id") @db.Uuid
   phoneE164        String           @map("phone_e164")
   variant          BroadcastVariant @default(A)
   // Resolved per-recipient template parameters: { "1": "Jane", "2": "Gold" }.
@@ -2269,9 +2298,10 @@ model BroadcastRecipient {
   attemptCount     Int              @default(0) @map("attempt_count")
   createdAt        DateTime         @default(now()) @map("created_at")
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  broadcast    Broadcast    @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
-  contact      Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  broadcast       Broadcast        @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+  contact         Contact?         @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  whatsAppChannel WhatsAppChannel? @relation(fields: [whatsAppChannelId], references: [id], onDelete: SetNull)
 
   @@index([broadcastId, status])
   @@index([organizationId, metaMessageId])

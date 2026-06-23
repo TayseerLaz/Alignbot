@@ -732,6 +732,273 @@ export default async function dashboardRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- GET /dashboard/widgets/sales --------------------------------
+  // Orders + revenue over the last 7 days. "Order" = a captured cart in a
+  // real state ('new' | 'confirmed' | 'completed') — drafts and cancelled
+  // carts are excluded. Revenue is reported in the org's dominant currency
+  // (the currency carrying the most orders); AOV is revenue ÷ those orders.
+  const ORDER_STATES = ['new', 'confirmed', 'completed'];
+  r.get(
+    '/dashboard/widgets/sales',
+    {
+      schema: {
+        tags: ['dashboard'],
+        summary: 'Orders + revenue (last 7 days) for the dashboard widget.',
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              currency: z.string(),
+              orders7d: z.number().int(),
+              ordersToday: z.number().int(),
+              revenue7dMinor: z.number().int(),
+              paid7d: z.number().int(),
+              aovMinor: z.number().int(),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const data = await app.tenant(req, async (tx) => {
+        const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const startOfDay = new Date();
+        startOfDay.setUTCHours(0, 0, 0, 0);
+        const [byCurrency, ordersToday, paid7d] = await Promise.all([
+          tx.cart.groupBy({
+            by: ['currency'],
+            where: { status: { in: ORDER_STATES }, createdAt: { gte: weekAgo } },
+            _sum: { totalMinor: true },
+            _count: { _all: true },
+          }),
+          tx.cart.count({ where: { status: { in: ORDER_STATES }, createdAt: { gte: startOfDay } } }),
+          tx.cart.count({ where: { paidAt: { not: null, gte: weekAgo } } }),
+        ]);
+        // Dominant currency = the one carrying the most orders. Revenue/AOV
+        // are single-currency (mixing minor units across currencies would be
+        // meaningless); the order count stays currency-agnostic.
+        let dom = byCurrency[0] ?? null;
+        for (const g of byCurrency) {
+          if (g._count._all > (dom?._count._all ?? 0)) dom = g;
+        }
+        const orders7d = byCurrency.reduce((s, g) => s + g._count._all, 0);
+        const revenue7dMinor = dom?._sum.totalMinor ?? 0;
+        const domOrders = dom?._count._all ?? 0;
+        const aovMinor = domOrders > 0 ? Math.round(revenue7dMinor / domOrders) : 0;
+        return {
+          currency: dom?.currency ?? 'USD',
+          orders7d,
+          ordersToday,
+          revenue7dMinor,
+          paid7d,
+          aovMinor,
+        };
+      });
+      return { data };
+    },
+  );
+
+  // ---------- GET /dashboard/widgets/conversion-funnel --------------------
+  // Last-7-day funnel: conversations → carts started → orders placed →
+  // orders paid. Each stage is a strict subset of the one before, so the
+  // web layer can render drop-off percentages without a second query.
+  r.get(
+    '/dashboard/widgets/conversion-funnel',
+    {
+      schema: {
+        tags: ['dashboard'],
+        summary: 'Chats → carts → orders → paid funnel (last 7 days).',
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              conversations: z.number().int(),
+              cartsStarted: z.number().int(),
+              ordersPlaced: z.number().int(),
+              ordersPaid: z.number().int(),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const data = await app.tenant(req, async (tx) => {
+        const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const [conversations, cartsStarted, ordersPlaced, ordersPaid] = await Promise.all([
+          tx.whatsAppThread.count({ where: { createdAt: { gte: weekAgo } } }),
+          tx.cart.count({ where: { createdAt: { gte: weekAgo } } }),
+          tx.cart.count({ where: { status: { in: ORDER_STATES }, createdAt: { gte: weekAgo } } }),
+          tx.cart.count({ where: { paidAt: { not: null, gte: weekAgo } } }),
+        ]);
+        return { conversations, cartsStarted, ordersPlaced, ordersPaid };
+      });
+      return { data };
+    },
+  );
+
+  // ---------- GET /dashboard/widgets/channel-mix --------------------------
+  // Conversations per channel over the last 7 days + voice-call volume.
+  // Lets a tenant see where their traffic actually comes from (WhatsApp vs
+  // Messenger vs Instagram vs phone).
+  r.get(
+    '/dashboard/widgets/channel-mix',
+    {
+      schema: {
+        tags: ['dashboard'],
+        summary: 'Conversations per channel + voice calls (last 7 days).',
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              channels: z.array(
+                z.object({ channel: z.string(), conversations: z.number().int() }),
+              ),
+              voiceCalls: z.number().int(),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const data = await app.tenant(req, async (tx) => {
+        const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const [grp, voiceCalls] = await Promise.all([
+          tx.whatsAppThread.groupBy({
+            by: ['channel'],
+            where: { createdAt: { gte: weekAgo } },
+            _count: { _all: true },
+          }),
+          tx.voiceCall.count({ where: { startedAt: { gte: weekAgo } } }),
+        ]);
+        const channels = grp
+          .map((g) => ({ channel: g.channel, conversations: g._count._all }))
+          .sort((a, b) => b.conversations - a.conversations);
+        return { channels, voiceCalls };
+      });
+      return { data };
+    },
+  );
+
+  // ---------- GET /dashboard/widgets/audience -----------------------------
+  // Contact-list health + compliance: total, new this week, opted-out, and
+  // operator-blocked. The web layer derives the opt-out rate. Soft-deleted
+  // contacts are excluded from every count.
+  r.get(
+    '/dashboard/widgets/audience',
+    {
+      schema: {
+        tags: ['dashboard'],
+        summary: 'Audience size + opt-out / block compliance for the dashboard widget.',
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              total: z.number().int(),
+              newThisWeek: z.number().int(),
+              optedOut: z.number().int(),
+              blocked: z.number().int(),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const data = await app.tenant(req, async (tx) => {
+        const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const [total, newThisWeek, optedOut, blocked] = await Promise.all([
+          tx.contact.count({ where: { deletedAt: null } }),
+          tx.contact.count({ where: { deletedAt: null, createdAt: { gte: weekAgo } } }),
+          tx.contact.count({ where: { deletedAt: null, optedOutAt: { not: null } } }),
+          tx.contact.count({ where: { deletedAt: null, blockedAt: { not: null } } }),
+        ]);
+        return { total, newThisWeek, optedOut, blocked };
+      });
+      return { data };
+    },
+  );
+
+  // ---------- GET /dashboard/widgets/reply-quality ------------------------
+  // Tenant-safe view of the AI provenance audit trail: how many bot replies
+  // in the last 7 days carried a hallucination flag. Raw SQL so we can ask
+  // Postgres for the JSONB array length directly rather than pulling rows.
+  r.get(
+    '/dashboard/widgets/reply-quality',
+    {
+      schema: {
+        tags: ['dashboard'],
+        summary: 'Flagged bot replies (last 7 days) for the dashboard widget.',
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({ total: z.number().int(), flagged: z.number().int() }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const data = await app.tenant(req, async (tx) => {
+        const rows = (await tx.$queryRawUnsafe(`
+          SELECT
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (
+              WHERE jsonb_typeof(hallucinations) = 'array'
+                AND jsonb_array_length(hallucinations) > 0
+            )::int AS flagged
+          FROM message_provenances
+          WHERE organization_id = current_setting('app.current_org_id')::uuid
+            AND created_at >= now() - interval '7 days'
+        `)) as { total: number; flagged: number }[];
+        return { total: rows[0]?.total ?? 0, flagged: rows[0]?.flagged ?? 0 };
+      });
+      return { data };
+    },
+  );
+
+  // ---------- GET /dashboard/widgets/voice --------------------------------
+  // Phone voicebot volume + outcomes over the last 7 days. Returns zeros
+  // (not an error) for tenants without a phone line so the widget can still
+  // be added and shows an empty state.
+  r.get(
+    '/dashboard/widgets/voice',
+    {
+      schema: {
+        tags: ['dashboard'],
+        summary: 'Voice-call volume + outcomes (last 7 days) for the dashboard widget.',
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              total: z.number().int(),
+              completed: z.number().int(),
+              handoff: z.number().int(),
+              dropped: z.number().int(),
+              inProgress: z.number().int(),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const data = await app.tenant(req, async (tx) => {
+        const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const grp = await tx.voiceCall.groupBy({
+          by: ['outcome'],
+          where: { startedAt: { gte: weekAgo } },
+          _count: { _all: true },
+        });
+        const m = new Map(grp.map((g) => [g.outcome, g._count._all]));
+        return {
+          total: grp.reduce((s, g) => s + g._count._all, 0),
+          completed: m.get('completed') ?? 0,
+          handoff: m.get('handoff') ?? 0,
+          dropped: m.get('dropped') ?? 0,
+          inProgress: m.get('in_progress') ?? 0,
+        };
+      });
+      return { data };
+    },
+  );
+
   // ============================================================
   //   /me/dashboard-layout — per-user, cross-device layout persist
   // ============================================================

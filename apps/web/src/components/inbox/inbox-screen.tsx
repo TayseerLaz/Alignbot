@@ -86,6 +86,11 @@ interface Thread {
   id: string;
   // 'whatsapp' | 'messenger' | 'instagram'
   channel?: string;
+  // Multi-number: which WhatsApp number this thread belongs to + its label, so
+  // the inbox can show a per-number inbox and reply from the right number.
+  whatsAppChannelId?: string | null;
+  whatsAppChannelLabel?: string | null;
+  whatsAppChannelPhone?: string | null;
   customerPhone: string;
   customerName: string | null;
   // Read-only mirror of the customer's WhatsApp profile name from Meta.
@@ -253,18 +258,44 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
     (searchParams?.get('status') as ThreadStatus | 'all') ?? 'all',
   );
   const [filterTag, setFilterTag] = useState(searchParams?.get('tag') ?? '');
-  const [filterChannel, setFilterChannel] = useState<'all' | 'whatsapp' | 'messenger' | 'instagram'>(
-    (searchParams?.get('channel') as 'all' | 'whatsapp' | 'messenger' | 'instagram') ?? 'all',
-  );
+  // Channel filter. Platform values ('whatsapp'|'messenger'|'instagram') OR a
+  // per-number value 'wa:<channelId>' so the operator can pick a single
+  // WhatsApp number's inbox. Reconstructed from the URL's channel +
+  // whatsAppChannelId params.
+  const [filterChannel, setFilterChannel] = useState<string>(() => {
+    const ch = searchParams?.get('channel');
+    const waId = searchParams?.get('whatsAppChannelId');
+    if (waId) return `wa:${waId}`;
+    return ch ?? 'all';
+  });
   // Canned-reply management now lives in the inbox itself (a dialog), not a
   // separate sidebar page.
   const [cannedOpen, setCannedOpen] = useState(false);
+
+  // The org's WhatsApp numbers — drives the per-number entries in the channel
+  // filter and the "replying from" labels.
+  const numbersQ = useQuery({
+    queryKey: ['whatsapp-numbers'],
+    queryFn: () =>
+      api.get<{ data: { id: string; label: string | null; displayPhoneNumber: string | null; isPrimary: boolean }[] }>(
+        '/api/v1/whatsapp/numbers',
+      ),
+    staleTime: 60_000,
+  });
+  const waNumbers = numbersQ.data?.data ?? [];
+  const waNumberName = (n: { label: string | null; displayPhoneNumber: string | null }): string =>
+    n.label || n.displayPhoneNumber || 'WhatsApp number';
 
   const params = new URLSearchParams();
   if (filterQ.trim()) params.set('q', filterQ.trim());
   if (filterStatus !== 'all') params.set('status', filterStatus);
   if (filterTag.trim()) params.set('tag', filterTag.trim());
-  if (filterChannel !== 'all') params.set('channel', filterChannel);
+  if (filterChannel.startsWith('wa:')) {
+    params.set('channel', 'whatsapp');
+    params.set('whatsAppChannelId', filterChannel.slice(3));
+  } else if (filterChannel !== 'all') {
+    params.set('channel', filterChannel);
+  }
 
   const threadsQ = useQuery({
     queryKey: ['inbox-threads', filterQ, filterStatus, filterTag, filterChannel],
@@ -313,7 +344,12 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
     if (filterQ.trim()) sp.set('q', filterQ.trim());
     if (filterStatus !== 'all') sp.set('status', filterStatus);
     if (filterTag.trim()) sp.set('tag', filterTag.trim());
-    if (filterChannel !== 'all') sp.set('channel', filterChannel);
+    if (filterChannel.startsWith('wa:')) {
+      sp.set('channel', 'whatsapp');
+      sp.set('whatsAppChannelId', filterChannel.slice(3));
+    } else if (filterChannel !== 'all') {
+      sp.set('channel', filterChannel);
+    }
     if (activeId) sp.set('thread', activeId);
     const qs = sp.toString();
     window.history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname);
@@ -422,18 +458,24 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
                 className="h-9 text-sm"
               />
             </div>
-            <Select
-              value={filterChannel}
-              onValueChange={(v) =>
-                setFilterChannel(v as 'all' | 'whatsapp' | 'messenger' | 'instagram')
-              }
-            >
+            <Select value={filterChannel} onValueChange={(v) => setFilterChannel(v)}>
               <SelectTrigger className="h-9 text-sm" aria-label="Filter by channel">
                 <SelectValue placeholder="Channel" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All channels</SelectItem>
-                <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                {/* One WhatsApp number → a single "WhatsApp" entry; multiple →
+                    one entry per number so each has its own inbox. */}
+                {waNumbers.length <= 1 ? (
+                  <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                ) : (
+                  waNumbers.map((n) => (
+                    <SelectItem key={n.id} value={`wa:${n.id}`}>
+                      {waNumberName(n)}
+                      {n.isPrimary ? ' (primary)' : ''}
+                    </SelectItem>
+                  ))
+                )}
                 <SelectItem value="messenger">Messenger</SelectItem>
                 <SelectItem value="instagram">Instagram</SelectItem>
               </SelectContent>
@@ -700,9 +742,11 @@ function ThreadView({
           .post(`/api/v1/inbox/threads/${thread.id}/reply`, { body })
           .then(() => ({ data: { ok: true as const, errorMessage: null } }));
       }
+      // Pass threadId so the reply is sent FROM the number this thread belongs
+      // to (multi-number routing); the API falls back to the primary if unset.
       return api.post<{ data: { ok: boolean; errorMessage: string | null } }>(
         '/api/v1/whatsapp/send',
-        { to, body },
+        { to, body, ...(thread ? { threadId: thread.id } : {}) },
       );
     },
     onSuccess: (res) => {
@@ -1080,6 +1124,17 @@ function ThreadHeader({
                 </span>
               </button>
             )}
+            {/* Multi-number: which WhatsApp number this conversation is on (you
+                reply from it). Shown when the thread is bound to a number. */}
+            {(thread.channel ?? 'whatsapp') === 'whatsapp' &&
+            (thread.whatsAppChannelLabel || thread.whatsAppChannelPhone) ? (
+              <span
+                className="ml-1 inline-flex shrink-0 items-center rounded-full bg-surface-muted px-2 py-0.5 text-[10px] font-medium text-foreground-muted"
+                title="The WhatsApp number this conversation is on — replies are sent from it"
+              >
+                via {thread.whatsAppChannelLabel || thread.whatsAppChannelPhone}
+              </span>
+            ) : null}
           </div>
           {/* Open the full customer profile (info, memory, orders, tags). */}
           <Button

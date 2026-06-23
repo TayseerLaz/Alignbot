@@ -57,6 +57,7 @@ interface BroadcastRow {
   name: string;
   status: BroadcastStatus;
   channelId: string;
+  channelIds: string[];
   audienceKind: BroadcastAudienceKind;
   csvAssetId: string | null;
   segmentId: string | null;
@@ -104,6 +105,7 @@ function toDto(row: BroadcastRow) {
     name: row.name,
     status: row.status,
     channelId: row.channelId,
+    channelIds: row.channelIds ?? [],
     audienceKind: row.audienceKind,
     csvAssetId: row.csvAssetId,
     segmentId: row.segmentId,
@@ -256,6 +258,18 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
         // Verify channel + templates belong to the org (RLS already enforces).
         const channel = await tx.whatsAppChannel.findUnique({ where: { id: body.channelId } });
         if (!channel) throw notFound('WhatsApp channel not found.');
+        // Multi-number: the full set to send from (round-robin). Always includes
+        // channelId; verify every extra number belongs to the org.
+        const channelIdSet = Array.from(new Set([body.channelId, ...(body.channelIds ?? [])]));
+        if (channelIdSet.length > 1) {
+          const found = await tx.whatsAppChannel.findMany({
+            where: { id: { in: channelIdSet }, organizationId: orgId },
+            select: { id: true },
+          });
+          if (found.length !== channelIdSet.length) {
+            throw notFound('One or more selected WhatsApp numbers were not found.');
+          }
+        }
         const tplA = await tx.whatsAppTemplate.findUnique({
           where: { id: body.variantATemplateId },
         });
@@ -296,6 +310,7 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
             organizationId: orgId,
             name: body.name,
             channelId: body.channelId,
+            channelIds: channelIdSet,
             audienceKind: body.audienceKind,
             csvAssetId: body.csvAssetId ?? null,
             segmentId: body.segmentId ?? null,
@@ -397,6 +412,7 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
           data: {
             name: body.name ?? undefined,
             channelId: body.channelId ?? undefined,
+            channelIds: body.channelIds ?? undefined,
             audienceKind: body.audienceKind ?? undefined,
             csvAssetId: body.csvAssetId !== undefined ? body.csvAssetId : undefined,
             segmentId: body.segmentId !== undefined ? body.segmentId : undefined,
@@ -1325,7 +1341,13 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
           // included — the underlying issue may have been transient.
           const recipients = await tx.broadcastRecipient.findMany({
             where: { broadcastId: id, NOT: { status: 'skipped' } },
-            select: { phoneE164: true, contactId: true, variables: true, variant: true },
+            select: {
+              phoneE164: true,
+              contactId: true,
+              variables: true,
+              variant: true,
+              whatsAppChannelId: true,
+            },
           });
           if (recipients.length === 0) {
             throw badRequest(
@@ -1365,6 +1387,7 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
               name,
               status: 'sending',
               channelId: source.channelId,
+              channelIds: source.channelIds ?? [],
               audienceKind: 'manual',
               abTest: source.abTest,
               variantATemplateId: source.variantATemplateId,
@@ -1390,6 +1413,8 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
               phoneE164: r.phoneE164,
               variant: r.variant,
               variables: r.variables as never,
+              // Re-send from the same number this recipient was originally on.
+              whatsAppChannelId: r.whatsAppChannelId,
             })),
             skipDuplicates: true,
           });

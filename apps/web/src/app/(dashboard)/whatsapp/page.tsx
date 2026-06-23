@@ -10,14 +10,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import {
   AlertTriangle,
+  Bot,
   CheckCircle2,
   Copy,
   ExternalLink,
   MessageCircle,
   Phone,
+  Plus,
   PowerOff,
   Send,
   ShieldCheck,
+  Star,
   Trash2,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -35,6 +38,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
+import { cn } from '@/lib/utils';
 
 interface TemplateOption {
   id: string;
@@ -49,6 +53,7 @@ interface TemplateOption {
 }
 
 type FormState = {
+  label: string;
   wabaId: string;
   phoneNumberId: string;
   displayPhoneNumber: string;
@@ -65,6 +70,7 @@ type FormState = {
 
 function formFromChannel(c: WhatsAppChannelDto): FormState {
   return {
+    label: c.label ?? '',
     wabaId: c.wabaId ?? '',
     phoneNumberId: c.phoneNumberId ?? '',
     displayPhoneNumber: c.displayPhoneNumber ?? '',
@@ -92,10 +98,26 @@ async function copyToClipboard(value: string, label: string) {
 export default function WhatsAppPage() {
   const queryClient = useQueryClient();
 
-  const channelQ = useQuery({
-    queryKey: ['whatsapp-channel'],
-    queryFn: () => api.get<{ data: WhatsAppChannelDto }>('/api/v1/whatsapp'),
+  // Multi-number: the full list of the org's WhatsApp numbers. The first call
+  // to GET /whatsapp lazily creates the primary stub, so we hit it once to
+  // guarantee at least one row exists, then drive everything off the list.
+  const numbersQ = useQuery({
+    queryKey: ['whatsapp-numbers'],
+    queryFn: async () => {
+      await api.get<{ data: WhatsAppChannelDto }>('/api/v1/whatsapp'); // ensure primary stub
+      return api.get<{ data: WhatsAppChannelDto[] }>('/api/v1/whatsapp/numbers');
+    },
   });
+  const numbers = numbersQ.data?.data ?? [];
+  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
+  // Keep a valid selection: default to the primary, fall back to the first.
+  useEffect(() => {
+    if (numbers.length === 0) return;
+    if (!selectedChannelId || !numbers.some((n) => n.id === selectedChannelId)) {
+      setSelectedChannelId((numbers.find((n) => n.isPrimary) ?? numbers[0]!).id);
+    }
+  }, [numbers, selectedChannelId]);
+
   const messagesQ = useQuery({
     queryKey: ['whatsapp-messages'],
     queryFn: () => api.get<{ data: WhatsAppMessageDto[] }>('/api/v1/whatsapp/messages?limit=5'),
@@ -108,25 +130,66 @@ export default function WhatsAppPage() {
     queryFn: () => api.get<{ data: TemplateOption[] }>('/api/v1/whatsapp/templates'),
   });
 
-  const channel = channelQ.data?.data;
+  const channel = numbers.find((n) => n.id === selectedChannelId) ?? null;
 
   const [form, setForm] = useState<FormState | null>(null);
   useEffect(() => {
     if (channel) setForm(formFromChannel(channel));
-  }, [channel]);
+    // Re-seed the form when the selected number changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedChannelId, channel?.updatedAt]);
+
+  const invalidateNumbers = () =>
+    queryClient.invalidateQueries({ queryKey: ['whatsapp-numbers'] });
 
   const save = useMutation({
     mutationFn: (payload: Record<string, unknown>) =>
-      api.put<{ data: WhatsAppChannelDto }>('/api/v1/whatsapp', payload),
+      api.put<{ data: WhatsAppChannelDto }>(`/api/v1/whatsapp/numbers/${selectedChannelId}`, payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['whatsapp-channel'] });
+      invalidateNumbers();
       toast.success('Saved');
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
   });
 
+  // Add a new number, then select it so the operator can fill in its creds.
+  const addNumber = useMutation({
+    mutationFn: () =>
+      api.post<{ data: WhatsAppChannelDto }>('/api/v1/whatsapp/numbers', {}),
+    onSuccess: async (res) => {
+      await invalidateNumbers();
+      setSelectedChannelId(res.data.id);
+      toast.success('Number added — fill in its credentials');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Add failed'),
+  });
+
+  // Make the selected number the org default (primary).
+  const promote = useMutation({
+    mutationFn: () => api.post(`/api/v1/whatsapp/numbers/${selectedChannelId}/promote`),
+    onSuccess: () => {
+      invalidateNumbers();
+      toast.success('Set as primary number');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Failed'),
+  });
+
+  // Remove a non-primary number entirely.
+  const removeNumber = useMutation({
+    mutationFn: () => api.delete(`/api/v1/whatsapp/numbers/${selectedChannelId}`),
+    onSuccess: async () => {
+      await invalidateNumbers();
+      setSelectedChannelId(null);
+      toast.success('Number removed');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Remove failed'),
+  });
+
   const verify = useMutation({
-    mutationFn: () => api.post<{ data: WhatsAppVerifyResult }>('/api/v1/whatsapp/verify'),
+    mutationFn: () =>
+      api.post<{ data: WhatsAppVerifyResult }>('/api/v1/whatsapp/verify', {
+        channelId: selectedChannelId,
+      }),
     onSuccess: (res) => {
       const r = res.data;
       if (r.ok) {
@@ -136,7 +199,7 @@ export default function WhatsAppPage() {
       } else {
         toast.error(`Verification failed (${r.status})${r.errorMessage ? ': ' + r.errorMessage : ''}`);
       }
-      queryClient.invalidateQueries({ queryKey: ['whatsapp-channel'] });
+      invalidateNumbers();
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Verify failed'),
   });
@@ -149,7 +212,11 @@ export default function WhatsAppPage() {
       parameters: string[];
       headerTextParam?: string;
       buttonUrlParams?: string[];
-    }) => api.post<{ data: WhatsAppTestSendResult }>('/api/v1/whatsapp/test-send', args),
+    }) =>
+      api.post<{ data: WhatsAppTestSendResult }>('/api/v1/whatsapp/test-send', {
+        ...args,
+        channelId: selectedChannelId,
+      }),
     onSuccess: (res, vars) => {
       const r = res.data;
       if (r.ok) toast.success(`${vars.templateName} template sent`);
@@ -159,10 +226,22 @@ export default function WhatsAppPage() {
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Send failed'),
   });
 
+  // "Disconnect" clears this number's credentials (keeps the row + webhook
+  // verify token so it can be reconnected). Removing the row entirely is the
+  // separate "Remove number" action (non-primary only).
   const disconnect = useMutation({
-    mutationFn: () => api.delete('/api/v1/whatsapp'),
+    mutationFn: () =>
+      api.put(`/api/v1/whatsapp/numbers/${selectedChannelId}`, {
+        accessToken: '',
+        appSecret: '',
+        wabaId: '',
+        phoneNumberId: '',
+        appId: '',
+        isActive: false,
+        botEnabled: false,
+      }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['whatsapp-channel'] });
+      invalidateNumbers();
       toast.success('Disconnected');
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Disconnect failed'),
@@ -228,6 +307,109 @@ export default function WhatsAppPage() {
           </div>
         }
       />
+
+      {/* Multi-number switcher — pick which number to configure. The AI bot can
+          be deployed on any subset of numbers (per-number toggle below). */}
+      <Card className="mb-6">
+        <CardHeader className="pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-base">Your WhatsApp numbers</CardTitle>
+              <CardDescription>
+                Run several numbers and choose which ones the AI bot replies on.
+              </CardDescription>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => addNumber.mutate()}
+              loading={addNumber.isPending}
+            >
+              <Plus className="size-4" /> Add number
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {numbers.map((n) => {
+              const isSel = n.id === selectedChannelId;
+              const name = n.label || n.displayPhoneNumber || 'Untitled number';
+              return (
+                <button
+                  key={n.id}
+                  type="button"
+                  onClick={() => setSelectedChannelId(n.id)}
+                  className={cn(
+                    'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors',
+                    isSel
+                      ? 'border-brand-400 bg-brand-50 text-brand-800 dark:bg-brand-400/10'
+                      : 'border-border hover:bg-surface-muted',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'size-1.5 rounded-full',
+                      n.isActive ? 'bg-success' : 'bg-foreground-subtle/40',
+                    )}
+                  />
+                  <span className="font-medium">{name}</span>
+                  {n.isPrimary ? <Star className="size-3.5 text-amber-500" /> : null}
+                  {n.botEnabled ? (
+                    <Badge variant="success" className="gap-1 px-1.5 py-0 text-[10px]">
+                      <Bot className="size-3" /> AI
+                    </Badge>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+
+          {channel ? (
+            <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+              {/* Per-number AI bot switch — the core multi-number control. */}
+              <Button
+                size="sm"
+                variant={channel.botEnabled ? 'primary' : 'secondary'}
+                onClick={() => save.mutate({ botEnabled: !channel.botEnabled })}
+                loading={save.isPending}
+                title="When ON, the AI bot auto-replies to customers messaging this number (the bot must also be deployed on the Bot page)."
+              >
+                <Bot className="size-4" />
+                {channel.botEnabled ? 'AI bot: ON for this number' : 'AI bot: OFF for this number'}
+              </Button>
+              {!channel.isPrimary ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => promote.mutate()}
+                  loading={promote.isPending}
+                >
+                  <Star className="size-4" /> Make primary
+                </Button>
+              ) : null}
+              {!channel.isPrimary ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-coral-700"
+                  onClick={async () => {
+                    const ok = await confirmDialog({
+                      title: 'Remove this number?',
+                      body: 'The number and its conversations link will be removed. This cannot be undone.',
+                      confirmLabel: 'Remove',
+                      destructive: true,
+                    });
+                    if (ok) removeNumber.mutate();
+                  }}
+                  loading={removeNumber.isPending}
+                >
+                  <Trash2 className="size-4" /> Remove number
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
       {/* Honesty banner — Phase 1.5 only stores credentials + verifies + receives;
           autonomous bot replies still belong to your bot runtime. */}
@@ -335,6 +517,18 @@ export default function WhatsAppPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="label">Number title</Label>
+                <Input
+                  id="label"
+                  placeholder="e.g. Sales line, Support, Dubai branch"
+                  value={form.label}
+                  onChange={(e) => setForm({ ...form, label: e.target.value })}
+                />
+                <p className="text-xs text-foreground-subtle">
+                  Shown in the inbox + broadcasts so you can tell numbers apart.
+                </p>
+              </div>
               <div className="space-y-1.5">
                 <Label htmlFor="wabaId">WhatsApp Business Account ID (WABA ID)</Label>
                 <Input

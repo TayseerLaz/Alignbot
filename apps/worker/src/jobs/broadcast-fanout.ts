@@ -344,6 +344,37 @@ export function startBroadcastFanoutWorker() {
         await resolveExistingRecipientVariables(organizationId, broadcastId, variantA, variantB);
       }
 
+      // Multi-number: assign each recipient a sending number. With one number,
+      // everyone uses it; with several, split round-robin (deterministic by id)
+      // so each contact is messaged exactly once, load spread across numbers.
+      const sendChannelIds =
+        broadcast.channelIds && broadcast.channelIds.length > 0
+          ? broadcast.channelIds
+          : [broadcast.channelId];
+      if (sendChannelIds.length <= 1) {
+        await prisma.broadcastRecipient.updateMany({
+          where: { broadcastId, whatsAppChannelId: null },
+          data: { whatsAppChannelId: sendChannelIds[0] },
+        });
+      } else {
+        const placeholders = sendChannelIds.map((_, i) => `$${i + 1}::uuid`).join(',');
+        const bidParam = `$${sendChannelIds.length + 1}`;
+        await prisma.$executeRawUnsafe(
+          `WITH ordered AS (
+             SELECT id, ((row_number() OVER (ORDER BY id) - 1) % ${sendChannelIds.length})::int AS slot
+             FROM broadcast_recipients
+             WHERE broadcast_id = ${bidParam}::uuid AND whatsapp_channel_id IS NULL
+           )
+           UPDATE broadcast_recipients r
+           SET whatsapp_channel_id = (ARRAY[${placeholders}])[ordered.slot + 1]
+           FROM ordered
+           WHERE r.id = ordered.id`,
+          ...sendChannelIds,
+          broadcastId,
+        );
+      }
+      log(`assigned sending number(s): ${sendChannelIds.length}`);
+
       // Enqueue per-recipient send jobs in batches.
       const sendQ = getSendQueue();
       const PAGE = 500;

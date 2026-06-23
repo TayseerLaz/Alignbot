@@ -14,7 +14,39 @@
 //      thread's counts + preview. Run periodically by startInboxConsistencyTick
 //      so even a future bug can't permanently lose a chat.
 
+import { Prisma } from '@prisma/client';
+
 import { prisma, withRlsBypass } from './db.js';
+
+// Find-or-create a WhatsApp thread keyed by (org, phone, number). Mirrors the
+// two partial unique indexes from the multi_number_whatsapp migration (Prisma
+// can't express them as @@unique, so no upsert). Retries once on a P2002 race.
+// `tx` is the transaction client handed to us by withRlsBypass.
+type ThreadTx = Parameters<Parameters<typeof withRlsBypass>[0]>[0];
+async function findOrCreateThread(
+  tx: ThreadTx,
+  key: { organizationId: string; customerPhone: string; whatsAppChannelId: string | null },
+  create: Record<string, unknown>,
+  update: Record<string, unknown>,
+): Promise<{ id: string }> {
+  const where = key;
+  const existing = await tx.whatsAppThread.findFirst({ where, select: { id: true } });
+  if (existing) {
+    if (Object.keys(update).length > 0) {
+      await tx.whatsAppThread.update({ where: { id: existing.id }, data: update });
+    }
+    return existing;
+  }
+  try {
+    return await tx.whatsAppThread.create({ data: { ...create, ...key }, select: { id: true } });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      const again = await tx.whatsAppThread.findFirst({ where, select: { id: true } });
+      if (again) return again;
+    }
+    throw err;
+  }
+}
 
 const TICK_INTERVAL_MS = 15 * 60 * 1000; // every 15 minutes
 const REPAIR_BATCH = 500;
@@ -31,19 +63,24 @@ export async function recordOutboundTemplate(args: {
   toNumber: string;
   metaMessageId: string | null;
   templateName: string;
+  // Multi-number: the WhatsApp number this template was sent from, so the
+  // message links to the SAME thread the customer's inbound is on. Null ⇒
+  // the org's "no specific number" thread bucket.
+  whatsAppChannelId?: string | null;
 }): Promise<void> {
   const phone = (args.toNumber ?? '').replace(/[^0-9]/g, '');
   if (!phone) return;
   const preview = `📨 Template · ${args.templateName}`.slice(0, 200);
   try {
     await withRlsBypass(async (tx) => {
-      const thread = await tx.whatsAppThread.upsert({
-        where: {
-          organizationId_customerPhone: { organizationId: args.organizationId, customerPhone: phone },
-        },
-        create: {
+      const thread = await findOrCreateThread(
+        tx,
+        {
           organizationId: args.organizationId,
           customerPhone: phone,
+          whatsAppChannelId: args.whatsAppChannelId ?? null,
+        },
+        {
           status: 'open',
           lastMessageAt: new Date(),
           lastMessagePreview: preview,
@@ -51,13 +88,12 @@ export async function recordOutboundTemplate(args: {
           outboundCount: 1,
           searchText: preview,
         },
-        update: {
+        {
           lastMessageAt: new Date(),
           lastMessagePreview: preview,
           outboundCount: { increment: 1 },
         },
-        select: { id: true },
-      });
+      );
       await tx.whatsAppMessage.create({
         data: {
           threadId: thread.id,
@@ -97,6 +133,18 @@ export async function repairOrphanedMessages(
     let relinked = 0;
     let unattributable = 0;
     const touched = new Set<string>();
+    // Orphan messages carry no number, so attribute them to each org's primary
+    // number (best-effort, cached). Matches pre-multi-number behaviour.
+    const primaryByOrg = new Map<string, string | null>();
+    const primaryFor = async (orgId: string): Promise<string | null> => {
+      if (primaryByOrg.has(orgId)) return primaryByOrg.get(orgId)!;
+      const p = await tx.whatsAppChannel.findFirst({
+        where: { organizationId: orgId, isPrimary: true },
+        select: { id: true },
+      });
+      primaryByOrg.set(orgId, p?.id ?? null);
+      return p?.id ?? null;
+    };
 
     for (const m of orphans) {
       const raw = (m.direction === 'inbound' ? m.fromNumber : m.toNumber) ?? '';
@@ -107,21 +155,32 @@ export async function repairOrphanedMessages(
         unattributable++;
         continue;
       }
-      const thread = await tx.whatsAppThread.upsert({
-        where: { organizationId_customerPhone: { organizationId: m.organizationId, customerPhone: phone } },
-        create: {
-          organizationId: m.organizationId,
-          customerPhone: phone,
-          status: 'open',
-          lastMessageAt: new Date(),
-          lastMessagePreview: null,
-          inboundCount: 0,
-          outboundCount: 0,
-          searchText: phone,
-        },
-        update: {},
+      // Prefer any existing thread for this customer (regardless of number) so
+      // we don't split a conversation; otherwise create under the primary.
+      let thread = await tx.whatsAppThread.findFirst({
+        where: { organizationId: m.organizationId, customerPhone: phone },
         select: { id: true },
+        orderBy: { lastMessageAt: 'desc' },
       });
+      if (!thread) {
+        thread = await findOrCreateThread(
+          tx,
+          {
+            organizationId: m.organizationId,
+            customerPhone: phone,
+            whatsAppChannelId: await primaryFor(m.organizationId),
+          },
+          {
+            status: 'open',
+            lastMessageAt: new Date(),
+            lastMessagePreview: null,
+            inboundCount: 0,
+            outboundCount: 0,
+            searchText: phone,
+          },
+          {},
+        );
+      }
       await tx.whatsAppMessage.update({ where: { id: m.id }, data: { threadId: thread.id } });
       relinked++;
       touched.add(thread.id);

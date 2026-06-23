@@ -12,34 +12,52 @@
 import {
   Activity,
   Bot,
+  Filter,
   Inbox,
   LayoutGrid,
   ListChecks,
+  PhoneCall,
   Plug,
+  Radio,
   Send,
+  ShieldCheck,
+  ShoppingBag,
   Sparkles,
+  Users,
   type LucideIcon,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
 
 import { AiBudgetWidget } from './widgets/ai-budget';
+import { AudienceComplianceWidget } from './widgets/audience-compliance';
 import { BotPerformanceWidget } from './widgets/bot-performance';
+import { ChannelMixWidget } from './widgets/channel-mix';
 import { ConnectionsSyncWidget } from './widgets/connections-sync';
+import { ConversionFunnelWidget } from './widgets/conversion-funnel';
 import { InboxSnapshotWidget } from './widgets/inbox-snapshot';
 import { KpiStripWidget } from './widgets/kpi-strip';
 import { OnboardingChecklistWidget } from './widgets/onboarding-checklist';
 import { OutreachCampaignsWidget } from './widgets/outreach-campaigns';
 import { RecentActivityWidget } from './widgets/recent-activity';
+import { ReplyQualityWidget } from './widgets/reply-quality';
+import { SalesRevenueWidget } from './widgets/sales-revenue';
+import { VoiceCallsWidget } from './widgets/voice-calls';
 
 export type WidgetId =
   | 'kpi-strip'
   | 'onboarding'
   | 'inbox-snapshot'
   | 'bot-performance'
+  | 'sales-revenue'
+  | 'conversion-funnel'
   | 'outreach'
   | 'ai-budget'
   | 'connections'
-  | 'recent-activity';
+  | 'recent-activity'
+  | 'channel-mix'
+  | 'audience'
+  | 'reply-quality'
+  | 'voice-calls';
 
 /**
  * Where the widget lives on the page. The dashboard places `full`
@@ -102,6 +120,24 @@ export const WIDGETS: WidgetDef[] = [
     Component: BotPerformanceWidget,
   },
   {
+    id: 'sales-revenue',
+    title: 'Sales & revenue · 7d',
+    description: 'Orders, revenue, avg order value + paid count — the bottom line.',
+    icon: ShoppingBag,
+    slot: 'half',
+    defaultOn: true,
+    Component: SalesRevenueWidget,
+  },
+  {
+    id: 'conversion-funnel',
+    title: 'Conversion funnel · 7d',
+    description: 'Conversations → carts → orders → paid, with drop-off at each step.',
+    icon: Filter,
+    slot: 'half',
+    defaultOn: true,
+    Component: ConversionFunnelWidget,
+  },
+  {
     id: 'outreach',
     title: 'Outreach & campaigns',
     description: 'Active campaign status + sent / delivered / read funnel.',
@@ -136,6 +172,44 @@ export const WIDGETS: WidgetDef[] = [
     slot: 'half',
     defaultOn: true,
     Component: RecentActivityWidget,
+  },
+  // --- Available-to-add widgets (off by default to keep the default
+  //     board focused; operators add them from the "Add widgets" dialog). ---
+  {
+    id: 'channel-mix',
+    title: 'Channel mix · 7d',
+    description: 'Where conversations come from — WhatsApp / Messenger / Instagram / voice.',
+    icon: Radio,
+    slot: 'half',
+    defaultOn: false,
+    Component: ChannelMixWidget,
+  },
+  {
+    id: 'audience',
+    title: 'Audience & compliance',
+    description: 'Contact-list size + growth, opt-out rate, blocked contacts.',
+    icon: Users,
+    slot: 'half',
+    defaultOn: false,
+    Component: AudienceComplianceWidget,
+  },
+  {
+    id: 'reply-quality',
+    title: 'Reply quality · 7d',
+    description: 'Share of grounded bot replies + count flagged for unsupported claims.',
+    icon: ShieldCheck,
+    slot: 'half',
+    defaultOn: false,
+    Component: ReplyQualityWidget,
+  },
+  {
+    id: 'voice-calls',
+    title: 'Voice calls · 7d',
+    description: 'Phone-voicebot volume + completed / handoff / dropped outcomes.',
+    icon: PhoneCall,
+    slot: 'half',
+    defaultOn: false,
+    Component: VoiceCallsWidget,
   },
 ];
 

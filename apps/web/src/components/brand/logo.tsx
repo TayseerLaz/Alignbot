@@ -53,12 +53,12 @@ export function AlignedLogo({
     <span
       role="img"
       aria-label="Hader AI"
-      className={cn('inline-block text-brand-500', className)}
+      // Default height is the Tailwind class h-9 (36px) — NOT an inline style —
+      // so callers can shrink/grow it via className (e.g. h-6/h-7); twMerge
+      // dedupes the conflicting h-* and the caller wins. The aspect-ratio keeps
+      // the wordmark from squishing at any height.
+      className={cn('inline-block h-9 text-brand-500', className)}
       style={{
-        // 5.07:1 aspect, default height 36 → ~183px wide. Caller can
-        // override either dimension via Tailwind classes (h-7, h-10, …)
-        // and the aspect-ratio keeps the wordmark from squishing.
-        height: 36,
         aspectRatio: '6452 / 1272',
         backgroundColor: 'currentColor',
         // Prefixed with /app for the same basePath reason as the

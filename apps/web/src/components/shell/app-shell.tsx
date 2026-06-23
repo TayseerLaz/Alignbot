@@ -38,10 +38,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <CommandPaletteProvider>
       <div className="flex h-dvh bg-surface-muted">
-        {/* Desktop sidebar — fixed width, always expanded. Deep-oxblood brand
-            panel (fixed colors so it stays dark in light mode too). */}
-        <aside className="hidden h-dvh w-60 shrink-0 border-r border-black/10 bg-[#360516] lg:block">
-          <Sidebar />
+        {/* Desktop sidebar — a floating, rounded deep-oxblood brand panel
+            (fixed colors so it stays dark in light mode too). */}
+        <aside className="hidden h-dvh shrink-0 p-3 lg:block">
+          <div className="h-full w-60 overflow-hidden rounded-2xl bg-[#360516] shadow-[0_8px_30px_-12px_rgba(54,5,22,0.35)]">
+            <Sidebar />
+          </div>
         </aside>
 
         {/* Mobile sidebar drawer */}

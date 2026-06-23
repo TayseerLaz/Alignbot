@@ -189,7 +189,7 @@ export function Sidebar({
         }
         aria-label={item.newTab ? `${item.label} (opens in a new tab)` : item.label}
         className={cn(
-          'relative flex items-center rounded-md text-[13px] font-medium transition-colors duration-[var(--dur-fast)]',
+          'relative flex items-center rounded-xl text-[13px] font-medium transition-colors duration-[var(--dur-fast)]',
           collapsed ? 'justify-center px-2 py-2' : 'gap-2.5 px-2.5 py-1.5',
           active
             ? 'bg-white/[0.12] text-white'
@@ -224,8 +224,9 @@ export function Sidebar({
           collapsed ? 'justify-center px-2' : 'px-4',
         )}
       >
-        {/* currentColor-masked logo → render it cream on the dark panel. */}
-        <AlignedLogo iconOnly={collapsed} className="text-[#f7eef0]" />
+        {/* currentColor-masked logo → render it cream on the dark panel.
+            h-7 shrinks the wordmark from the 36px default. */}
+        <AlignedLogo iconOnly={collapsed} className="h-7 text-[#f7eef0]" />
       </div>
       <nav className="flex-1 space-y-4 overflow-y-auto p-2.5">
         {visibleGroups.map((group) => (

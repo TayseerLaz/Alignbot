@@ -32,10 +32,40 @@ export const ORG_FEATURES = [
     hrefs: ['/contacts'],
   },
   {
+    key: 'orders',
+    label: 'Orders / cart',
+    description: 'The orders (cart) page where WhatsApp/Messenger orders land.',
+    hrefs: ['/cart'],
+  },
+  {
     key: 'bookings',
-    label: 'Bookings & orders',
-    description: 'Appointment bookings and the orders/cart page.',
-    hrefs: ['/bookings', '/cart'],
+    label: 'Bookings',
+    description: 'The appointment bookings page.',
+    hrefs: ['/bookings'],
+  },
+  {
+    key: 'messenger',
+    label: 'Facebook Messenger',
+    description:
+      'Let the bot answer Facebook Messenger DMs. Turn OFF to silence Messenger (DMs still land in the inbox; the bot stays silent and operators can’t reply on it). Does not affect WhatsApp or Instagram.',
+    // No page to hide — Messenger + Instagram share the /settings/messenger
+    // config page, so gating is enforced at the channel level (bot reply +
+    // operator send + inbox filter), not by hiding a route.
+    hrefs: [],
+  },
+  {
+    key: 'instagram',
+    label: 'Instagram Direct',
+    description:
+      'Let the bot answer Instagram DMs. Turn OFF to silence Instagram only (Messenger stays active if enabled separately).',
+    hrefs: [],
+  },
+  {
+    key: 'exports',
+    label: 'Data export',
+    description:
+      'Self-service GDPR data export (the /settings/data-export page). Turn OFF to remove it for the tenant — ALIGNED admins can still export this org’s data from the admin panel at any time.',
+    hrefs: ['/settings/data-export'],
   },
   {
     key: 'analytics',

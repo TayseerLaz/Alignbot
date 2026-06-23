@@ -635,6 +635,22 @@ export default async function inboxRoutes(app: FastifyInstance) {
       if (thread.channel === 'whatsapp') {
         throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'Use /whatsapp/send for WhatsApp threads.');
       }
+      // Per-channel access control: if ALIGNED-admin turned this channel off,
+      // operators can't send on it either (inbound is still stored + visible).
+      if (thread.channel === 'messenger' || thread.channel === 'instagram') {
+        const org = await app.tenant(req, (tx) =>
+          tx.organization.findUnique({
+            where: { id: orgId },
+            select: { disabledFeatures: true },
+          }),
+        );
+        if (org?.disabledFeatures?.includes(thread.channel)) {
+          throw badRequest(
+            ApiErrorCode.FEATURE_DISABLED,
+            `${thread.channel === 'instagram' ? 'Instagram' : 'Messenger'} is turned off for this workspace.`,
+          );
+        }
+      }
       const recipient = thread.channelUserId ?? thread.customerPhone;
       const { sendMessengerText } = await import('../../lib/messenger-send.js');
       const metaId = await sendMessengerText(orgId, recipient, req.body.body, req.log);

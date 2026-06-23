@@ -1,5 +1,6 @@
 'use client';
 
+import { ORG_FEATURES } from '@aligned/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ClipboardCheck, Copy } from 'lucide-react';
 import Link from 'next/link';
@@ -65,6 +66,8 @@ export default function NewTenantPage() {
   const [adminEmail, setEmail] = useState('');
   const [adminPassword, setPwd] = useState('');
   const [sendWelcomeEmail, setSendEmail] = useState(true);
+  // Features start enabled; toggling a checkbox OFF adds its key here.
+  const [disabledFeatures, setDisabledFeatures] = useState<string[]>([]);
 
   const [created, setCreated] = useState<CreatedTenant | null>(null);
 
@@ -79,6 +82,7 @@ export default function NewTenantPage() {
         adminEmail: adminEmail.trim().toLowerCase(),
         adminPassword: adminPassword.trim() || undefined,
         sendWelcomeEmail,
+        disabledFeatures,
       }),
     onSuccess: (res) => {
       setCreated(res.data);
@@ -268,6 +272,47 @@ export default function NewTenantPage() {
           </CardContent>
         </Card>
 
+        {/* ----- Features (access control) ----- */}
+        <Card className="lg:col-span-3">
+          <CardHeader>
+            <CardTitle>Features</CardTitle>
+            <CardDescription>
+              Everything is on by default. Uncheck anything this tenant shouldn&apos;t have — you
+              can change it later from the tenant&apos;s detail page.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {ORG_FEATURES.map((f) => {
+              const enabled = !disabledFeatures.includes(f.key);
+              return (
+                <label
+                  key={f.key}
+                  className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 size-4 accent-brand-600"
+                    checked={enabled}
+                    onChange={(e) =>
+                      setDisabledFeatures((prev) =>
+                        e.target.checked
+                          ? prev.filter((k) => k !== f.key)
+                          : [...new Set([...prev, f.key])],
+                      )
+                    }
+                  />
+                  <span className="min-w-0">
+                    <span className="font-medium">{f.label}</span>
+                    <span className="mt-0.5 block text-xs text-foreground-muted">
+                      {f.description}
+                    </span>
+                  </span>
+                </label>
+              );
+            })}
+          </CardContent>
+        </Card>
+
         <div className="flex justify-end gap-2 lg:col-span-3">
           <Button variant="secondary" asChild>
             <Link href="/aligned-admin">Cancel</Link>
@@ -297,6 +342,7 @@ export default function NewTenantPage() {
             setPwd('');
             setPlanCode('free');
             setSendEmail(true);
+            setDisabledFeatures([]);
             if (slug) router.push('/aligned-admin');
           }
         }}

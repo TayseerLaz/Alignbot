@@ -14,9 +14,23 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { withRlsBypass } from '../../lib/db.js';
-import { badRequest, notFound } from '../../lib/errors.js';
+import { badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { getDataExportQueue } from '../../lib/queues.js';
 import { presignGetUrl } from '../../lib/storage.js';
+
+// Per-tenant access control: ALIGNED-admin can turn self-service export off.
+// (ALIGNED admins can still export any org's data from the admin panel.)
+async function ensureExportsEnabled(orgId: string): Promise<void> {
+  const org = await withRlsBypass((tx) =>
+    tx.organization.findUnique({ where: { id: orgId }, select: { disabledFeatures: true } }),
+  );
+  if (org?.disabledFeatures?.includes('exports')) {
+    throw forbidden(
+      ApiErrorCode.FEATURE_DISABLED,
+      'Data export is turned off for this workspace. Contact ALIGNED support if you need an export.',
+    );
+  }
+}
 
 const dataExportSchema = z.object({
   id: uuidSchema,
@@ -42,8 +56,9 @@ export default async function dataExportRoutes(app: FastifyInstance) {
       },
       preHandler: [app.requireRole('admin')],
     },
-    async (req) =>
-      app.tenant(req, async (tx) => {
+    async (req) => {
+      await ensureExportsEnabled(req.auth!.organizationId);
+      return app.tenant(req, async (tx) => {
         const rows = await tx.dataExport.findMany({
           orderBy: { createdAt: 'desc' },
           take: 25,
@@ -61,7 +76,8 @@ export default async function dataExportRoutes(app: FastifyInstance) {
           })),
           nextCursor: null,
         };
-      }),
+      });
+    },
   );
 
   r.post(
@@ -88,6 +104,7 @@ export default async function dataExportRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const orgId = req.auth!.organizationId;
       const userId = req.auth!.userId;
+      await ensureExportsEnabled(orgId);
 
       // Refuse if there's an in-flight export — keep the queue lean and
       // give the operator a clear error instead of a silent build-up.
@@ -162,6 +179,7 @@ export default async function dataExportRoutes(app: FastifyInstance) {
       preHandler: [app.requireRole('admin')],
     },
     async (req) => {
+      await ensureExportsEnabled(req.auth!.organizationId);
       const row = await app.tenant(req, (tx) =>
         tx.dataExport.findUnique({ where: { id: req.params.id } }),
       );

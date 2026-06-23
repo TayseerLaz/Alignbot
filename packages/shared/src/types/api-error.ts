@@ -30,6 +30,7 @@ export const ApiErrorCode = {
   // Authorization
   FORBIDDEN: 'FORBIDDEN',
   ROLE_INSUFFICIENT: 'ROLE_INSUFFICIENT',
+  FEATURE_DISABLED: 'FEATURE_DISABLED',
 
   // Resource
   NOT_FOUND: 'NOT_FOUND',

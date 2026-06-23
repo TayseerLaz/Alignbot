@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { ORG_FEATURE_KEYS } from '../constants/org-features.js';
 import { OrgStatus } from '../enums/index.js';
 import { slugSchema, uuidSchema } from './common.js';
 
@@ -48,6 +49,13 @@ export const adminCreateTenantBodySchema = z.object({
   // When true (default), the new admin gets an email with the login URL +
   // their credentials. Disable to onboard silently for QA / migrations.
   sendWelcomeEmail: z.boolean().default(true),
+  // Features to DISABLE for this tenant from the start (keys from the shared
+  // ORG_FEATURES registry). Empty = full access. Can be changed later from the
+  // org detail page's "Access & features" card.
+  disabledFeatures: z
+    .array(z.enum(ORG_FEATURE_KEYS as [string, ...string[]]))
+    .max(20)
+    .default([]),
 });
 export type AdminCreateTenantBody = z.infer<typeof adminCreateTenantBodySchema>;
 

@@ -633,6 +633,18 @@ async function maybeReplyOnMessenger(
     return;
   }
 
+  // Per-channel access control: ALIGNED-admin can turn Messenger and Instagram
+  // on/off independently. When the inbound channel is disabled the DM is still
+  // stored + shown in the inbox; the bot just stays silent on that channel.
+  if (channelKind === 'messenger' && orgFeatures?.disabledFeatures?.includes('messenger')) {
+    log.info({ orgId, threadId }, '[messenger] bot skip: Messenger channel disabled for tenant');
+    return;
+  }
+  if (channelKind === 'instagram' && orgFeatures?.disabledFeatures?.includes('instagram')) {
+    log.info({ orgId, threadId }, '[instagram] bot skip: Instagram channel disabled for tenant');
+    return;
+  }
+
   const channel = await withRlsBypass((tx) =>
     tx.messengerChannel.findUnique({ where: { id: channelId } }),
   );

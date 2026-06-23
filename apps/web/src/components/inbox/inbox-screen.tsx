@@ -308,6 +308,9 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
   // Phase 8 / 1.3 — per-thread hallucination counts for the red-dot.
   // Only fetched for ALIGNED admins. One round-trip across all threads.
   const isAdmin = session?.user.isAlignedAdmin === true;
+  // Per-channel access control — hide Messenger/Instagram from the channel
+  // filter when ALIGNED-admin turned them off for this workspace.
+  const disabledFeatures = session?.organization?.disabledFeatures ?? [];
   const flaggedQ = useQuery({
     queryKey: ['inbox-flagged-summary'],
     queryFn: () =>
@@ -476,8 +479,12 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
                     </SelectItem>
                   ))
                 )}
-                <SelectItem value="messenger">Messenger</SelectItem>
-                <SelectItem value="instagram">Instagram</SelectItem>
+                {!disabledFeatures.includes('messenger') && (
+                  <SelectItem value="messenger">Messenger</SelectItem>
+                )}
+                {!disabledFeatures.includes('instagram') && (
+                  <SelectItem value="instagram">Instagram</SelectItem>
+                )}
               </SelectContent>
             </Select>
           </div>

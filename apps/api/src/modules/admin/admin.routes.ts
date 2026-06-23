@@ -27,8 +27,14 @@ import { withRlsBypass } from '../../lib/db.js';
 import { sendEmail, tenantProvisionedTemplate } from '../../lib/email.js';
 import { env } from '../../lib/env.js';
 import { badRequest, conflict, notFound } from '../../lib/errors.js';
-import { getImportQueue, getSyncQueue, getWebhookQueue } from '../../lib/queues.js';
+import {
+  getDataExportQueue,
+  getImportQueue,
+  getSyncQueue,
+  getWebhookQueue,
+} from '../../lib/queues.js';
 import { getRedis } from '../../lib/redis.js';
+import { presignGetUrl } from '../../lib/storage.js';
 import { issueSession } from '../auth/auth.service.js';
 
 // Derives a URL-safe slug from a human org name. Strips diacritics,
@@ -167,7 +173,12 @@ export default async function adminRoutes(app: FastifyInstance) {
         const passwordHash = await hashPassword(password);
 
         const organization = await tx.organization.create({
-          data: { slug, name: body.organizationName, status: 'active' },
+          data: {
+            slug,
+            name: body.organizationName,
+            status: 'active',
+            disabledFeatures: Array.from(new Set(body.disabledFeatures ?? [])),
+          },
         });
         const admin = await tx.user.create({
           data: {
@@ -1917,6 +1928,163 @@ export default async function adminRoutes(app: FastifyInstance) {
         metadata: { event: 'features_changed', disabledFeatures: next },
       });
       return { data: { id: row.id, disabledFeatures: row.disabledFeatures } };
+    },
+  );
+
+  // ---------- ALIGNED-admin: export ANY org's data -----------------------
+  // ALIGNED admins can export a tenant's full data bundle at any time, even
+  // when the tenant's own self-service 'exports' feature is turned off. Reuses
+  // the same BullMQ worker + DataExport rows as the self-service flow; the
+  // admin downloads from this panel (the worker's email link is tenant-only).
+  const adminExportSchema = z.object({
+    id: uuidSchema,
+    status: z.enum(['pending', 'running', 'succeeded', 'failed']),
+    fileSizeBytes: z.number().int().nullable(),
+    errorMessage: z.string().nullable(),
+    startedAt: z.string().datetime().nullable(),
+    finishedAt: z.string().datetime().nullable(),
+    createdAt: z.string().datetime(),
+  });
+
+  r.get(
+    '/aligned-admin/orgs/:id/exports',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: "List a tenant's recent data exports.",
+        params: z.object({ id: uuidSchema }),
+        response: { 200: listEnvelopeSchema(adminExportSchema) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const rows = await withRlsBypass((tx) =>
+        tx.dataExport.findMany({
+          where: { organizationId: req.params.id },
+          orderBy: { createdAt: 'desc' },
+          take: 25,
+        }),
+      );
+      return {
+        data: rows.map((e) => ({
+          id: e.id,
+          status: e.status as 'pending' | 'running' | 'succeeded' | 'failed',
+          fileSizeBytes: e.fileSizeBytes,
+          errorMessage: e.errorMessage,
+          startedAt: e.startedAt?.toISOString() ?? null,
+          finishedAt: e.finishedAt?.toISOString() ?? null,
+          createdAt: e.createdAt.toISOString(),
+        })),
+        nextCursor: null,
+      };
+    },
+  );
+
+  r.post(
+    '/aligned-admin/orgs/:id/export',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: "Trigger a full data export for any tenant (bypasses the tenant's feature toggle).",
+        params: z.object({ id: uuidSchema }),
+        response: { 201: itemEnvelopeSchema(adminExportSchema) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req, reply) => {
+      const orgId = req.params.id;
+      const org = await withRlsBypass((tx) =>
+        tx.organization.findUnique({ where: { id: orgId }, select: { id: true } }),
+      );
+      if (!org) throw notFound('Organization not found');
+
+      // Don't pile up exports — refuse if one is already in flight.
+      const inflight = await withRlsBypass((tx) =>
+        tx.dataExport.findFirst({
+          where: { organizationId: orgId, status: { in: ['pending', 'running'] } },
+        }),
+      );
+      if (inflight) {
+        throw badRequest(
+          ApiErrorCode.CONFLICT,
+          'An export is already in progress for this organisation.',
+        );
+      }
+
+      const admin = await withRlsBypass((tx) =>
+        tx.user.findUnique({ where: { id: req.auth!.userId }, select: { email: true } }),
+      );
+
+      const created = await withRlsBypass((tx) =>
+        tx.dataExport.create({
+          data: { organizationId: orgId, requestedByUserId: req.auth!.userId, status: 'pending' },
+        }),
+      );
+
+      await getDataExportQueue().add(
+        'data-export',
+        {
+          organizationId: orgId,
+          requestedByUserId: req.auth!.userId,
+          requestedByEmail: admin?.email ?? env.EMAIL_FROM,
+          exportId: created.id,
+        },
+        {
+          attempts: 1,
+          removeOnComplete: { age: 24 * 60 * 60 },
+          removeOnFail: { age: 7 * 24 * 60 * 60 },
+        },
+      );
+
+      await recordAudit({
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        action: 'org_suspended', // reuse: closest existing admin audit action
+        entityType: 'organization',
+        entityId: orgId,
+        metadata: { event: 'admin_data_export_requested', exportId: created.id },
+      });
+
+      reply.code(201);
+      return {
+        data: {
+          id: created.id,
+          status: 'pending' as const,
+          fileSizeBytes: null,
+          errorMessage: null,
+          startedAt: null,
+          finishedAt: null,
+          createdAt: created.createdAt.toISOString(),
+        },
+      };
+    },
+  );
+
+  r.get(
+    '/aligned-admin/orgs/:id/exports/:exportId/download',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Get a short-lived signed download URL for a tenant export.',
+        params: z.object({ id: uuidSchema, exportId: uuidSchema }),
+        response: {
+          200: itemEnvelopeSchema(z.object({ url: z.string().url(), expiresInSeconds: z.number() })),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const row = await withRlsBypass((tx) =>
+        tx.dataExport.findFirst({
+          where: { id: req.params.exportId, organizationId: req.params.id },
+        }),
+      );
+      if (!row) throw notFound('Export not found.');
+      if (row.status !== 'succeeded' || !row.storageKey) {
+        throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'Export is not ready for download.');
+      }
+      const url = await presignGetUrl(row.storageKey);
+      return { data: { url, expiresInSeconds: 900 } };
     },
   );
 

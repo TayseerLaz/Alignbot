@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRightToLine,
   Cpu,
+  Download,
   Lock,
   MessageCircle,
   Pause,
@@ -68,6 +69,16 @@ interface AiUsage {
   aiPlan: AiPlan;
   today: { tokens: number; usd: number; replies: number };
   thisMonth: { tokens: number; usd: number; replies: number };
+}
+
+interface ExportRow {
+  id: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
+  fileSizeBytes: number | null;
+  errorMessage: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
 }
 
 export default function OrgDetailPage() {
@@ -161,6 +172,39 @@ export default function OrgDetailPage() {
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Update failed'),
   });
+
+  // Data export (ALIGNED-admin can export any org, even if the tenant's own
+  // self-service export feature is turned off). Poll while one is in flight.
+  const exportsQ = useQuery({
+    queryKey: ['admin-org-exports', id],
+    queryFn: () => api.get<{ data: ExportRow[] }>(`/api/v1/aligned-admin/orgs/${id}/exports`),
+    refetchInterval: (q) => {
+      const rows = q.state.data?.data ?? [];
+      return rows.some((e) => e.status === 'pending' || e.status === 'running') ? 3000 : false;
+    },
+  });
+  const exports = exportsQ.data?.data ?? [];
+  const exportInflight = exports.some((e) => e.status === 'pending' || e.status === 'running');
+
+  const triggerExport = useMutation({
+    mutationFn: () => api.post(`/api/v1/aligned-admin/orgs/${id}/export`, {}),
+    onSuccess: () => {
+      toast.success('Export started — it will appear below when ready.');
+      queryClient.invalidateQueries({ queryKey: ['admin-org-exports', id] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Could not start export'),
+  });
+
+  const downloadExport = async (exportId: string) => {
+    try {
+      const res = await api.get<{ data: { url: string } }>(
+        `/api/v1/aligned-admin/orgs/${id}/exports/${exportId}/download`,
+      );
+      window.open(res.data.url, '_blank', 'noopener');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.payload.message : 'Download failed');
+    }
+  };
 
   const name = d?.name ?? org?.name ?? 'Organisation';
 
@@ -356,6 +400,62 @@ export default function OrgDetailPage() {
                   );
                 })}
               </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Data export (ALIGNED-admin — always available) */}
+        <Card className="lg:col-span-1">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <Download className="size-4 text-brand-500" /> Data export
+            </CardTitle>
+            <Button
+              size="sm"
+              loading={triggerExport.isPending}
+              disabled={exportInflight}
+              onClick={() => triggerExport.mutate()}
+            >
+              {exportInflight ? 'Exporting…' : 'Export data'}
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <p className="text-xs text-foreground-muted">
+              Full data bundle (catalog, conversations, bot config, audit log) as gzipped JSON.
+              Available even if the tenant&apos;s own export feature is off.
+            </p>
+            {exportsQ.isLoading ? (
+              <Skeleton className="h-8 w-full" />
+            ) : exports.length === 0 ? (
+              <p className="text-foreground-muted">No exports yet.</p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {exports.map((e) => (
+                  <li key={e.id} className="flex items-center justify-between gap-2 py-2">
+                    <span className="min-w-0">
+                      <span className="block">{formatRelative(e.createdAt)}</span>
+                      <span className="text-xs text-foreground-muted">
+                        {e.status}
+                        {e.fileSizeBytes != null
+                          ? ` · ${(e.fileSizeBytes / (1024 * 1024)).toFixed(2)} MB`
+                          : ''}
+                        {e.errorMessage ? ` · ${e.errorMessage}` : ''}
+                      </span>
+                    </span>
+                    {e.status === 'succeeded' ? (
+                      <Button size="sm" variant="secondary" onClick={() => downloadExport(e.id)}>
+                        <Download className="size-3.5" /> Download
+                      </Button>
+                    ) : (
+                      <Badge
+                        variant={e.status === 'failed' ? 'muted' : 'warning'}
+                      >
+                        {e.status}
+                      </Badge>
+                    )}
+                  </li>
+                ))}
+              </ul>
             )}
           </CardContent>
         </Card>

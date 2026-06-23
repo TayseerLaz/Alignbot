@@ -437,7 +437,7 @@ function AccessDialog({
 
   return (
     <Dialog open={!!org} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Access — {org?.name}</DialogTitle>
           <DialogDescription>
@@ -459,7 +459,7 @@ function AccessDialog({
             Full access
           </Button>
         </div>
-        <div className="space-y-2.5">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {ORG_FEATURES.map((f) => {
             const enabled = !disabled.includes(f.key);
             return (

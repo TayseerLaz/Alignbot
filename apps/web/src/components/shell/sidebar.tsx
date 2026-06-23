@@ -39,6 +39,11 @@ interface NavItem {
   exact?: boolean;
   badgeKey?: BadgeKey;
   newTab?: boolean;
+  // Role-aware placement: `adminOnly` shows the item only to ALIGNED admins;
+  // `hideForAdmin` hides it from admins (because it's relocated into the
+  // ALIGNED HQ group for them, but stays in Configure for regular tenants).
+  adminOnly?: boolean;
+  hideForAdmin?: boolean;
 }
 
 type BadgeKey = 'inboxEscalated' | 'leadsNew';
@@ -93,18 +98,24 @@ const groups: NavGroup[] = [
       { href: '/bot', label: 'AI bot builder', icon: Bot },
       // Bulk import lives contextually on Products / Services / Business info now
       // (a "Bulk import" button per page). /imports route + ⌘K still work.
-      { href: '/members', label: 'Members', icon: Users },
+      // Tenants (ALIGNED HQ) shows here for admins. Members + Settings show here
+      // for regular tenants but move into the ALIGNED HQ group for admins.
+      { href: '/aligned-admin', label: 'Tenants', icon: ShieldCheck, adminOnly: true },
+      { href: '/members', label: 'Members', icon: Users, hideForAdmin: true },
       { href: '/audit-log', label: 'Activity log', icon: Activity },
       // Developer integrations (Connectors / Webhooks / API keys) live under
       // Settings now, not the nav. Routes still resolve + the command palette
       // (⌘K) still reaches them.
-      { href: '/settings', label: 'Settings', icon: Settings },
+      { href: '/settings', label: 'Settings', icon: Settings, hideForAdmin: true },
     ],
   },
 ];
 
 const alignedAdminItems: NavItem[] = [
-  { href: '/aligned-admin', label: 'Tenants', icon: ShieldCheck },
+  // Tenants now lives in the Configure group for admins. Members + Settings are
+  // relocated here for admins (they stay in Configure for regular tenants).
+  { href: '/members', label: 'Members', icon: Users },
+  { href: '/settings', label: 'Settings', icon: Settings },
   { href: '/aligned-admin/leads', label: 'Leads', icon: UserPlus, badgeKey: 'leadsNew' },
   { href: '/aligned-admin/system', label: 'System health', icon: Activity },
 ];
@@ -142,9 +153,18 @@ export function Sidebar({
   const isActive = (item: NavItem) =>
     item.exact ? pathname === item.href : pathname.startsWith(item.href);
 
+  const isAdmin = !!session?.user.isAlignedAdmin;
   const disabledFeatures = session?.organization?.disabledFeatures ?? [];
   const visibleGroups = groups
-    .map((g) => ({ ...g, items: g.items.filter((it) => !isHrefDisabled(it.href, disabledFeatures)) }))
+    .map((g) => ({
+      ...g,
+      items: g.items.filter(
+        (it) =>
+          !isHrefDisabled(it.href, disabledFeatures) &&
+          !(it.adminOnly && !isAdmin) &&
+          !(it.hideForAdmin && isAdmin),
+      ),
+    }))
     .filter((g) => g.items.length > 0);
 
   const renderItem = (item: NavItem) => {

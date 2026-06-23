@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 
 import { api } from '@/lib/api';
-import { cn } from '@/lib/utils';
 import { useSession } from '@/lib/session';
 
 // "The system reports its own state." A compact, always-visible strip so the
@@ -29,15 +28,17 @@ export function StatusStrip() {
 
   return (
     <div className="hidden items-center gap-1 text-xs text-foreground-muted md:flex">
-      <Link
-        href="/inbox"
-        className="flex items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-surface-muted"
-        title="Open conversations"
-      >
-        <span className={cn('size-1.5 rounded-full', open > 0 ? 'bg-success' : 'bg-foreground-subtle/40')} />
-        <span className="font-mono tabular-nums">{open}</span>
-        <span className="text-foreground-subtle">chats open</span>
-      </Link>
+      {open > 0 ? (
+        <Link
+          href="/inbox"
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-surface-muted"
+          title="Open conversations"
+        >
+          <span className="size-1.5 rounded-full bg-success" />
+          <span className="font-mono tabular-nums">{open}</span>
+          <span className="text-foreground-subtle">chats open</span>
+        </Link>
+      ) : null}
 
       {escalated > 0 ? (
         <Link

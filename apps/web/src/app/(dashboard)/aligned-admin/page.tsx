@@ -11,6 +11,7 @@ import {
   Eye,
   KeyRound,
   Lock,
+  MoreHorizontal,
   Pause,
   Pencil,
   Play,
@@ -38,6 +39,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { SkeletonRows, SkeletonText } from '@/components/ui/skeleton';
 import { api, ApiError, setAccessToken } from '@/lib/api';
@@ -206,7 +214,9 @@ export default function AlignedAdminPage() {
         }
       />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+      {/* Queue depth / Redis ops / Queues moved out — they live on the System
+          health page. This page is focused on tenants. */}
+      <div className="grid grid-cols-2 gap-4 sm:max-w-md">
         <StatCard
           icon={Building2}
           label="Organisations"
@@ -219,53 +229,9 @@ export default function AlignedAdminPage() {
           value={sys?.users.total ?? '—'}
           hint={sys ? `${sys.users.pending} pending verify` : undefined}
         />
-        <StatCard
-          icon={Activity}
-          label="Redis ops/s"
-          value={sys?.redis.opsPerSec ?? '—'}
-          hint={sys?.redis.connected ? 'connected' : 'disconnected'}
-        />
-        <StatCard
-          icon={Activity}
-          label="Queue depth"
-          value={
-            sys
-              ? sys.queues.import.waiting + sys.queues.sync.waiting + sys.queues.webhook.waiting
-              : '—'
-          }
-          hint={
-            sys
-              ? `${sys.queues.import.failed + sys.queues.sync.failed + sys.queues.webhook.failed} failed`
-              : undefined
-          }
-        />
       </div>
 
-      <Card className="mt-6">
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Queues</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            {(['import', 'sync', 'webhook'] as const).map((k) => (
-              <div key={k} className="rounded-md border border-border p-3 text-sm">
-                <p className="text-xs uppercase tracking-wide text-foreground-subtle">{k}</p>
-                {sys ? (
-                  <div className="mt-1 grid grid-cols-3 gap-2">
-                    <Stat label="Waiting" value={sys.queues[k].waiting} />
-                    <Stat label="Active" value={sys.queues[k].active} />
-                    <Stat label="Failed" value={sys.queues[k].failed} accent="red" />
-                  </div>
-                ) : (
-                  <p className="mt-1 text-foreground-muted">—</p>
-                )}
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="mt-6">
+      <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Organisations</CardTitle>
           <div className="relative w-72">
@@ -302,8 +268,12 @@ export default function AlignedAdminPage() {
                   {orgRows.map((o) => (
                     <tr key={o.id} className="border-b border-border last:border-0">
                       <td className="px-4 py-3">
-                        <p className="font-medium">{o.name}</p>
-                        <p className="font-mono text-xs text-foreground-subtle">{o.slug}</p>
+                        <Link href={`/aligned-admin/orgs/${o.id}`} className="group block">
+                          <p className="font-medium text-foreground group-hover:text-brand-600 group-hover:underline">
+                            {o.name}
+                          </p>
+                          <p className="font-mono text-xs text-foreground-subtle">{o.slug}</p>
+                        </Link>
                       </td>
                       <td className="px-4 py-3">
                         <Badge
@@ -329,104 +299,81 @@ export default function AlignedAdminPage() {
                         {o.lastActivityAt ? formatRelative(o.lastActivityAt) : '—'}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        {o.status === 'active' ? (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={ownOrgIds.has(o.id)}
-                            title={ownOrgIds.has(o.id) ? 'You cannot suspend your own account.' : undefined}
-                            onClick={async () => {
-                              if (
-                                await confirmDialog({
-                                  title: `Suspend "${o.name}"?`,
-                                  body: "Members won't be able to sign in until you reactivate the organisation. Their data stays intact.",
-                                  confirmLabel: 'Suspend',
-                                  destructive: true,
-                                })
-                              ) {
-                                update.mutate({ id: o.id, status: 'suspended' });
-                              }
-                            }}
-                          >
-                            <Pause className="size-4" /> Suspend
-                          </Button>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => update.mutate({ id: o.id, status: 'active' })}
-                          >
-                            <Play className="size-4" /> Reactivate
-                          </Button>
-                        )}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setDetailsOpenFor(o)}
-                          title="See members, emails, last logins, audit log."
-                        >
-                          <Eye className="size-4" /> Details
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setAiOpenFor(o)}
-                          title="See AI token + USD usage and change the plan."
-                        >
-                          <Cpu className="size-4" /> AI
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setAccessOpenFor(o)}
-                          disabled={ownOrgIds.has(o.id)}
-                          title={
-                            ownOrgIds.has(o.id)
-                              ? "This is your own admin account — its access is locked and can't be changed."
-                              : 'Control which pages, features, and the AI this tenant can use.'
-                          }
-                        >
-                          <Lock className="size-4" /> Access
-                          {o.disabledFeatures.length > 0 ? (
-                            <span className="ml-1 rounded-full bg-amber-100 px-1.5 text-[10px] font-semibold text-amber-700">
-                              {o.disabledFeatures.length}
-                            </span>
-                          ) : null}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => controlOrg.mutate(o)}
-                          disabled={controlOrg.isPending || o.status !== 'active'}
-                          title={
-                            o.status === 'active'
-                              ? `Open ${o.name} as an admin so you can edit their data.`
-                              : 'Reactivate this organisation first to control it.'
-                          }
-                        >
-                          <ArrowRightToLine className="size-4" /> Control
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          aria-label="Delete"
-                          disabled={ownOrgIds.has(o.id)}
-                          title={ownOrgIds.has(o.id) ? 'You cannot delete your own account.' : 'Delete'}
-                          onClick={async () => {
-                            if (
-                              await confirmDialog({
-                                title: `Permanently delete "${o.name}"?`,
-                                body: 'Members, products, services, FAQs, API keys and webhooks for this organisation will all be removed. This cannot be undone.',
-                                confirmLabel: 'Delete everything',
-                                destructive: true,
-                              })
-                            ) {
-                              remove.mutate(o.id);
-                            }
-                          }}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button size="icon" variant="ghost" aria-label={`Actions for ${o.name}`}>
+                              <MoreHorizontal className="size-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-52">
+                            <DropdownMenuItem asChild>
+                              <Link href={`/aligned-admin/orgs/${o.id}`}>
+                                <Eye className="size-4" /> Open details page
+                              </Link>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => setDetailsOpenFor(o)}>
+                              <Users className="size-4" /> Members &amp; activity
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => setAiOpenFor(o)}>
+                              <Cpu className="size-4" /> AI usage &amp; plan
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onSelect={() => setAccessOpenFor(o)}
+                              disabled={ownOrgIds.has(o.id)}
+                            >
+                              <Lock className="size-4" /> Access
+                              {o.disabledFeatures.length > 0 ? ` (${o.disabledFeatures.length})` : ''}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onSelect={() => controlOrg.mutate(o)}
+                              disabled={controlOrg.isPending || o.status !== 'active'}
+                            >
+                              <ArrowRightToLine className="size-4" /> Control workspace
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            {o.status === 'active' ? (
+                              <DropdownMenuItem
+                                disabled={ownOrgIds.has(o.id)}
+                                onSelect={async () => {
+                                  if (
+                                    await confirmDialog({
+                                      title: `Suspend "${o.name}"?`,
+                                      body: "Members won't be able to sign in until you reactivate the organisation. Their data stays intact.",
+                                      confirmLabel: 'Suspend',
+                                      destructive: true,
+                                    })
+                                  ) {
+                                    update.mutate({ id: o.id, status: 'suspended' });
+                                  }
+                                }}
+                              >
+                                <Pause className="size-4" /> Suspend
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem onSelect={() => update.mutate({ id: o.id, status: 'active' })}>
+                                <Play className="size-4" /> Reactivate
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem
+                              disabled={ownOrgIds.has(o.id)}
+                              className="text-danger focus:text-danger"
+                              onSelect={async () => {
+                                if (
+                                  await confirmDialog({
+                                    title: `Permanently delete "${o.name}"?`,
+                                    body: 'Members, products, services, FAQs, API keys and webhooks for this organisation will all be removed. This cannot be undone.',
+                                    confirmLabel: 'Delete everything',
+                                    destructive: true,
+                                  })
+                                ) {
+                                  remove.mutate(o.id);
+                                }
+                              }}
+                            >
+                              <Trash2 className="size-4" /> Delete organisation
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </td>
                     </tr>
                   ))}

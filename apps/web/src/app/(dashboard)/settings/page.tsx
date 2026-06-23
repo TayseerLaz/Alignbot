@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Building2, CreditCard, Download, Key, MessageCircle, Palette, Phone, PlugZap, Trash2, User, Users, Webhook } from 'lucide-react';
+import { ArrowRight, Building2, CreditCard, Download, Key, MessageCircle, Phone, Trash2, User, Users } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -57,6 +57,8 @@ export default function SettingsPage() {
   const organization = session?.organization;
   const user = session?.user;
   const isOrgAdmin = organization?.role === 'admin';
+  const disabledFeatures = organization?.disabledFeatures ?? [];
+  const phoneOn = !disabledFeatures.includes('phone');
   const [deleting, setDeleting] = useState(false);
 
   async function deleteOrganization() {
@@ -120,14 +122,8 @@ export default function SettingsPage() {
             <SettingsLink
               href="/settings/billing"
               icon={CreditCard}
-              title="Billing & plan"
-              description="Subscription, usage caps, Stripe self-serve management."
-            />
-            <SettingsLink
-              href="/settings/payments"
-              icon={CreditCard}
-              title="Payments"
-              description="Choose how customers pay: cash, bank transfer, a payment link, MyFatoorah, Stripe, or PayPal."
+              title="Plan"
+              description="Your current plan and usage caps."
             />
             <SettingsLink
               href="/settings/messenger"
@@ -153,7 +149,7 @@ export default function SettingsPage() {
               <Key className="size-4" /> Integrations
             </CardTitle>
             <CardDescription>
-              WhatsApp, phone, keys, connectors, and webhooks for your chatbot and automations.
+              Connect WhatsApp and phone channels to your chatbot.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -163,30 +159,14 @@ export default function SettingsPage() {
               title="WhatsApp"
               description="Connect your Meta WhatsApp Business number + manage templates."
             />
-            <SettingsLink
-              href="/phone-integrations"
-              icon={Phone}
-              title="Phone integration"
-              description="Connect phone numbers to your AI voicebot (Aseer-time phone bridge)."
-            />
-            <SettingsLink
-              href="/api-keys"
-              icon={Key}
-              title="API keys"
-              description="Let the chatbot read your catalog (X-Aligned-Api-Key)."
-            />
-            <SettingsLink
-              href="/connectors"
-              icon={PlugZap}
-              title="API connectors"
-              description="Pull data from Shopify, Sheets, or accept push via inbound webhook."
-            />
-            <SettingsLink
-              href="/webhooks"
-              icon={Webhook}
-              title="Outbound webhooks"
-              description="Notify external systems when your catalog changes."
-            />
+            {phoneOn ? (
+              <SettingsLink
+                href="/phone-integrations"
+                icon={Phone}
+                title="Phone integration"
+                description="Connect phone numbers to your AI voicebot (Aseer-time phone bridge)."
+              />
+            ) : null}
           </CardContent>
         </Card>
 

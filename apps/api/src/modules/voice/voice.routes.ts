@@ -50,6 +50,19 @@ type VoiceConfigEnvelope = { data: z.infer<typeof voiceConfigSchema> };
 async function loadVoiceConfig(
   orgId: string,
 ): Promise<{ value: VoiceConfigEnvelope; cache: 'HIT' | 'STALE' | 'MISS' }> {
+  // Per-tenant access control: ALIGNED-admin can turn the phone/voice
+  // integration off. With it off the voicebot gets no persona/config, so it
+  // can't operate for this tenant. Checked before the cache so flipping the
+  // toggle takes effect immediately.
+  const org0 = await withRlsBypass((tx) =>
+    tx.organization.findUnique({ where: { id: orgId }, select: { disabledFeatures: true } }),
+  );
+  if (org0?.disabledFeatures?.includes('phone')) {
+    throw forbidden(
+      ApiErrorCode.FEATURE_DISABLED,
+      'Phone / voice integration is turned off for this organization.',
+    );
+  }
   const hit = await readCacheGet<VoiceConfigEnvelope>(orgId, 'voice-config', null);
   if (hit && !hit.stale) return { value: hit.value, cache: 'HIT' };
   const value = await withTenant(orgId, async (tx) => {

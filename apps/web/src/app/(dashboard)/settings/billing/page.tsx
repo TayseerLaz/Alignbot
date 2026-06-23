@@ -124,8 +124,8 @@ export default function BillingPage() {
   return (
     <>
       <PageHeader
-        title="Billing"
-        description="Subscription, plan, usage caps, and Stripe self-serve management."
+        title="Plan"
+        description="Your current plan and usage. To change your plan, contact ALIGNED."
         actions={
           <Button variant="secondary" asChild>
             <Link href="/settings">
@@ -135,97 +135,12 @@ export default function BillingPage() {
         }
       />
 
-      {sub ? <CurrentPlanCard sub={sub} onPortal={() => portal.mutate()} portalLoading={portal.isPending} /> : null}
-
-      <Card className="mt-6">
-        <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <div>
-            <CardTitle>Plans</CardTitle>
-            <CardDescription>Pick a plan to upgrade. Stripe handles payment.</CardDescription>
-          </div>
-          <div className="inline-flex rounded-md border border-border bg-surface p-0.5 text-xs">
-            {(['monthly', 'yearly'] as const).map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => setInterval(v)}
-                className={cn(
-                  'rounded px-3 py-1 capitalize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
-                  interval === v ? 'bg-brand-50 text-brand-700 shadow-sm' : 'text-foreground-muted',
-                )}
-                aria-pressed={interval === v}
-              >
-                {v}
-              </button>
-            ))}
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-            {plans.map((p) => (
-              <div
-                key={p.id}
-                className={cn(
-                  'flex flex-col rounded-lg border p-4',
-                  sub?.planCode === p.code ? 'border-brand-500 bg-brand-50/40' : 'border-border bg-surface',
-                )}
-              >
-                <p className="text-sm font-semibold">{p.name}</p>
-                <p className="mt-0.5 text-2xl font-bold">
-                  {interval === 'monthly'
-                    ? money(p.priceMonthlyMinor, p.currency)
-                    : money(p.priceYearlyMinor, p.currency)}
-                  <span className="ml-1 text-xs font-normal text-foreground-muted">
-                    /{interval === 'monthly' ? 'mo' : 'yr'}
-                  </span>
-                </p>
-                {p.description ? <p className="mt-1 text-xs text-foreground-muted">{p.description}</p> : null}
-                <ul className="mt-3 flex-1 space-y-1 text-xs">
-                  {p.highlights.map((h) => (
-                    <li key={h} className="flex items-start gap-1.5">
-                      <CheckCircle2 className="mt-0.5 size-3 shrink-0 text-emerald-500" />
-                      <span>{h}</span>
-                    </li>
-                  ))}
-                </ul>
-                <div className="mt-3">
-                  {sub?.planCode === p.code ? (
-                    <Badge variant="success" className="w-full justify-center">
-                      Current plan
-                    </Badge>
-                  ) : !p.hasStripePrice ? (
-                    <Button variant="secondary" size="sm" className="w-full" disabled>
-                      Contact us
-                    </Button>
-                  ) : (
-                    <Button
-                      size="sm"
-                      className="w-full"
-                      loading={checkout.isPending && checkout.variables === p.code}
-                      onClick={() => checkout.mutate(p.code)}
-                    >
-                      <Sparkles className="size-4" /> Upgrade
-                    </Button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+      {sub ? <CurrentPlanCard sub={sub} /> : null}
     </>
   );
 }
 
-function CurrentPlanCard({
-  sub,
-  onPortal,
-  portalLoading,
-}: {
-  sub: Subscription;
-  onPortal: () => void;
-  portalLoading: boolean;
-}) {
+function CurrentPlanCard({ sub }: { sub: Subscription }) {
   const trialActive = sub.status === 'trialing' && sub.trialEndsAt;
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -246,9 +161,6 @@ function CurrentPlanCard({
               ) : null}
             </CardDescription>
           </div>
-          <Button variant="secondary" size="sm" loading={portalLoading} onClick={onPortal}>
-            <Receipt className="size-4" /> Stripe portal <ExternalLink className="size-3" />
-          </Button>
         </CardHeader>
         <CardContent>
           {trialActive ? (

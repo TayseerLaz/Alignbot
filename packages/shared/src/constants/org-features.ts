@@ -61,6 +61,13 @@ export const ORG_FEATURES = [
     hrefs: [],
   },
   {
+    key: 'phone',
+    label: 'Phone / voice integration',
+    description:
+      'The AI voicebot answers phone calls (Aseer-time phone bridge). Turn OFF to disable the phone bot and hide the Phone integration page — the voicebot stops receiving this tenant’s persona/config.',
+    hrefs: ['/phone-integrations'],
+  },
+  {
     key: 'exports',
     label: 'Data export',
     description:

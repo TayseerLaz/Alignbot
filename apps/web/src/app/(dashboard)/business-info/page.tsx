@@ -39,8 +39,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { MarkdownEditor } from '@/components/ui/rich-text-editor';
 import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError } from '@/lib/api';
+import { useSession } from '@/lib/session';
 
 export default function BusinessInfoPage() {
+  const { session } = useSession();
+  const disabledFeatures = session?.organization?.disabledFeatures ?? [];
+  // Booking-form tab tracks the 'bookings' feature; Shop-form tab tracks
+  // 'orders'. When ALIGNED-admin turns the feature off the tab is hidden;
+  // when it's on, the flow is forced enabled (the org toggle is the master).
+  const bookingsOn = !disabledFeatures.includes('bookings');
+  const ordersOn = !disabledFeatures.includes('orders');
   return (
     <>
       <PageHeader
@@ -72,12 +80,16 @@ export default function BusinessInfoPage() {
           <TabsTrigger value="policies">
             <ScrollText className="mr-2 size-4" /> Policies
           </TabsTrigger>
-          <TabsTrigger value="booking">
-            <CalendarCheck className="mr-2 size-4" /> Booking form
-          </TabsTrigger>
-          <TabsTrigger value="shop">
-            <ShoppingCart className="mr-2 size-4" /> Shop form
-          </TabsTrigger>
+          {bookingsOn ? (
+            <TabsTrigger value="booking">
+              <CalendarCheck className="mr-2 size-4" /> Booking form
+            </TabsTrigger>
+          ) : null}
+          {ordersOn ? (
+            <TabsTrigger value="shop">
+              <ShoppingCart className="mr-2 size-4" /> Shop form
+            </TabsTrigger>
+          ) : null}
           {/* Locations + Contact channels — fed into the bot's
               system prompt by gatherBotData(), so the bot can quote
               an address or phone when the customer asks. */}
@@ -94,12 +106,16 @@ export default function BusinessInfoPage() {
         <TabsContent value="policies">
           <PoliciesPanel />
         </TabsContent>
-        <TabsContent value="booking">
-          <BookingFormPanel />
-        </TabsContent>
-        <TabsContent value="shop">
-          <ShopFormPanel />
-        </TabsContent>
+        {bookingsOn ? (
+          <TabsContent value="booking">
+            <BookingFormPanel forceEnabled />
+          </TabsContent>
+        ) : null}
+        {ordersOn ? (
+          <TabsContent value="shop">
+            <ShopFormPanel forceEnabled />
+          </TabsContent>
+        ) : null}
         <TabsContent value="team">
           <TeamInfoPanel />
         </TabsContent>
@@ -1027,7 +1043,7 @@ function defaultBookingForm(): BookingFormDraft {
   };
 }
 
-function BookingFormPanel() {
+function BookingFormPanel({ forceEnabled = false }: { forceEnabled?: boolean }) {
   const queryClient = useQueryClient();
   const infoQuery = useQuery({
     queryKey: ['business-info'],
@@ -1037,6 +1053,12 @@ function BookingFormPanel() {
   const [draft, setDraft] = useState<BookingFormDraft>(defaultBookingForm());
   const [keywordsInput, setKeywordsInput] = useState('');
   const [loaded, setLoaded] = useState(false);
+
+  // Master switch: when the org has the 'bookings' feature on, keep the flow
+  // enabled (covers the no-saved-form default case too).
+  useEffect(() => {
+    if (forceEnabled) setDraft((d) => (d.enabled ? d : { ...d, enabled: true }));
+  }, [forceEnabled]);
 
   useEffect(() => {
     if (!infoQuery.data || loaded) return;
@@ -1049,7 +1071,9 @@ function BookingFormPanel() {
       const av = incoming.availability;
       const baseAv = defaultAvailability();
       setDraft({
-        enabled: !!incoming.enabled,
+        // Org-level 'bookings' feature is the master switch — when on, the
+        // booking flow is always enabled (the in-page toggle is locked on).
+        enabled: forceEnabled ? true : !!incoming.enabled,
         title: incoming.title || 'Book a consultation',
         intentKeywords: incoming.intentKeywords ?? [],
         fields: incoming.fields.map((f) => ({
@@ -1190,12 +1214,15 @@ function BookingFormPanel() {
               type="checkbox"
               className="mt-1 size-4 accent-brand-600"
               checked={draft.enabled}
+              disabled={forceEnabled}
               onChange={(e) => setDraft((d) => ({ ...d, enabled: e.target.checked }))}
             />
             <div className="text-sm">
               <p className="font-medium">Enable booking flow</p>
               <p className="text-xs text-foreground-muted">
-                When on, the AI will offer to collect these fields when a customer asks to book.
+                {forceEnabled
+                  ? 'Bookings are enabled for your workspace, so this flow is always on. Configure the fields below.'
+                  : 'When on, the AI will offer to collect these fields when a customer asks to book.'}
               </p>
             </div>
           </label>
@@ -1533,7 +1560,7 @@ function majorToMinor(raw: string, currency: string): number | null {
   return Math.round(n * minorUnits);
 }
 
-function ShopFormPanel() {
+function ShopFormPanel({ forceEnabled = false }: { forceEnabled?: boolean }) {
   const queryClient = useQueryClient();
   const infoQuery = useQuery({
     queryKey: ['business-info'],
@@ -1545,6 +1572,12 @@ function ShopFormPanel() {
   const [keywordsInput, setKeywordsInput] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [dismissedSuggestion, setDismissedSuggestion] = useState(false);
+
+  // Master switch: when the org has the 'orders' feature on, keep the cart
+  // flow enabled (covers the no-saved-form default case too).
+  useEffect(() => {
+    if (forceEnabled) setDraft((d) => (d.enabled ? d : { ...d, enabled: true }));
+  }, [forceEnabled]);
 
   // Heuristic: if the org has visible products AND most of them are
   // priced, suggest enabling the shop form. Quiet for orgs that look
@@ -1566,6 +1599,7 @@ function ShopFormPanel() {
     staleTime: 1000 * 60 * 10,
   });
   const heuristicSuggests =
+    !forceEnabled &&
     !draft.enabled &&
     !dismissedSuggestion &&
     (productsHeuristicQ.data?.productsCount ?? 0) >= 3 &&
@@ -1591,7 +1625,7 @@ function ShopFormPanel() {
     )?.shopForm;
     if (incoming && Array.isArray(incoming.fields)) {
       setDraft({
-        enabled: !!incoming.enabled,
+        enabled: forceEnabled ? true : !!incoming.enabled,
         title: incoming.title || 'Place an order',
         intentKeywords: incoming.intentKeywords ?? [],
         fields: incoming.fields.map((f) => ({
@@ -1744,13 +1778,15 @@ function ShopFormPanel() {
               type="checkbox"
               className="mt-1 size-4 accent-brand-600"
               checked={draft.enabled}
+              disabled={forceEnabled}
               onChange={(e) => setDraft((d) => ({ ...d, enabled: e.target.checked }))}
             />
             <div className="text-sm">
               <p className="font-medium">Enable shop / cart flow</p>
               <p className="text-xs text-foreground-muted">
-                When on, the bot will help customers build a cart from your products and ask for
-                these fields to finalize the order.
+                {forceEnabled
+                  ? 'Orders are enabled for your workspace, so the cart flow is always on. Configure the fields below.'
+                  : 'When on, the bot will help customers build a cart from your products and ask for these fields to finalize the order.'}
               </p>
             </div>
           </label>

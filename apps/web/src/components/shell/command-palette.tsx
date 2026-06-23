@@ -111,9 +111,6 @@ function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: bool
       { id: 'bookings', label: 'Bookings', group: 'Go to', icon: CalendarCheck, href: '/bookings' },
       { id: 'bot', label: 'AI bot builder', group: 'Go to', icon: Bot, href: '/bot', keywords: 'persona deploy' },
       { id: 'imports', label: 'Imports', group: 'Go to', icon: Upload, href: '/imports', keywords: 'csv upload' },
-      { id: 'connectors', label: 'Connectors', group: 'Go to', icon: Plug, href: '/connectors', keywords: 'integrations api sync' },
-      { id: 'webhooks', label: 'Webhooks', group: 'Go to', icon: Plug, href: '/webhooks' },
-      { id: 'apikeys', label: 'API keys', group: 'Go to', icon: Plug, href: '/api-keys' },
       { id: 'members', label: 'Members', group: 'Go to', icon: Users, href: '/members', keywords: 'team users invite' },
       { id: 'settings', label: 'Settings', group: 'Go to', icon: Settings, href: '/settings' },
     ];

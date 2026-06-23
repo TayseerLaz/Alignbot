@@ -1,7 +1,17 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { ArrowUpRight, Info, Plus, X } from 'lucide-react';
+import {
+  ArrowUpRight,
+  HelpCircle,
+  Info,
+  Package,
+  Plus,
+  Sparkles,
+  Users,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
 
@@ -33,6 +43,15 @@ import { useEditMode } from '../edit-mode-context';
 
 const KPI_QUERY_KEY = ['dashboard', 'kpi-strip'] as const;
 
+// Per-tile accent icon (the soft chip top-right) — gives each KPI card the
+// polished SaaS look while staying on Hader's restrained palette.
+const KPI_ICON: Record<string, LucideIcon> = {
+  products: Package,
+  services: Sparkles,
+  faqs: HelpCircle,
+  contacts: Users,
+};
+
 export function KpiStripWidget() {
   const { editing, layout } = useEditMode();
   const q = useQuery({
@@ -45,7 +64,7 @@ export function KpiStripWidget() {
     return (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <Card key={i} className="h-[124px] animate-pulse" />
+          <Card key={i} className="h-[124px] animate-pulse rounded-2xl" />
         ))}
       </div>
     );
@@ -90,11 +109,11 @@ function KpiTileCard({ tile }: { tile: KpiTile }) {
     // pointer events above it. This avoids nesting anchors/buttons inside an
     // anchor — which is invalid HTML and lets a press on the hint navigate
     // away instead of opening it.
-    <Card className="group relative h-full transition-shadow hover:shadow-lg">
+    <Card className="group relative h-full rounded-2xl border-border/80 shadow-[0_1px_2px_rgba(54,5,22,0.04)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_8px_24px_-8px_rgba(54,5,22,0.12)]">
       <Link
         href={tile.href}
         aria-label={`${tile.label}: ${tile.value}. ${tile.subtext}.`}
-        className="absolute inset-0 z-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+        className="absolute inset-0 z-0 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
       />
       <CardContent className="pointer-events-none relative z-10 p-5">
         <div className="flex items-start justify-between gap-2">
@@ -109,9 +128,18 @@ function KpiTileCard({ tile }: { tile: KpiTile }) {
             >
               <Plus className="size-3" aria-hidden /> {tile.action.label}
             </Link>
-          ) : null}
+          ) : (
+            (() => {
+              const Icon = KPI_ICON[tile.id] ?? Package;
+              return (
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-500 ring-1 ring-brand-100/60">
+                  <Icon className="size-4" aria-hidden />
+                </span>
+              );
+            })()
+          )}
         </div>
-        <p className="mt-2 text-3xl font-semibold tracking-tight" aria-hidden>
+        <p className="mt-3 text-[1.75rem] font-semibold leading-none tracking-tight" aria-hidden>
           {formatThousands(tile.value)}
         </p>
         {showHint ? (

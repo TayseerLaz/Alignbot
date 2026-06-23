@@ -56,19 +56,27 @@ export function WidgetFrame({
   const onLayout = layout.has(id);
 
   return (
-    <Card className={cn(ACCENT_BORDER[accent], 'h-full', className)}>
+    <Card
+      className={cn(
+        ACCENT_BORDER[accent],
+        // Softer SaaS card: roomier radius + a whisper of oxblood-tinted shadow
+        // that lifts on hover. Matches the KPI strip so the panel reads cohesive.
+        'h-full rounded-2xl border-border/80 shadow-[0_1px_2px_rgba(54,5,22,0.04)] transition-shadow duration-200 hover:shadow-[0_8px_24px_-10px_rgba(54,5,22,0.10)]',
+        className,
+      )}
+    >
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <div className="flex items-center gap-2">
-          <Icon
+          <span
             className={cn(
-              'size-4 shrink-0',
-              accent === 'blue'
-                ? 'text-brand-500'
-                : accent === 'green'
-                  ? 'text-emerald-600'
-                  : 'text-foreground-subtle',
+              'flex size-8 shrink-0 items-center justify-center rounded-lg',
+              accent === 'green'
+                ? 'bg-emerald-50 text-emerald-600'
+                : 'bg-brand-50 text-brand-500',
             )}
-          />
+          >
+            <Icon className="size-4 shrink-0" />
+          </span>
           <CardTitle className="text-sm font-medium text-foreground-muted">{title}</CardTitle>
         </div>
         <div className="flex items-center gap-2">

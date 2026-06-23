@@ -38,8 +38,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <CommandPaletteProvider>
       <div className="flex h-dvh bg-surface-muted">
-        {/* Desktop sidebar — fixed width, always expanded. */}
-        <aside className="hidden h-dvh w-60 shrink-0 border-r border-border bg-surface lg:block">
+        {/* Desktop sidebar — fixed width, always expanded. Deep-oxblood brand
+            panel (fixed colors so it stays dark in light mode too). */}
+        <aside className="hidden h-dvh w-60 shrink-0 border-r border-black/10 bg-[#360516] lg:block">
           <Sidebar />
         </aside>
 
@@ -52,7 +53,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           />
         ) : null}
         <aside
-          className={`fixed inset-y-0 left-0 z-50 w-60 transform border-r border-border bg-surface transition-transform lg:hidden ${
+          className={`fixed inset-y-0 left-0 z-50 w-60 transform border-r border-black/10 bg-[#360516] transition-transform lg:hidden ${
             mobileOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
         >

@@ -192,11 +192,11 @@ export function Sidebar({
           'relative flex items-center rounded-md text-[13px] font-medium transition-colors duration-[var(--dur-fast)]',
           collapsed ? 'justify-center px-2 py-2' : 'gap-2.5 px-2.5 py-1.5',
           active
-            ? 'bg-surface-elevated text-foreground'
-            : 'text-foreground-muted hover:bg-surface-muted hover:text-foreground',
+            ? 'bg-white/[0.12] text-white'
+            : 'text-white/65 hover:bg-white/[0.07] hover:text-white',
         )}
       >
-        <Icon className={cn('size-4 shrink-0', active ? 'text-brand-500' : 'text-foreground-subtle')} />
+        <Icon className={cn('size-4 shrink-0', active ? 'text-white' : 'text-white/55')} />
         {collapsed ? null : <span className="truncate">{item.label}</span>}
         {!collapsed && item.newTab ? (
           <ExternalLink className="ml-auto size-3 shrink-0 opacity-40" aria-hidden />
@@ -217,20 +217,21 @@ export function Sidebar({
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col bg-[#360516] text-white">
       <div
         className={cn(
-          'flex h-14 items-center border-b border-border',
+          'flex h-14 items-center border-b border-white/10',
           collapsed ? 'justify-center px-2' : 'px-4',
         )}
       >
-        <AlignedLogo iconOnly={collapsed} />
+        {/* currentColor-masked logo → render it cream on the dark panel. */}
+        <AlignedLogo iconOnly={collapsed} className="text-[#f7eef0]" />
       </div>
       <nav className="flex-1 space-y-4 overflow-y-auto p-2.5">
         {visibleGroups.map((group) => (
           <div key={group.label} className="space-y-0.5">
             {!collapsed ? (
-              <p className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground-subtle">
+              <p className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white/40">
                 {group.label}
               </p>
             ) : null}
@@ -239,9 +240,9 @@ export function Sidebar({
         ))}
 
         {session?.user.isAlignedAdmin ? (
-          <div className="space-y-0.5 border-t border-border pt-4">
+          <div className="space-y-0.5 border-t border-white/10 pt-4">
             {!collapsed ? (
-              <p className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-500">
+              <p className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#e9aab7]">
                 ALIGNED HQ
               </p>
             ) : null}

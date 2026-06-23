@@ -67,14 +67,9 @@ export function WidgetFrame({
     >
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              'flex size-8 shrink-0 items-center justify-center rounded-lg',
-              accent === 'green'
-                ? 'bg-emerald-50 text-emerald-600'
-                : 'bg-brand-50 text-brand-500',
-            )}
-          >
+          {/* Brand-only accent chip (no off-brand greens/blues) so the panel
+              stays in the Hader oxblood family. */}
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-500">
             <Icon className="size-4 shrink-0" />
           </span>
           <CardTitle className="text-sm font-medium text-foreground-muted">{title}</CardTitle>

@@ -364,8 +364,33 @@ export default function WhatsAppPage() {
             })}
           </div>
 
-          {channel ? (
-            <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+          {channel && form ? (
+            <div className="space-y-3 border-t border-border pt-3">
+              {/* Inline rename — change this number's display name right here. */}
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="min-w-[14rem] flex-1 space-y-1">
+                  <Label htmlFor="number-name">Number name</Label>
+                  <Input
+                    id="number-name"
+                    placeholder="e.g. Sales line, Support, Dubai branch"
+                    value={form.label}
+                    onChange={(e) => setForm({ ...form, label: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') save.mutate({ label: form.label.trim() || null });
+                    }}
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => save.mutate({ label: form.label.trim() || null })}
+                  loading={save.isPending}
+                  disabled={(form.label.trim() || null) === (channel.label ?? null)}
+                >
+                  Save name
+                </Button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
               {/* Per-number AI bot switch — the core multi-number control. */}
               <Button
                 size="sm"
@@ -406,6 +431,7 @@ export default function WhatsAppPage() {
                   <Trash2 className="size-4" /> Remove number
                 </Button>
               ) : null}
+              </div>
             </div>
           ) : null}
         </CardContent>
@@ -517,18 +543,6 @@ export default function WhatsAppPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label htmlFor="label">Number title</Label>
-                <Input
-                  id="label"
-                  placeholder="e.g. Sales line, Support, Dubai branch"
-                  value={form.label}
-                  onChange={(e) => setForm({ ...form, label: e.target.value })}
-                />
-                <p className="text-xs text-foreground-subtle">
-                  Shown in the inbox + broadcasts so you can tell numbers apart.
-                </p>
-              </div>
               <div className="space-y-1.5">
                 <Label htmlFor="wabaId">WhatsApp Business Account ID (WABA ID)</Label>
                 <Input

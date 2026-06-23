@@ -41,7 +41,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* Desktop sidebar — flush to the left edge, full height, with only the
             RIGHT corners rounded. Deep-oxblood brand panel (fixed colors so it
             stays dark in light mode too). */}
-        <aside className="hidden h-dvh w-60 shrink-0 overflow-hidden rounded-r-2xl bg-[#360516] shadow-[0_8px_30px_-12px_rgba(54,5,22,0.35)] lg:block">
+        <aside className="hidden h-dvh w-60 shrink-0 overflow-hidden rounded-r-2xl bg-[#360516] shadow-[0_8px_30px_-12px_rgba(54,5,22,0.35)] dark:bg-surface dark:shadow-none lg:block">
           <Sidebar />
         </aside>
 
@@ -54,7 +54,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           />
         ) : null}
         <aside
-          className={`fixed inset-y-0 left-0 z-50 w-60 transform border-r border-black/10 bg-[#360516] transition-transform lg:hidden ${
+          className={`fixed inset-y-0 left-0 z-50 w-60 transform border-r border-black/10 bg-[#360516] transition-transform dark:border-border dark:bg-surface lg:hidden ${
             mobileOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
         >

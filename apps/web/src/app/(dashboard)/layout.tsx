@@ -4,6 +4,7 @@ import { isHrefDisabled } from '@aligned/shared';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 
+import { AiSupportProvider } from '@/components/admin/ai-support';
 import { AppShell } from '@/components/shell/app-shell';
 import { AppShellSkeleton } from '@/components/shell/app-shell-skeleton';
 import { useSession } from '@/lib/session';
@@ -39,5 +40,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return <AppShellSkeleton />;
   }
 
-  return <AppShell>{children}</AppShell>;
+  return (
+    <AiSupportProvider>
+      <AppShell>{children}</AppShell>
+    </AiSupportProvider>
+  );
 }

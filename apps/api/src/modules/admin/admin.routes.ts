@@ -20,6 +20,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
+import { runAdminCopilot, isCopilotConfigured } from '../../lib/admin-copilot.js';
 import { recordAudit } from '../../lib/audit.js';
 import { REFRESH_COOKIE_NAME, refreshCookieOptions } from '../../lib/cookies.js';
 import { generateTempPassword, hashPassword } from '../../lib/crypto.js';
@@ -1931,6 +1932,67 @@ export default async function adminRoutes(app: FastifyInstance) {
         metadata: { event: 'subscription_plan_changed', planCode: result.code },
       });
       return { data: { id: orgId, planCode: result.code } };
+    },
+  );
+
+  // ---------- POST /aligned-admin/support/chat --------------------------
+  // ALIGNED HQ AI copilot. Streams a plain-text token stream (read with a
+  // fetch ReadableStream on the client). Tool-calls live tenant data. Admin-only.
+  r.post(
+    '/aligned-admin/support/chat',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Streaming ALIGNED HQ AI copilot (plain-text token stream).',
+        body: z.object({
+          messages: z
+            .array(
+              z.object({
+                role: z.enum(['user', 'assistant']),
+                content: z.string().trim().min(1).max(8000),
+              }),
+            )
+            .min(1)
+            .max(40),
+        }),
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req, reply) => {
+      const origin = (req.headers.origin as string | undefined) ?? '';
+      const allowed = env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
+      const allowOrigin = allowed.includes(origin) ? origin : allowed[0] ?? '*';
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'X-Accel-Buffering': 'no',
+        'Access-Control-Allow-Origin': allowOrigin,
+        'Access-Control-Allow-Credentials': 'true',
+        Vary: 'Origin',
+      });
+      if (!isCopilotConfigured()) {
+        reply.raw.write('The AI copilot is not configured on this deployment (missing OpenAI key).');
+        reply.raw.end();
+        return reply;
+      }
+      try {
+        for await (const delta of runAdminCopilot(req.body.messages)) {
+          reply.raw.write(delta);
+        }
+      } catch (err) {
+        req.log.error({ err }, '[admin-copilot] stream failed');
+        try {
+          reply.raw.write('\n\n_Sorry — something went wrong generating that answer._');
+        } catch {
+          /* socket closed */
+        }
+      }
+      try {
+        reply.raw.end();
+      } catch {
+        /* noop */
+      }
+      return reply;
     },
   );
 

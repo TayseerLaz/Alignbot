@@ -2166,6 +2166,12 @@ model ContactMemory {
   facts           Json      @default("{}")
   // Detected primary language (en / ar / fr) — biases reply language.
   language        String?
+  // Operator-curated "User info" — free text edited by staff in the Contacts
+  // UI. The AI summarizer NEVER touches this field, so an operator's edit is
+  // never clobbered. When set it SUPERSEDES `persona` in the system prompt, so
+  // the bot always honours what staff wrote about this customer.
+  operatorNote    String?   @map("operator_note")
+  operatorNoteAt  DateTime? @map("operator_note_at")
   // How many conversation turns have been folded into `persona` so far —
   // lets the summarizer decide when a refresh is worth the token spend.
   turnsSummarized Int       @default(0) @map("turns_summarized")

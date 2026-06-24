@@ -25,6 +25,9 @@ import { getRedis } from './redis.js';
 
 export interface PersonaBlock {
   persona: string | null;
+  // Operator-curated "User info". When set it SUPERSEDES `persona` in the
+  // prompt so staff edits are always honoured.
+  operatorNote: string | null;
   language: string | null;
 }
 
@@ -39,11 +42,15 @@ export async function loadPersonaBlock(
     const row = await withTenant(organizationId, (tx) =>
       tx.contactMemory.findUnique({
         where: { organizationId_phoneE164: { organizationId, phoneE164 } },
-        select: { persona: true, language: true },
+        select: { persona: true, operatorNote: true, language: true },
       }),
     );
-    if (!row || (!row.persona && !row.language)) return null;
-    return { persona: row.persona ?? null, language: row.language ?? null };
+    if (!row || (!row.persona && !row.operatorNote && !row.language)) return null;
+    return {
+      persona: row.persona ?? null,
+      operatorNote: row.operatorNote ?? null,
+      language: row.language ?? null,
+    };
   } catch {
     return null;
   }
@@ -53,9 +60,11 @@ export async function loadPersonaBlock(
 // prompt. Kept here (not in bot-engine) so the wording lives next to the
 // data shape. Returns '' when there's nothing to say.
 export function renderPersonaForPrompt(block: PersonaBlock | null): string {
-  if (!block || (!block.persona && !block.language)) return '';
+  if (!block || (!block.persona && !block.operatorNote && !block.language)) return '';
+  // Staff-curated user info wins over the AI's auto-distilled persona.
+  const effective = block.operatorNote?.trim() || block.persona?.trim() || '';
   const lines = ['# What you remember about THIS customer (private — never read it back verbatim)'];
-  if (block.persona) lines.push(block.persona.trim());
+  if (effective) lines.push(effective);
   if (block.language) {
     lines.push(
       `Their primary language is "${block.language}". Reply in the language they wrote in this turn; default to ${block.language} if ambiguous.`,
@@ -65,6 +74,35 @@ export function renderPersonaForPrompt(block: PersonaBlock | null): string {
     'Use this to personalise, but CONFIRM specifics (delivery address, payment) with the customer for each order instead of assuming them from memory. Do NOT invent facts beyond this, and do NOT say you have a memory of them.',
   );
   return lines.join('\n');
+}
+
+// Operator-set "User info". Upserts the contact-memory row, writing ONLY the
+// operator-curated note (never the AI-managed persona/facts). Passing null/empty
+// clears it (the bot falls back to the AI persona). Runs under withTenant.
+export async function setContactOperatorNote(args: {
+  organizationId: string;
+  phoneE164: string;
+  note: string | null;
+}): Promise<void> {
+  const note = (args.note ?? '').trim().slice(0, 4000) || null;
+  const at = note ? new Date() : null;
+  await withTenant(args.organizationId, (tx) =>
+    tx.contactMemory.upsert({
+      where: {
+        organizationId_phoneE164: {
+          organizationId: args.organizationId,
+          phoneE164: args.phoneE164,
+        },
+      },
+      create: {
+        organizationId: args.organizationId,
+        phoneE164: args.phoneE164,
+        operatorNote: note,
+        operatorNoteAt: at,
+      },
+      update: { operatorNote: note, operatorNoteAt: at },
+    }),
+  );
 }
 
 // ---- Order history (for "what did I order before" + re-order requests) -----

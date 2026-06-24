@@ -393,7 +393,7 @@ function ContactRow({
                 if (
                   !blocking ||
                   window.confirm(
-                    `Block ${contact.phoneE164}? The bot will stop auto-replying to them and they’ll be excluded from broadcasts. Their messages still appear in the inbox.`,
+                    `Block ${contact.phoneE164}? No messages can be sent to them — the AI bot stops replying and you can't message them from the inbox either — and they're excluded from broadcasts. Their incoming messages still appear in the inbox.`,
                   )
                 ) {
                   onSave({ blocked: blocking });

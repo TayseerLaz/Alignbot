@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
+  Ban,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -106,6 +107,9 @@ interface Thread {
   noteCount: number;
   // Phase 6 — per-thread bot reply-mode override. null = inherit BotConfig.
   botReplyMode: 'text' | 'voice' | 'match_customer' | null;
+  // Operator block: true when the customer is blocked. No bot replies + no
+  // outbound messages can be sent. Inbound still arrives.
+  blocked?: boolean;
   createdAt: string;
 }
 
@@ -857,6 +861,21 @@ function ThreadView({
     },
   });
 
+  // Block / unblock the customer. Blocking stops the bot AND prevents any
+  // outbound message (the API rejects /whatsapp/send to a blocked contact).
+  const toggleBlock = useMutation({
+    mutationFn: (blocked: boolean) =>
+      thread
+        ? api.post(`/api/v1/inbox/threads/${thread.id}/block`, { blocked })
+        : Promise.reject(new Error('no thread')),
+    onSuccess: (_res, blocked) => {
+      toast.success(blocked ? 'Customer blocked' : 'Customer unblocked');
+      onChanged();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Could not update block'),
+  });
+
   // Hard-delete this thread + every message in it. The customer drops out
   // of the inbox immediately and only reappears when they send a new
   // WhatsApp message (the webhook upsert creates a fresh thread row).
@@ -935,8 +954,10 @@ function ThreadView({
         onShowInfo={() => setInfoOpen(true)}
         onDelete={() => deleteThread.mutate()}
         onReset={() => resetThread.mutate()}
+        onToggleBlock={(b) => toggleBlock.mutate(b)}
         deletePending={deleteThread.isPending}
         resetPending={resetThread.isPending}
+        blockPending={toggleBlock.isPending}
       />
       <TagBar thread={thread} onAdd={(t) => addTag.mutate(t)} onRemove={(t) => removeTag.mutate(t)} />
       <AiStatusBanner thread={thread} botDeployed={botDeployed} />
@@ -985,6 +1006,23 @@ function ThreadView({
         )}
       </MessageScroller>
       <div className="shrink-0">
+        {thread.blocked ? (
+          <div className="flex items-center justify-between gap-3 border-t border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-700">
+            <span className="inline-flex items-center gap-1.5">
+              <Ban className="size-3.5 shrink-0" /> This customer is blocked — the bot won&rsquo;t reply
+              and no messages can be sent.
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 shrink-0 text-rose-700 hover:bg-rose-100"
+              onClick={() => toggleBlock.mutate(false)}
+              loading={toggleBlock.isPending}
+            >
+              Unblock
+            </Button>
+          </div>
+        ) : null}
         <ReplyBox
           to={thread.customerPhone}
           cannedResponses={cannedQ.data?.data ?? []}
@@ -1016,8 +1054,10 @@ function ThreadHeader({
   onShowInfo,
   onDelete,
   onReset,
+  onToggleBlock,
   deletePending,
   resetPending,
+  blockPending,
 }: {
   thread: Thread;
   onStatusChange: (s: ThreadStatus) => void;
@@ -1032,8 +1072,11 @@ function ThreadHeader({
   // before firing because both wipe message history.
   onDelete: () => void;
   onReset: () => void;
+  // Block / unblock the customer (stops the bot + all outbound sends).
+  onToggleBlock: (blocked: boolean) => void;
   deletePending: boolean;
   resetPending: boolean;
+  blockPending: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(thread.customerName ?? '');
@@ -1142,6 +1185,14 @@ function ThreadHeader({
                 via {thread.whatsAppChannelLabel || thread.whatsAppChannelPhone}
               </span>
             ) : null}
+            {thread.blocked ? (
+              <span
+                className="ml-1 inline-flex shrink-0 items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700"
+                title="This customer is blocked — the bot won't reply and no messages can be sent"
+              >
+                <Ban className="size-3" /> Blocked
+              </span>
+            ) : null}
           </div>
           {/* Open the full customer profile (info, memory, orders, tags). */}
           <Button
@@ -1238,6 +1289,16 @@ function ThreadHeader({
                   {label}
                 </DropdownMenuItem>
               ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => onToggleBlock(!thread.blocked)}
+                disabled={blockPending}
+                className={
+                  thread.blocked ? undefined : 'text-rose-600 focus:bg-rose-50 focus:text-rose-700'
+                }
+              >
+                <Ban className="size-4" /> {thread.blocked ? 'Unblock customer' : 'Block customer'}
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setConfirmReset(true)}>
                 <RotateCcw className="size-4" /> Reset conversation

@@ -11,15 +11,17 @@ import {
   Plus,
   ShoppingBag,
   Tag as TagIcon,
+  UserPen,
   X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { api } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -40,6 +42,8 @@ interface Overview {
   } | null;
   memory: {
     persona: string | null;
+    operatorNote: string | null;
+    operatorNoteAt: string | null;
     language: string | null;
     facts: Record<string, unknown>;
     lastSummaryAt: string | null;
@@ -107,6 +111,13 @@ export function CustomerInfoSheet({
 }) {
   const qc = useQueryClient();
   const [tagInput, setTagInput] = useState('');
+  // Editable "User info" — null means "not edited this session" (show the
+  // saved value); a string means the operator is editing.
+  const [noteDraft, setNoteDraft] = useState<string | null>(null);
+  // Reset the editor when switching contacts.
+  useEffect(() => {
+    setNoteDraft(null);
+  }, [phone]);
 
   const q = useQuery({
     queryKey: ['contact-overview', phone],
@@ -137,6 +148,16 @@ export function CustomerInfoSheet({
     onSuccess: invalidate,
     onError: () => toast.error('Could not remove tag'),
   });
+  const saveUserInfo = useMutation({
+    mutationFn: (userInfo: string) =>
+      api.put('/api/v1/contacts/memory', { phone: phone ?? '', userInfo }),
+    onSuccess: () => {
+      toast.success('User info saved — the AI will use it on the next reply.');
+      setNoteDraft(null);
+      invalidate();
+    },
+    onError: () => toast.error('Could not save user info'),
+  });
 
   if (!open) return null;
 
@@ -147,6 +168,11 @@ export function CustomerInfoSheet({
   const factEntries = Object.entries(facts).filter(
     ([, v]) => v != null && v !== '' && (typeof v !== 'object' || Object.keys(v as object).length > 0),
   );
+  // The "User info" the AI uses: operator edit wins, else the AI's persona.
+  const savedUserInfo = data?.memory?.operatorNote ?? data?.memory?.persona ?? '';
+  const noteValue = noteDraft ?? savedUserInfo;
+  const noteDirty = noteDraft !== null && noteDraft.trim() !== savedUserInfo.trim();
+  const isOperatorEdited = !!data?.memory?.operatorNote;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
@@ -295,28 +321,63 @@ export function CustomerInfoSheet({
               )}
             </Section>
 
-            {/* AI memory */}
-            {data?.memory && (data.memory.persona || factEntries.length > 0) ? (
-              <Section icon={Bot} title="What the AI remembers">
-                {data.memory.persona ? (
-                  <p className="mb-2 whitespace-pre-wrap text-sm text-foreground">
-                    {data.memory.persona}
-                  </p>
-                ) : null}
-                {factEntries.length > 0 ? (
-                  <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 text-xs">
-                    {factEntries.map(([k, v]) => (
-                      <div key={k} className="contents">
-                        <dt className="truncate capitalize text-foreground-subtle">
-                          {k.replace(/_/g, ' ')}
-                        </dt>
-                        <dd className="text-foreground">
-                          {typeof v === 'object' ? JSON.stringify(v) : String(v)}
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
-                ) : null}
+            {/* User info — editable; fed into the bot's prompt on every reply.
+                Prefilled from what the AI wrote; operator edits supersede it
+                and are never overwritten by the AI. */}
+            <Section icon={UserPen} title="User info">
+              <p className="mb-2 text-xs text-foreground-muted">
+                What the AI knows about this customer. Edit to correct or add details — the bot uses
+                this on every reply, and your edits are kept (the AI won&apos;t overwrite them).
+              </p>
+              <Textarea
+                value={noteValue}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                rows={5}
+                maxLength={4000}
+                placeholder="e.g. Prefers Arabic. Allergic to nuts. VIP — always offer free delivery. Usually orders for a family of 5."
+                className="text-sm"
+              />
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <span className="text-[11px] text-foreground-subtle">
+                  {isOperatorEdited
+                    ? `Edited by staff${data?.memory?.operatorNoteAt ? ` ${formatRelative(data.memory.operatorNoteAt)}` : ''}`
+                    : savedUserInfo
+                      ? 'Written by the AI — edit to take over'
+                      : 'Nothing yet'}
+                </span>
+                <div className="flex items-center gap-2">
+                  {noteDirty ? (
+                    <Button size="sm" variant="ghost" onClick={() => setNoteDraft(null)}>
+                      Cancel
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    loading={saveUserInfo.isPending}
+                    disabled={!noteDirty}
+                    onClick={() => saveUserInfo.mutate(noteValue.trim())}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </div>
+            </Section>
+
+            {/* AI-detected structured facts (read-only) */}
+            {factEntries.length > 0 ? (
+              <Section icon={Bot} title="AI-detected details">
+                <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 text-xs">
+                  {factEntries.map(([k, v]) => (
+                    <div key={k} className="contents">
+                      <dt className="truncate capitalize text-foreground-subtle">
+                        {k.replace(/_/g, ' ')}
+                      </dt>
+                      <dd className="text-foreground">
+                        {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
               </Section>
             ) : null}
 

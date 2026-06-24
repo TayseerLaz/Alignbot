@@ -1374,6 +1374,27 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       }
       const to = req.body.to.replace(/[^\d+]/g, '').replace(/^\+/, '');
 
+      // Operator block — never message a contact the operator has blocked.
+      // Mirrors the bot gate in maybeReplyAsBot so "blocked" means no outbound
+      // at all (bot OR human). Matches the contact by either phone form.
+      const blockedContact = await app.tenant(req, (tx) =>
+        tx.contact.findFirst({
+          where: {
+            organizationId: orgId,
+            deletedAt: null,
+            blockedAt: { not: null },
+            phoneE164: { in: [to, `+${to}`] },
+          },
+          select: { id: true },
+        }),
+      );
+      if (blockedContact) {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'This contact is blocked — unblock them to send messages again.',
+        );
+      }
+
       // §5.1.2 24-hour session window. Meta only allows free-form text
       // when the customer messaged in the last 24h; otherwise the agent
       // must use an approved template. Enforce client-side so the user
@@ -1781,6 +1802,27 @@ export default async function whatsappRoutes(app: FastifyInstance) {
 
       // Step 3: send the message.
       const to = req.body.to.replace(/[^\d+]/g, '').replace(/^\+/, '');
+
+      // Operator block — never message a blocked contact (mirrors /whatsapp/send
+      // and the bot gate). The media upload above is harmless (Meta-side only);
+      // the customer receives nothing.
+      const blockedMediaContact = await app.tenant(req, (tx) =>
+        tx.contact.findFirst({
+          where: {
+            organizationId: req.auth!.organizationId,
+            deletedAt: null,
+            blockedAt: { not: null },
+            phoneE164: { in: [to, `+${to}`] },
+          },
+          select: { id: true },
+        }),
+      );
+      if (blockedMediaContact) {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'This contact is blocked — unblock them to send messages again.',
+        );
+      }
 
       // §5.1.2 24-hour session window — same rule as /whatsapp/send. Media
       // messages also count as free-form for Meta's purposes; outside the

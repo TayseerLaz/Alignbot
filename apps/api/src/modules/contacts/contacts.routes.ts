@@ -20,6 +20,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
+import { setContactOperatorNote } from '../../lib/contact-memory.js';
 import { badRequest, conflict, notFound } from '../../lib/errors.js';
 
 const tagBodySchema = z.object({ tag: z.string().trim().min(1).max(40) });
@@ -128,6 +129,9 @@ export default async function contactsRoutes(app: FastifyInstance) {
       memory: z
         .object({
           persona: z.string().nullable(),
+          // Operator-curated "User info" (overrides persona for the bot).
+          operatorNote: z.string().nullable(),
+          operatorNoteAt: z.string().nullable(),
           language: z.string().nullable(),
           facts: z.record(z.string(), z.unknown()),
           lastSummaryAt: z.string().nullable(),
@@ -237,6 +241,8 @@ export default async function contactsRoutes(app: FastifyInstance) {
             memory: memory
               ? {
                   persona: memory.persona,
+                  operatorNote: memory.operatorNote ?? null,
+                  operatorNoteAt: memory.operatorNoteAt?.toISOString() ?? null,
                   language: memory.language,
                   facts,
                   lastSummaryAt: memory.lastSummaryAt?.toISOString() ?? null,
@@ -274,6 +280,54 @@ export default async function contactsRoutes(app: FastifyInstance) {
           },
         };
       }),
+  );
+
+  // ---------- PUT /contacts/memory -----------------------------------------
+  // Save the operator-curated "User info" for a customer (by phone). This is
+  // stored on contact_memory.operator_note, which the AI summarizer NEVER
+  // overwrites and which SUPERSEDES the AI persona in the bot's system prompt —
+  // so whatever staff write here is what the bot considers on future replies.
+  r.put(
+    '/contacts/memory',
+    {
+      schema: {
+        tags: ['contacts'],
+        summary: 'Save operator-edited User info for a customer (fed into the bot prompt).',
+        body: z.object({
+          phone: z.string().trim().min(3).max(32),
+          // Empty string clears the override (bot falls back to AI persona).
+          userInfo: z.string().max(4000),
+        }),
+        response: { 200: itemEnvelopeSchema(z.object({ operatorNote: z.string().nullable() })) },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const rawPhone = req.body.phone.trim();
+      const digits = rawPhone.replace(/[^0-9]/g, '');
+      if (!digits) throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'Invalid phone.');
+      const phones = Array.from(new Set([rawPhone, digits, `+${digits}`].filter(Boolean)));
+
+      // Write onto the SAME row the bot reads. The bot looks memory up by the
+      // raw wa_id (digits, no "+"); reuse an existing row's key if present.
+      const existing = await app.tenant(req, (tx) =>
+        tx.contactMemory.findFirst({ where: { phoneE164: { in: phones } }, select: { phoneE164: true } }),
+      );
+      const targetPhone = existing?.phoneE164 ?? digits;
+      const note = req.body.userInfo.trim() || null;
+      await setContactOperatorNote({ organizationId: orgId, phoneE164: targetPhone, note });
+
+      await recordAudit({
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        action: 'business_info_updated',
+        entityType: 'contact_memory',
+        entityId: targetPhone,
+        metadata: { event: 'contact_user_info_edited', cleared: note === null },
+      });
+      return { data: { operatorNote: note } };
+    },
   );
 
   // ---------- GET /contacts -------------------------------------------------

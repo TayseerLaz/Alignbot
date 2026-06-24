@@ -7,7 +7,7 @@
 // All endpoints are tenant-scoped via app.tenant + RLS. Internal notes
 // are persisted in the `whatsapp_notes` table, not `whatsapp_messages`,
 // so they NEVER appear in the chatbot read API or in any outbound surface.
-import { ApiErrorCode, listEnvelopeSchema, successSchema, uuidSchema } from '@aligned/shared';
+import { ApiErrorCode, itemEnvelopeSchema, listEnvelopeSchema, successSchema, uuidSchema } from '@aligned/shared';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -58,6 +58,9 @@ const threadDtoSchema = z.object({
   noteCount: z.number().int(),
   // Phase 6 — per-thread reply-mode override. NULL = inherit BotConfig.
   botReplyMode: z.enum(['text', 'voice', 'match_customer']).nullable(),
+  // Operator block: true when the matching Contact has blockedAt set. A blocked
+  // customer gets NO bot auto-replies AND no outbound messages can be sent.
+  blocked: z.boolean(),
   createdAt: z.string().datetime(),
 });
 
@@ -111,6 +114,12 @@ const cannedResponseDtoSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
+// Contacts store phones as E.164 (`+…`); thread.customerPhone may or may not
+// carry the leading `+`. Normalise so block lookups match either form.
+function toE164(phone: string): string {
+  return phone.startsWith('+') ? phone : `+${phone}`;
+}
+
 // Helper — pull the joined fields the UI needs for a thread row.
 function serializeThread(t: {
   id: string;
@@ -132,6 +141,8 @@ function serializeThread(t: {
   assignedTo?: { firstName: string | null; lastName: string | null; email: string } | null;
   tags?: { tag: string }[];
   _count?: { notes: number };
+  // Set by the route from the matching Contact's blockedAt. Defaults false.
+  blocked?: boolean;
 }) {
   const rawMode = (t.botReplyMode ?? null) as
     | 'text'
@@ -141,6 +152,7 @@ function serializeThread(t: {
     | string;
   return {
     id: t.id,
+    blocked: t.blocked ?? false,
     channel: t.channel ?? 'whatsapp',
     whatsAppChannelId: t.whatsAppChannelId ?? null,
     whatsAppChannelLabel: t.whatsAppChannel?.label ?? null,
@@ -239,7 +251,27 @@ export default async function inboxRoutes(app: FastifyInstance) {
             _count: { select: { notes: true } },
           },
         });
-        return { data: rows.map(serializeThread), nextCursor: null };
+        // Batch-resolve which of these customers are blocked (one query) so
+        // the list can show a blocked indicator without an N+1.
+        const phones = Array.from(new Set(rows.map((r) => toE164(r.customerPhone))));
+        const blockedRows = phones.length
+          ? await tx.contact.findMany({
+              where: {
+                organizationId: req.auth!.organizationId,
+                deletedAt: null,
+                blockedAt: { not: null },
+                phoneE164: { in: phones },
+              },
+              select: { phoneE164: true },
+            })
+          : [];
+        const blockedSet = new Set(blockedRows.map((c) => c.phoneE164));
+        return {
+          data: rows.map((r) =>
+            serializeThread({ ...r, blocked: blockedSet.has(toE164(r.customerPhone)) }),
+          ),
+          nextCursor: null,
+        };
       });
     },
   );
@@ -300,7 +332,16 @@ export default async function inboxRoutes(app: FastifyInstance) {
           },
         });
         if (!t) throw notFound('Thread not found.');
-        return { data: serializeThread(t) };
+        const blocked = await tx.contact.findFirst({
+          where: {
+            organizationId: req.auth!.organizationId,
+            deletedAt: null,
+            blockedAt: { not: null },
+            phoneE164: toE164(t.customerPhone),
+          },
+          select: { id: true },
+        });
+        return { data: serializeThread({ ...t, blocked: !!blocked }) };
       }),
   );
 
@@ -890,6 +931,66 @@ export default async function inboxRoutes(app: FastifyInstance) {
           },
         });
         return { ok: true as const };
+      }),
+  );
+
+  // ===================================================================
+  // BLOCK / UNBLOCK
+  // ===================================================================
+
+  // Block (or unblock) the customer on this thread. Blocking sets blockedAt on
+  // the matching Contact (creating it if the inbound landed before a contact
+  // row existed). Effect: the bot stops auto-replying AND no outbound message
+  // can be sent (enforced in /whatsapp/send + /whatsapp/send-media). Inbound
+  // messages still arrive + are stored so the operator keeps full context.
+  r.post(
+    '/inbox/threads/:id/block',
+    {
+      schema: {
+        tags: ['inbox'],
+        summary: 'Block or unblock the customer on this thread (stops the bot + all outbound sends).',
+        params: z.object({ id: uuidSchema }),
+        body: z.object({ blocked: z.boolean() }),
+        response: { 200: itemEnvelopeSchema(threadDtoSchema) },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const orgId = req.auth!.organizationId;
+        const thread = await tx.whatsAppThread.findUnique({
+          where: { id: req.params.id },
+          include: {
+            assignedTo: { select: { firstName: true, lastName: true, email: true } },
+            whatsAppChannel: { select: { label: true, displayPhoneNumber: true } },
+            tags: { select: { tag: true } },
+            _count: { select: { notes: true } },
+          },
+        });
+        if (!thread) throw notFound('Thread not found.');
+        const phoneE164 = toE164(thread.customerPhone);
+        const blockedAt = req.body.blocked ? new Date() : null;
+        await tx.contact.upsert({
+          where: { organizationId_phoneE164: { organizationId: orgId, phoneE164 } },
+          create: {
+            organizationId: orgId,
+            phoneE164,
+            source: 'inbox_auto',
+            blockedAt,
+            displayName: thread.customerName ?? undefined,
+            whatsappName: thread.customerWhatsappName ?? undefined,
+          },
+          update: { blockedAt },
+        });
+        await recordAudit({
+          action: 'contact_updated',
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          entityType: 'contact',
+          entityId: thread.id,
+          metadata: { event: req.body.blocked ? 'blocked' : 'unblocked', via: 'inbox', phoneE164 },
+        });
+        return { data: serializeThread({ ...thread, blocked: req.body.blocked }) };
       }),
   );
 

@@ -184,6 +184,22 @@ export function compileVoiceConfig(data: BotData, orgName: string): CompiledVoic
     ].join('\n'),
   );
 
+  // Ordering — only advertised when the tenant has the shop enabled. The
+  // submit_order function is defined on the voicebot side; here we tell the
+  // model HOW and WHEN to use it.
+  if (data.shopForm) {
+    sections.push(
+      [
+        'TAKING ORDERS (you can place orders for callers):',
+        '- Take orders ONLY for items in the menu under BUSINESS DATA, and quote prices ONLY from there. If a caller asks for something not on the menu, say it is unavailable — never invent items or prices.',
+        '- Collect: each item and its quantity, the customer\'s name, and whether it is pickup or delivery (get the address if delivery).',
+        '- When the caller says that is everything, READ BACK the full order — every item with its quantity, the name, pickup or delivery, and the total — and ask them to confirm.',
+        '- ONLY after they clearly confirm, call the submit_order function with the items (each item\'s name and quantity), the customer name, and the fulfillment details. Do NOT say the order is placed until the function returns a confirmation.',
+        '- After the function confirms, tell the caller the order is in and read the total. For payment, say a payment link will be sent to their WhatsApp, or they can pay on pickup or delivery. Never take card or payment-card numbers.',
+      ].join('\n'),
+    );
+  }
+
   // ---- BUSINESS DATA -------------------------------------------------------
   const dataLines: string[] = ['BUSINESS DATA (the only source of truth):'];
 
@@ -315,7 +331,12 @@ export function compileVoiceConfig(data: BotData, orgName: string): CompiledVoic
     instructions = instructions.slice(0, TOTAL_BUDGET);
   }
 
-  const greeting = clean(config?.greeting, CAP.greeting);
+  // Voice ALWAYS opens in English, then mirrors the caller (per the language
+  // rule). The tenant's BotConfig.greeting is authored for chat (often Arabizi
+  // / emoji), which would force a non-English open and can't be spoken cleanly,
+  // so we synthesize a short spoken English greeting from the business name
+  // instead. (WhatsApp keeps its own greeting — this only affects voice.)
+  const greeting = `Hello, thanks for calling ${businessName}. How can I help you today?`;
 
   return {
     instructions,

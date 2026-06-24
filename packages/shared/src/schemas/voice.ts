@@ -75,6 +75,41 @@ export const endVoiceCallBodySchema = z.object({
 });
 export type EndVoiceCallBody = z.infer<typeof endVoiceCallBodySchema>;
 
+// POST /voice/calls/:uuid/order — the voicebot's `submit_order` tool. The model
+// never sees SKUs (the spoken prompt lists items by name), so items arrive as
+// spoken names + quantities and the server matches them to the catalog. Mirrors
+// the WhatsApp/Messenger order: a real Cart (status 'new') is created.
+export const submitVoiceOrderBodySchema = z.object({
+  items: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(200),
+        quantity: z.number().int().min(1).max(999).default(1),
+        notes: z.string().trim().max(300).nullish(),
+      }),
+    )
+    .min(1)
+    .max(50),
+  customerName: z.string().trim().max(120).nullish(),
+  fulfillment: z.enum(['pickup', 'delivery']).nullish(),
+  address: z.string().trim().max(400).nullish(),
+  // Defaults to the call's caller ID when omitted.
+  phone: z.string().trim().max(40).nullish(),
+  notes: z.string().trim().max(500).nullish(),
+});
+export type SubmitVoiceOrderBody = z.infer<typeof submitVoiceOrderBodySchema>;
+
+export const voiceOrderResultSchema = z.object({
+  orderId: uuidSchema,
+  itemsCount: z.number().int(),
+  totalMinor: z.number().int(),
+  currency: z.string(),
+  // How many spoken items resolved to a catalog product, and which didn't
+  // (those still land on the order at price 0 for the operator to price).
+  matched: z.number().int(),
+  unmatched: z.array(z.string()),
+});
+
 /** Portal-facing call summary (list + detail). */
 export const voiceCallSchema = z.object({
   id: uuidSchema,

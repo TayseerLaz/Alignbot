@@ -267,7 +267,11 @@ export async function syncDraftFromReply(args: {
  */
 export async function captureCart(args: {
   orgId: string;
-  threadId: string;
+  // null for channels with no message thread (voice calls). The draft-cart
+  // lookup below then matches WHERE thread_id IS NULL — and since drafts are
+  // only ever created with a real threadId (syncDraftFromReply), a null-thread
+  // call never collides with one and always takes the create-from-marker path.
+  threadId: string | null;
   customerId: string;
   customerName: string | null;
   cartMarkerPayload: {

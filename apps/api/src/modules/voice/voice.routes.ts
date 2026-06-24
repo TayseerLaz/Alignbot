@@ -22,11 +22,13 @@ import {
   listEnvelopeSchema,
   normalizePhoneNumber,
   startVoiceCallBodySchema,
+  submitVoiceOrderBodySchema,
   uuidSchema,
   voiceCallDetailSchema,
   voiceCallSchema,
   voiceCallUuidSchema,
   voiceConfigSchema,
+  voiceOrderResultSchema,
   voiceResolveResponseSchema,
 } from '@aligned/shared';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -38,6 +40,7 @@ import { withRlsBypass, withTenant } from '../../lib/db.js';
 import type { Tx } from '../../lib/db.js';
 import { badRequest, conflict, forbidden, notFound } from '../../lib/errors.js';
 import { readCacheGet, readCacheSet } from '../../lib/read-cache.js';
+import { createVoiceOrder } from '../../lib/voice-order.js';
 import { compileVoiceConfig } from '../../lib/voice-prompt.js';
 import { decodeCursor, encodeCursor } from '../catalog/shared.js';
 
@@ -307,6 +310,97 @@ export default async function voiceRoutes(app: FastifyInstance) {
         return call;
       });
       return { data: { id: row.id } };
+    },
+  );
+
+  // ---------- POST /voice/calls/:callUuid/order -----------------------------
+  // The voicebot's `submit_order` tool. Captures a finalized order into a real
+  // Cart ('new') — same as the WhatsApp/Messenger bot — so it lands in /cart and
+  // alerts operators. Spoken item names are matched to the catalog server-side.
+  r.post(
+    '/voice/calls/:callUuid/order',
+    {
+      schema: {
+        tags: ['voice'],
+        summary: 'Submit a finalized order captured during a voice call.',
+        params: z.object({ callUuid: voiceCallUuidSchema }),
+        body: submitVoiceOrderBodySchema,
+        response: { 200: itemEnvelopeSchema(voiceOrderResultSchema) },
+        security: [{ apiKey: [] }],
+      },
+    },
+    async (req) => {
+      const { orgId } = await authenticateVoiceWrite(app, req);
+      const { callUuid } = req.params;
+      const b = req.body;
+
+      // Resolve/auto-create the call and load the catalog + shop config in one
+      // tenant transaction (captureCart opens its own).
+      const ctx = await withTenant(orgId, async (tx) => {
+        const call = await ensureCall(tx, orgId, callUuid);
+        const full = await tx.voiceCall.findUnique({
+          where: { id: call.id },
+          select: { callerId: true },
+        });
+        const data = await gatherBotData(tx, orgId);
+        return { callerId: full?.callerId ?? null, data };
+      });
+
+      if (!ctx.data.shopForm) {
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          'Ordering is not enabled for this business.',
+        );
+      }
+
+      const callerPhone = b.phone
+        ? normalizePhoneNumber(b.phone)
+        : ctx.callerId
+          ? normalizePhoneNumber(ctx.callerId)
+          : 'voice';
+
+      // Fulfillment details — kept on the cart. captureCart retains those whose
+      // key matches the tenant's shopForm fields; the rest still inform the note.
+      const fields: Record<string, unknown> = {};
+      if (b.customerName) fields.name = b.customerName;
+      if (b.phone ?? ctx.callerId) fields.phone = b.phone ?? ctx.callerId;
+      if (b.fulfillment) fields.fulfillment = b.fulfillment;
+      if (b.address) fields.address = b.address;
+      if (b.notes) fields.notes = b.notes;
+
+      const result = await createVoiceOrder({
+        orgId,
+        callUuid,
+        callerPhone,
+        customerName: b.customerName ?? null,
+        items: b.items,
+        fields,
+        data: ctx.data,
+      });
+      if (!result) {
+        throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'Could not capture any order items.');
+      }
+
+      // Tag the cart so operators see it's a phone order + which call it came
+      // from (voice has no inbox thread to open).
+      const detail = [
+        b.fulfillment ? b.fulfillment : null,
+        b.address ? `to ${b.address}` : null,
+        b.notes ? b.notes : null,
+        result.unmatched.length > 0 ? `unmatched: ${result.unmatched.join(', ')}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      await withTenant(orgId, (tx) =>
+        tx.cart.updateMany({
+          where: { id: result.orderId },
+          data: {
+            notes: `Voice order — call ${callUuid.slice(0, 8)} · ${callerPhone}${detail ? ` · ${detail}` : ''}`,
+          },
+        }),
+      );
+
+      return { data: result };
     },
   );
 

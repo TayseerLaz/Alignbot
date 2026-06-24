@@ -297,13 +297,16 @@ export async function getOrgQuotas(
 ): Promise<{ planCode: string; quotas: QuotaItem[] }> {
   const plan = await resolveOrgPlan(tx, orgId);
   const ym = currentYearMonth();
+  // IMPORTANT: every count filters by organizationId explicitly. This runs
+  // under RLS-bypass from the admin path, so without the filter the counts
+  // would span the WHOLE platform, not this tenant.
   const [products, services, members, apiKeys, webhooks, msgs, broadcasts, imports] =
     await Promise.all([
-      tx.product.count({ where: { deletedAt: null } }),
-      tx.service.count({ where: { deletedAt: null } }),
-      tx.membership.count({ where: { isActive: true } }),
-      tx.apiKey.count({ where: { revokedAt: null } }),
-      tx.webhookEndpoint.count(),
+      tx.product.count({ where: { organizationId: orgId, deletedAt: null } }),
+      tx.service.count({ where: { organizationId: orgId, deletedAt: null } }),
+      tx.membership.count({ where: { organizationId: orgId, isActive: true } }),
+      tx.apiKey.count({ where: { organizationId: orgId, revokedAt: null } }),
+      tx.webhookEndpoint.count({ where: { organizationId: orgId } }),
       tx.usageMonthly
         .findFirst({ where: { organizationId: orgId, yearMonth: ym, kind: 'message_outbound' } })
         .then((r) => r?.count ?? 0),

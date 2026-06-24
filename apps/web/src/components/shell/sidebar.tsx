@@ -256,24 +256,27 @@ export function Sidebar({
                 ALIGNED HQ
               </p>
             ) : null}
-            {/* AI support copilot — opens the right slide-over. Top of HQ. */}
-            <button
-              type="button"
-              onClick={() => {
-                openAiSupport();
-                onNavigate?.();
-              }}
-              title="AI support"
-              aria-label="AI support"
-              className={cn(
-                'group relative flex w-full items-center rounded-xl text-[13px] font-semibold transition-colors duration-[var(--dur-fast)]',
-                collapsed ? 'justify-center px-2 py-2' : 'gap-2.5 px-2.5 py-1.5',
-                'bg-white/[0.08] text-white hover:bg-white/[0.16] dark:bg-brand-500/10 dark:text-brand-500 dark:hover:bg-brand-500/20',
-              )}
-            >
-              <Sparkles className="size-4 shrink-0 text-[#f7c9d4] dark:text-brand-500" />
-              {collapsed ? null : <span className="truncate">AI support</span>}
-            </button>
+            {/* AI support copilot button — hidden for now (panel + endpoint
+                stay wired; re-enable by restoring this button). */}
+            {false ? (
+              <button
+                type="button"
+                onClick={() => {
+                  openAiSupport();
+                  onNavigate?.();
+                }}
+                title="AI support"
+                aria-label="AI support"
+                className={cn(
+                  'group relative flex w-full items-center rounded-xl text-[13px] font-semibold transition-colors duration-[var(--dur-fast)]',
+                  collapsed ? 'justify-center px-2 py-2' : 'gap-2.5 px-2.5 py-1.5',
+                  'bg-white/[0.08] text-white hover:bg-white/[0.16] dark:bg-brand-500/10 dark:text-brand-500 dark:hover:bg-brand-500/20',
+                )}
+              >
+                <Sparkles className="size-4 shrink-0 text-[#f7c9d4] dark:text-brand-500" />
+                {collapsed ? null : <span className="truncate">AI support</span>}
+              </button>
+            ) : null}
             {alignedAdminItems.map(renderItem)}
           </div>
         ) : null}

@@ -201,32 +201,43 @@ function CurrentPlanCard({ sub }: { sub: Subscription }) {
 }
 
 function UsageBar({ label, used, cap }: { label: string; used: number; cap: number | null }) {
-  const pct = cap == null || cap === 0 ? 0 : Math.min(100, (used / cap) * 100);
-  const overdue = cap != null && used >= cap;
+  const unlimited = cap == null || cap === 0;
+  const pct = unlimited ? 0 : Math.min(100, Math.round((used / cap) * 100));
+  const tone = pct >= 100 ? 'text-red-700' : pct >= 90 ? 'text-amber-700' : pct >= 75 ? 'text-amber-600' : 'text-foreground';
   return (
     <div>
       <div className="flex items-center justify-between gap-2">
         <span className="text-foreground-muted">{label}</span>
-        <span className={cn('font-mono', overdue ? 'text-red-700' : 'text-foreground')}>
-          {used} / {cap == null ? '∞' : cap}
+        {/* Percentage-first — how close to the limit, not a money figure. */}
+        <span className="flex items-baseline gap-1.5">
+          <span className={cn('font-semibold tabular-nums', unlimited ? 'text-foreground-subtle' : tone)}>
+            {unlimited ? 'Unlimited' : `${pct}%`}
+          </span>
+          {!unlimited ? (
+            <span className="text-[11px] tabular-nums text-foreground-subtle">
+              ({used.toLocaleString()}/{cap.toLocaleString()})
+            </span>
+          ) : null}
         </span>
       </div>
-      <div
-        className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-surface-muted"
-        role="progressbar"
-        aria-valuenow={Math.round(pct)}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label={`${label} usage`}
-      >
+      {!unlimited ? (
         <div
-          className={cn(
-            'h-full transition-[width]',
-            overdue ? 'bg-red-500' : pct > 80 ? 'bg-amber-500' : 'bg-brand-500',
-          )}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
+          className="mt-0.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-muted"
+          role="progressbar"
+          aria-valuenow={pct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`${label} usage`}
+        >
+          <div
+            className={cn(
+              'h-full transition-[width]',
+              pct >= 100 ? 'bg-red-500' : pct >= 90 ? 'bg-amber-500' : pct >= 75 ? 'bg-amber-400' : 'bg-brand-500',
+            )}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

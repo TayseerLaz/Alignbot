@@ -32,6 +32,8 @@ export const NotificationKind = {
   cart_received: 'cart_received',
   // Payments (F-04) — a gateway webhook confirmed an order was paid.
   order_paid: 'order_paid',
+  // Quota usage crossed a threshold (75/80/85/90/95/100% of a plan cap).
+  quota_warning: 'quota_warning',
 } as const;
 export type NotificationKind = (typeof NotificationKind)[keyof typeof NotificationKind];
 

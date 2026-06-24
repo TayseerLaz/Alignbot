@@ -192,7 +192,7 @@ export async function bumpUsage(
     await prisma.usageEvent.create({
       data: { organizationId: orgId, kind, count },
     });
-    await prisma.usageMonthly.upsert({
+    const updated = (await prisma.usageMonthly.upsert({
       where: {
         organizationId_yearMonth_kind: {
           organizationId: orgId,
@@ -202,8 +202,129 @@ export async function bumpUsage(
       },
       create: { organizationId: orgId, yearMonth: currentYearMonth(), kind, count },
       update: { count: { increment: count } as never },
-    });
+    })) as { count?: number };
+    // Fire a one-per-crossing quota warning to the tenant when a monthly cap
+    // is approached/hit (75/80/85/90/95/100%). Fire-and-forget.
+    if (typeof updated?.count === 'number') {
+      void maybeFireQuotaNotice(orgId, kind, updated.count);
+    }
   } catch (err) {
     console.error('[billing] bumpUsage failed', err);
   }
+}
+
+// ---- Quota visibility + threshold notices ---------------------------------
+
+// Notify the tenant once as usage crosses each of these % marks of a cap.
+export const QUOTA_THRESHOLDS = [75, 80, 85, 90, 95, 100];
+
+const MONTHLY_KIND_TO_CAP: Record<
+  string,
+  { capField: 'monthlyMessageCap' | 'monthlyBroadcastCap' | 'monthlyImportCap'; label: string }
+> = {
+  message_outbound: { capField: 'monthlyMessageCap', label: 'WhatsApp messages' },
+  broadcast_started: { capField: 'monthlyBroadcastCap', label: 'broadcasts' },
+  import_started: { capField: 'monthlyImportCap', label: 'imports' },
+};
+
+async function maybeFireQuotaNotice(
+  orgId: string,
+  eventKind: string,
+  newCount: number,
+): Promise<void> {
+  const map = MONTHLY_KIND_TO_CAP[eventKind];
+  if (!map) return;
+  try {
+    if (await isOrgUnlimited(orgId)) return; // ALIGNED-operated orgs are unmetered
+    const { prisma } = await import('./db.js');
+    const plan = await resolveOrgPlan(prisma as unknown as MinimalTx, orgId);
+    const cap = plan[map.capField];
+    if (cap == null || cap <= 0) return;
+    const pct = Math.min(100, Math.floor((newCount / cap) * 100));
+    const reached = QUOTA_THRESHOLDS.filter((t) => pct >= t);
+    if (reached.length === 0) return;
+
+    const ym = currentYearMonth();
+    const row = await prisma.usageMonthly.findUnique({
+      where: { organizationId_yearMonth_kind: { organizationId: orgId, yearMonth: ym, kind: eventKind } },
+      select: { notifiedThresholds: true },
+    });
+    const already = new Set<number>(row?.notifiedThresholds ?? []);
+    const fresh = reached.filter((t) => !already.has(t));
+    if (fresh.length === 0) return;
+    const top = Math.max(...fresh);
+
+    const { createNotification } = await import('./notifications.js');
+    await createNotification({
+      organizationId: orgId,
+      kind: 'quota_warning',
+      severity: top >= 100 ? 'error' : top >= 90 ? 'warning' : 'info',
+      title:
+        top >= 100
+          ? `Monthly ${map.label} limit reached`
+          : `${top}% of your monthly ${map.label} used`,
+      body:
+        top >= 100
+          ? `You've used all ${cap} ${map.label} for this month — new ones are paused until next month or a plan upgrade.`
+          : `You've used ${newCount} of ${cap} ${map.label} this month (${pct}%).`,
+      link: '/settings/billing',
+      metadata: { kind: eventKind, used: newCount, cap, pct, threshold: top },
+    });
+    await prisma.usageMonthly.update({
+      where: { organizationId_yearMonth_kind: { organizationId: orgId, yearMonth: ym, kind: eventKind } },
+      data: { notifiedThresholds: { set: Array.from(already).concat(fresh) } },
+    });
+  } catch (err) {
+    console.error('[billing] quota notice failed', err);
+  }
+}
+
+export interface QuotaItem {
+  key: string;
+  label: string;
+  monthly: boolean;
+  used: number;
+  cap: number | null; // null = unlimited
+  pct: number | null; // null when unlimited
+}
+
+// Per-kind usage + caps + percentage for an org. Used by the tenant Plan page
+// (percentage only) and the ALIGNED-admin views (percentage + cost). null caps
+// render as "unlimited" with no bar.
+export async function getOrgQuotas(
+  tx: MinimalTx,
+  orgId: string,
+): Promise<{ planCode: string; quotas: QuotaItem[] }> {
+  const plan = await resolveOrgPlan(tx, orgId);
+  const ym = currentYearMonth();
+  const [products, services, members, apiKeys, webhooks, msgs, broadcasts, imports] =
+    await Promise.all([
+      tx.product.count({ where: { deletedAt: null } }),
+      tx.service.count({ where: { deletedAt: null } }),
+      tx.membership.count({ where: { isActive: true } }),
+      tx.apiKey.count({ where: { revokedAt: null } }),
+      tx.webhookEndpoint.count(),
+      tx.usageMonthly
+        .findFirst({ where: { organizationId: orgId, yearMonth: ym, kind: 'message_outbound' } })
+        .then((r) => r?.count ?? 0),
+      tx.usageMonthly
+        .findFirst({ where: { organizationId: orgId, yearMonth: ym, kind: 'broadcast_started' } })
+        .then((r) => r?.count ?? 0),
+      tx.usageMonthly
+        .findFirst({ where: { organizationId: orgId, yearMonth: ym, kind: 'import_started' } })
+        .then((r) => r?.count ?? 0),
+    ]);
+  const pctOf = (used: number, cap: number | null): number | null =>
+    cap == null || cap <= 0 ? null : Math.min(100, Math.round((used / cap) * 100));
+  const quotas: QuotaItem[] = [
+    { key: 'monthly_messages', label: 'Messages (this month)', monthly: true, used: msgs, cap: plan.monthlyMessageCap, pct: pctOf(msgs, plan.monthlyMessageCap) },
+    { key: 'monthly_broadcasts', label: 'Broadcasts (this month)', monthly: true, used: broadcasts, cap: plan.monthlyBroadcastCap, pct: pctOf(broadcasts, plan.monthlyBroadcastCap) },
+    { key: 'monthly_imports', label: 'Imports (this month)', monthly: true, used: imports, cap: plan.monthlyImportCap, pct: pctOf(imports, plan.monthlyImportCap) },
+    { key: 'products', label: 'Products', monthly: false, used: products, cap: plan.productCap, pct: pctOf(products, plan.productCap) },
+    { key: 'services', label: 'Services', monthly: false, used: services, cap: plan.serviceCap, pct: pctOf(services, plan.serviceCap) },
+    { key: 'members', label: 'Members', monthly: false, used: members, cap: plan.memberCap, pct: pctOf(members, plan.memberCap) },
+    { key: 'api_keys', label: 'API keys', monthly: false, used: apiKeys, cap: plan.apiKeyCap, pct: pctOf(apiKeys, plan.apiKeyCap) },
+    { key: 'webhooks', label: 'Webhooks', monthly: false, used: webhooks, cap: plan.webhookCap, pct: pctOf(webhooks, plan.webhookCap) },
+  ];
+  return { planCode: plan.code, quotas };
 }

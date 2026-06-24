@@ -187,6 +187,8 @@ enum NotificationKind {
   cart_received
   // Payment confirmation (F-04) — a gateway webhook confirmed an order paid.
   order_paid
+  // Quota usage crossed a threshold (75/80/85/90/95/100% of a plan cap).
+  quota_warning
 }
 
 enum NotificationSeverity {
@@ -1950,6 +1952,9 @@ model UsageMonthly {
   yearMonth      String   @map("year_month")
   kind           String
   count          Int      @default(0)
+  // Quota thresholds (75/80/85/90/95/100) already notified this month, so we
+  // ping the tenant once per threshold crossing instead of on every increment.
+  notifiedThresholds Int[] @default([]) @map("notified_thresholds")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   @@unique([organizationId, yearMonth, kind])

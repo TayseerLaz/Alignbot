@@ -915,6 +915,15 @@ interface AiUsageResponse {
   thisMonth: AiUsageBucket;
   dailySeries: { date: string; tokens: number; usd: number; replies: number }[];
   byModel: { model: string; tokens: number; usd: number; replies: number }[];
+  planCode: string;
+  quotas: {
+    key: string;
+    label: string;
+    monthly: boolean;
+    used: number;
+    cap: number | null;
+    pct: number | null;
+  }[];
 }
 
 function AiUsageDialog({
@@ -1030,6 +1039,22 @@ function AiUsageDialog({
               <UsageCard label="This month" bucket={data.thisMonth} />
             </div>
 
+            {/* Plan quotas — % used per cap (admin sees this alongside the
+                USD cost above; tenants see only the %). */}
+            <div className="rounded-lg border border-border p-4">
+              <div className="mb-3 flex items-baseline justify-between">
+                <p className="text-xs font-medium uppercase tracking-wider text-foreground-subtle">
+                  Plan quotas · {data.planCode}
+                </p>
+                <span className="text-[11px] text-foreground-subtle">% of cap used</span>
+              </div>
+              <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+                {data.quotas.map((q) => (
+                  <AdminQuotaBar key={q.key} q={q} />
+                ))}
+              </div>
+            </div>
+
             {/* Per-model breakdown */}
             <div className="rounded-lg border border-border">
               <div className="border-b border-border bg-surface-muted/40 px-4 py-2 text-xs font-medium uppercase tracking-wider text-foreground-subtle">
@@ -1082,6 +1107,46 @@ function AiUsageDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Quota bar for the ALIGNED-admin AI-usage dialog. Shows % of cap + raw
+// used/cap. Unlimited caps render as a flat "Unlimited" line.
+function AdminQuotaBar({
+  q,
+}: {
+  q: { label: string; used: number; cap: number | null; pct: number | null };
+}) {
+  const pct = q.pct;
+  const tone =
+    pct == null
+      ? 'bg-foreground-subtle/30'
+      : pct >= 100
+        ? 'bg-red-500'
+        : pct >= 90
+          ? 'bg-amber-500'
+          : 'bg-brand-500';
+  return (
+    <div>
+      <div className="mb-1 flex items-baseline justify-between gap-2 text-xs">
+        <span className="text-foreground-muted">{q.label}</span>
+        <span className="tabular-nums text-foreground-subtle">
+          {q.cap == null ? (
+            'Unlimited'
+          ) : (
+            <>
+              <span className={pct != null && pct >= 90 ? 'font-semibold text-foreground' : ''}>
+                {pct}%
+              </span>{' '}
+              · {q.used.toLocaleString()}/{q.cap.toLocaleString()}
+            </>
+          )}
+        </span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-surface-muted">
+        <div className={`h-full ${tone}`} style={{ width: `${pct ?? 0}%` }} />
+      </div>
+    </div>
   );
 }
 

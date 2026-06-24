@@ -1681,6 +1681,19 @@ export default async function adminRoutes(app: FastifyInstance) {
                   replies: z.number().int(),
                 }),
               ),
+              // Subscription plan + per-quota usage/caps/percentage so the
+              // admin sees BOTH money (USD above) and quota % in one place.
+              planCode: z.string(),
+              quotas: z.array(
+                z.object({
+                  key: z.string(),
+                  label: z.string(),
+                  monthly: z.boolean(),
+                  used: z.number().int(),
+                  cap: z.number().int().nullable(),
+                  pct: z.number().int().nullable(),
+                }),
+              ),
             }),
           ),
         },
@@ -1689,6 +1702,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
     async (req) => {
       const { tokensToUsd } = await import('../../lib/ai-pricing.js');
+      const { getOrgQuotas } = await import('../../lib/billing.js');
       const orgId = req.params.id;
       const now = new Date();
       const startOfTodayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -1791,6 +1805,8 @@ export default async function adminRoutes(app: FastifyInstance) {
         replies: b.replies,
       });
 
+      const { planCode, quotas } = await withRlsBypass((tx) => getOrgQuotas(tx as never, orgId));
+
       return {
         data: {
           aiPlan: (org as { aiPlan?: 'basic' | 'middle' | 'max' | 'ultra' }).aiPlan ?? 'basic',
@@ -1799,6 +1815,8 @@ export default async function adminRoutes(app: FastifyInstance) {
           thisMonth: round(thisMonth),
           dailySeries,
           byModel: byModelArr,
+          planCode,
+          quotas,
         },
       };
     },

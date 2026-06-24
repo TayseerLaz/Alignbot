@@ -14,6 +14,7 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { api, ApiError } from '@/lib/api';
+import { useSession } from '@/lib/session';
 
 interface MessengerChannel {
   pageId: string | null;
@@ -52,6 +53,11 @@ function CopyField({ label, value }: { label: string; value: string }) {
 }
 
 export default function MessengerSettingsPage() {
+  const { session } = useSession();
+  const disabledFeatures = session?.organization?.disabledFeatures ?? [];
+  // Messenger + Instagram share this page. Available while EITHER is enabled.
+  const messagingOn =
+    !disabledFeatures.includes('messenger') || !disabledFeatures.includes('instagram');
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ['messenger-config'],
@@ -119,6 +125,28 @@ export default function MessengerSettingsPage() {
       destructive: true,
     });
     if (confirmed) disconnect.mutate();
+  }
+
+  // Direct-URL guard: when both Messenger AND Instagram are disabled for this
+  // tenant, the integration isn't available — don't render the config page.
+  if (!messagingOn) {
+    return (
+      <>
+        <PageHeader title="Messenger & Instagram" description="This integration isn't enabled for your account." />
+        <Link
+          href="/settings"
+          className="mb-4 inline-flex items-center gap-1 text-sm text-foreground-muted hover:text-foreground"
+        >
+          <ArrowLeft className="size-3.5" /> Back to settings
+        </Link>
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-foreground-muted">
+            Facebook Messenger and Instagram aren’t part of your current plan. Contact your account
+            manager if you’d like to enable them.
+          </CardContent>
+        </Card>
+      </>
+    );
   }
 
   return (

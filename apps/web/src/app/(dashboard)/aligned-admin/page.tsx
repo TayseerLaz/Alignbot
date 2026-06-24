@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
+  ArrowLeftToLine,
   ArrowRightToLine,
   Building2,
   Check,
@@ -17,6 +18,7 @@ import {
   Play,
   Plus,
   Search,
+  ShieldCheck,
   Trash2,
   Users,
   X,
@@ -96,7 +98,7 @@ interface SystemHealth {
 }
 
 export default function AlignedAdminPage() {
-  const { session } = useSession();
+  const { session, switchOrg } = useSession();
   // The admin's own org(s) are protected: access/suspend/delete are disabled so
   // an admin can't lock themselves out of (or restrict) their own admin account.
   const ownOrgIds = new Set<string>(
@@ -104,6 +106,17 @@ export default function AlignedAdminPage() {
       (x): x is string => !!x,
     ),
   );
+  // The admin's REAL account org(s) = their memberships (NOT a tenant they're
+  // currently controlling). Used to pin + highlight the admin-account row.
+  const adminOrgIds = new Set<string>((session?.availableOrganizations ?? []).map((o) => o.id));
+  // "Controlling" a tenant: an aligned admin whose ACTIVE org isn't one of their
+  // memberships (impersonation mints a no-membership session for the tenant).
+  const isControlling =
+    !!session?.user.isAlignedAdmin &&
+    !!session?.organization &&
+    !adminOrgIds.has(session.organization.id);
+  const homeAdminOrgId = session?.availableOrganizations?.[0]?.id ?? null;
+  const [switchingBack, setSwitchingBack] = useState(false);
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -174,6 +187,22 @@ export default function AlignedAdminPage() {
       toast.error(err instanceof ApiError ? err.payload.message : 'Could not open this org.'),
   });
 
+  // Exit "control" mode: switch the session back to the admin's own account.
+  async function backToAdmin() {
+    if (!homeAdminOrgId) return;
+    setSwitchingBack(true);
+    try {
+      await switchOrg(homeAdminOrgId);
+      queryClient.clear();
+      toast.success('Back to your admin account.');
+      router.push('/aligned-admin');
+    } catch {
+      toast.error('Could not switch back to your admin account.');
+    } finally {
+      setSwitchingBack(false);
+    }
+  }
+
   // Org details dialog state. Null = closed. We track the row that
   // opened it so the dialog can show the org name in its header.
   const [detailsOpenFor, setDetailsOpenFor] = useState<OrgRow | null>(null);
@@ -192,6 +221,11 @@ export default function AlignedAdminPage() {
 
   const sys = system.data?.data;
   const orgRows = orgs.data?.data ?? [];
+  // Pin the admin's own account row(s) to the top, preserving order otherwise.
+  const sortedRows = [
+    ...orgRows.filter((o) => adminOrgIds.has(o.id)),
+    ...orgRows.filter((o) => !adminOrgIds.has(o.id)),
+  ];
 
   return (
     <>
@@ -234,14 +268,27 @@ export default function AlignedAdminPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Organisations</CardTitle>
-          <div className="relative w-72">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-subtle" />
-            <Input
-              className="pl-9"
-              placeholder="Search by name or slug…"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-            />
+          <div className="flex items-center gap-2">
+            {isControlling && (
+              <Button
+                variant="secondary"
+                onClick={() => void backToAdmin()}
+                disabled={switchingBack || !homeAdminOrgId}
+                title="Stop controlling this tenant and return to your admin account"
+              >
+                <ArrowLeftToLine className="size-4" />
+                {switchingBack ? 'Switching…' : 'Back to admin'}
+              </Button>
+            )}
+            <div className="relative w-72">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-subtle" />
+              <Input
+                className="pl-9"
+                placeholder="Search by name or slug…"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+              />
+            </div>
           </div>
         </CardHeader>
         <CardContent className="p-0">
@@ -265,12 +312,24 @@ export default function AlignedAdminPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {orgRows.map((o) => (
-                    <tr key={o.id} className="border-b border-border last:border-0">
+                  {sortedRows.map((o) => {
+                    const isAdminAccount = adminOrgIds.has(o.id);
+                    return (
+                    <tr
+                      key={o.id}
+                      className={`border-b border-border last:border-0${
+                        isAdminAccount ? ' bg-brand-50/60 hover:bg-brand-50' : ''
+                      }`}
+                    >
                       <td className="px-4 py-3">
                         <Link href={`/aligned-admin/orgs/${o.id}`} className="group block">
-                          <p className="font-medium text-foreground group-hover:text-brand-600 group-hover:underline">
+                          <p className="flex items-center gap-2 font-medium text-foreground group-hover:text-brand-600 group-hover:underline">
                             {o.name}
+                            {isAdminAccount && (
+                              <Badge variant="info" className="gap-1">
+                                <ShieldCheck className="size-3" /> Admin account
+                              </Badge>
+                            )}
                           </p>
                           <p className="font-mono text-xs text-foreground-subtle">{o.slug}</p>
                         </Link>
@@ -376,7 +435,8 @@ export default function AlignedAdminPage() {
                         </DropdownMenu>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

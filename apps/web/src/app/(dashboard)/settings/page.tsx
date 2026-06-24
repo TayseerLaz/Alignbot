@@ -59,6 +59,10 @@ export default function SettingsPage() {
   const isOrgAdmin = organization?.role === 'admin';
   const disabledFeatures = organization?.disabledFeatures ?? [];
   const phoneOn = !disabledFeatures.includes('phone');
+  // Messenger + Instagram share the /settings/messenger page. Show it while
+  // EITHER channel is enabled; hide the whole section only when BOTH are off.
+  const messagingOn =
+    !disabledFeatures.includes('messenger') || !disabledFeatures.includes('instagram');
   const [deleting, setDeleting] = useState(false);
 
   async function deleteOrganization() {
@@ -125,12 +129,14 @@ export default function SettingsPage() {
               title="Plan"
               description="Your current plan and usage caps."
             />
-            <SettingsLink
-              href="/settings/messenger"
-              icon={MessageCircle}
-              title="Messenger & Instagram"
-              description="Let the AI bot answer your Facebook Page and Instagram DMs, not just WhatsApp."
-            />
+            {messagingOn && (
+              <SettingsLink
+                href="/settings/messenger"
+                icon={MessageCircle}
+                title="Messenger & Instagram"
+                description="Let the AI bot answer your Facebook Page and Instagram DMs, not just WhatsApp."
+              />
+            )}
             {/* Branding is Phase 2 — hidden until logo/accent/footer
                 are wired into the actual portal layout. The /settings/branding
                 route still loads via direct URL, but no UI links to it. */}

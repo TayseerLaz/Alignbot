@@ -42,6 +42,21 @@
   --color-ring:                  var(--color-brand-400);
 }
 
+/* Accessibility: honour the OS "reduce motion" setting globally. The Radix
+   overlay animations use unprefixed `animate-in`/`animate-out` (they must run
+   regardless of the motion-safe variant so exit animations fire), so neutralise
+   ALL animation/transition durations here for users who asked for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ============================================================================
    Hader AI design tokens — Oxblood + Sand + Signal palette.
    Brand book at /Hader AI Brand Book _standalone_.html:

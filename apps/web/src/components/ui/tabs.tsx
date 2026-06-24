@@ -86,5 +86,17 @@ export function TabsContent({
   const ctx = React.useContext(TabsContext);
   if (!ctx) throw new Error('TabsContent must be used inside <Tabs>');
   if (ctx.value !== value) return null;
-  return <div className={cn('mt-6', className)}>{children}</div>;
+  // Active panel mounts fresh on each switch → animate-in fires, giving a
+  // subtle fade+rise as you move between tabs.
+  return (
+    <div
+      role="tabpanel"
+      className={cn(
+        'mt-6 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-200',
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
 }

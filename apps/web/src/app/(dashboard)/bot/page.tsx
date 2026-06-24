@@ -1,6 +1,7 @@
 'use client';
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import {
   AlertTriangle,
@@ -21,7 +22,6 @@ import {
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
-import { FlowEditor } from '@/components/bot/flow-editor';
 import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,6 +35,21 @@ import { api, ApiError } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 import { uploadFile } from '@/lib/upload';
 import { cn } from '@/lib/utils';
+
+// Code-split the visual flow editor — it pulls in @xyflow/react (a large graph
+// library) that's only needed once the operator opens the flow tab. Lazy-loading
+// keeps it out of the /bot route's initial bundle.
+const FlowEditor = dynamic(
+  () => import('@/components/bot/flow-editor').then((m) => m.FlowEditor),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="grid h-80 place-items-center rounded-lg border border-border bg-surface-muted">
+        <Loader2 className="size-5 animate-spin text-foreground-subtle" />
+      </div>
+    ),
+  },
+);
 
 interface BotConfig {
   id: string;

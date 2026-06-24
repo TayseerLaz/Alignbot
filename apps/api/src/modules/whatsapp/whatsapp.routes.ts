@@ -349,6 +349,54 @@ function webhookCallbackUrl(orgId: string): string {
   return `${env.API_PUBLIC_URL.replace(/\/$/, '')}/api/v1/whatsapp/webhook/${orgId}`;
 }
 
+// Register THIS org's per-org callback as the WABA-level override so Meta
+// actually delivers inbound here. Without it a number can be fully verified +
+// send outbound yet receive NOTHING (the "empty inbox" trap). Best-effort:
+// returns a status the caller can record/surface. Shared by POST /subscribe
+// and the auto-subscribe baked into POST /verify so connecting a number can't
+// silently skip inbound.
+async function ensureWabaSubscribed(channel: {
+  organizationId: string;
+  wabaId: string | null;
+  accessToken: string | null;
+  webhookVerifyToken: string;
+}): Promise<{ ok: boolean; status: string; message: string | null }> {
+  if (!channel.accessToken || !channel.wabaId) {
+    return { ok: false, status: 'missing_credentials', message: 'Access token and WABA ID required.' };
+  }
+  const callbackUrl = webhookCallbackUrl(channel.organizationId);
+  const url = `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.wabaId)}/subscribed_apps`;
+  const params = new URLSearchParams({
+    override_callback_uri: callbackUrl,
+    verify_token: channel.webhookVerifyToken,
+  });
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${channel.accessToken}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params,
+      signal: AbortSignal.timeout(15_000),
+    });
+    const body = await res.text();
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      parsed = JSON.parse(body) as Record<string, unknown>;
+    } catch {
+      parsed = null;
+    }
+    if (res.ok && parsed?.success === true) return { ok: true, status: 'subscribed', message: null };
+    const errObj = (parsed?.error ?? {}) as Record<string, unknown>;
+    const code = typeof errObj.code === 'number' ? errObj.code : null;
+    const msg = typeof errObj.message === 'string' ? errObj.message : `HTTP ${res.status}`;
+    return { ok: false, status: code === 190 ? 'token_invalid' : 'subscribe_failed', message: msg };
+  } catch (err) {
+    return { ok: false, status: 'network_error', message: err instanceof Error ? err.message : 'fetch failed' };
+  }
+}
+
 function serializeChannel(c: {
   id: string;
   label: string | null;
@@ -731,12 +779,37 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       const quality = typeof parsed.quality_rating === 'string' ? parsed.quality_rating : null;
       const nameStatus = typeof parsed.name_status === 'string' ? parsed.name_status : null;
 
-      // Success: capture display number + status, mark verified.
+      // Credentials are valid. Now ALSO register the WABA-level override
+      // callback so inbound actually flows here — otherwise a number can verify
+      // green yet receive nothing (the empty-inbox trap that hit Full Volume).
+      // Best-effort: verify still returns success; we fold the inbound state
+      // into lastVerifyStatus so the page can warn when inbound isn't wired.
+      const sub = await ensureWabaSubscribed({
+        organizationId: orgId,
+        wabaId: channel.wabaId,
+        accessToken: channel.accessToken,
+        webhookVerifyToken: channel.webhookVerifyToken,
+      });
+      // Inbound is only truly live when subscribed AND the app secret is present
+      // (the webhook HMAC-verifies every delivery against it).
+      const inboundLive = sub.ok && !!channel.appSecret;
+      const status = inboundLive
+        ? 'success'
+        : sub.ok
+          ? 'success_no_appsecret'
+          : 'verified_inbound_failed';
+      if (!sub.ok) {
+        req.log.warn(
+          { orgId, channelId: channel.id, subStatus: sub.status, subMsg: sub.message },
+          '[whatsapp] verify ok but WABA auto-subscribe failed',
+        );
+      }
+
       await app.tenant(req, (tx) =>
         tx.whatsAppChannel.update({
           where: { id: channel.id },
           data: {
-            lastVerifyStatus: 'success',
+            lastVerifyStatus: status,
             lastVerifiedAt: new Date(),
             displayPhoneNumber: display ?? channel.displayPhoneNumber,
           },
@@ -750,7 +823,11 @@ export default async function whatsappRoutes(app: FastifyInstance) {
           verifiedDisplayPhoneNumber: display,
           verifiedQualityRating: quality,
           verifiedNameStatus: nameStatus,
-          errorMessage: null,
+          errorMessage: inboundLive
+            ? null
+            : sub.ok
+              ? 'Verified and inbound subscribed, but the app secret is missing — add it so inbound messages can be received.'
+              : `Verified, but inbound delivery could not be set up automatically (${sub.message ?? sub.status}). Click Connect/Subscribe or check the WABA + token.`,
           rawSample: null,
         },
       };

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/kbd';
 
 import { CommandPaletteProvider, useCommandPalette } from './command-palette';
+import { ControllingBanner } from './controlling-banner';
 import { Sidebar } from './sidebar';
 import { TopBar } from './top-bar';
 
@@ -75,6 +76,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <CommandTrigger />
             <TopBar />
           </header>
+          {/* Impersonation banner — visible on every page while an ALIGNED admin
+              is controlling a tenant, with a one-click way back. */}
+          <ControllingBanner />
           {/* overscroll-none stops the rubber-band/scroll-chaining at the top and
               bottom of the content — the page stops exactly at its ends. */}
           <main className="flex-1 overflow-y-auto overscroll-none">

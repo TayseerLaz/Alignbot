@@ -216,7 +216,40 @@ function DetailsCard({ product, categories }: { product: Product; categories: Ca
     skipNext.current = true;
   }, [product, orgCurrency]);
 
-  // Debounced auto-save.
+  const buildPayload = () => ({
+    name: draft.name.trim() || 'Untitled product',
+    sku: draft.sku.trim() || product.sku,
+    shortDescription: draft.shortDescription || null,
+    description: draft.description || null,
+    priceMinor: parseMoneyMajor(draft.priceMajor, orgCurrency),
+    compareAtMinor: parseMoneyMajor(draft.compareAtMajor, orgCurrency),
+    // Currency is locked to BusinessInfo.currency server-side.
+    categoryId: draft.categoryId === NO_CATEGORY ? null : draft.categoryId,
+  });
+
+  // "Completely empty" = nothing worth keeping. A brand-new draft left empty is
+  // discarded on leave (below) instead of cluttering the catalog as "Untitled".
+  const isEmpty =
+    (draft.name.trim() === '' || draft.name.trim() === 'Untitled product') &&
+    draft.shortDescription.trim() === '' &&
+    draft.description.trim() === '' &&
+    !parseMoneyMajor(draft.priceMajor, orgCurrency) &&
+    !parseMoneyMajor(draft.compareAtMajor, orgCurrency) &&
+    draft.categoryId === NO_CATEGORY &&
+    (product.images?.length ?? 0) === 0;
+  // Was the product blank when the page opened? Only such never-filled drafts
+  // are auto-discarded — an EXISTING product cleared out is never deleted.
+  const startedEmptyRef = useRef(
+    (product.name.trim() === '' || product.name.trim() === 'Untitled product') &&
+      !product.shortDescription &&
+      !product.description &&
+      product.priceMinor == null &&
+      (product.images?.length ?? 0) === 0,
+  );
+  const isEmptyRef = useRef(isEmpty);
+  isEmptyRef.current = isEmpty;
+
+  // Debounced auto-save (keeps the item as a saved draft as you type).
   useEffect(() => {
     if (skipNext.current) {
       skipNext.current = false;
@@ -226,17 +259,7 @@ function DetailsCard({ product, categories }: { product: Product; categories: Ca
     debounceRef.current = setTimeout(async () => {
       setSaving(true);
       try {
-        await api.patch(`/api/v1/products/${product.id}`, {
-          name: draft.name.trim() || 'Untitled product',
-          sku: draft.sku.trim() || product.sku,
-          shortDescription: draft.shortDescription || null,
-          description: draft.description || null,
-          priceMinor: parseMoneyMajor(draft.priceMajor, orgCurrency),
-          compareAtMinor: parseMoneyMajor(draft.compareAtMajor, orgCurrency),
-          // Currency is locked to BusinessInfo.currency server-side; no
-          // longer part of the per-product payload.
-          categoryId: draft.categoryId === NO_CATEGORY ? null : draft.categoryId,
-        });
+        await api.patch(`/api/v1/products/${product.id}`, buildPayload());
         setSavedAt(new Date());
         queryClient.invalidateQueries({ queryKey: ['product', product.id] });
       } catch (err) {
@@ -250,13 +273,48 @@ function DetailsCard({ product, categories }: { product: Product; categories: Ca
     };
   }, [draft, product.id, product.sku, queryClient]);
 
+  // Discard a never-filled blank draft when leaving (unmount). Fire-and-forget.
+  useEffect(() => {
+    return () => {
+      if (startedEmptyRef.current && isEmptyRef.current) {
+        void api.delete(`/api/v1/products/${product.id}`).catch(() => undefined);
+      }
+    };
+  }, [product.id]);
+
+  // Explicit Save — flushes the pending auto-save immediately. Refuses to save a
+  // completely empty item (nothing to keep).
+  const saveNow = async () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (isEmpty) {
+      toast.message('Add a name or some details before saving.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.patch(`/api/v1/products/${product.id}`, buildPayload());
+      setSavedAt(new Date());
+      queryClient.invalidateQueries({ queryKey: ['product', product.id] });
+      toast.success('Saved');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.payload.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>Details</CardTitle>
-        <span className="text-xs text-foreground-subtle">
-          {saving ? 'Saving…' : savedAt ? `Saved ${savedAt.toLocaleTimeString()}` : 'Auto-save on'}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-foreground-subtle">
+            {saving ? 'Saving…' : savedAt ? `Saved ${savedAt.toLocaleTimeString()}` : 'Auto-save on'}
+          </span>
+          <Button size="sm" onClick={() => void saveNow()} loading={saving} disabled={isEmpty}>
+            Save
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="space-y-1.5 sm:col-span-2">

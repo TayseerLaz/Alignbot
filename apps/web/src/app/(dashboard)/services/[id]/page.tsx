@@ -163,6 +163,39 @@ function DetailsCard({ service, categories }: { service: Service; categories: Ca
     skipNext.current = true;
   }, [service, orgCurrency]);
 
+  const buildPayload = () => ({
+    name: draft.name.trim() || 'Untitled service',
+    shortDescription: draft.shortDescription || null,
+    description: draft.description || null,
+    durationMinutes: draft.durationMinutes || null,
+    basePriceMinor: parseMoneyMajor(draft.basePriceMajor, orgCurrency),
+    // Currency is locked to BusinessInfo.currency server-side.
+    priceUnit: draft.priceUnit,
+    isAvailable: draft.isAvailable,
+    categoryId: draft.categoryId === NO_CATEGORY ? null : draft.categoryId,
+  });
+
+  // "Completely empty" = nothing worth keeping; a never-filled blank draft is
+  // discarded on leave instead of cluttering the catalog as "Untitled service".
+  const isEmpty =
+    (draft.name.trim() === '' || draft.name.trim() === 'Untitled service') &&
+    draft.shortDescription.trim() === '' &&
+    draft.description.trim() === '' &&
+    !draft.durationMinutes &&
+    !parseMoneyMajor(draft.basePriceMajor, orgCurrency) &&
+    draft.categoryId === NO_CATEGORY;
+  // Only never-filled drafts are auto-discarded — an existing service that's
+  // cleared out is never deleted.
+  const startedEmptyRef = useRef(
+    (service.name.trim() === '' || service.name.trim() === 'Untitled service') &&
+      !service.shortDescription &&
+      !service.description &&
+      !service.durationMinutes &&
+      service.basePriceMinor == null,
+  );
+  const isEmptyRef = useRef(isEmpty);
+  isEmptyRef.current = isEmpty;
+
   useEffect(() => {
     if (skipNext.current) {
       skipNext.current = false;
@@ -172,17 +205,7 @@ function DetailsCard({ service, categories }: { service: Service; categories: Ca
     debounceRef.current = setTimeout(async () => {
       setSaving(true);
       try {
-        await api.patch(`/api/v1/services/${service.id}`, {
-          name: draft.name.trim() || 'Untitled service',
-          shortDescription: draft.shortDescription || null,
-          description: draft.description || null,
-          durationMinutes: draft.durationMinutes || null,
-          basePriceMinor: parseMoneyMajor(draft.basePriceMajor, orgCurrency),
-          // Currency is locked to BusinessInfo.currency server-side.
-          priceUnit: draft.priceUnit,
-          isAvailable: draft.isAvailable,
-          categoryId: draft.categoryId === NO_CATEGORY ? null : draft.categoryId,
-        });
+        await api.patch(`/api/v1/services/${service.id}`, buildPayload());
         setSavedAt(new Date());
         queryClient.invalidateQueries({ queryKey: ['service', service.id] });
       } catch (err) {
@@ -195,6 +218,35 @@ function DetailsCard({ service, categories }: { service: Service; categories: Ca
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [draft, service.id, queryClient]);
+
+  // Discard a never-filled blank draft when leaving (unmount). Fire-and-forget.
+  useEffect(() => {
+    return () => {
+      if (startedEmptyRef.current && isEmptyRef.current) {
+        void api.delete(`/api/v1/services/${service.id}`).catch(() => undefined);
+      }
+    };
+  }, [service.id]);
+
+  // Explicit Save — flushes the pending auto-save; refuses a completely empty item.
+  const saveNow = async () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (isEmpty) {
+      toast.message('Add a name or some details before saving.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.patch(`/api/v1/services/${service.id}`, buildPayload());
+      setSavedAt(new Date());
+      queryClient.invalidateQueries({ queryKey: ['service', service.id] });
+      toast.success('Saved');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.payload.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <Card>
@@ -210,6 +262,9 @@ function DetailsCard({ service, categories }: { service: Service; categories: Ca
           <span aria-live="polite">
             {saving ? 'Saving…' : savedAt ? `Saved ${savedAt.toLocaleTimeString()}` : 'Auto-save on'}
           </span>
+          <Button size="sm" onClick={() => void saveNow()} loading={saving} disabled={isEmpty}>
+            Save
+          </Button>
         </div>
       </CardHeader>
       <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">

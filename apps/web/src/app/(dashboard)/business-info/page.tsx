@@ -1209,23 +1209,35 @@ function BookingFormPanel({ forceEnabled = false }: { forceEnabled?: boolean }) 
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <label className="flex items-start gap-3">
-            <input
-              type="checkbox"
-              className="mt-1 size-4 accent-brand-600"
-              checked={draft.enabled}
-              disabled={forceEnabled}
-              onChange={(e) => setDraft((d) => ({ ...d, enabled: e.target.checked }))}
-            />
-            <div className="text-sm">
-              <p className="font-medium">Enable booking flow</p>
-              <p className="text-xs text-foreground-muted">
-                {forceEnabled
-                  ? 'Bookings are enabled for your workspace, so this flow is always on. Configure the fields below.'
-                  : 'When on, the AI will offer to collect these fields when a customer asks to book.'}
-              </p>
+          {forceEnabled ? (
+            <div className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 dark:border-emerald-400/30 dark:bg-emerald-400/10">
+              <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600" />
+              <div className="text-sm">
+                <p className="font-medium text-emerald-700 dark:text-emerald-300">
+                  Booking flow is on
+                </p>
+                <p className="text-xs text-foreground-muted">
+                  Bookings are enabled for your workspace, so this flow is always on. Configure the
+                  fields below.
+                </p>
+              </div>
             </div>
-          </label>
+          ) : (
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                className="mt-1 size-4 accent-brand-600"
+                checked={draft.enabled}
+                onChange={(e) => setDraft((d) => ({ ...d, enabled: e.target.checked }))}
+              />
+              <div className="text-sm">
+                <p className="font-medium">Enable booking flow</p>
+                <p className="text-xs text-foreground-muted">
+                  When on, the AI will offer to collect these fields when a customer asks to book.
+                </p>
+              </div>
+            </label>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <Label>Title (shown in the prompt + on /bookings)</Label>
@@ -1773,23 +1785,36 @@ function ShopFormPanel({ forceEnabled = false }: { forceEnabled?: boolean }) {
               </Button>
             </div>
           ) : null}
-          <label className="flex items-start gap-3">
-            <input
-              type="checkbox"
-              className="mt-1 size-4 accent-brand-600"
-              checked={draft.enabled}
-              disabled={forceEnabled}
-              onChange={(e) => setDraft((d) => ({ ...d, enabled: e.target.checked }))}
-            />
-            <div className="text-sm">
-              <p className="font-medium">Enable shop / cart flow</p>
-              <p className="text-xs text-foreground-muted">
-                {forceEnabled
-                  ? 'Orders are enabled for your workspace, so the cart flow is always on. Configure the fields below.'
-                  : 'When on, the bot will help customers build a cart from your products and ask for these fields to finalize the order.'}
-              </p>
+          {forceEnabled ? (
+            <div className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 dark:border-emerald-400/30 dark:bg-emerald-400/10">
+              <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600" />
+              <div className="text-sm">
+                <p className="font-medium text-emerald-700 dark:text-emerald-300">
+                  Shop / cart flow is on
+                </p>
+                <p className="text-xs text-foreground-muted">
+                  Orders are enabled for your workspace, so the cart flow is always on. Configure the
+                  fields below.
+                </p>
+              </div>
             </div>
-          </label>
+          ) : (
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                className="mt-1 size-4 accent-brand-600"
+                checked={draft.enabled}
+                onChange={(e) => setDraft((d) => ({ ...d, enabled: e.target.checked }))}
+              />
+              <div className="text-sm">
+                <p className="font-medium">Enable shop / cart flow</p>
+                <p className="text-xs text-foreground-muted">
+                  When on, the bot will help customers build a cart from your products and ask for
+                  these fields to finalize the order.
+                </p>
+              </div>
+            </label>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <Label>Title (shown in the prompt + on /cart)</Label>

@@ -85,7 +85,7 @@ export default function OrgDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { session } = useSession();
+  const { session, refresh } = useSession();
   const isOwnOrg =
     !!session && [session.organization?.id, ...(session.availableOrganizations?.map((o) => o.id) ?? [])].includes(id);
 
@@ -150,9 +150,14 @@ export default function OrgDetailPage() {
         `/api/v1/aligned-admin/orgs/${id}/impersonate`,
         {},
       ),
-    onSuccess: (res) => {
+    onSuccess: async (res) => {
       setAccessToken(res.data.accessToken, res.data.expiresAt);
       queryClient.clear();
+      // Refresh the in-memory session so org name, role, and (critically)
+      // disabledFeatures reflect the controlled workspace — otherwise feature
+      // gating (e.g. hidden booking/shop tabs) would keep using the admin's
+      // own org features.
+      await refresh();
       toast.success('Now controlling this workspace.');
       router.push('/dashboard');
     },

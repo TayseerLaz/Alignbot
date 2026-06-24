@@ -20,11 +20,11 @@ export function AiBudgetWidget() {
   return (
     <WidgetFrame
       id="ai-budget"
-      title="AI chatbot budget · today"
+      title="AI chatbot usage"
       icon={Sparkles}
       accent="green"
       headerExtra={
-        <span className="text-[10px] uppercase tracking-wider text-foreground-subtle">RESETS DAILY</span>
+        <span className="text-[10px] uppercase tracking-wider text-foreground-subtle">THIS MONTH</span>
       }
     >
       {q.isLoading ? (
@@ -39,45 +39,45 @@ export function AiBudgetWidget() {
 }
 
 function Body({ data }: { data: NonNullable<ReturnType<typeof useQuery<Awaited<ReturnType<typeof getAiBudgetToday>>>>['data']> }) {
-  const isUnlimited = data.plan === 'Unlimited';
-  const percentUsed = isUnlimited ? 0 : Math.min(100, Math.round((data.used / data.limit) * 100));
+  // Tenant-facing widget: ONLY percentages + messages used. We deliberately do
+  // NOT render token counts or dollar cost — those are admin-only and live on
+  // the tenant details page in the ALIGNED admin panel.
+  const unlimited = data.plan === 'Unlimited' || data.messageCap == null;
+  const percentUsed = unlimited ? 0 : Math.min(100, Math.max(0, data.messagePct ?? 0));
 
   // Threshold logic per spec: amber at 80%, red at 95%. Unlimited stays
   // green (with a faint indicative fill).
-  const barColour = isUnlimited
+  const barColour = unlimited
     ? 'bg-emerald-500'
     : percentUsed >= 95
       ? 'bg-red-500'
       : percentUsed >= 80
         ? 'bg-amber-500'
         : 'bg-emerald-500';
-  const indicativeFill = isUnlimited ? 18 : percentUsed;
+  const indicativeFill = unlimited ? 18 : percentUsed;
 
   return (
     <div className="space-y-3">
-      <p className="text-3xl font-semibold leading-tight">{data.plan}</p>
+      <p className="text-3xl font-semibold leading-tight">{unlimited ? 'Unlimited' : `${percentUsed}%`}</p>
       <p className="text-xs text-foreground-muted">
-        {formatThousands(data.used)} tokens
-        <span className="mx-1 text-foreground-subtle">·</span>
-        <span className="font-medium">${data.estCostUsd.toFixed(3)}</span>
+        <span className="font-medium text-foreground">{formatThousands(data.messagesUsed)}</span> messages
+        used{data.messageCap != null ? <> of {formatThousands(data.messageCap)}</> : null} this month
       </p>
       <div
         className="h-2 w-full overflow-hidden rounded-full bg-surface-muted"
         role="progressbar"
         aria-valuemin={0}
-        aria-valuemax={isUnlimited ? 0 : 100}
-        aria-valuenow={isUnlimited ? undefined : percentUsed}
-        aria-label={isUnlimited ? 'Unlimited plan — indicative usage only' : `${percentUsed}% of daily cap used`}
+        aria-valuemax={unlimited ? 0 : 100}
+        aria-valuenow={unlimited ? undefined : percentUsed}
+        aria-label={unlimited ? 'Unlimited plan — indicative usage only' : `${percentUsed}% of monthly message limit used`}
       >
         <div
           className={cn('h-full transition-all', barColour)}
-          style={{ width: `${indicativeFill}%`, opacity: isUnlimited ? 0.5 : 1 }}
+          style={{ width: `${indicativeFill}%`, opacity: unlimited ? 0.5 : 1 }}
         />
       </div>
-      {!isUnlimited ? (
-        <p className="text-xs text-foreground-subtle">
-          {percentUsed}% of {formatThousands(data.limit)} daily tokens
-        </p>
+      {!unlimited ? (
+        <p className="text-xs text-foreground-subtle">{percentUsed}% of your monthly message limit</p>
       ) : null}
     </div>
   );

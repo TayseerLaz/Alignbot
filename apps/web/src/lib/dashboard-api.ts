@@ -184,9 +184,11 @@ export async function getOutreachCampaigns(): Promise<OutreachData> {
 
 export interface AiBudgetToday {
   plan: 'Unlimited' | 'Capped';
-  used: number;
-  limit: number;
-  estCostUsd: number;
+  // Tenant-facing: messages used + cap + percentage only. Tokens/cost are
+  // intentionally NOT surfaced here (admin-only, on the tenant details page).
+  messagesUsed: number;
+  messageCap: number | null;
+  messagePct: number | null;
 }
 
 interface AiUsageResponse {
@@ -195,6 +197,9 @@ interface AiUsageResponse {
   unlimited: boolean;
   percentUsed: number;
   estCostUsd: number;
+  messagesUsed: number;
+  messageCap: number | null;
+  messagePct: number | null;
 }
 
 export async function getAiBudgetToday(): Promise<AiBudgetToday> {
@@ -202,9 +207,9 @@ export async function getAiBudgetToday(): Promise<AiBudgetToday> {
   const d = res.data;
   return {
     plan: d.unlimited ? 'Unlimited' : 'Capped',
-    used: d.used,
-    limit: d.limit,
-    estCostUsd: d.estCostUsd,
+    messagesUsed: d.messagesUsed,
+    messageCap: d.messageCap,
+    messagePct: d.messagePct,
   };
 }
 

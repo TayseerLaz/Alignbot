@@ -183,6 +183,12 @@ export default async function dashboardRoutes(app: FastifyInstance) {
               unlimited: z.boolean(),
               percentUsed: z.number().int().min(0).max(100),
               estCostUsd: z.number().nonnegative(),
+              // Tenant-facing message quota (used + cap + %). The widget shows
+              // ONLY these + percentages — never tokens or money (those are
+              // admin-only, on the tenant details page).
+              messagesUsed: z.number().int().nonnegative(),
+              messageCap: z.number().int().nonnegative().nullable(),
+              messagePct: z.number().int().min(0).max(100).nullable(),
             }),
           ),
         },
@@ -192,13 +198,23 @@ export default async function dashboardRoutes(app: FastifyInstance) {
     async (req) => {
       const orgId = req.auth!.organizationId;
       const { readDailyTokenUsage } = await import('../../lib/openai.js');
+      const { getOrgQuotas } = await import('../../lib/billing.js');
       const data = await readDailyTokenUsage(orgId);
+      // Monthly message quota — the only usage metric tenants see (with %).
+      const { quotas } = await app.tenant(req, (tx) => getOrgQuotas(tx as never, orgId));
+      const msg = quotas.find((q) => q.key === 'monthly_messages');
+      const base = {
+        ...data,
+        messagesUsed: msg?.used ?? 0,
+        messageCap: msg?.cap ?? null,
+        messagePct: msg?.pct ?? null,
+      };
       // Force unlimited when the JWT says admin — covers the case where
       // the org's membership-based check missed for any reason.
       if (req.auth!.isAlignedAdmin && !data.unlimited) {
-        return { data: { ...data, unlimited: true, percentUsed: 0 } };
+        return { data: { ...base, unlimited: true, percentUsed: 0 } };
       }
-      return { data };
+      return { data: base };
     },
   );
 

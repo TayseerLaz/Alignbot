@@ -426,7 +426,7 @@ export default function OrgDetailPage() {
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             <p className="text-xs text-foreground-muted">
-              Full data bundle (catalog, conversations, bot config, audit log) as gzipped JSON.
+              Full data bundle (catalog, conversations, bot config, audit log) as a .zip of CSVs.
               Available even if the tenant&apos;s own export feature is off.
             </p>
             {exportsQ.isLoading ? (

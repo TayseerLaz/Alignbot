@@ -593,6 +593,17 @@ interface BotResponseArgs {
      * turn). Free-form so we can grow the set without prompt changes.
      */
     capturedFields?: Record<string, string>;
+    /**
+     * The customer left this order unfinished and has now returned after a
+     * long silence (>1h, computed deterministically by the caller from the
+     * inter-message gap). When true, the prompt makes the bot OPEN its reply
+     * by reminding the customer of the pending order and asking whether to
+     * continue it or start fresh — instead of the usual "never abandon a
+     * mid-checkout cart" stance (this is no longer mid-checkout). If the
+     * customer's message is unrelated or they decline, the bot emits
+     * [CLEAR_CART] and proceeds fresh.
+     */
+    idleReturn?: boolean;
   } | null;
   // Ultra plan — a pre-rendered persona/memory block about THIS customer
   // (from lib/contact-memory.ts → renderPersonaForPrompt). Injected near
@@ -1109,6 +1120,10 @@ export async function buildBotResponse(
                   ...capturedKeys.map((k) => `  - ${k}: ${captured[k]}`),
                 ].join('\n')
               : '';
+          const idleReturn = args.cartState!.idleReturn === true;
+          const itemsShort = args.cartState!.items
+            .map((it) => `${it.quantity}× ${it.name}`)
+            .join(', ');
           return [
             `# 🛒 Running cart state for THIS conversation`,
             `Subtotal so far: ${fmt(args.cartState!.subtotalMinor)} (${args.cartState!.items.reduce((s, i) => s + i.quantity, 0)} items)`,
@@ -1116,11 +1131,22 @@ export async function buildBotResponse(
             lines,
             capturedBlock,
             `When the customer asks "what's the total" / "how much" / "كم المجموع", quote the subtotal above VERBATIM. NEVER reply "I can't compute the total" or "I don't have that info" — you have the running total right here.`,
-            `These cart items are CONFIRMED and orderable — they are in the catalog. NEVER tell the customer a cart item "isn't in our catalog", doesn't exist, or can't be ordered; this cart is authoritative. NEVER reset, clear, or abandon it mid-checkout, say it's "pending", or "start fresh" — carry these exact items through checkout and the final confirmation.`,
-            // Unfinished-cart resume — when the customer RETURNS (greets / asks
-            // something new) and this cart is left over from earlier, offer to
-            // resume it. If they decline / want to start over, emit [CLEAR_CART].
-            `RESUME CHECK: if the customer is returning or starting a new topic (greeting, a fresh question) and this cart is left over from an earlier chat — NOT actively mid-checkout — offer ONCE: "You've got an unfinished order: ${args.cartState!.items.map((it) => `${it.quantity}× ${it.name}`).join(', ')}. Want to continue it, or start fresh?". If they say start fresh / a new order / they don't want it, put the literal token [CLEAR_CART] on its own line (the platform discards the saved cart) and then help them with the new request. If they want to continue, proceed with this cart.`,
+            // When idleReturn is true the customer has been AWAY > 1h, so this is
+            // NOT mid-checkout — we deliberately invite continue-or-fresh and must
+            // NOT emit the "never start fresh" stance (it would gag the reminder).
+            idleReturn
+              ? `These cart items are CONFIRMED and orderable — they are in the catalog. NEVER tell the customer a cart item "isn't in our catalog", doesn't exist, or can't be ordered; this cart is authoritative.`
+              : `These cart items are CONFIRMED and orderable — they are in the catalog. NEVER tell the customer a cart item "isn't in our catalog", doesn't exist, or can't be ordered; this cart is authoritative. NEVER reset, clear, or abandon it mid-checkout, say it's "pending", or "start fresh" — carry these exact items through checkout and the final confirmation.`,
+            // Returning-after-absence reminder. Two modes:
+            //  - idleReturn (deterministic >1h gap): MANDATORY reminder-first.
+            //  - otherwise: the softer "offer once if they seem to be returning".
+            idleReturn
+              ? [
+                  `⏰ RETURNING CUSTOMER — DO THIS FIRST, BEFORE answering anything else:`,
+                  `The customer left this order unfinished and has just come back after being away for over an hour. Your reply MUST OPEN by reminding them of it, in the conversation's language, e.g.: "Welcome back 👋 You have an unfinished order: ${itemsShort} — total ${fmt(args.cartState!.subtotalMinor)}. Want to continue with it, or start fresh?"`,
+                  `THEN handle their current message. If their message is UNRELATED to this order, or they say cancel / start over / no / a new order / forget it, put the literal token [CLEAR_CART] on its own line (the platform discards the saved order) and continue fresh with whatever they actually want. If they want to continue, proceed with this cart toward checkout.`,
+                ].join('\n')
+              : `RESUME CHECK: if the customer is returning or starting a new topic (greeting, a fresh question) and this cart is left over from an earlier chat — NOT actively mid-checkout — offer ONCE: "You've got an unfinished order: ${itemsShort}. Want to continue it, or start fresh?". If they say start fresh / a new order / they don't want it, put the literal token [CLEAR_CART] on its own line (the platform discards the saved cart) and then help them with the new request. If they want to continue, proceed with this cart.`,
           ]
             .filter(Boolean)
             .join('\n');

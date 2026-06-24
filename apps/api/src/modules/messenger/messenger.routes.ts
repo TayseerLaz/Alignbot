@@ -655,14 +655,18 @@ async function maybeReplyOnMessenger(
   const config = (data as { config?: { deployedAt?: Date | null } }).config;
   if (!config?.deployedAt) return; // bot not deployed
 
-  // Last 8 turns for context.
+  // Last 8 turns for context. Also capture the previous message's timestamp so
+  // we can detect a returning customer (>1h silence) below.
+  let lastPriorReceivedAt: Date | null = null;
   const history = await withRlsBypass(async (tx) => {
     const rows = await tx.whatsAppMessage.findMany({
       where: { threadId },
       orderBy: { receivedAt: 'desc' },
       take: 9,
-      select: { direction: true, body: true },
+      select: { direction: true, body: true, receivedAt: true },
     });
+    // rows[0] is the current inbound (already stored); rows[1] is the prior msg.
+    lastPriorReceivedAt = rows[1]?.receivedAt ?? null;
     return rows
       .reverse()
       .slice(0, -1) // drop the current inbound (it's passed as userMessage)
@@ -680,6 +684,15 @@ async function maybeReplyOnMessenger(
       .products ?? [];
   const { loadDraftCartState, syncDraftFromReply, captureCart } = await import('../../lib/cart-flow.js');
   const cartState = shopForm ? await loadDraftCartState(orgId, threadId) : null;
+
+  // Returning-customer reminder: customer left this order unfinished and came
+  // back after a long silence (>1h since the previous message). Flag it so the
+  // bot opens by reminding them of the pending order and asks continue-or-fresh.
+  const RETURN_REMINDER_GAP_MS = 60 * 60 * 1000;
+  const cartIdleReturn =
+    !!cartState &&
+    lastPriorReceivedAt != null &&
+    Date.now() - new Date(lastPriorReceivedAt).getTime() > RETURN_REMINDER_GAP_MS;
 
   // Booking availability — compute the open slots the bot may offer.
   const bookingAvail =
@@ -699,7 +712,7 @@ async function maybeReplyOnMessenger(
       history,
       data,
       replyMode: 'text',
-      cartState: cartState ?? undefined,
+      cartState: cartState ? { ...cartState, idleReturn: cartIdleReturn } : undefined,
       channelLabel: channelKind === 'instagram' ? 'Instagram' : 'Facebook Messenger',
       openSlots,
     });

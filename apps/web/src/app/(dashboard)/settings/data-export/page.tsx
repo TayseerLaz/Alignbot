@@ -72,7 +72,7 @@ export default function DataExportPage() {
     <>
       <PageHeader
         title="Data export"
-        description="Download a gzipped JSON of all your products, services, conversations, bot config, and audit log."
+        description="Download a .zip of CSV files — your products, services, conversations, bot config, and audit log."
         actions={
           <Button variant="secondary" asChild>
             <Link href="/settings">
@@ -90,7 +90,8 @@ export default function DataExportPage() {
           <CardDescription>
             Spec: §5.1.4 — GDPR data portability. We bundle products, services, categories, business
             info, FAQs, policies, WhatsApp threads + messages + notes, bot config + KB, and the last
-            5,000 audit entries into a single gzipped JSON file. Large orgs may take a minute or two.
+            5,000 audit entries into a .zip of CSV files (one per data type). Large orgs may take a
+            minute or two.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

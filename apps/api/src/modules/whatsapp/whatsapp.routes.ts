@@ -3508,6 +3508,23 @@ async function maybeReplyAsBot(args: {
       };
     });
 
+    // Returning-customer reminder: if the customer left this order unfinished
+    // and has come back after a long silence (>1h since the previous message),
+    // flag it so the bot OPENS by reminding them of the pending order and asks
+    // continue-or-fresh (instead of silently resuming). The 4h session-boundary
+    // above already cancels older drafts, so a non-null cartState here means the
+    // order is still resumable. Gap is measured from the most recent prior
+    // message of any direction (ctx.history excludes the current inbound).
+    const RETURN_REMINDER_GAP_MS = 60 * 60 * 1000;
+    let cartIdleReturn = false;
+    if (cartStateForLLM) {
+      const lastPriorMsg = ctx.history[ctx.history.length - 1];
+      const idleGapMs = lastPriorMsg
+        ? Date.now() - new Date(lastPriorMsg.receivedAt).getTime()
+        : null;
+      cartIdleReturn = idleGapMs != null && idleGapMs > RETURN_REMINDER_GAP_MS;
+    }
+
     // Per-user memory ("user_info") — ALL plans. Loads this contact's
     // distilled persona + real recent orders so the bot personalises and uses
     // FEWER tokens (it reads saved facts instead of re-deriving them from the
@@ -3589,7 +3606,7 @@ async function maybeReplyAsBot(args: {
       replyMode: ctx.replyMode as 'text' | 'voice' | 'match_customer',
       customerSpokeAudio,
       customerName: (ctx as { customerName?: string | null }).customerName ?? null,
-      cartState: cartStateForLLM,
+      cartState: cartStateForLLM ? { ...cartStateForLLM, idleReturn: cartIdleReturn } : null,
       persona: personaBlock,
       pinnedSkus,
       channelLabel: 'WhatsApp',

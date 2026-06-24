@@ -2,7 +2,6 @@
 
 import type {
   WhatsAppChannelDto,
-  WhatsAppMessageDto,
   WhatsAppTestSendResult,
   WhatsAppVerifyResult,
 } from '@aligned/shared';
@@ -14,7 +13,6 @@ import {
   CheckCircle2,
   Copy,
   ExternalLink,
-  MessageCircle,
   Phone,
   Plus,
   PowerOff,
@@ -118,11 +116,6 @@ export default function WhatsAppPage() {
     }
   }, [numbers, selectedChannelId]);
 
-  const messagesQ = useQuery({
-    queryKey: ['whatsapp-messages'],
-    queryFn: () => api.get<{ data: WhatsAppMessageDto[] }>('/api/v1/whatsapp/messages?limit=5'),
-    refetchInterval: 10_000,
-  });
   // Approved templates — used to populate the test-send dropdown so the
   // operator can pick instead of typing a name/language by hand.
   const templatesQ = useQuery({
@@ -280,57 +273,38 @@ export default function WhatsAppPage() {
     return out;
   };
 
+  const statusBadge = (
+    <Badge variant={verifiedOk && channel.isActive ? 'success' : 'muted'} className="gap-1">
+      {verifiedOk && channel.isActive ? (
+        <>
+          <CheckCircle2 className="size-3" /> Live
+        </>
+      ) : verifiedOk ? (
+        <>
+          <CheckCircle2 className="size-3" /> Connected · paused
+        </>
+      ) : credsComplete ? (
+        <>
+          <AlertTriangle className="size-3" /> Not verified
+        </>
+      ) : (
+        'Not configured'
+      )}
+    </Badge>
+  );
+
   return (
     <>
       <PageHeader
         title="WhatsApp"
-        description="Connect your Meta WhatsApp Business number so the platform can verify credentials and receive inbound messages."
-        actions={
-          <div className="flex items-center gap-2">
-            <Badge variant={verifiedOk && channel.isActive ? 'success' : 'muted'} className="gap-1">
-              {verifiedOk && channel.isActive ? (
-                <>
-                  <CheckCircle2 className="size-3" /> Live
-                </>
-              ) : verifiedOk ? (
-                <>
-                  <CheckCircle2 className="size-3" /> Connected · paused
-                </>
-              ) : credsComplete ? (
-                <>
-                  <AlertTriangle className="size-3" /> Not yet verified
-                </>
-              ) : (
-                'Not configured'
-              )}
-            </Badge>
-          </div>
-        }
+        description="Connect your Meta WhatsApp Business number(s) so the bot can receive and reply."
+        actions={statusBadge}
       />
 
-      {/* Multi-number switcher — pick which number to configure. The AI bot can
-          be deployed on any subset of numbers (per-number toggle below). */}
-      <Card className="mb-6">
-        <CardHeader className="pb-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <CardTitle className="text-base">Your WhatsApp numbers</CardTitle>
-              <CardDescription>
-                Run several numbers and choose which ones the AI bot replies on.
-              </CardDescription>
-            </div>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => addNumber.mutate()}
-              loading={addNumber.isPending}
-            >
-              <Plus className="size-4" /> Add number
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap gap-2">
+      {/* ---------- Numbers strip + per-number controls ---------- */}
+      <Card className="mb-4">
+        <CardContent className="space-y-3 py-3">
+          <div className="flex flex-wrap items-center gap-2">
             {numbers.map((n) => {
               const isSel = n.id === selectedChannelId;
               const name = n.label || n.displayPhoneNumber || 'Untitled number';
@@ -340,7 +314,7 @@ export default function WhatsAppPage() {
                   type="button"
                   onClick={() => setSelectedChannelId(n.id)}
                   className={cn(
-                    'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors',
+                    'flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-colors',
                     isSel
                       ? 'border-brand-400 bg-brand-50 text-brand-800 dark:bg-brand-400/10'
                       : 'border-border hover:bg-surface-muted',
@@ -354,65 +328,61 @@ export default function WhatsAppPage() {
                   />
                   <span className="font-medium">{name}</span>
                   {n.isPrimary ? <Star className="size-3.5 text-amber-500" /> : null}
-                  {n.botEnabled ? (
-                    <Badge variant="success" className="gap-1 px-1.5 py-0 text-[10px]">
-                      <Bot className="size-3" /> AI
-                    </Badge>
-                  ) : null}
+                  {n.botEnabled ? <Bot className="size-3.5 text-emerald-600" /> : null}
                 </button>
               );
             })}
+            <Button size="sm" variant="ghost" onClick={() => addNumber.mutate()} loading={addNumber.isPending}>
+              <Plus className="size-4" /> Add number
+            </Button>
           </div>
 
-          {channel && form ? (
-            <div className="space-y-3 border-t border-border pt-3">
-              {/* Inline rename — change this number's display name right here. */}
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="min-w-[14rem] flex-1 space-y-1">
-                  <Label htmlFor="number-name">Number name</Label>
-                  <Input
-                    id="number-name"
-                    placeholder="e.g. Sales line, Support, Dubai branch"
-                    value={form.label}
-                    onChange={(e) => setForm({ ...form, label: e.target.value })}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') save.mutate({ label: form.label.trim() || null });
-                    }}
-                  />
-                </div>
-                <Button
-                  size="sm"
-                  onClick={() => save.mutate({ label: form.label.trim() || null })}
-                  loading={save.isPending}
-                  disabled={(form.label.trim() || null) === (channel.label ?? null)}
-                >
-                  Save name
-                </Button>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-              {/* Per-number AI bot switch — the core multi-number control. */}
-              <Button
-                size="sm"
-                variant={channel.botEnabled ? 'primary' : 'secondary'}
-                onClick={() => save.mutate({ botEnabled: !channel.botEnabled })}
-                loading={save.isPending}
-                title="When ON, the AI bot auto-replies to customers messaging this number (the bot must also be deployed on the Bot page)."
-              >
-                <Bot className="size-4" />
-                {channel.botEnabled ? 'AI bot: ON for this number' : 'AI bot: OFF for this number'}
-              </Button>
-              {!channel.isPrimary ? (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => promote.mutate()}
-                  loading={promote.isPending}
-                >
+          {/* Compact per-number action row: name + toggles + primary/remove. */}
+          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+            <Input
+              aria-label="Number name"
+              placeholder="Name this number (e.g. Sales, Support)"
+              className="h-9 w-full sm:w-56"
+              value={form.label}
+              onChange={(e) => setForm({ ...form, label: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') save.mutate({ label: form.label.trim() || null });
+              }}
+            />
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => save.mutate({ label: form.label.trim() || null })}
+              loading={save.isPending}
+              disabled={(form.label.trim() || null) === (channel.label ?? null)}
+            >
+              Save
+            </Button>
+            <span className="mx-1 hidden h-5 w-px bg-border sm:block" />
+            <Button
+              size="sm"
+              variant={channel.botEnabled ? 'primary' : 'secondary'}
+              onClick={() => save.mutate({ botEnabled: !channel.botEnabled })}
+              loading={save.isPending}
+              title="When ON, the AI bot auto-replies to this number (the bot must also be deployed on the Bot page)."
+            >
+              <Bot className="size-4" /> AI bot {channel.botEnabled ? 'ON' : 'OFF'}
+            </Button>
+            <Button
+              size="sm"
+              variant={channel.isActive ? 'primary' : 'secondary'}
+              onClick={() => save.mutate({ isActive: !channel.isActive })}
+              loading={save.isPending}
+              disabled={!verifiedOk}
+              title={verifiedOk ? 'Mark this number live' : 'Verify with Meta first'}
+            >
+              <PowerOff className="size-4" /> Live {channel.isActive ? 'ON' : 'OFF'}
+            </Button>
+            {!channel.isPrimary ? (
+              <>
+                <Button size="sm" variant="ghost" onClick={() => promote.mutate()} loading={promote.isPending}>
                   <Star className="size-4" /> Make primary
                 </Button>
-              ) : null}
-              {!channel.isPrimary ? (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -428,123 +398,51 @@ export default function WhatsAppPage() {
                   }}
                   loading={removeNumber.isPending}
                 >
-                  <Trash2 className="size-4" /> Remove number
+                  <Trash2 className="size-4" /> Remove
                 </Button>
-              ) : null}
-              </div>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+              </>
+            ) : null}
+          </div>
 
-      {/* Honesty banner — Phase 1.5 only stores credentials + verifies + receives;
-          autonomous bot replies still belong to your bot runtime. */}
-      <Card className="mb-6 border border-amber-200 bg-amber-50/40 dark:border-amber-400/30 dark:bg-amber-400/10">
-        {/* text-foreground resolves to near-black in light mode and the
-            pale token in dark mode, so the banner reads on both. Inline
-            `color` style on the body wrapper is a belt-and-suspenders
-            fallback in case any cascade rule sneaks in — child elements
-            inherit it. */}
-        <CardContent
-          className="flex items-start gap-3 py-3 text-xs text-foreground"
-          style={{ color: 'var(--color-foreground)' }}
-        >
-          <MessageCircle className="mt-0.5 size-4 shrink-0" />
-          <div className="space-y-1">
-            <p className="font-semibold">This page connects credentials, not conversations.</p>
-            <p className="leading-relaxed">
-              The platform will verify your token, expose a webhook URL Meta can call, and persist
-              inbound messages for the audit log. <strong>Auto-responding to customers</strong> is
-              still done by your bot runtime — Landbot, an in-house bridge, or Phase 2 when it
-              ships. See the{' '}
-              <a
-                className="font-medium text-foreground underline underline-offset-2"
-                href="/docs/NO_CODE_CHATBOT_PLAYBOOK.md"
-              >
-                no-code playbook
-              </a>{' '}
-              for the wiring.
-            </p>
+          {/* One-line status chips. */}
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            <Chip ok={credsComplete} label={credsComplete ? 'Credentials set' : 'Credentials missing'} />
+            <Chip
+              ok={verifiedOk}
+              warn={!verifiedOk && !!channel.lastVerifyStatus}
+              label={verifiedOk ? 'Verified' : `Verify: ${channel.lastVerifyStatus ?? 'never'}`}
+            />
+            <Chip ok={channel.hasAppSecret} label={channel.hasAppSecret ? 'Inbound ready' : 'App secret missing'} />
+            <Chip ok={channel.isActive} label={channel.isActive ? 'Live' : 'Paused'} />
           </div>
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
-          {/* ----- Webhook info Meta needs ----- */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ShieldCheck className="size-4" /> Meta webhook configuration
-              </CardTitle>
-              <CardDescription>
-                Paste these into{' '}
-                <span className="font-mono">developers.facebook.com → your app → WhatsApp →
-                Configuration → Webhooks</span>
-                . Then subscribe the app to the WhatsApp Business Account and tick the{' '}
-                <span className="font-mono">messages</span> field.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {/* ---------- Connection: credentials + webhook ---------- */}
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Phone className="size-4" /> Connection
+            </CardTitle>
+            <CardDescription>
+              From{' '}
+              <a
+                href="https://business.facebook.com/"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-brand-500 underline"
+              >
+                Meta Business Settings
+              </a>{' '}
+              <ExternalLink className="inline size-3" /> → WhatsApp → API Setup. Use a non-expiring
+              System User token; the app secret is under app dashboard → Settings → Basic.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor="callback-url">Callback URL</Label>
-                <div className="flex gap-2">
-                  <Input id="callback-url" readOnly value={channel.webhookCallbackUrl} className="font-mono text-xs" />
-                  <Button
-                    variant="secondary"
-                    size="icon"
-                    aria-label="Copy callback URL"
-                    onClick={() => copyToClipboard(channel.webhookCallbackUrl, 'Callback URL')}
-                  >
-                    <Copy className="size-4" />
-                  </Button>
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="verify-token">Verify token</Label>
-                <div className="flex gap-2">
-                  <Input id="verify-token" readOnly value={channel.webhookVerifyToken} className="font-mono text-xs" />
-                  <Button
-                    variant="secondary"
-                    size="icon"
-                    aria-label="Copy verify token"
-                    onClick={() => copyToClipboard(channel.webhookVerifyToken, 'Verify token')}
-                  >
-                    <Copy className="size-4" />
-                  </Button>
-                </div>
-              </div>
-              <p className="text-xs text-foreground-subtle">
-                Meta sends a one-time GET to the callback URL with this verify token. The platform
-                echoes the challenge back when the token matches.
-              </p>
-            </CardContent>
-          </Card>
-
-          {/* ----- Credentials ----- */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Phone className="size-4" /> Meta credentials
-              </CardTitle>
-              <CardDescription>
-                Find these in{' '}
-                <a
-                  href="https://business.facebook.com/"
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="text-brand-500 underline"
-                >
-                  Meta Business Settings
-                </a>{' '}
-                <ExternalLink className="inline size-3" /> → WhatsApp → API Setup. The access token
-                must be a <strong>System User</strong> token (non-expiring). The app secret is on
-                the app dashboard → Settings → Basic.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="wabaId">WhatsApp Business Account ID (WABA ID)</Label>
+                <Label htmlFor="wabaId">WABA ID</Label>
                 <Input
                   id="wabaId"
                   value={form.wabaId}
@@ -560,16 +458,13 @@ export default function WhatsAppPage() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="displayPhoneNumber">Display phone number (optional)</Label>
+                <Label htmlFor="displayPhoneNumber">Display number (auto on verify)</Label>
                 <Input
                   id="displayPhoneNumber"
                   placeholder="+14155551234"
                   value={form.displayPhoneNumber}
                   onChange={(e) => setForm({ ...form, displayPhoneNumber: e.target.value.trim() })}
                 />
-                <p className="text-xs text-foreground-subtle">
-                  Auto-populated by a successful verify.
-                </p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="appId">Meta App ID</Label>
@@ -614,177 +509,89 @@ export default function WhatsAppPage() {
                   value={form.appSecret}
                   onChange={(e) => setForm({ ...form, appSecret: e.target.value })}
                 />
-                <p className="text-xs text-foreground-subtle">
-                  Used to verify the <span className="font-mono">X-Hub-Signature-256</span> header
-                  on inbound webhooks.
-                </p>
               </div>
-              <div className="sm:col-span-2 flex flex-wrap items-center gap-2">
-                <Button onClick={() => save.mutate(buildPayload())} loading={save.isPending}>
-                  Save credentials
-                </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={() => save.mutate(buildPayload())} loading={save.isPending}>
+                Save credentials
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => verify.mutate()}
+                loading={verify.isPending}
+                disabled={!credsComplete}
+              >
+                <ShieldCheck className="size-4" /> Verify with Meta
+              </Button>
+              {channel.lastVerifiedAt ? (
+                <span className="text-xs text-foreground-subtle">
+                  checked {formatRelative(channel.lastVerifiedAt)} ·{' '}
+                  <span className={verifiedOk ? 'text-emerald-700' : 'text-red-600'}>
+                    {channel.lastVerifyStatus}
+                  </span>
+                </span>
+              ) : null}
+            </div>
+
+            {/* Webhook details for Meta — compact, collapsible-feel block. */}
+            <div className="space-y-2 rounded-lg border border-border bg-surface-muted/30 p-3">
+              <p className="flex items-center gap-1.5 text-xs font-medium text-foreground-muted">
+                <ShieldCheck className="size-3.5" /> Webhook for Meta (developers.facebook.com → app
+                → WhatsApp → Configuration)
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  readOnly
+                  value={channel.webhookCallbackUrl}
+                  className="h-8 font-mono text-xs"
+                  aria-label="Callback URL"
+                />
                 <Button
                   variant="secondary"
-                  onClick={() => verify.mutate()}
-                  loading={verify.isPending}
-                  disabled={!credsComplete}
+                  size="icon"
+                  className="size-8"
+                  aria-label="Copy callback URL"
+                  onClick={() => copyToClipboard(channel.webhookCallbackUrl, 'Callback URL')}
                 >
-                  <ShieldCheck className="size-4" /> Verify with Meta
+                  <Copy className="size-3.5" />
                 </Button>
-                {channel.lastVerifiedAt ? (
-                  <span className="text-xs text-foreground-subtle">
-                    last checked {formatRelative(channel.lastVerifiedAt)} ·{' '}
-                    <span className={verifiedOk ? 'text-emerald-700' : 'text-red-600'}>
-                      {channel.lastVerifyStatus}
-                    </span>
-                  </span>
-                ) : null}
               </div>
-            </CardContent>
-          </Card>
+              <div className="flex gap-2">
+                <Input
+                  readOnly
+                  value={channel.webhookVerifyToken}
+                  className="h-8 font-mono text-xs"
+                  aria-label="Verify token"
+                />
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="size-8"
+                  aria-label="Copy verify token"
+                  onClick={() => copyToClipboard(channel.webhookVerifyToken, 'Verify token')}
+                >
+                  <Copy className="size-3.5" />
+                </Button>
+              </div>
+              <p className="text-[11px] text-foreground-subtle">
+                Subscribe the app to the WABA and tick the <span className="font-mono">messages</span>{' '}
+                field. Verifying above also auto-subscribes the callback.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
-          {/* ----- Pointers to the real sources of truth -----
-              The fields that used to live here (businessName / Address /
-              About / greetingMessage) were write-only — the AI bot reads
-              from BusinessInfo + BotConfig instead, so editing them here
-              had no effect on what the customer saw. Replaced the form
-              with a clear pointer to where each value actually lives. */}
+        {/* ---------- Sidebar: test + disconnect ---------- */}
+        <div className="space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle>Business profile & greeting</CardTitle>
-              <CardDescription>
-                The AI bot pulls its identity + opening line from two other pages — edit them
-                there.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-muted/30 px-3 py-2">
-                <div>
-                  <p className="font-medium">Business name, email, address, about, opening hours</p>
-                  <p className="text-xs text-foreground-muted">
-                    Source of truth: <span className="font-mono">/business-info</span>
-                  </p>
-                </div>
-                <Button asChild size="sm" variant="secondary">
-                  <Link href="/business-info">Edit business info</Link>
-                </Button>
-              </div>
-              <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-muted/30 px-3 py-2">
-                <div>
-                  <p className="font-medium">Greeting, personality, handoff message, languages</p>
-                  <p className="text-xs text-foreground-muted">
-                    Source of truth: <span className="font-mono">/bot</span>
-                  </p>
-                </div>
-                <Button asChild size="sm" variant="secondary">
-                  <Link href="/bot">Edit bot config</Link>
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* ----- Inbound + test message log ----- */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <MessageCircle className="size-4" /> Recent messages
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Send className="size-4" /> Send a test
               </CardTitle>
               <CardDescription>
-                The 5 most recent inbound + outbound messages for this number. For full history,
-                use <span className="font-mono">/inbox</span>.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-0">
-              {(messagesQ.data?.data ?? []).length === 0 ? (
-                <p className="px-6 py-6 text-center text-sm text-foreground-muted">
-                  Nothing yet. Try the test send or message your number from a tester phone.
-                </p>
-              ) : (
-                <ul className="divide-y divide-border">
-                  {(messagesQ.data?.data ?? []).slice(0, 5).map((m) => (
-                    <li key={m.id} className="grid grid-cols-[auto_1fr_auto] items-start gap-3 px-6 py-3 text-sm">
-                      <Badge variant={m.direction === 'inbound' ? 'success' : 'muted'} className="mt-0.5">
-                        {m.direction}
-                      </Badge>
-                      <div className="min-w-0">
-                        <p className="truncate">
-                          <span className="font-mono text-xs text-foreground-subtle">
-                            {m.fromNumber ?? m.toNumber ?? '—'}
-                          </span>{' '}
-                          · {m.messageType ?? 'unknown'}
-                        </p>
-                        {m.body ? (
-                          <p className="mt-0.5 whitespace-pre-wrap break-words text-foreground">
-                            {m.body}
-                          </p>
-                        ) : null}
-                      </div>
-                      <span className="whitespace-nowrap text-xs text-foreground-subtle">
-                        {formatRelative(m.receivedAt)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* ----- Sidebar column ----- */}
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Status</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <Row label="Credentials" value={credsComplete ? 'configured' : 'incomplete'} ok={credsComplete} />
-              <Row
-                label="Last verify"
-                value={channel.lastVerifyStatus ?? 'never'}
-                ok={verifiedOk}
-                warn={!verifiedRecently && !!channel.lastVerifyStatus}
-              />
-              <Row
-                label="Inbound webhook"
-                value={channel.hasAppSecret ? 'ready' : 'app secret missing'}
-                ok={channel.hasAppSecret}
-              />
-              <Row label="Live" value={channel.isActive ? 'ON' : 'OFF'} ok={channel.isActive} />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Live toggle</CardTitle>
-              <CardDescription>
-                Marks the channel as active in this platform. Your bot runtime is responsible for
-                actually replying — the toggle does not start a bot.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button
-                variant={channel.isActive ? 'secondary' : 'primary'}
-                onClick={() => save.mutate({ isActive: !channel.isActive })}
-                loading={save.isPending}
-                disabled={!verifiedOk}
-              >
-                <PowerOff className="size-4" /> {channel.isActive ? 'Set OFF' : 'Set Live'}
-              </Button>
-              {!verifiedOk ? (
-                <p className="mt-2 text-xs text-foreground-subtle">
-                  Verify with Meta first.
-                </p>
-              ) : null}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Send a test</CardTitle>
-              <CardDescription>
-                Sends an approved WhatsApp template. The recipient must be added as a tester in
-                Meta until business verification is complete. Pick a template from the dropdown —
-                it's populated from <span className="font-mono">/whatsapp/templates</span>.
+                Sends an approved template (recipient must be a Meta tester until business
+                verification).
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -797,16 +604,15 @@ export default function WhatsAppPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-red-200">
-            <CardHeader>
-              <CardTitle className="text-red-700">Disconnect</CardTitle>
-              <CardDescription>
-                Clears credentials and marks the channel inactive. Re-paste your token to reconnect.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
+          <Card>
+            <CardContent className="flex items-center justify-between gap-2 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-red-700">Disconnect</p>
+                <p className="text-xs text-foreground-subtle">Clears credentials; webhook stays.</p>
+              </div>
               <Button
                 variant="danger"
+                size="sm"
                 onClick={async () => {
                   if (
                     await confirmDialog({
@@ -832,18 +638,22 @@ export default function WhatsAppPage() {
   );
 }
 
-function Row({ label, value, ok, warn }: { label: string; value: string; ok?: boolean; warn?: boolean }) {
+// Compact status pill used in the numbers strip.
+function Chip({ label, ok, warn }: { label: string; ok?: boolean; warn?: boolean }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-foreground-muted">{label}</span>
-      <span
-        className={
-          ok ? 'text-emerald-700 font-medium' : warn ? 'text-amber-700 font-medium' : 'text-foreground-subtle'
-        }
-      >
-        {value}
-      </span>
-    </div>
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium',
+        ok
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-300'
+          : warn
+            ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-300'
+            : 'border-border bg-surface-muted/40 text-foreground-subtle',
+      )}
+    >
+      {ok ? <CheckCircle2 className="size-3" /> : warn ? <AlertTriangle className="size-3" /> : null}
+      {label}
+    </span>
   );
 }
 

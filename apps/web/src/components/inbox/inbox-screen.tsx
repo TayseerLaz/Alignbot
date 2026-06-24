@@ -689,6 +689,11 @@ function ThreadView({
     staleTime: 30_000,
   });
   const botDeployed = !!botCfg.data?.data?.deployedAt;
+  // When the tenant has the 'ai' feature disabled (ALIGNED-admin toggle), this
+  // is a manual-only social-media handler: the bot never replies, so hide ALL
+  // AI affordances in the inbox (the "deploy on /bot" banner + the per-thread
+  // AI toggle) — surfacing them would be misleading for a tenant without AI.
+  const aiEnabled = !(session?.organization?.disabledFeatures ?? []).includes('ai');
 
   const messagesQ = useQuery({
     queryKey: ['inbox-thread', thread?.id, 'messages'],
@@ -944,6 +949,7 @@ function ThreadView({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <ThreadHeader
         thread={thread}
+        aiEnabled={aiEnabled}
         onStatusChange={(s) => setStatus.mutate(s)}
         onAssignSelf={() => currentUserId && setAssignee.mutate(currentUserId)}
         onUnassign={() => setAssignee.mutate(null)}
@@ -960,7 +966,7 @@ function ThreadView({
         blockPending={toggleBlock.isPending}
       />
       <TagBar thread={thread} onAdd={(t) => addTag.mutate(t)} onRemove={(t) => removeTag.mutate(t)} />
-      <AiStatusBanner thread={thread} botDeployed={botDeployed} />
+      {aiEnabled && <AiStatusBanner thread={thread} botDeployed={botDeployed} />}
       <MessageScroller
         threadId={thread.id}
         timelineLength={timeline.length}
@@ -1044,6 +1050,7 @@ function ThreadView({
 
 function ThreadHeader({
   thread,
+  aiEnabled,
   onStatusChange,
   onAssignSelf,
   onUnassign,
@@ -1060,6 +1067,7 @@ function ThreadHeader({
   blockPending,
 }: {
   thread: Thread;
+  aiEnabled: boolean;
   onStatusChange: (s: ThreadStatus) => void;
   onAssignSelf: () => void;
   onUnassign: () => void;
@@ -1234,24 +1242,28 @@ function ThreadHeader({
             >
               <UserCheck className="size-3.5" /> Take
             </Button>
-            <span className="h-5 w-px bg-border" aria-hidden />
-            <Button
-              size="sm"
-              variant="ghost"
-              className={cn(
-                'rounded-none border-0',
-                !thread.assignedToUserId && 'bg-brand-50 text-brand-700',
-              )}
-              aria-pressed={!thread.assignedToUserId}
-              onClick={onUnassign}
-              title={
-                thread.assignedToUserId
-                  ? 'Hand the thread to the AI (unassigns the current owner)'
-                  : 'AI is currently handling this thread'
-              }
-            >
-              <Sparkles className="size-3.5" /> AI
-            </Button>
+            {aiEnabled && (
+              <>
+                <span className="h-5 w-px bg-border" aria-hidden />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className={cn(
+                    'rounded-none border-0',
+                    !thread.assignedToUserId && 'bg-brand-50 text-brand-700',
+                  )}
+                  aria-pressed={!thread.assignedToUserId}
+                  onClick={onUnassign}
+                  title={
+                    thread.assignedToUserId
+                      ? 'Hand the thread to the AI (unassigns the current owner)'
+                      : 'AI is currently handling this thread'
+                  }
+                >
+                  <Sparkles className="size-3.5" /> AI
+                </Button>
+              </>
+            )}
             <span className="h-5 w-px bg-border" aria-hidden />
             <Button
               size="sm"

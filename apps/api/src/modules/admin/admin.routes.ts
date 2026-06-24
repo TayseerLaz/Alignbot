@@ -1883,6 +1883,57 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- PUT /aligned-admin/orgs/:id/plan --------------------------
+  // ALIGNED-admin changes a tenant's SUBSCRIPTION plan (free/starter/…), which
+  // drives the quota caps (messages, broadcasts, products, …). Distinct from
+  // ai-plan (the AI model tier). Upserts the Subscription row by plan code.
+  r.put(
+    '/aligned-admin/orgs/:id/plan',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: "Change a tenant's subscription plan (quota caps) by plan code.",
+        params: z.object({ id: uuidSchema }),
+        body: z.object({ planCode: z.string().trim().min(1).max(40) }),
+        response: {
+          200: itemEnvelopeSchema(z.object({ id: uuidSchema, planCode: z.string() })),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const orgId = req.params.id;
+      const planCode = req.body.planCode;
+      const result = await withRlsBypass(async (tx) => {
+        const org = await tx.organization.findUnique({ where: { id: orgId }, select: { id: true } });
+        if (!org) return null;
+        const plan = await tx.plan.findFirst({ where: { code: planCode }, select: { id: true, code: true } });
+        if (!plan) return { notFoundPlan: true as const };
+        // Upsert the subscription onto the new plan (keep status/trial intact).
+        await tx.subscription.upsert({
+          where: { organizationId: orgId },
+          create: { organizationId: orgId, planId: plan.id, status: 'trialing' },
+          update: { planId: plan.id },
+        });
+        return { code: plan.code };
+      });
+      if (!result) throw notFound('Organization not found');
+      if ('notFoundPlan' in result) {
+        throw badRequest(ApiErrorCode.VALIDATION_ERROR, `Unknown plan code: ${planCode}`);
+      }
+      // Cap caches are read live (resolveOrgPlan), nothing to flush.
+      await recordAudit({
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        action: 'org_suspended', // reuse: closest existing admin audit action
+        entityType: 'organization',
+        entityId: orgId,
+        metadata: { event: 'subscription_plan_changed', planCode: result.code },
+      });
+      return { data: { id: orgId, planCode: result.code } };
+    },
+  );
+
   // ---------- PUT /aligned-admin/orgs/:id/features ----------------------
   // ALIGNED-admin sets which features a tenant can access. The keys here are
   // DISABLED: their portal pages are hidden + route-guarded, and 'ai' turns off

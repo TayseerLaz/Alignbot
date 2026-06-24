@@ -966,6 +966,25 @@ function AiUsageDialog({
       toast.error(err instanceof ApiError ? err.payload.message : 'Plan change failed'),
   });
 
+  // Subscription plans (global) for the quota-plan picker.
+  const plansQ = useQuery({
+    enabled: !!org,
+    queryKey: ['admin-billing-plans'],
+    queryFn: () => api.get<{ data: { code: string; name: string }[] }>('/api/v1/billing/plans'),
+    staleTime: 5 * 60_000,
+  });
+  const setSubPlan = useMutation({
+    mutationFn: (planCode: string) =>
+      api.put(`/api/v1/aligned-admin/orgs/${org!.id}/plan`, { planCode }),
+    onSuccess: () => {
+      toast.success('Plan updated');
+      queryClient.invalidateQueries({ queryKey: qKey }); // refetch quotas + caps
+      onPlanChanged();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Plan change failed'),
+  });
+
   if (!org) return null;
   const data = usage.data?.data;
   const currentPlan = data?.aiPlan ?? org.aiPlan;
@@ -1042,10 +1061,30 @@ function AiUsageDialog({
             {/* Plan quotas — % used per cap (admin sees this alongside the
                 USD cost above; tenants see only the %). */}
             <div className="rounded-lg border border-border p-4">
-              <div className="mb-3 flex items-baseline justify-between">
-                <p className="text-xs font-medium uppercase tracking-wider text-foreground-subtle">
-                  Plan quotas · {data.planCode}
-                </p>
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium uppercase tracking-wider text-foreground-subtle">
+                    Plan quotas
+                  </span>
+                  <select
+                    value={data.planCode}
+                    onChange={(e) => setSubPlan.mutate(e.target.value)}
+                    disabled={setSubPlan.isPending}
+                    className="rounded-md border border-border bg-surface px-2 py-1 text-xs font-medium capitalize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 disabled:opacity-60"
+                    aria-label="Subscription plan"
+                  >
+                    {/* Keep the current code selectable even if it isn't in the
+                        active-plans list (e.g. a retired plan). */}
+                    {!(plansQ.data?.data ?? []).some((p) => p.code === data.planCode) ? (
+                      <option value={data.planCode}>{data.planCode}</option>
+                    ) : null}
+                    {(plansQ.data?.data ?? []).map((p) => (
+                      <option key={p.code} value={p.code}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <span className="text-[11px] text-foreground-subtle">% of cap used</span>
               </div>
               <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">

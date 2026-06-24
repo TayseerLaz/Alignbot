@@ -20,7 +20,9 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
       </header>
 
       <main className="flex flex-1 flex-col items-center justify-center px-6 py-10 sm:px-10 lg:px-14">
-        {children}
+        <div className="flex w-full flex-col items-center motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:duration-500">
+          {children}
+        </div>
       </main>
 
       <footer

@@ -104,6 +104,32 @@ export function welcomeTemplate(args: {
   return { subject: `Welcome to Hader, ${args.organizationName}`, html, text };
 }
 
+/**
+ * Internal notification sent to the Hader team whenever the marketing site
+ * captures a new lead. Not customer-facing.
+ */
+export function newLeadTemplate(args: {
+  name: string;
+  phone: string;
+  source: string;
+  capturedAt: Date;
+  leadsUrl: string;
+}) {
+  const captured = args.capturedAt.toUTCString();
+  const html = wrap(`
+    <p><strong>New lead captured</strong> from the Hader landing page.</p>
+    <table cellpadding="0" cellspacing="0" style="font-size:15px;line-height:1.8;">
+      <tr><td style="color:#846872;padding-right:16px;">Name</td><td><strong>${args.name}</strong></td></tr>
+      <tr><td style="color:#846872;padding-right:16px;">WhatsApp</td><td><strong>${args.phone}</strong></td></tr>
+      <tr><td style="color:#846872;padding-right:16px;">Source</td><td>${args.source}</td></tr>
+      <tr><td style="color:#846872;padding-right:16px;">Captured</td><td>${captured}</td></tr>
+    </table>
+    <p><a class="btn" href="${args.leadsUrl}">View all leads</a></p>
+  `);
+  const text = `New lead captured from the Hader landing page.\n\nName: ${args.name}\nWhatsApp: ${args.phone}\nSource: ${args.source}\nCaptured: ${captured}\n\nAll leads: ${args.leadsUrl}`;
+  return { subject: `New Hader lead: ${args.name} (${args.phone})`, html, text };
+}
+
 export function passwordResetTemplate(args: { firstName: string | null; url: string }) {
   const greeting = args.firstName ? `Hi ${args.firstName},` : 'Hello,';
   const html = wrap(`

@@ -12,7 +12,19 @@ const buttonVariants = cva(
   'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium text-sm leading-none ring-offset-background transition-[background-color,border-color,color,transform] duration-[var(--dur-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-1 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
+      // Variant names are a SUPERSET of canonical shadcn. The project's own
+      // names (primary/coral/soft/dark/danger) are kept so existing call sites
+      // never break, and canonical shadcn names (default/destructive/outline)
+      // are added as on-brand aliases so newly-migrated pages can use the
+      // standard shadcn API. default === primary; destructive === danger.
       variant: {
+        // ---- canonical shadcn aliases ----
+        default:
+          'bg-brand-500 text-on-brand hover:bg-brand-600 active:bg-brand-700 shadow-sm',
+        destructive: 'bg-danger text-white hover:bg-danger/90',
+        outline:
+          'border border-border-strong bg-surface text-foreground hover:bg-surface-muted',
+        // ---- project variants (kept) ----
         primary:
           'bg-brand-500 text-on-brand hover:bg-brand-600 active:bg-brand-700 shadow-sm',
         secondary:
@@ -25,6 +37,8 @@ const buttonVariants = cva(
         link: 'text-brand-500 underline-offset-4 hover:underline',
       },
       size: {
+        // `default` is the canonical shadcn name; `md` is the project's — same size.
+        default: 'h-8 px-3.5',
         sm: 'h-7 px-2.5 text-xs gap-1',
         md: 'h-8 px-3.5',
         lg: 'h-10 px-5 text-[15px]',

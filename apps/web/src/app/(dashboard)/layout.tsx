@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 
 import { AppShell } from '@/components/shell/app-shell';
-import { Skeleton } from '@/components/ui/skeleton';
+import { AppShellSkeleton } from '@/components/shell/app-shell-skeleton';
 import { useSession } from '@/lib/session';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -36,14 +36,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [status, pathname, session, router]);
 
   if (status !== 'authenticated') {
-    return (
-      <div className="grid min-h-dvh place-items-center">
-        <div className="w-48 space-y-3">
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-2/3" />
-        </div>
-      </div>
-    );
+    return <AppShellSkeleton />;
   }
 
   return <AppShell>{children}</AppShell>;

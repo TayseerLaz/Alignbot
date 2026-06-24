@@ -1,4 +1,8 @@
 @import "tailwindcss";
+/* Tailwind v4 animation utilities (animate-in / fade-in / zoom-in / slide-in…)
+   — the v4 successor to tailwindcss-animate. Powers the Radix overlay
+   enter/exit animations across the app. */
+@import "tw-animate-css";
 
 /* Dark mode is driven by a `.dark` class on <html> (see theme-provider.tsx),
    NOT the OS preference. Bind Tailwind's `dark:` variant to that class so
@@ -6,6 +10,37 @@
    scheme (otherwise a light app on a dark-OS machine wrongly gets dark styles —
    e.g. the oxblood sidebar showing as white). */
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* ----------------------------------------------------------------------------
+   shadcn/ui canonical token bridge.
+   Maps shadcn's expected color tokens onto the existing Oxblood ramp via var()
+   references, so ANY canonical shadcn component (bg-background, bg-primary,
+   bg-card, border-input, ring-ring, text-muted-foreground …) renders on-brand
+   and flips correctly in dark mode — the referenced --color-* tokens are
+   overridden in the .dark block below, and var() resolves at use-time.
+   Purely additive: `foreground` + `border` already exist in the theme; every
+   token here is NEW, so no existing utility changes. Migrating a component to
+   canonical shadcn now Just Works without re-skinning.
+   ---------------------------------------------------------------------------- */
+@theme {
+  --color-background:            var(--color-surface-muted);
+  --color-card:                  var(--color-surface);
+  --color-card-foreground:       var(--color-foreground);
+  --color-popover:               var(--color-surface);
+  --color-popover-foreground:    var(--color-foreground);
+  --color-primary:               var(--color-brand-500);
+  --color-primary-foreground:    var(--color-on-brand);
+  --color-secondary:             var(--color-surface-elevated);
+  --color-secondary-foreground:  var(--color-foreground);
+  --color-muted:                 var(--color-surface-elevated);
+  --color-muted-foreground:      var(--color-foreground-muted);
+  --color-accent:                var(--color-brand-50);
+  --color-accent-foreground:     var(--color-brand-700);
+  --color-destructive:           var(--color-danger);
+  --color-destructive-foreground: #ffffff;
+  --color-input:                 var(--color-border-strong);
+  --color-ring:                  var(--color-brand-400);
+}
 
 /* ============================================================================
    Hader AI design tokens — Oxblood + Sand + Signal palette.

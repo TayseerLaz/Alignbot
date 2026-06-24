@@ -13,7 +13,9 @@ import '@/styles/globals.css';
 // utility, so the woff2 only matters where data density lives.
 const jakarta = Plus_Jakarta_Sans({
   subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700', '800'],
+  // 300 dropped — `font-light` is used 0× in the app; trimming the weight
+  // shrinks the woff2 payload (faster LCP) with zero visual change.
+  weight: ['400', '500', '600', '700', '800'],
   variable: '--font-jakarta',
   display: 'swap',
 });

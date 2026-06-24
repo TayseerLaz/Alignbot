@@ -7,6 +7,11 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { withRlsBypass } from '../../lib/db.js';
+import { newLeadTemplate, sendEmail } from '../../lib/email.js';
+import { env } from '../../lib/env.js';
+
+// Hader team inboxes notified on every new marketing lead.
+const LEAD_NOTIFY_RECIPIENTS = ['laztayseer@gmail.com', 'mayssam.ismail@aligned-tech.com'];
 
 export default async function leadsRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -32,13 +37,32 @@ export default async function leadsRoutes(app: FastifyInstance) {
       },
     },
     async (req, reply) => {
-      const { name, phone, source } = req.body;
+      const { name, phone } = req.body;
+      const resolvedSource = req.body.source?.trim() || 'hader_landing';
       const lead = await withRlsBypass((tx) =>
         tx.lead.create({
-          data: { name, phone, source: source?.trim() || 'hader_landing' },
-          select: { id: true },
+          data: { name, phone, source: resolvedSource },
+          select: { id: true, createdAt: true },
         }),
       );
+
+      // Notify the Hader team — fire-and-forget so a mail hiccup never fails
+      // the public capture (the lead is already saved).
+      void (async () => {
+        try {
+          const tpl = newLeadTemplate({
+            name,
+            phone,
+            source: resolvedSource,
+            capturedAt: lead.createdAt,
+            leadsUrl: `${env.WEB_PUBLIC_URL}/aligned-admin/leads`,
+          });
+          await sendEmail({ to: LEAD_NOTIFY_RECIPIENTS.join(', '), ...tpl });
+        } catch (err) {
+          req.log.error({ err, leadId: lead.id }, '[leads] new-lead notification email failed');
+        }
+      })();
+
       reply.code(201);
       return { data: { ok: true as const, id: lead.id } };
     },

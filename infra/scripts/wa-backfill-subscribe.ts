@@ -50,21 +50,32 @@ async function main() {
       console.log(`CHECK-ERR ${label} — ${e instanceof Error ? e.message : e}`);
     }
 
-    // Subscribe (overwrites any stale override).
-    try {
+    // Subscribe (overwrites any stale override). Two-step: some WABAs require a
+    // plain app-subscribe before an override callback can be set (Meta #100).
+    const subUrl = `https://graph.facebook.com/v20.0/${ch.wabaId}/subscribed_apps`;
+    const postOverride = async () => {
       const params = new URLSearchParams({
         override_callback_uri: callbackUrl,
         verify_token: ch.webhookVerifyToken,
       });
-      const r = await fetch(`https://graph.facebook.com/v20.0/${ch.wabaId}/subscribed_apps`, {
+      const r = await fetch(subUrl, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
         body: params,
       });
       const t = await r.text();
-      const ok = r.ok && /"success":\s*true/.test(t);
+      return { ok: r.ok && /"success":\s*true/.test(t), needsSubscribe: /code"?:\s*100/.test(t), body: t };
+    };
+    try {
+      let res = await postOverride();
+      if (!res.ok && res.needsSubscribe) {
+        await fetch(subUrl, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+        res = await postOverride();
+      }
       const warn = ch.appSecret ? '' : '  [WARN: no app secret — inbound will be rejected with 403]';
-      console.log(`${ok ? 'FIXED ' : 'FAIL  '} ${label} -> ${callbackUrl}${ok ? '' : ` :: ${t.slice(0, 200)}`}${warn}`);
+      console.log(
+        `${res.ok ? 'FIXED ' : 'FAIL  '} ${label} -> ${callbackUrl}${res.ok ? '' : ` :: ${res.body.slice(0, 200)}`}${warn}`,
+      );
     } catch (e) {
       console.log(`SUB-ERR ${label} — ${e instanceof Error ? e.message : e}`);
     }

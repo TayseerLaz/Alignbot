@@ -366,17 +366,18 @@ async function ensureWabaSubscribed(channel: {
   }
   const callbackUrl = webhookCallbackUrl(channel.organizationId);
   const url = `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.wabaId)}/subscribed_apps`;
-  const params = new URLSearchParams({
-    override_callback_uri: callbackUrl,
-    verify_token: channel.webhookVerifyToken,
-  });
-  try {
+  const authHeaders = { Authorization: `Bearer ${channel.accessToken}` };
+
+  // POST the override callback. Returns { success, code } where code is Meta's
+  // error code (or null on success / parse failure).
+  const postOverride = async (): Promise<{ success: boolean; code: number | null; msg: string }> => {
+    const params = new URLSearchParams({
+      override_callback_uri: callbackUrl,
+      verify_token: channel.webhookVerifyToken!,
+    });
     const res = await fetch(url, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${channel.accessToken}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
+      headers: { ...authHeaders, 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params,
       signal: AbortSignal.timeout(15_000),
     });
@@ -387,11 +388,29 @@ async function ensureWabaSubscribed(channel: {
     } catch {
       parsed = null;
     }
-    if (res.ok && parsed?.success === true) return { ok: true, status: 'subscribed', message: null };
+    if (res.ok && parsed?.success === true) return { success: true, code: null, msg: '' };
     const errObj = (parsed?.error ?? {}) as Record<string, unknown>;
     const code = typeof errObj.code === 'number' ? errObj.code : null;
     const msg = typeof errObj.message === 'string' ? errObj.message : `HTTP ${res.status}`;
-    return { ok: false, status: code === 190 ? 'token_invalid' : 'subscribe_failed', message: msg };
+    return { success: false, code, msg };
+  };
+
+  try {
+    let r = await postOverride();
+    // Code 100 "must be subscribed to receive messages" → the app isn't
+    // subscribed to this WABA yet. Do a plain subscribe (no override) first,
+    // then retry the override. Some WABAs accept the override directly (which
+    // is why we try that first), others require this two-step.
+    if (!r.success && r.code === 100) {
+      await fetch(url, { method: 'POST', headers: authHeaders, signal: AbortSignal.timeout(15_000) });
+      r = await postOverride();
+    }
+    if (r.success) return { ok: true, status: 'subscribed', message: null };
+    return {
+      ok: false,
+      status: r.code === 190 ? 'token_invalid' : 'subscribe_failed',
+      message: r.msg,
+    };
   } catch (err) {
     return { ok: false, status: 'network_error', message: err instanceof Error ? err.message : 'fetch failed' };
   }

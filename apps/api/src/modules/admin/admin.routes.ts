@@ -762,14 +762,15 @@ export default async function adminRoutes(app: FastifyInstance) {
 
       reply.setCookie(REFRESH_COOKIE_NAME, tokens.refreshToken, refreshCookieOptions());
 
+      // Transparent to the tenant: a clearly-labeled entry in THEIR audit log
+      // (the reader redacts the HQ email, showing only the HQ username).
       await recordAudit({
-        action: 'business_info_updated',
+        action: 'aligned_admin_accessed',
         organizationId: target.id,
         actorUserId: req.auth!.userId,
         entityType: 'organization',
         entityId: target.id,
         metadata: {
-          event: 'aligned_admin_impersonate',
           target_org_slug: target.slug,
           target_org_name: target.name,
         },

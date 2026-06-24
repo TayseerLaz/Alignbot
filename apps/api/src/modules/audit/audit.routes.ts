@@ -89,19 +89,26 @@ export default async function auditRoutes(app: FastifyInstance) {
         const nextCursor = hasMore ? page[page.length - 1]?.createdAt.toISOString() ?? null : null;
 
         return {
-          data: page.map((a) => ({
-            id: a.id,
-            action: a.action,
-            entityType: a.entityType,
-            entityId: a.entityId,
-            actorName:
+          data: page.map((a) => {
+            const actorName =
               a.actor && (a.actor.firstName || a.actor.lastName)
                 ? `${a.actor.firstName ?? ''} ${a.actor.lastName ?? ''}`.trim()
-                : null,
-            actorEmail: a.actor?.email ?? null,
-            metadata: (a.metadata ?? null) as Record<string, unknown> | null,
-            createdAt: a.createdAt.toISOString(),
-          })),
+                : null;
+            // ALIGNED-HQ access entries are transparent to the tenant, but show
+            // only the HQ username — never expose the HQ employee's email.
+            const isHqAccess =
+              a.action === 'aligned_admin_accessed' || a.action === 'aligned_admin_exited';
+            return {
+              id: a.id,
+              action: a.action,
+              entityType: a.entityType,
+              entityId: a.entityId,
+              actorName: isHqAccess ? (actorName ?? 'ALIGNED HQ') : actorName,
+              actorEmail: isHqAccess ? null : (a.actor?.email ?? null),
+              metadata: (a.metadata ?? null) as Record<string, unknown> | null,
+              createdAt: a.createdAt.toISOString(),
+            };
+          }),
           nextCursor,
         };
       });

@@ -41,7 +41,12 @@ const ENTITY_TYPES = [
   'invitation',
 ];
 
-const humanAction = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+const ACTION_LABELS: Record<string, string> = {
+  aligned_admin_accessed: 'ALIGNED HQ accessed your workspace',
+  aligned_admin_exited: 'ALIGNED HQ left your workspace',
+};
+const humanAction = (s: string) =>
+  ACTION_LABELS[s] ?? s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
 // Prefer a human subject (name/email captured in metadata) over the raw entity
 // id, so member actions read "membership · John Doe" instead of "· 13ef2232".

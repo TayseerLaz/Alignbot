@@ -879,8 +879,30 @@ export async function switchOrganization(args: {
     throw forbidden(ApiErrorCode.AUTH_NO_MEMBERSHIP, 'You do not belong to that organization.');
   }
 
+  // If we're LEAVING an ALIGNED-HQ control (impersonation) session, write a
+  // transparent "ALIGNED HQ left your workspace" entry to that tenant's audit
+  // log — mirroring the "accessed" entry logged when control started.
+  const leaving = await prisma.session.findUnique({
+    where: { id: args.sessionId },
+    select: { isImpersonation: true, organizationId: true },
+  });
+
   // Revoke current session, issue a new one bound to the new org.
   await prisma.session.update({ where: { id: args.sessionId }, data: { revokedAt: new Date() } });
+
+  if (
+    leaving?.isImpersonation &&
+    leaving.organizationId &&
+    leaving.organizationId !== membership.organizationId
+  ) {
+    await recordAudit({
+      action: 'aligned_admin_exited',
+      organizationId: leaving.organizationId,
+      actorUserId: args.userId,
+      entityType: 'organization',
+      entityId: leaving.organizationId,
+    }).catch(() => undefined);
+  }
 
   return issueSession({
     userId: args.userId,

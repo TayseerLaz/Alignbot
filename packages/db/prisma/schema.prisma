@@ -88,6 +88,9 @@ enum AuditAction {
   refresh_token_reuse_detected
   // H-01 — refresh-token grace-window re-issue (observability for replays)
   refresh_token_grace_reissue
+  // ALIGNED HQ impersonation — transparent to the tenant in their audit log.
+  aligned_admin_accessed
+  aligned_admin_exited
   // Catalog (Day 2)
   product_created
   product_updated

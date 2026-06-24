@@ -30,6 +30,7 @@ import { isOpenAIConfigured, workerComplete } from '../lib/openai.js';
 import { env } from '../lib/env.js';
 import { isWorkerShuttingDown } from '../lib/lifecycle.js';
 import { getConnection } from '../lib/redis.js';
+import { assertUrlResolvesPublic, safeFetch, type SafeResponse } from '../lib/safe-fetch.js';
 import { putObject } from '../lib/storage.js';
 
 import { prisma, withRlsBypass } from './db.js';
@@ -129,6 +130,10 @@ async function fetchOnePage(url: string): Promise<{
   let context: BrowserContext | null = null;
   let page: Page | null = null;
   try {
+    // SSRF pre-flight: Chromium does its own DNS, so the pinning dispatcher
+    // can't protect page.goto. Resolve the host ourselves and refuse private/
+    // loopback/link-local targets (incl. cloud-metadata) before navigating.
+    await assertUrlResolvesPublic(url);
     const browser = await getBrowser();
     // Fresh context per page: isolated cookies / storage so cross-site
     // tracking + previous-page side effects can't influence this fetch.
@@ -493,10 +498,17 @@ export function startCrawlWorker() {
           if (next.depth < meta.maxDepth) {
             for (const link of childLinks) {
               const key = link.toString().split('#')[0]!;
-              if (!seen.has(key)) {
-                seen.add(key);
-                queue.push({ url: new URL(key), depth: next.depth + 1 });
+              if (seen.has(key)) continue;
+              seen.add(key);
+              // SSRF: refuse to enqueue a discovered link that points at a
+              // private/loopback/literal-IP host (the per-page goto also DNS-
+              // resolves, but drop obvious ones up front).
+              try {
+                assertSafeOutboundUrl(key);
+              } catch {
+                continue;
               }
+              queue.push({ url: new URL(key), depth: next.depth + 1 });
             }
           }
         }
@@ -1582,23 +1594,15 @@ async function downloadAndAttachImage(
     return;
   }
 
-  // SSRF guard. The image URL came from a third-party page, so re-validate
-  // before we make ANOTHER outbound request.
-  let safeUrl: URL;
-  try {
-    safeUrl = assertSafeOutboundUrl(job.imageUrl);
-  } catch (err) {
-    if (err instanceof UrlGuardError) return;
-    throw err;
-  }
-
+  // SSRF guard. The image URL came from a third-party page, so re-validate +
+  // pin the connection IP and re-check every redirect hop before we make
+  // ANOTHER outbound request.
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), IMAGE_FETCH_TIMEOUT_MS);
-  let res: Response;
+  let res: SafeResponse;
   try {
-    res = await fetch(safeUrl.toString(), {
+    res = await safeFetch(job.imageUrl, {
       signal: ctrl.signal,
-      redirect: 'follow',
       headers: {
         'User-Agent':
           'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)' +
@@ -1606,6 +1610,9 @@ async function downloadAndAttachImage(
         Accept: 'image/*',
       },
     });
+  } catch (err) {
+    if (err instanceof UrlGuardError) return; // blocked/private/redirect-to-private — skip
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -1620,15 +1627,12 @@ async function downloadAndAttachImage(
   // OOM the worker.
   const chunks: Buffer[] = [];
   let total = 0;
-  const reader = res.body.getReader();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  for await (const value of res.body) {
     if (!value) continue;
     const buf = Buffer.from(value);
     total += buf.byteLength;
     if (total > IMAGE_MAX_BYTES) {
-      try { await reader.cancel(); } catch { /* noop */ }
+      res.body.destroy();
       return;
     }
     chunks.push(buf);

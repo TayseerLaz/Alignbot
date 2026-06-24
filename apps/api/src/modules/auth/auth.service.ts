@@ -1,3 +1,4 @@
+import { decryptSecret } from '@aligned/db';
 import { ApiErrorCode } from '@aligned/shared';
 import type { OrgRole } from '@aligned/shared';
 
@@ -194,7 +195,7 @@ export async function login(args: LoginArgs) {
     let ok = false;
     if (/^\d{6}$/.test(supplied)) {
       const { verifyTotpCode } = await import('../../lib/totp.js');
-      ok = verifyTotpCode(user.totpSecret, supplied);
+      ok = verifyTotpCode(decryptSecret(user.totpSecret), supplied);
     } else if (user.recoveryCodesHashed.length > 0) {
       // Recovery code path: SHA-256 hash + constant-time compare.
       const { createHash } = await import('node:crypto');
@@ -346,17 +347,21 @@ export async function issueSession(args: {
 // user reported. Within this window we return success without rotating
 // again; the client gets a fresh access token and the family stays
 // intact. Outside the window: real replay → keep the strict behaviour.
-// Widened 10s → 60s on 2026-06-09. With the full-screen inbox opening a
-// second tab, a backgrounded/throttled tab's refresh can legitimately land
-// later than 10s after the foreground tab rotated. The client now also
-// serializes refreshes across tabs (Web Locks) + shares tokens, so this is
-// a belt-and-suspenders margin for slow networks — not the primary guard.
-// Widened 60s → 10 min on 2026-06-18. Tenants were still getting logged out:
-// a slept laptop/phone or a backgrounded tab fires a refresh carrying the
-// just-rotated token minutes later, and the 60s cutoff treated that as theft
-// and revoked the session. 10 min covers real-world tab/device wake-ups while
-// still catching a token replayed long after the fact.
-const REUSE_GRACE_WINDOW_MS = 10 * 60_000;
+// Grace window for a previously-rotated refresh token (concurrent/woken-tab
+// replay). History: 10s → 60s (2026-06-09) → 10 min (2026-06-18) to stop
+// woken-device logouts. H-01 (2026-06-24): a 10-min window meant a STOLEN
+// refresh token could be silently re-minted into a fresh access token for ten
+// minutes with no revocation and no audit — neutralising the rotation
+// theft-detector. The window is now BOTH shortened to 30s AND device-bound:
+// grace is honoured only when the replay comes from the SAME browser (matching
+// User-Agent), since a legitimate concurrent/woken-tab refresh always does. A
+// token replayed from an attacker's machine carries a different UA and is
+// treated as theft (revoke + audit) even inside the window. Every grace
+// re-issue is now audited so replays are observable.
+// NOTE (UX tradeoff): a same-device refresh fired >30s after rotation (deeply
+// slept tab) will now be revoked. The device-binding is the primary security
+// control; widen this constant only if woken-device logouts resurface.
+const REUSE_GRACE_WINDOW_MS = 30_000;
 
 export async function refreshSession(refreshToken: string, meta: RequestMeta) {
   const tokenHash = hashToken(refreshToken);
@@ -373,7 +378,17 @@ export async function refreshSession(refreshToken: string, meta: RequestMeta) {
     const rotatedAt = reusedSession.previousTokenRotatedAt;
     const withinGrace =
       rotatedAt && Date.now() - rotatedAt.getTime() < REUSE_GRACE_WINDOW_MS;
-    if (withinGrace) {
+    // Device-bind the grace window: a legitimate concurrent/woken-tab refresh
+    // comes from the same browser (same User-Agent). A stolen token replayed
+    // from a different machine carries a different UA — deny grace and fall
+    // through to the theft branch (revoke + audit) even within the time window.
+    // When the session has NO UA recorded (non-browser/API client that never
+    // sent one) we can't bind, so fall back to the time window alone — but a
+    // browser session always has a UA, so an attacker stripping the header
+    // produces a mismatch and is denied.
+    const sameDevice =
+      !reusedSession.userAgent || reusedSession.userAgent === meta.userAgent;
+    if (withinGrace && sameDevice) {
       // Re-issue a fresh access token against the SAME session row
       // without rotating the refresh family again. The first refresh
       // already moved hash(T1) → previous, hash(T2) → current; this
@@ -404,6 +419,20 @@ export async function refreshSession(refreshToken: string, meta: RequestMeta) {
         aa: reusedSession.user.isAlignedAdmin,
         sid: reusedSession.id,
       });
+      // Observability (H-01): record every grace re-issue. A burst of these on
+      // one session — or any with a mismatched IP — is a signal of a replay
+      // attempt riding the window, even though we allowed this same-device one.
+      await recordAudit({
+        action: 'refresh_token_grace_reissue',
+        actorUserId: reusedSession.userId,
+        organizationId: reusedSession.organizationId,
+        ipAddress: meta.ip,
+        userAgent: meta.userAgent,
+        metadata: {
+          sessionId: reusedSession.id,
+          ipMatch: reusedSession.ipAddress === meta.ip,
+        },
+      });
       // Don't return a new refresh token — the client's cookie is the
       // already-rotated T2 (set by the first call which is currently
       // in flight), so leaving the refresh cookie untouched is correct.
@@ -415,8 +444,9 @@ export async function refreshSession(refreshToken: string, meta: RequestMeta) {
         expiresAt: access.expiresAt,
       };
     }
-    // Outside the grace window OR no rotation timestamp recorded
-    // (pre-migration rows): treat as malicious replay.
+    // Outside the grace window, a DIFFERENT device (UA mismatch), or no
+    // rotation timestamp recorded (pre-migration rows): treat as malicious
+    // replay — revoke the family and audit.
     await prisma.session.update({
       where: { id: reusedSession.id },
       data: { revokedAt: new Date() },

@@ -14,7 +14,6 @@ import type { Prisma, PrismaClient } from '@aligned/db';
 import type { Readable } from 'node:stream';
 import { createHash, randomUUID } from 'node:crypto';
 
-import { assertSafeOutboundUrl, UrlGuardError } from '@aligned/shared';
 import { parse as csvParse } from 'csv-parse';
 import { Worker } from 'bullmq';
 import ExcelJS from 'exceljs';
@@ -22,6 +21,7 @@ import { z } from 'zod';
 
 import { env } from '../lib/env.js';
 import { getConnection } from '../lib/redis.js';
+import { safeFetch } from '../lib/safe-fetch.js';
 import { getObjectStream, putObject } from '../lib/storage.js';
 
 import { prisma, withRlsBypass, withTenant } from './db.js';
@@ -161,14 +161,10 @@ async function importProductImages(orgId: string, productId: string, urlsRaw: st
   let order = 0;
   for (const url of urls) {
     try {
-      let safe: URL;
-      try {
-        safe = assertSafeOutboundUrl(url);
-      } catch (e) {
-        if (e instanceof UrlGuardError) continue; // blocked/private URL — skip
-        throw e;
-      }
-      const res = await fetch(safe, { signal: AbortSignal.timeout(15_000), redirect: 'follow' });
+      // SSRF-safe: validates the URL + every redirect hop and pins the
+      // connection IP (blocked/private/rebinding targets throw UrlGuardError,
+      // caught below to skip this image).
+      const res = await safeFetch(url, { signal: AbortSignal.timeout(15_000) });
       if (!res.ok) continue;
       const contentType = (res.headers.get('content-type') ?? '').split(';')[0]!.trim() || 'image/jpeg';
       if (!contentType.startsWith('image/')) continue;

@@ -2,7 +2,8 @@
 //
 // Covers: whatsapp_channels (access_token, app_secret),
 //         messenger_channels (page_access_token, app_secret),
-//         api_connectors    (auth_config JSONB, webhook_secret).
+//         api_connectors    (auth_config JSONB, webhook_secret),
+//         users             (totp_secret).
 //
 // Run AFTER SECRET_ENCRYPTION_KEY is set in the environment:
 //   set -a; . ./.env.production; set +a
@@ -94,6 +95,24 @@ async function backfillConnectors(prisma: PrismaClient): Promise<void> {
   console.log(`✓ api_connectors: encrypted ${changed}/${rows.length} row(s).`);
 }
 
+async function backfillTotpSecrets(prisma: PrismaClient): Promise<void> {
+  const rows = await prisma.$queryRawUnsafe<{ id: string; totp_secret: string | null }[]>(
+    `SELECT id, totp_secret FROM users WHERE totp_secret IS NOT NULL`,
+  );
+  let changed = 0;
+  for (const r of rows) {
+    const enc = encryptSecret(r.totp_secret);
+    if (enc === r.totp_secret) continue; // already encrypted / null
+    await prisma.$executeRawUnsafe(
+      `UPDATE users SET totp_secret = $1 WHERE id = $2::uuid`,
+      enc,
+      r.id,
+    );
+    changed++;
+  }
+  console.log(`✓ users.totp_secret: encrypted ${changed}/${rows.length} row(s).`);
+}
+
 async function main(): Promise<void> {
   if (!secretCryptoEnabled()) {
     console.error('✗ SECRET_ENCRYPTION_KEY is not set — refusing to run.');
@@ -104,6 +123,7 @@ async function main(): Promise<void> {
     await backfillWhatsApp(prisma);
     await backfillMessenger(prisma);
     await backfillConnectors(prisma);
+    await backfillTotpSecrets(prisma);
     console.log('✓ backfill complete.');
   } finally {
     await prisma.$disconnect();

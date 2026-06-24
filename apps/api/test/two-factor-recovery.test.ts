@@ -58,7 +58,11 @@ describe('two-step recovery code persistence (M-3)', () => {
     await prisma.$executeRawUnsafe(`SET app.bypass_rls = 'on'`);
     const after = await prisma.user.findUnique({ where: { id: me.userId } });
     expect(after?.totpEnabled).toBe(true);
-    expect(after?.totpSecret).toBe('JBSWY3DPEHPK3PXP');
+    // H-02: the TOTP secret is encrypted at rest. It must round-trip back to
+    // the original via decryptSecret (which is a plaintext passthrough when no
+    // SECRET_ENCRYPTION_KEY is configured, so this holds in every environment).
+    const { decryptSecret } = await import('@aligned/db');
+    expect(decryptSecret(after?.totpSecret ?? null)).toBe('JBSWY3DPEHPK3PXP');
     expect(after?.recoveryCodesHashed).toHaveLength(2);
 
     // Redis pending payload is cleared.

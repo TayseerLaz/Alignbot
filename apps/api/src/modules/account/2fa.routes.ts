@@ -21,6 +21,7 @@
 //      + stashes pending; the existing codes remain valid until step 6.
 //   6. POST /account/2fa/confirm-regenerate-recovery → swaps the live
 //      hashes for the freshly stashed ones.
+import { decryptSecret, encryptSecret } from '@aligned/db';
 import { ApiErrorCode, itemEnvelopeSchema, successSchema } from '@aligned/shared';
 import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
@@ -241,7 +242,9 @@ export default async function twoFactorRoutes(app: FastifyInstance) {
             where: { id: userId },
             data: {
               totpEnabled: true,
-              totpSecret: payload.totpSecret,
+              // Encrypt the TOTP shared secret at rest (AES-256-GCM) so a DB
+              // read can't derive valid codes and defeat 2FA for every user.
+              totpSecret: encryptSecret(payload.totpSecret),
               totpEnrolledAt: new Date(),
               recoveryCodesHashed: payload.recoveryCodesHashed,
             },
@@ -295,7 +298,7 @@ export default async function twoFactorRoutes(app: FastifyInstance) {
         throw badRequest(ApiErrorCode.VALIDATION_ERROR, '2FA is not enabled.');
       }
       let ok = false;
-      if (req.body.code && verifyTotpCode(user.totpSecret, req.body.code)) {
+      if (req.body.code && verifyTotpCode(decryptSecret(user.totpSecret), req.body.code)) {
         ok = true;
       } else if (req.body.password && (await verifyPassword(req.body.password, user.passwordHash))) {
         ok = true;
@@ -356,7 +359,7 @@ export default async function twoFactorRoutes(app: FastifyInstance) {
       if (!user?.totpEnabled || !user.totpSecret) {
         throw badRequest(ApiErrorCode.VALIDATION_ERROR, '2FA is not enabled.');
       }
-      if (!verifyTotpCode(user.totpSecret, req.body.code)) {
+      if (!verifyTotpCode(decryptSecret(user.totpSecret), req.body.code)) {
         throw unauthorized(ApiErrorCode.TOTP_INVALID, 'Invalid code.');
       }
       const recoveryCodes = generateRecoveryCodes();

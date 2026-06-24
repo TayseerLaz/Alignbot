@@ -10,11 +10,25 @@
 // On a verified success event we resolve the order and call markCartPaid()
 // (idempotent), so a gateway's retries can never double-confirm.
 import { decryptSecret } from '@aligned/db';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 
 import { withTenant } from '../../lib/db.js';
 import { findCartByPaymentRef, markCartPaid } from '../../lib/payments/confirm.js';
+import { getRedis } from '../../lib/redis.js';
+
+// Replay guard: once a (org, signature) pair has been accepted, refuse it again
+// for this window. Gateways legitimately retry, but markCartPaid is idempotent
+// so a retry is harmless; this stops a CAPTURED valid webhook being re-played.
+const WEBHOOK_NONCE_TTL_SEC = 24 * 60 * 60;
+
+/** Returns true the FIRST time this signature is seen for the org; false on replay. */
+async function claimWebhookNonce(provider: string, orgId: string, signature: string): Promise<boolean> {
+  const digest = createHash('sha256').update(signature).digest('hex');
+  const key = `webhook:nonce:${provider}:${orgId}:${digest}`;
+  const res = await getRedis().set(key, '1', 'EX', WEBHOOK_NONCE_TTL_SEC, 'NX');
+  return res === 'OK';
+}
 
 interface ResolvedCreds {
   provider: string;
@@ -112,8 +126,10 @@ export default async function paymentWebhookRoutes(app: FastifyInstance) {
   // ------------------------------------------------------------ MyFatoorah --
   // Verifies the `MyFatoorah-Signature` header: Base64(HMAC-SHA256(secret,
   // dataString)) where dataString joins the Data object's fields as
-  // `Key=Value` in order, separated by commas (MyFatoorah's documented
-  // scheme). Correlates by the InvoiceId we stored at link creation.
+  // `Key=Value` joined by commas, with keys sorted ALPHABETICALLY — the order
+  // MyFatoorah documents and signs against (NOT JS object-insertion order,
+  // which is attacker-influenced and gateway-divergent). Correlates by the
+  // InvoiceId we stored at link creation.
   app.post('/payments/webhooks/myfatoorah/:orgId', async (req, reply) => {
     const { orgId } = req.params as { orgId: string };
     const creds = await loadCreds(orgId);
@@ -130,12 +146,28 @@ export default async function paymentWebhookRoutes(app: FastifyInstance) {
       Data?: Record<string, unknown>;
     };
     const data = body.Data ?? {};
-    const dataString = Object.entries(data)
+    // Reject an empty Data object: there is nothing to authenticate, and the
+    // HMAC of an empty string would otherwise be trivially reconstructable.
+    const entries = Object.entries(data);
+    if (entries.length === 0) {
+      return reply.code(400).send({ ok: false, reason: 'empty_data' });
+    }
+    // Canonical signing string: keys sorted alphabetically (MyFatoorah's spec).
+    const dataString = entries
+      .sort(([a], [b]) => a.localeCompare(b))
       .map(([k, v]) => `${k}=${v ?? ''}`)
       .join(',');
     const expected = createHmac('sha256', secret).update(dataString).digest('base64');
     if (!safeEqual(expected, header)) {
       return reply.code(400).send({ ok: false, reason: 'bad_signature' });
+    }
+
+    // Replay protection: MyFatoorah's payload carries no signed timestamp, so
+    // dedupe on the (org, signature) pair. A captured valid webhook replayed
+    // within the window is rejected; legitimate gateway retries are harmless
+    // (markCartPaid is idempotent) but also collapse to a single accept.
+    if (!(await claimWebhookNonce('myfatoorah', orgId, header))) {
+      return reply.code(200).send({ ok: true, reason: 'duplicate' });
     }
 
     // Payment success → correlate by stored InvoiceId. MyFatoorah's status

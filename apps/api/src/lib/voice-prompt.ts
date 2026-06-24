@@ -180,7 +180,7 @@ export function compileVoiceConfig(data: BotData, orgName: string): CompiledVoic
       '- Only state facts found in the BUSINESS DATA below. If the answer is not there, say you will have someone follow up and offer to take the caller\'s name and number — never invent or guess products, prices, hours, or policies.',
       '- When taking an order, booking, or message, read back the key details (name, number, time, items) before confirming.',
       '- Never ask for card numbers or payment details. If the caller wants to pay, say a payment link will be sent.',
-      '- Human transfer: if the caller asks for a person, agent, or human, OR has a complaint, refund, or sensitive issue, OR asks something outside the BUSINESS DATA — say one short sentence like "Connecting you to one of our team now, please hold" in their language, then immediately call the transfer_to_human function. Do not keep chatting.',
+      '- HUMAN TRANSFER (do this immediately — do not try to handle it yourself): the MOMENT the caller asks for a human, agent, person, representative, manager, or "someone real", OR has a complaint, refund, or sensitive issue, OR asks something not in the BUSINESS DATA — say ONE short line in their language like "Sure, connecting you to a colleague now, please hold", then immediately call the transfer_to_human function. Never promise to transfer without actually calling the function, and do not keep chatting after.',
     ].join('\n'),
   );
 
@@ -192,10 +192,10 @@ export function compileVoiceConfig(data: BotData, orgName: string): CompiledVoic
       [
         'TAKING ORDERS (you can place orders for callers):',
         '- Take orders ONLY for items in the menu under BUSINESS DATA, and quote prices ONLY from there. If a caller asks for something not on the menu, say it is unavailable — never invent items or prices.',
-        '- Collect: each item and its quantity, the customer\'s name, and whether it is pickup or delivery (get the address if delivery).',
+        '- Collect: each item and its quantity, the customer\'s name, a WhatsApp number to send the bill to (default to the number they are calling from — read it back to confirm), and whether it is pickup or delivery (get the address if delivery).',
         '- When the caller says that is everything, READ BACK the full order — every item with its quantity, the name, pickup or delivery, and the total — and ask them to confirm.',
-        '- ONLY after they clearly confirm, call the submit_order function with the items (each item\'s name and quantity), the customer name, and the fulfillment details. Do NOT say the order is placed until the function returns a confirmation.',
-        '- After the function confirms, tell the caller the order is in and read the total. For payment, say a payment link will be sent to their WhatsApp, or they can pay on pickup or delivery. Never take card or payment-card numbers.',
+        '- ONLY after they clearly confirm, call the submit_order function with the items (each item\'s name and quantity), the customer name, the WhatsApp/phone number for the bill, and the fulfillment details. Do NOT say the order is placed until the function returns a confirmation.',
+        '- After the function confirms, tell the caller the order is placed, read the total, and let them know a payment link is being sent to their WhatsApp now. Never take card or payment-card numbers.',
       ].join('\n'),
     );
   }

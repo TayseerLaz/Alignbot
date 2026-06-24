@@ -9,6 +9,7 @@
 import type { BotData } from './bot-engine.js';
 import { captureCart } from './cart-flow.js';
 import { createNotification } from './notifications.js';
+import { dispatchVoiceOrderBill } from './voice-payment.js';
 import { emitWebhookEvent } from './webhooks.js';
 
 type CatalogLite = { id: string; sku: string; name: string; priceMinor: number | null };
@@ -162,6 +163,17 @@ export async function createVoiceOrder(args: CreateVoiceOrderArgs): Promise<Voic
     link: '/cart',
     entityType: 'cart',
     entityId: captured.id,
+  }).catch(() => undefined);
+
+  // Mint + WhatsApp the payment "bill" to the caller. Backgrounded (void) so the
+  // gateway + Meta round-trips never block the live call's submit_order response.
+  void dispatchVoiceOrderBill({
+    orgId: args.orgId,
+    cartId: captured.id,
+    customerName: args.customerName,
+    customerPhone: args.callerPhone,
+    totalMinor: captured.totalMinor,
+    currency: captured.currency,
   }).catch(() => undefined);
 
   return {

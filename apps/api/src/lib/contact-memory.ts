@@ -211,17 +211,41 @@ export async function updateContactMemory(args: {
     } catch {
       /* redis unavailable — proceed without throttling */
     }
-    const existing = await withTenant(args.organizationId, (tx) =>
-      tx.contactMemory.findUnique({
-        where: {
-          organizationId_phoneE164: {
-            organizationId: args.organizationId,
-            phoneE164: args.phoneE164,
+    const [existing, biz] = await withTenant(args.organizationId, (tx) =>
+      Promise.all([
+        tx.contactMemory.findUnique({
+          where: {
+            organizationId_phoneE164: {
+              organizationId: args.organizationId,
+              phoneE164: args.phoneE164,
+            },
           },
-        },
-        select: { persona: true, facts: true, language: true },
-      }),
+          select: { persona: true, facts: true, language: true },
+        }),
+        // Org timezone so we can resolve relative dates ("tomorrow") to an
+        // absolute calendar date — otherwise stored memory like "booked for
+        // tomorrow" silently rots and misleads the bot on later days.
+        tx.businessInfo.findFirst({ select: { timezone: true } }),
+      ]),
     );
+
+    // Today, in the org's timezone, as "Weekday, YYYY-MM-DD" — handed to the
+    // summarizer so it can convert relative dates/times to absolute ones.
+    const tz = biz?.timezone || 'UTC';
+    const now = new Date();
+    let todayLabel: string;
+    try {
+      const ymd = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(now);
+      const weekday = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long' }).format(now);
+      todayLabel = `${weekday}, ${ymd}`;
+    } catch {
+      todayLabel = now.toISOString().slice(0, 10);
+    }
 
     const transcript = [
       ...args.history,
@@ -238,11 +262,13 @@ export async function updateContactMemory(args: {
       'Given the existing memory and the latest conversation, output an UPDATED memory.',
       'Keep ONLY durable, reusable facts: preferred language, name, tone, past or open orders/bookings, stated preferences, constraints/allergies, do-not-contact requests.',
       'Drop small talk, one-off questions, and anything not worth remembering next time. Be brief — "persona" is one short paragraph at most.',
+      `IMPORTANT — DATES: today is ${todayLabel}. Whenever you record a booking, appointment, order, or any date/time, write the ABSOLUTE calendar date (and time if given), e.g. "booked for 2026-06-25 at 7pm". NEVER store relative words like "today", "tomorrow", "tonight", "this Friday", or "next week" — resolve them to the actual date using today's date above. Re-resolve any relative wording already in the existing memory too.`,
       'Detect the primary language the customer writes in as an ISO code: "ar", "en", or "fr" (or another code if clearly different).',
       'Return JSON only: {"persona": string, "facts": object, "language": string}.',
     ].join(' ');
 
     const user = [
+      `Today's date: ${todayLabel}`,
       args.customerName ? `Customer name (if known): ${args.customerName}` : '',
       existing?.persona ? `Existing persona:\n${existing.persona}` : 'Existing persona: (none yet)',
       existing?.facts ? `Existing facts JSON:\n${JSON.stringify(existing.facts)}` : '',

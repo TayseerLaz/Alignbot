@@ -24,6 +24,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { api } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
+import { useSession } from '@/lib/session';
 
 interface Overview {
   contact: {
@@ -110,6 +111,12 @@ export function CustomerInfoSheet({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
+  const { session } = useSession();
+  // Respect the org's feature access: only show Orders / Bookings here when the
+  // tenant actually has those features enabled (orders → /cart, bookings).
+  const disabledFeatures = session?.organization?.disabledFeatures ?? [];
+  const ordersOn = !disabledFeatures.includes('orders');
+  const bookingsOn = !disabledFeatures.includes('bookings');
   const [tagInput, setTagInput] = useState('');
   // Editable "User info" — null means "not edited this session" (show the
   // saved value); a string means the operator is editing.
@@ -381,7 +388,8 @@ export function CustomerInfoSheet({
               </Section>
             ) : null}
 
-            {/* Orders */}
+            {/* Orders — only when the tenant has the orders/cart feature. */}
+            {ordersOn ? (
             <Section icon={ShoppingBag} title={`Orders (${data?.orders.length ?? 0})`}>
               {(data?.orders.length ?? 0) === 0 ? (
                 <p className="text-xs text-foreground-subtle">No orders yet.</p>
@@ -410,8 +418,10 @@ export function CustomerInfoSheet({
                 </ul>
               )}
             </Section>
+            ) : null}
 
-            {/* Bookings */}
+            {/* Bookings — only when the tenant has the bookings feature. */}
+            {bookingsOn ? (
             <Section icon={CalendarCheck} title={`Bookings (${data?.bookings.length ?? 0})`}>
               {(data?.bookings.length ?? 0) === 0 ? (
                 <p className="text-xs text-foreground-subtle">No bookings yet.</p>
@@ -449,6 +459,7 @@ export function CustomerInfoSheet({
                 </ul>
               )}
             </Section>
+            ) : null}
 
             {/* Activity */}
             <Section icon={Clock} title="Activity">

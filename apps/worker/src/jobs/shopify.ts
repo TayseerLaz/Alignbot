@@ -123,7 +123,11 @@ function normProduct(p: ShopifyProduct, shopCurrency: string): NormalizedItem | 
       name: v.title || 'Default',
       sku: v.sku || null,
       priceMinor: priceToMinor(v.price),
-      stockQuantity: typeof v.inventory_quantity === 'number' ? v.inventory_quantity : null,
+      // Shopify oversold inventory goes negative; the API stock is nonnegative.
+      stockQuantity:
+        typeof v.inventory_quantity === 'number' && v.inventory_quantity >= 0
+          ? v.inventory_quantity
+          : null,
       options,
       sortOrder: i,
     };

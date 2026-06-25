@@ -637,7 +637,9 @@ async function loadProduct(tx: Prisma.TransactionClient, id: string) {
     compareAtMinor: p.compareAtMinor,
     currency: orgCurrency,
     isAvailable: p.isAvailable,
-    stockQuantity: p.stockQuantity,
+    // Stock is nonnegative in the API; Shopify oversold rows go negative, so
+    // clamp a negative count to null ("unknown") rather than 500 on validation.
+    stockQuantity: p.stockQuantity != null && p.stockQuantity < 0 ? null : p.stockQuantity,
     trackInventory: p.trackInventory,
     attributes: (p.attributes ?? null) as Record<string, unknown> | null,
     categoryId: p.categoryId,
@@ -664,8 +666,8 @@ async function loadProduct(tx: Prisma.TransactionClient, id: string) {
             (v.options as unknown[]).map((val, i) => [`Option ${i + 1}`, val as string | number | boolean]),
           )
         : ((v.options as Record<string, string | number | boolean>) ?? {}),
-      priceMinor: v.priceMinor,
-      stockQuantity: v.stockQuantity,
+      priceMinor: v.priceMinor != null && v.priceMinor < 0 ? null : v.priceMinor,
+      stockQuantity: v.stockQuantity != null && v.stockQuantity < 0 ? null : v.stockQuantity,
       isAvailable: v.isAvailable,
       sortOrder: v.sortOrder,
     })),

@@ -6,6 +6,7 @@ import {
   Ban,
   ChevronLeft,
   ChevronRight,
+  Download,
   Info,
   Pencil,
   Plus,
@@ -38,6 +39,28 @@ import { api, ApiError, getAccessToken } from '@/lib/api';
 interface TagBucket {
   tag: string;
   count: number;
+}
+
+// Download a ready-to-fill CSV template whose headers match the importer
+// (phone required; name/locale/tags optional). Any extra columns you add are
+// imported as custom fields. Generated client-side — no server round-trip.
+function downloadContactsTemplate() {
+  const rows = [
+    ['phone', 'name', 'locale', 'tags'],
+    ['+9613123456', 'Jane Doe', 'en', 'vip,beirut'],
+    ['+9613987654', 'John Smith', 'ar', 'newsletter'],
+  ];
+  const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  const csv = rows.map((r) => r.map(esc).join(',')).join('\r\n') + '\r\n';
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'contacts-template.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 export default function ContactsPage() {
@@ -122,6 +145,9 @@ export default function ContactsPage() {
         description="Your customer phone book. Imported from CSV, the inbox, or added manually. Use these for broadcast audiences."
         actions={
           <div className="flex gap-2">
+            <Button variant="secondary" onClick={downloadContactsTemplate}>
+              <Download className="size-4" /> Download template
+            </Button>
             <Button variant="secondary" onClick={() => setImportOpen(true)}>
               <Upload className="size-4" /> Import CSV
             </Button>

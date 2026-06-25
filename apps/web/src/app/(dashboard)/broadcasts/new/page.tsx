@@ -134,6 +134,14 @@ export default function NewBroadcastPage() {
     queryFn: () => api.get<{ data: { tag: string; count: number }[] }>('/api/v1/contacts/tags'),
   });
 
+  // Duplicate-number warning: the same person saved under more than one number
+  // format could receive this broadcast twice.
+  const dupQuery = useQuery({
+    queryKey: ['contacts', 'duplicates'],
+    queryFn: () => api.get<{ data: { groupCount: number } }>('/api/v1/contacts/duplicates'),
+  });
+  const dupCount = dupQuery.data?.data.groupCount ?? 0;
+
   // Contacts picker — first 100 matching the search box (for "select some").
   const contactsPickerQuery = useQuery({
     queryKey: ['contacts', 'picker', contactSearch],
@@ -731,6 +739,22 @@ export default function NewBroadcastPage() {
                 />
               ) : null}
             </div>
+
+            {/* Duplicate-number warning — same person under multiple formats. */}
+            {dupCount > 0 ? (
+              <div className="border-t border-border pt-4">
+                <div className="flex items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 p-3">
+                  <p className="text-sm text-amber-900">
+                    <strong>{dupCount}</strong> duplicate number{dupCount === 1 ? '' : 's'} in your
+                    contacts — the same person may receive this broadcast more than once. Fix them
+                    first, or send anyway.
+                  </p>
+                  <Button asChild variant="secondary" size="sm">
+                    <a href="/contacts">Fix duplicates</a>
+                  </Button>
+                </div>
+              </div>
+            ) : null}
 
             {/* Unsubscribe compliance note + explicit override. */}
             <div className="border-t border-border pt-4">

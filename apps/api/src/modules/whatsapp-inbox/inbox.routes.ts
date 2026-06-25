@@ -403,9 +403,13 @@ export default async function inboxRoutes(app: FastifyInstance) {
         //   2. a storageKey stamped on the rawPayload (bot images, going fwd);
         //   3. older bot images: the product image looked up by SKU, or the
         //      greeting image from the bot config.
-        const imageMsgs = messages.filter(
-          (m) => (m.messageType ?? '').toLowerCase() === 'image',
-        );
+        // Media bubbles whose file we presign a GET URL for: images AND voice
+        // notes (audio). Audio carries only mediaAssetId (no SKU/greeting
+        // fallback), so it just hits the stored-asset path below.
+        const imageMsgs = messages.filter((m) => {
+          const t = (m.messageType ?? '').toLowerCase();
+          return t === 'image' || t === 'audio' || t === 'voice';
+        });
         const mediaUrlByMsgId = new Map<string, string>();
         if (imageMsgs.length > 0) {
           const { presignGetUrl } = await import('../../lib/storage.js');

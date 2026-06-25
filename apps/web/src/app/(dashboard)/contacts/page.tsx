@@ -42,6 +42,23 @@ interface TagBucket {
   count: number;
 }
 
+interface DupContact {
+  id: string;
+  phoneE164: string;
+  displayName: string | null;
+  whatsappName: string | null;
+  lastInboundAt: string | null;
+}
+interface DupGroup {
+  key: string;
+  sameName: boolean;
+  contacts: DupContact[];
+}
+interface DuplicatesData {
+  groupCount: number;
+  groups: DupGroup[];
+}
+
 // Download a ready-to-fill CSV template whose headers match the importer
 // (phone required; name/locale/tags optional). Any extra columns you add are
 // imported as custom fields. Generated client-side — no server round-trip.
@@ -82,6 +99,7 @@ export default function ContactsPage() {
   }, [instagramOn, channelFilter]);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [dupOpen, setDupOpen] = useState(false);
   // Phone of the contact whose info slide-over is open (null = closed).
   const [infoPhone, setInfoPhone] = useState<string | null>(null);
   // Numbered pagination: 1-based page + selectable page size.
@@ -116,6 +134,14 @@ export default function ContactsPage() {
     queryKey: ['contacts', 'tags'],
     queryFn: () => api.get<{ data: TagBucket[] }>('/api/v1/contacts/tags'),
   });
+
+  // Likely-duplicate numbers (same phone written differently). Drives the
+  // banner + the review/merge dialog.
+  const dupQuery = useQuery({
+    queryKey: ['contacts', 'duplicates'],
+    queryFn: () => api.get<{ data: DuplicatesData }>('/api/v1/contacts/duplicates'),
+  });
+  const dupCount = dupQuery.data?.data.groupCount ?? 0;
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/contacts/${id}`),
@@ -169,6 +195,22 @@ export default function ContactsPage() {
           </div>
         }
       />
+
+      {/* Duplicate-number flag — same phone written differently / different names. */}
+      {dupCount > 0 ? (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm">
+          <span className="flex items-center gap-2 text-red-800">
+            <span className="text-base leading-none">⚠</span>
+            <span>
+              <strong>{dupCount}</strong> number{dupCount === 1 ? '' : 's'} look duplicated (same
+              phone, different format or name). Merge each into one clean contact.
+            </span>
+          </span>
+          <Button variant="secondary" size="sm" onClick={() => setDupOpen(true)}>
+            Review &amp; fix
+          </Button>
+        </div>
+      ) : null}
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
@@ -338,6 +380,15 @@ export default function ContactsPage() {
 
       <CreateContactDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={reloadContacts} />
       <ImportCsvDialog open={importOpen} onOpenChange={setImportOpen} onDone={reloadContacts} />
+      <DuplicatesDialog
+        open={dupOpen}
+        onOpenChange={setDupOpen}
+        groups={dupQuery.data?.data.groups ?? []}
+        onMerged={() => {
+          void dupQuery.refetch();
+          reloadContacts();
+        }}
+      />
       <CustomerInfoSheet
         phone={infoPhone}
         open={infoPhone !== null}
@@ -699,6 +750,127 @@ function ImportCsvDialog({
           </Button>
           <Button onClick={submit} disabled={!file || running}>
             {running ? 'Importing…' : 'Import'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DuplicatesDialog({
+  open,
+  onOpenChange,
+  groups,
+  onMerged,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  groups: DupGroup[];
+  onMerged: () => void;
+}) {
+  // keepId per group (default: the oldest/first contact in each group).
+  const [keepByKey, setKeepByKey] = useState<Record<string, string>>({});
+  const [autoMerging, setAutoMerging] = useState(false);
+  const merge = useMutation({
+    mutationFn: (vars: { keepId: string; dropIds: string[] }) =>
+      api.post('/api/v1/contacts/merge', vars),
+    onSuccess: () => {
+      toast.success('Merged');
+      onMerged();
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Merge failed'),
+  });
+  const nameOf = (c: DupContact) => c.displayName ?? c.whatsappName ?? '(no name)';
+  // Safe one-click: groups whose entries share the same name (or are unnamed)
+  // — just keep the first of each.
+  const sameNameGroups = groups.filter((g) => g.sameName);
+  const autoMergeSameName = async () => {
+    setAutoMerging(true);
+    try {
+      for (const g of sameNameGroups) {
+        const keepId = g.contacts[0]!.id;
+        await api
+          .post('/api/v1/contacts/merge', { keepId, dropIds: g.contacts.slice(1).map((c) => c.id) })
+          .catch(() => undefined);
+      }
+      toast.success('Merged same-name duplicates');
+      onMerged();
+    } finally {
+      setAutoMerging(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Duplicate numbers</DialogTitle>
+          <DialogDescription>
+            Each group is the same phone saved more than once. Pick the contact to keep — its tags
+            absorb the others&apos;, and the duplicates are deleted.
+          </DialogDescription>
+          {sameNameGroups.length > 0 ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="self-start"
+              loading={autoMerging}
+              onClick={() => void autoMergeSameName()}
+            >
+              Auto-merge {sameNameGroups.length} same-name group{sameNameGroups.length === 1 ? '' : 's'}
+            </Button>
+          ) : null}
+        </DialogHeader>
+        <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+          {groups.length === 0 ? (
+            <p className="py-6 text-center text-sm text-foreground-muted">No duplicates 🎉</p>
+          ) : (
+            groups.map((g) => {
+              const keepId = keepByKey[g.key] ?? g.contacts[0]?.id ?? '';
+              return (
+                <div key={g.key} className="rounded-md border border-border p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-xs font-medium uppercase tracking-wide text-foreground-subtle">
+                      {g.contacts.length} entries {g.sameName ? '· same name' : '· different names'}
+                    </span>
+                    <Button
+                      size="sm"
+                      loading={merge.isPending}
+                      onClick={() =>
+                        merge.mutate({
+                          keepId,
+                          dropIds: g.contacts.map((c) => c.id).filter((id) => id !== keepId),
+                        })
+                      }
+                    >
+                      Merge — keep selected
+                    </Button>
+                  </div>
+                  <div className="space-y-1">
+                    {g.contacts.map((c) => (
+                      <label
+                        key={c.id}
+                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-surface-muted"
+                      >
+                        <input
+                          type="radio"
+                          name={`keep-${g.key}`}
+                          checked={keepId === c.id}
+                          onChange={() => setKeepByKey((m) => ({ ...m, [g.key]: c.id }))}
+                        />
+                        <span className="font-medium text-foreground">{nameOf(c)}</span>
+                        <span className="font-mono text-xs text-foreground-subtle">{c.phoneE164}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => onOpenChange(false)}>
+            Done
           </Button>
         </DialogFooter>
       </DialogContent>

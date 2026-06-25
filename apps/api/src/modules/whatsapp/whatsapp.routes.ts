@@ -224,16 +224,47 @@ async function transcribeInboundVoice(args: {
     );
     if (!text) return null;
 
-    // Step 4: patch the persisted inbox row so operators see the
-    // transcript next to the audio bubble. Idempotent (updateMany).
+    // Step 4: persist the transcript AND store the audio file so the inbox can
+    // play the actual voice note (operator listens) with the transcript behind
+    // a "Transcribe" button. Idempotent (updateMany). Storing the audio is
+    // best-effort — a failure still leaves the transcript on the bubble.
     if (args.wamid) {
+      let audioAssetId: string | null = null;
+      try {
+        const { isStorageConfigured, buildStorageKey, putObject } = await import('../../lib/storage.js');
+        if (isStorageConfigured() && buf.length > 0 && buf.length <= 25 * 1024 * 1024) {
+          const aId = crypto.randomUUID();
+          const storageKey = buildStorageKey({
+            organizationId: args.organizationId,
+            kind: 'inbound-audio',
+            assetId: aId,
+            filename: `voice.${ext}`,
+          });
+          await putObject({ storageKey, body: buf, contentType: mime });
+          await withRlsBypass((tx) =>
+            tx.asset.create({
+              data: {
+                id: aId,
+                organizationId: args.organizationId,
+                kind: 'document',
+                storageKey,
+                contentType: mime,
+                byteSize: buf.length,
+              },
+            }),
+          );
+          audioAssetId = aId;
+        }
+      } catch (e) {
+        args.log.warn({ e, mediaId: args.mediaId }, '[whatsapp] inbound voice store failed');
+      }
       await withRlsBypass(async (tx) => {
         await tx.whatsAppMessage.updateMany({
           where: {
             organizationId: args.organizationId,
             metaMessageId: args.wamid!,
           },
-          data: { body: `🎙 ${text}` },
+          data: { body: `🎙 ${text}`, ...(audioAssetId ? { mediaAssetId: audioAssetId } : {}) },
         });
       });
     }

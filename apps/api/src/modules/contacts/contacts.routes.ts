@@ -836,4 +836,147 @@ export default async function contactsRoutes(app: FastifyInstance) {
       return { data: result };
     },
   );
+
+  // ---------- GET /contacts/duplicates -------------------------------------
+  // Surface likely-duplicate numbers — the same phone written differently
+  // (+961…, 00961…, or local) that landed as separate contacts. Grouped by the
+  // trailing 9 digits. Only real phone contacts (WhatsApp); Messenger/IG store
+  // a PSID in phoneE164, not a phone, so they're never "duplicate numbers".
+  r.get(
+    '/contacts/duplicates',
+    {
+      schema: {
+        tags: ['contacts'],
+        summary: 'Groups of contacts that look like the same phone number.',
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              groupCount: z.number().int(),
+              groups: z.array(
+                z.object({
+                  key: z.string(),
+                  sameName: z.boolean(),
+                  contacts: z.array(
+                    z.object({
+                      id: uuidSchema,
+                      phoneE164: z.string(),
+                      displayName: z.string().nullable(),
+                      whatsappName: z.string().nullable(),
+                      lastInboundAt: z.string().nullable(),
+                    }),
+                  ),
+                }),
+              ),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const rows = await tx.contact.findMany({
+          // Real phone contacts only — Messenger/IG hold a PSID in phoneE164.
+          where: { deletedAt: null, channel: { notIn: ['messenger', 'instagram'] } },
+          select: {
+            id: true,
+            phoneE164: true,
+            displayName: true,
+            whatsappName: true,
+            lastInboundAt: true,
+            createdAt: true,
+          },
+          take: 20000,
+        });
+        const norm = (p: string) => {
+          const d = p.replace(/[^\d]/g, '').replace(/^0+/, '');
+          return d.length >= 9 ? d.slice(-9) : d;
+        };
+        const byKey = new Map<string, typeof rows>();
+        for (const r of rows) {
+          const k = norm(r.phoneE164);
+          if (!k) continue;
+          const arr = byKey.get(k);
+          if (arr) arr.push(r);
+          else byKey.set(k, [r]);
+        }
+        const groups = [...byKey.entries()]
+          .filter(([, list]) => list.length >= 2)
+          .map(([key, list]) => {
+            const names = Array.from(
+              new Set(
+                list
+                  .map((c) => (c.displayName ?? c.whatsappName ?? '').trim())
+                  .filter((n) => n.length > 0),
+              ),
+            );
+            return {
+              key,
+              sameName: names.length <= 1,
+              contacts: list
+                .slice()
+                .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+                .map((c) => ({
+                  id: c.id,
+                  phoneE164: c.phoneE164,
+                  displayName: c.displayName,
+                  whatsappName: c.whatsappName,
+                  lastInboundAt: c.lastInboundAt?.toISOString() ?? null,
+                })),
+            };
+          });
+        return { data: { groupCount: groups.length, groups } };
+      }),
+  );
+
+  // ---------- POST /contacts/merge -----------------------------------------
+  // Merge duplicate contacts into one: move every tag onto the kept contact,
+  // adopt a name if the kept one has none, then delete the dropped contacts
+  // (their tags/enrollments cascade away).
+  r.post(
+    '/contacts/merge',
+    {
+      schema: {
+        tags: ['contacts'],
+        summary: 'Merge duplicate contacts into keepId, deleting dropIds.',
+        body: z.object({ keepId: uuidSchema, dropIds: z.array(uuidSchema).min(1).max(50) }),
+        response: { 200: itemEnvelopeSchema(z.object({ merged: z.number().int() })) },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const { keepId } = req.body;
+        const ids = req.body.dropIds.filter((d) => d !== keepId);
+        const keep = await tx.contact.findUnique({ where: { id: keepId } });
+        if (!keep) throw notFound('Kept contact not found.');
+        if (ids.length === 0) return { data: { merged: 0 } };
+        const tags = await tx.contactTag.findMany({
+          where: { contactId: { in: ids } },
+          select: { tag: true },
+        });
+        const uniqueTags = Array.from(new Set(tags.map((t) => t.tag)));
+        if (uniqueTags.length) {
+          await tx.contactTag.createMany({
+            data: uniqueTags.map((tag) => ({
+              organizationId: keep.organizationId,
+              contactId: keepId,
+              tag,
+            })),
+            skipDuplicates: true,
+          });
+        }
+        if (!keep.displayName) {
+          const named = await tx.contact.findFirst({
+            where: { id: { in: ids }, displayName: { not: null } },
+            select: { displayName: true },
+          });
+          if (named?.displayName) {
+            await tx.contact.update({ where: { id: keepId }, data: { displayName: named.displayName } });
+          }
+        }
+        const del = await tx.contact.deleteMany({ where: { id: { in: ids } } });
+        return { data: { merged: del.count } };
+      }),
+  );
 }

@@ -1593,6 +1593,7 @@ function Bubble({
   const canAudit = isAlignedAdmin && isBotMessage && !isImage;
   const [open, setOpen] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [showTranscript, setShowTranscript] = useState(false);
   const provQ = useQuery({
     queryKey: ['provenance', message.id],
     queryFn: () =>
@@ -1630,6 +1631,11 @@ function Bubble({
   }
   const imgSrc = imageUrlCache.get(message.id) ?? message.mediaUrl ?? null;
   const showImage = isImage && !!imgSrc;
+  // Voice notes: play the actual audio + reveal the AI transcript on demand.
+  const isAudio = mt === 'audio' || mt === 'voice';
+  const showAudio = isAudio && !!imgSrc;
+  // The transcript is stored as the message body, prefixed with 🎙.
+  const audioTranscript = isAudio ? (message.body ?? '').replace(/^🎙\s*/, '').trim() : '';
   // For image bubbles the body is usually a bland "[image]" / "[image] Name"
   // placeholder — hide it when we render the real picture; keep genuine
   // customer captions.
@@ -1683,7 +1689,42 @@ function Bubble({
           </button>
         ) : null}
         <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />
-        {bodyIsImagePlaceholder ? null : (
+        {showAudio ? (
+          <div className="space-y-1.5">
+            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+            <audio controls preload="none" src={imgSrc!} className="max-w-full" />
+            {audioTranscript ? (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowTranscript((v) => !v)}
+                  className={cn(
+                    'inline-flex items-center gap-1 text-xs font-medium underline-offset-2 hover:underline',
+                    isOut ? 'text-white/80' : 'text-brand-600',
+                  )}
+                >
+                  <Sparkles className="size-3" />
+                  {showTranscript ? 'Hide transcription' : 'Transcribe'}
+                </button>
+                {showTranscript ? (
+                  <p
+                    className={cn(
+                      'mt-1 whitespace-pre-wrap break-words text-sm',
+                      isOut ? 'text-white/90' : 'text-foreground',
+                    )}
+                  >
+                    {audioTranscript}
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <p className={cn('text-xs', isOut ? 'text-white/70' : 'text-foreground-subtle')}>
+                No transcription available.
+              </p>
+            )}
+          </div>
+        ) : null}
+        {bodyIsImagePlaceholder || showAudio ? null : (
           <p className={cn('whitespace-pre-wrap break-words', showImage && 'mt-1.5')}>
             {message.body ?? <em className="opacity-70">[{message.messageType ?? 'media'}]</em>}
           </p>

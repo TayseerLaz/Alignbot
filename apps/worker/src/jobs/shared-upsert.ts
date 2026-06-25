@@ -105,13 +105,26 @@ export async function upsertOne(
       // bulk import into a KWD/EUR shop silently writes dollar rows that later
       // render with a '$'.
       const orgCurrency = await resolveOrgCurrency(tx, organizationId);
-      const slug = data.name
-        .toLowerCase()
-        .normalize('NFKD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 48);
+      const baseSlug =
+        data.name
+          .toLowerCase()
+          .normalize('NFKD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 48) || data.sku.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48);
+      // slug is unique per org. Multiple products can share a name (e.g. Shopify
+      // bundles), so resolve a free slug \u2014 base, then base-2, base-3, \u2026 \u2014
+      // ignoring this SKU's own existing row (so re-imports don't drift).
+      let slug = baseSlug;
+      for (let n = 2; n < 200; n++) {
+        const clash = await tx.product.findFirst({
+          where: { organizationId, slug, sku: { not: data.sku } },
+          select: { id: true },
+        });
+        if (!clash) break;
+        slug = `${baseSlug.slice(0, 44)}-${n}`;
+      }
       const upserted = await tx.product.upsert({
         where: { organizationId_sku: { organizationId, sku: data.sku } },
         create: {

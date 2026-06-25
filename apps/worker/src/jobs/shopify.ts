@@ -132,7 +132,9 @@ function normProduct(p: ShopifyProduct, shopCurrency: string): NormalizedItem | 
         priceMinor: priceToMinor(firstVariant?.price),
         currency: shopCurrency,
         isAvailable: (p.status ?? 'active') === 'active',
-        stockQuantity: stockTotal || null,
+        // Shopify lets oversold inventory go negative; our schema is nonnegative.
+        // Only record a positive count, else leave it unknown (null).
+        stockQuantity: stockTotal > 0 ? stockTotal : null,
         categorySlug: p.product_type || null,
       },
       images: (p.images ?? []).map((im) => im.src).filter((s): s is string => !!s).slice(0, 6),

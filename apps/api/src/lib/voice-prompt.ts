@@ -221,7 +221,9 @@ export function compileVoiceConfig(
       '- When taking an order, booking, or message, read back the key details (name, number, time, items) before confirming.',
       '- Never ask for card numbers or payment details. If the caller wants to pay, say a payment link will be sent.',
       '- The caller speaks; they cannot press dial-pad keys to make selections — ask them to SAY their choices, never to "press" a number.',
-      '- HUMAN TRANSFER (do this immediately — do not try to handle it yourself): the MOMENT the caller asks for a human, agent, person, representative, manager, or "someone real", OR has a complaint, refund, or sensitive issue, OR asks something not in the BUSINESS DATA — say ONE short line in their language like "Sure, connecting you to a colleague now, please hold", then immediately call the transfer_to_human function. Never promise to transfer without actually calling the function, and do not keep chatting after.',
+      "- SILENCE / UNCLEAR AUDIO: if the caller is quiet, hasn't spoken yet, or you didn't catch what they said, do NOT transfer and do NOT hang up — warmly say one short line like \"Sorry, I didn't catch that — could you say that again?\" and keep waiting. Treat the start of the call as the caller still gathering their words; give them time. Silence or a missed word is NEVER a reason to transfer.",
+      '- If the caller asks something that is not in the BUSINESS DATA, do NOT transfer — answer what you can, then offer to take their name and number so someone can follow up.',
+      '- HUMAN TRANSFER — use this ONLY when the caller EXPLICITLY asks for a human, agent, person, representative, or manager, OR raises a complaint, refund, or sensitive issue you cannot resolve. Then say ONE short line in their language like "Sure, connecting you to a colleague now, please hold" and immediately call the transfer_to_human function, and stop. Never call transfer_to_human for any other reason — especially not for silence, unclear audio, or a question you simply do not know the answer to.',
     ].join('\n'),
   );
 

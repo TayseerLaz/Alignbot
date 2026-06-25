@@ -1,9 +1,9 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle2, Clock, MessageSquare, Plus, RefreshCw, Send, Trash2, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock, MessageSquare, Plus, RefreshCw, Send, Trash2, Upload, XCircle } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shell/page-header';
@@ -27,6 +27,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
+import { uploadFile } from '@/lib/upload';
 
 interface Template {
   id: string;
@@ -304,6 +305,25 @@ function CreateTemplateDialog({
   const [headerText, setHeaderText] = useState('');
   const [headerTextExample, setHeaderTextExample] = useState('');
   const [headerMediaUrl, setHeaderMediaUrl] = useState('');
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
+
+  // Upload the header media from the device → object storage, then drop the
+  // resulting URL into the field (so the rest of the flow is unchanged).
+  const onUploadMedia = async (file: File | undefined) => {
+    if (!file) return;
+    setUploadingMedia(true);
+    try {
+      const { url } = await uploadFile(file, headerFormat === 'IMAGE' ? 'image' : 'document');
+      setHeaderMediaUrl(url);
+      toast.success('Uploaded');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.payload.message : err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploadingMedia(false);
+      if (mediaInputRef.current) mediaInputRef.current.value = '';
+    }
+  };
 
   // Body
   const [bodyText, setBodyText] = useState('');
@@ -510,14 +530,42 @@ function CreateTemplateDialog({
             {['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerFormat) ? (
               <>
                 <Input
-                  placeholder={`Public ${headerFormat.toLowerCase()} URL (e.g. https://cdn.example.com/file.jpg)`}
+                  placeholder={`Paste a public ${headerFormat.toLowerCase()} URL, or upload below`}
                   value={headerMediaUrl}
                   onChange={(e) => setHeaderMediaUrl(e.target.value)}
                 />
+                {headerFormat !== 'VIDEO' ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-foreground-subtle">or</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      loading={uploadingMedia}
+                      onClick={() => mediaInputRef.current?.click()}
+                    >
+                      <Upload className="size-4" /> Upload from device
+                    </Button>
+                    <input
+                      ref={mediaInputRef}
+                      type="file"
+                      accept={headerFormat === 'IMAGE' ? 'image/*' : '.pdf,application/pdf'}
+                      className="hidden"
+                      onChange={(e) => void onUploadMedia(e.target.files?.[0])}
+                    />
+                  </div>
+                ) : null}
+                {headerMediaUrl && headerFormat === 'IMAGE' ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={headerMediaUrl}
+                    alt="Header preview"
+                    className="max-h-28 w-auto rounded-md border border-border object-contain"
+                  />
+                ) : null}
                 <p className="text-xs text-foreground-subtle">
-                  Meta downloads this URL to register the template. Use a CDN / S3-style link that's
-                  publicly accessible for at least the approval window. After approval, the asset
-                  can move — Meta stores its own copy.
+                  Paste a public CDN/S3 link, or upload from your device (we host it). Meta downloads
+                  it to register the template; after approval Meta stores its own copy.
                 </p>
               </>
             ) : null}

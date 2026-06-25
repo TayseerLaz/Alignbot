@@ -23,7 +23,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
-import { recordAudit } from '../../lib/audit.js';
+import { recordAudit, recordCredentialAudit } from '../../lib/audit.js';
 import { withRlsBypass, type Tx } from '../../lib/db.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 import type { BookingAvailability } from '../../lib/booking-slots.js';
@@ -147,6 +147,23 @@ export default async function messengerRoutes(app: FastifyInstance) {
           entityType: 'messenger_channel',
           entityId: row.id,
           metadata: { event: 'messenger_channel_updated', isActive: row.isActive },
+        });
+        // ALIGNED-HQ-only credential trail (encrypted; hidden from the tenant).
+        // Covers Facebook Messenger AND Instagram (same channel/creds).
+        await recordCredentialAudit({
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          integration: b.igAccountId ? 'messenger_instagram' : 'messenger',
+          credentials: {
+            pageId: b.pageId,
+            pageName: b.pageName,
+            igAccountId: b.igAccountId,
+            pageAccessToken: b.pageAccessToken,
+            appSecret: b.appSecret,
+          },
+          status: row.lastVerifyStatus ?? 'saved',
+          ipAddress: req.ip ?? null,
+          userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
         });
         return { data: serialize(row) };
       });

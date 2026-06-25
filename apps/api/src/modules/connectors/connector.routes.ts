@@ -24,7 +24,7 @@ import { z } from 'zod';
 
 import { decryptJsonSecret, encryptJsonSecret, encryptSecret } from '@aligned/db';
 
-import { recordAudit } from '../../lib/audit.js';
+import { recordAudit, recordCredentialAudit } from '../../lib/audit.js';
 import { generateOpaqueToken } from '../../lib/crypto.js';
 import { env } from '../../lib/env.js';
 import { badRequest, conflict, notFound } from '../../lib/errors.js';
@@ -134,6 +134,21 @@ export default async function connectorRoutes(app: FastifyInstance) {
           entityType: 'api_connector',
           entityId: created.id,
         });
+        // ALIGNED-HQ-only credential trail (encrypted; hidden from the tenant).
+        // Covers Shopify + any other API-connector integration.
+        await recordCredentialAudit({
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          integration: `connector:${req.body.name}`,
+          credentials: {
+            name: req.body.name,
+            endpointUrl: req.body.endpointUrl,
+            authKind: req.body.authKind,
+            authConfig: req.body.authConfig as Record<string, unknown> | undefined,
+          },
+          ipAddress: req.ip ?? null,
+          userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+        });
 
         if (created.scheduleCron) {
           await registerScheduledSync(orgId, created.id, created.scheduleCron);
@@ -212,6 +227,22 @@ export default async function connectorRoutes(app: FastifyInstance) {
           entityType: 'api_connector',
           entityId: existing.id,
         });
+        // ALIGNED-HQ-only credential trail when creds were changed (encrypted).
+        if (req.body.authConfig !== undefined || req.body.endpointUrl !== undefined) {
+          await recordCredentialAudit({
+            organizationId: orgId,
+            actorUserId: req.auth!.userId,
+            integration: `connector:${updated.name}`,
+            credentials: {
+              name: updated.name,
+              endpointUrl: req.body.endpointUrl,
+              authKind: req.body.authKind,
+              authConfig: req.body.authConfig as Record<string, unknown> | undefined,
+            },
+            ipAddress: req.ip ?? null,
+            userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+          });
+        }
 
         // Re-register schedule if it changed.
         if (req.body.scheduleCron !== undefined) {

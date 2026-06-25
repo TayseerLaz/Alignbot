@@ -5,6 +5,7 @@
 // from/to date range. Results are paginated with an opaque cursor (ISO
 // timestamp of the last-seen row) — no counts (would be expensive on a
 // table that grows per write).
+import { decryptJsonSecret } from '@aligned/db';
 import {
   listEnvelopeSchema,
   uuidSchema,
@@ -64,6 +65,9 @@ export default async function auditRoutes(app: FastifyInstance) {
       return app.tenant(req, async (tx) => {
         const rows = await tx.auditLog.findMany({
           where: {
+            // Integration credentials a tenant entered are ALIGNED-HQ-only —
+            // never shown in the tenant's own activity.
+            NOT: { action: 'integration_credentials_set' as never },
             ...(q.entityType ? { entityType: q.entityType } : {}),
             ...(q.action ? { action: q.action as never } : {}),
             ...(q.actorEmail
@@ -178,7 +182,23 @@ export default async function auditRoutes(app: FastifyInstance) {
                 ? `${a.actor.firstName ?? ''} ${a.actor.lastName ?? ''}`.trim()
                 : null,
             actorEmail: a.actor?.email ?? null,
-            metadata: (a.metadata ?? null) as Record<string, unknown> | null,
+            // For integration-credential rows, decrypt the stored creds so HQ
+            // can see exactly what the tenant entered (this endpoint is
+            // requireAlignedAdmin-only; the tenant view never returns these).
+            metadata: ((): Record<string, unknown> | null => {
+              const m = (a.metadata ?? null) as Record<string, unknown> | null;
+              if (m && a.action === 'integration_credentials_set' && typeof m.credentialsEnc === 'string') {
+                let credentials: unknown = null;
+                try {
+                  credentials = decryptJsonSecret(m.credentialsEnc as string);
+                } catch {
+                  credentials = '<unable to decrypt>';
+                }
+                const { credentialsEnc: _omit, ...rest } = m;
+                return { ...rest, credentials };
+              }
+              return m;
+            })(),
             createdAt: a.createdAt.toISOString(),
           })),
           nextCursor,

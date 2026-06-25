@@ -1,4 +1,5 @@
 import type { AuditAction } from '@aligned/db';
+import { encryptJsonSecret } from '@aligned/db';
 
 import { prisma } from './db.js';
 
@@ -38,4 +39,46 @@ export async function recordAudit(args: RecordAuditArgs): Promise<void> {
   } catch (err) {
     console.error('[audit] failed to record', args.action, err);
   }
+}
+
+/**
+ * Record integration credentials a tenant entered (WhatsApp / Messenger /
+ * Instagram / Shopify connector / payments…). ALIGNED-HQ-only: the tenant's own
+ * audit view hides `integration_credentials_set`, and the credential VALUES are
+ * AES-256-GCM encrypted in the metadata (`credentialsEnc`) — decrypted only in
+ * the ALIGNED-admin audit view. Captured on every save, whether it worked or
+ * not, so HQ can support a tenant who can't get a connection live.
+ */
+export async function recordCredentialAudit(args: {
+  organizationId: string;
+  actorUserId?: string | null;
+  integration: string;
+  /** Raw values the tenant entered — only non-empty ones are recorded. */
+  credentials: Record<string, unknown>;
+  status?: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}): Promise<void> {
+  const entries = Object.entries(args.credentials).filter(
+    ([, v]) => v != null && String(v).trim() !== '',
+  );
+  if (entries.length === 0) return; // nothing entered — don't log an empty save
+  const fieldsSet = entries.map(([k]) => k);
+  const cleaned = Object.fromEntries(entries);
+  await recordAudit({
+    action: 'integration_credentials_set',
+    organizationId: args.organizationId,
+    actorUserId: args.actorUserId ?? null,
+    entityType: 'integration',
+    entityId: args.integration,
+    metadata: {
+      integration: args.integration,
+      fieldsSet,
+      status: args.status ?? 'saved',
+      // Opaque encrypted blob — never plaintext at rest.
+      credentialsEnc: encryptJsonSecret(cleaned),
+    },
+    ipAddress: args.ipAddress,
+    userAgent: args.userAgent,
+  });
 }

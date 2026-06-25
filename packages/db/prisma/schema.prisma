@@ -91,6 +91,9 @@ enum AuditAction {
   // ALIGNED HQ impersonation — transparent to the tenant in their audit log.
   aligned_admin_accessed
   aligned_admin_exited
+  // Integration credentials a tenant entered — ALIGNED-HQ-only (hidden from the
+  // tenant's own audit view); the values are stored encrypted in the metadata.
+  integration_credentials_set
   // Catalog (Day 2)
   product_created
   product_updated

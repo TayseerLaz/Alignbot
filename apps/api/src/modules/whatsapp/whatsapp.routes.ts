@@ -39,7 +39,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
-import { recordAudit } from '../../lib/audit.js';
+import { recordAudit, recordCredentialAudit } from '../../lib/audit.js';
 import { attributeBroadcastResponse } from '../../lib/broadcast-response.js';
 import { generateOpaqueToken } from '../../lib/crypto.js';
 import { withRlsBypass, withTenant, type Tx } from '../../lib/db.js';
@@ -646,6 +646,24 @@ export default async function whatsappRoutes(app: FastifyInstance) {
             // Don't echo any secret values into the audit log.
             fieldsTouched: Object.keys(b).filter((k) => b[k as keyof typeof b] !== undefined),
           },
+        });
+
+        // ALIGNED-HQ-only credential trail (encrypted at rest, hidden from the tenant).
+        await recordCredentialAudit({
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          integration: 'whatsapp',
+          credentials: {
+            appId: b.appId,
+            appSecret: b.appSecret,
+            accessToken: b.accessToken,
+            wabaId: b.wabaId,
+            phoneNumberId: b.phoneNumberId,
+            displayPhoneNumber: b.displayPhoneNumber,
+          },
+          status: updated.lastVerifyStatus ?? 'saved',
+          ipAddress: req.ip ?? null,
+          userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
         });
 
         return { data: serializeChannel(updated) };
@@ -2094,6 +2112,23 @@ export default async function whatsappRoutes(app: FastifyInstance) {
             botEnabled: updated.botEnabled,
             fieldsTouched: Object.keys(b).filter((k) => b[k as keyof typeof b] !== undefined),
           },
+        });
+        // ALIGNED-HQ-only credential trail (encrypted; hidden from the tenant).
+        await recordCredentialAudit({
+          organizationId: orgId,
+          actorUserId: req.auth!.userId,
+          integration: 'whatsapp',
+          credentials: {
+            appId: b.appId,
+            appSecret: b.appSecret,
+            accessToken: b.accessToken,
+            wabaId: b.wabaId,
+            phoneNumberId: b.phoneNumberId,
+            displayPhoneNumber: b.displayPhoneNumber,
+          },
+          status: updated.lastVerifyStatus ?? 'saved',
+          ipAddress: req.ip ?? null,
+          userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
         });
 
         return { data: serializeChannel(updated) };

@@ -35,6 +35,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SkeletonRows } from '@/components/ui/skeleton';
 import { api, ApiError, getAccessToken } from '@/lib/api';
+import { useSession } from '@/lib/session';
 
 interface TagBucket {
   tag: string;
@@ -65,9 +66,20 @@ function downloadContactsTemplate() {
 
 export default function ContactsPage() {
   const qc = useQueryClient();
+  const { session } = useSession();
+  const disabledFeatures = session?.organization?.disabledFeatures ?? [];
+  const instagramOn = !disabledFeatures.includes('instagram');
+  // Channel-filter options — only offer Instagram when the tenant has it.
+  const channelOptions = (['all', 'whatsapp', 'instagram'] as const).filter(
+    (c) => c !== 'instagram' || instagramOn,
+  );
   const [search, setSearch] = useState('');
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [channelFilter, setChannelFilter] = useState<'all' | 'whatsapp' | 'instagram'>('all');
+  // If Instagram is turned off while it's the active filter, fall back to all.
+  useEffect(() => {
+    if (!instagramOn && channelFilter === 'instagram') setChannelFilter('all');
+  }, [instagramOn, channelFilter]);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   // Phone of the contact whose info slide-over is open (null = closed).
@@ -169,9 +181,10 @@ export default function ContactsPage() {
             className="w-72 pl-9"
           />
         </div>
-        {/* Channel filter — split WhatsApp vs Instagram contacts. */}
+        {/* Channel filter — split WhatsApp vs Instagram contacts. Instagram is
+            hidden when the tenant isn't subscribed to it. */}
         <div className="flex items-center gap-1 rounded-md border border-border p-0.5 text-xs">
-          {(['all', 'whatsapp', 'instagram'] as const).map((c) => (
+          {channelOptions.map((c) => (
             <button
               key={c}
               onClick={() => setChannelFilter(c)}

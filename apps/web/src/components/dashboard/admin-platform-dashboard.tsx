@@ -8,6 +8,7 @@ import {
   Boxes,
   Cpu,
   Database,
+  MessageCircle,
   Server,
   Users,
 } from 'lucide-react';
@@ -39,6 +40,7 @@ interface OrgRow {
   lastActivityAt: string | null;
   aiPlan: AiPlan;
   disabledFeatures: string[];
+  whatsappNumber: string | null;
 }
 
 interface SystemHealth {
@@ -141,6 +143,69 @@ export function AdminPlatformDashboard({ greeting }: { greeting: string }) {
             accent={totalFailed > 0 ? 'red' : undefined}
           />
         </div>
+
+        {/* Tenants & their WhatsApp numbers */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <MessageCircle className="size-4 text-brand-500" /> Tenants &amp; WhatsApp numbers
+            </CardTitle>
+            <span className="text-xs text-foreground-subtle">{rows.length} tenants</span>
+          </CardHeader>
+          <CardContent className="p-0">
+            {orgs.isLoading ? (
+              <div className="space-y-2 p-4">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <Skeleton key={i} className="h-8 w-full" />
+                ))}
+              </div>
+            ) : rows.length === 0 ? (
+              <p className="px-6 py-8 text-center text-sm text-foreground-muted">No tenants yet.</p>
+            ) : (
+              <div className="max-h-[28rem] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 z-10 bg-surface">
+                    <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-foreground-subtle">
+                      <th className="px-4 py-2.5 font-medium">Tenant</th>
+                      <th className="px-4 py-2.5 font-medium">WhatsApp number</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...rows]
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map((o) => (
+                        <tr
+                          key={o.id}
+                          className="border-b border-border last:border-0 hover:bg-surface-muted/40"
+                        >
+                          <td className="px-4 py-2.5">
+                            <Link
+                              href={`/aligned-admin/orgs/${o.id}`}
+                              className="font-medium text-foreground hover:text-brand-600 hover:underline"
+                            >
+                              {o.name}
+                            </Link>
+                            <span className="ml-2 font-mono text-[11px] text-foreground-subtle">
+                              {o.slug}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            {o.whatsappNumber ? (
+                              <span className="font-mono tabular-nums text-foreground">
+                                {o.whatsappNumber}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-foreground-subtle">— not connected</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* System health */}
         <Card>

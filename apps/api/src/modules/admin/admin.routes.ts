@@ -76,6 +76,8 @@ export default async function adminRoutes(app: FastifyInstance) {
               aiPlan: z.enum(['basic', 'middle', 'max', 'ultra']),
               // ALIGNED-admin per-tenant access control: disabled feature keys.
               disabledFeatures: z.array(z.string()),
+              // Primary WhatsApp display number (null if none connected).
+              whatsappNumber: z.string().nullable(),
             }),
           ),
         },
@@ -102,7 +104,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         });
         return Promise.all(
           rows.map(async (o) => {
-            const [memberCount, productCount, serviceCount, lastAudit] = await Promise.all([
+            const [memberCount, productCount, serviceCount, lastAudit, wa] = await Promise.all([
               tx.membership.count({ where: { organizationId: o.id, isActive: true } }),
               tx.product.count({ where: { organizationId: o.id, deletedAt: null } }),
               tx.service.count({ where: { organizationId: o.id, deletedAt: null } }),
@@ -110,6 +112,12 @@ export default async function adminRoutes(app: FastifyInstance) {
                 where: { organizationId: o.id },
                 orderBy: { createdAt: 'desc' },
                 select: { createdAt: true },
+              }),
+              // Primary number first; fall back to any connected number.
+              tx.whatsAppChannel.findFirst({
+                where: { organizationId: o.id, displayPhoneNumber: { not: null } },
+                orderBy: { isPrimary: 'desc' },
+                select: { displayPhoneNumber: true },
               }),
             ]);
             return {
@@ -126,6 +134,7 @@ export default async function adminRoutes(app: FastifyInstance) {
               aiPlan: (o as { aiPlan?: 'basic' | 'middle' | 'max' | 'ultra' }).aiPlan ?? 'basic',
               disabledFeatures:
                 (o as { disabledFeatures?: string[] }).disabledFeatures ?? [],
+              whatsappNumber: wa?.displayPhoneNumber ?? null,
             };
           }),
         );

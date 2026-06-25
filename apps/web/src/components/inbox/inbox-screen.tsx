@@ -35,6 +35,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { ImageLightbox } from '@/components/ui/image-lightbox';
 import {
   Dialog,
   DialogContent,
@@ -1591,6 +1592,7 @@ function Bubble({
   const isImage = (message.messageType ?? '').toLowerCase() === 'image';
   const canAudit = isAlignedAdmin && isBotMessage && !isImage;
   const [open, setOpen] = useState(false);
+  const [lightbox, setLightbox] = useState<string | null>(null);
   const provQ = useQuery({
     queryKey: ['provenance', message.id],
     queryFn: () =>
@@ -1664,13 +1666,12 @@ function Bubble({
           </p>
         ) : null}
         {showImage ? (
-          // Click to open the full-resolution image in a new tab.
-          <a
-            href={imgSrc!}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block"
-            title="Open full image"
+          // Click to pop the full-resolution image up in a lightbox.
+          <button
+            type="button"
+            onClick={() => setLightbox(imgSrc!)}
+            className="block cursor-zoom-in"
+            title="Click to view"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -1679,8 +1680,9 @@ function Bubble({
               loading="lazy"
               className="max-h-80 w-auto max-w-full rounded-lg object-contain"
             />
-          </a>
+          </button>
         ) : null}
+        <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />
         {bodyIsImagePlaceholder ? null : (
           <p className={cn('whitespace-pre-wrap break-words', showImage && 'mt-1.5')}>
             {message.body ?? <em className="opacity-70">[{message.messageType ?? 'media'}]</em>}

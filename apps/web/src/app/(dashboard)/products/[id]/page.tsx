@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ImageLightbox } from '@/components/ui/image-lightbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -390,6 +391,7 @@ function ImagesCard({ product }: { product: Product }) {
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [lightbox, setLightbox] = useState<string | null>(null);
 
   const attach = useMutation({
     mutationFn: (vars: { assetId: string; isPrimary: boolean }) =>
@@ -474,7 +476,12 @@ function ImagesCard({ product }: { product: Product }) {
         ) : (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {product.images.map((img) => (
-              <div key={img.id} className="group relative overflow-hidden rounded-lg border border-border">
+              <div
+                key={img.id}
+                className="group relative cursor-zoom-in overflow-hidden rounded-lg border border-border"
+                onClick={() => setLightbox(img.url)}
+                title="Click to view"
+              >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={img.url} alt={img.altText ?? ''} className="aspect-square w-full object-cover" />
                 <div className="absolute inset-0 flex items-end justify-between gap-1 bg-gradient-to-t from-black/60 via-transparent to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100">
@@ -487,7 +494,10 @@ function ImagesCard({ product }: { product: Product }) {
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() => setPrimary.mutate({ assetId: img.assetId, imageId: img.id })}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPrimary.mutate({ assetId: img.assetId, imageId: img.id });
+                        }}
                       >
                         Make primary
                       </Button>
@@ -497,7 +507,10 @@ function ImagesCard({ product }: { product: Product }) {
                     size="icon"
                     variant="danger"
                     aria-label="Remove image"
-                    onClick={() => detach.mutate(img.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      detach.mutate(img.id);
+                    }}
                   >
                     <Trash2 className="size-3.5" />
                   </Button>
@@ -506,6 +519,7 @@ function ImagesCard({ product }: { product: Product }) {
             ))}
           </div>
         )}
+        <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />
       </CardContent>
     </Card>
   );

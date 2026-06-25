@@ -35,13 +35,36 @@ export type MarkCartPaidResult =
  * (RLS + explicit filter both scope to the tenant).
  */
 export async function markCartPaid(args: MarkCartPaidArgs): Promise<MarkCartPaidResult> {
+  // Captured inside the tx so the voice caller can be told (post-commit) that
+  // their payment landed — voice orders have no inbox thread, so without this the
+  // customer who paid via the link hears nothing back (S5).
+  let voiceNotify: { phone: string; name: string | null } | null = null;
   const outcome = await withTenant(args.organizationId, async (tx) => {
     const cart = await tx.cart.findFirst({
       where: { id: args.cartId, organizationId: args.organizationId },
-      select: { id: true, paidAt: true, totalMinor: true, currency: true, threadId: true },
+      select: {
+        id: true,
+        paidAt: true,
+        totalMinor: true,
+        currency: true,
+        threadId: true,
+        channel: true,
+        customerPhone: true,
+        customerName: true,
+      },
     });
     if (!cart) return { status: 'not_found' as const };
     if (cart.paidAt) return { status: 'already_paid' as const, cartId: cart.id };
+    // A voice order with a real (non-placeholder) caller number → WhatsApp them a
+    // paid confirmation after commit.
+    if (
+      !cart.threadId &&
+      cart.channel === 'voice' &&
+      cart.customerPhone &&
+      !cart.customerPhone.startsWith('voice_')
+    ) {
+      voiceNotify = { phone: cart.customerPhone, name: cart.customerName };
+    }
 
     await tx.cart.update({
       where: { id: cart.id },
@@ -108,6 +131,24 @@ export async function markCartPaid(args: MarkCartPaidArgs): Promise<MarkCartPaid
     });
   } catch {
     /* swallow — already persisted */
+  }
+  // S5 — close the loop for the voice caller (no inbox thread to update). They
+  // just paid via the link, so they're inside Meta's 24h window. Best-effort.
+  // Cast defeats TS control-flow narrowing: it only sees `= null` (the
+  // assignment lives inside the withTenant closure), so it would otherwise type
+  // this `never` inside the truthy branch.
+  const vn = voiceNotify as { phone: string; name: string | null } | null;
+  if (vn) {
+    try {
+      const { sendWhatsAppText } = await import('../whatsapp-send.js');
+      await sendWhatsAppText(
+        args.organizationId,
+        vn.phone,
+        `${vn.name ? `Thanks ${vn.name}! ` : 'Thank you! '}Your payment for order ${outcome.cartId.slice(0, 8)}… is confirmed. We're preparing it now.`,
+      );
+    } catch {
+      /* swallow — confirmation is best-effort */
+    }
   }
   return outcome;
 }

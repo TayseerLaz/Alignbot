@@ -20,9 +20,11 @@ import { sendWhatsAppText } from './whatsapp-send.js';
 
 const NOOP_LOG = { warn: () => undefined };
 
+// ISO 4217 minor-unit = 3 currencies (1 major = 1000 minor). An unlisted
+// 3-decimal currency would otherwise be billed 10× wrong.
+const THREE_DP = new Set(['BHD', 'IQD', 'JOD', 'KWD', 'LYD', 'OMR', 'TND']);
 function decimals(currency: string): number {
-  const c = currency.toUpperCase();
-  return c === 'KWD' || c === 'BHD' || c === 'OMR' || c === 'JOD' ? 3 : 2;
+  return THREE_DP.has(currency.toUpperCase()) ? 3 : 2;
 }
 
 export async function dispatchVoiceOrderBill(args: {

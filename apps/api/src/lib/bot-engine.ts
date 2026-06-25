@@ -188,7 +188,7 @@ const SUPPRESSED_INTENT_KEYS = new Set([
   'company_info',
 ]);
 
-function extractIntents(
+export function extractIntents(
   conversationFlow: unknown,
   responseTemplates: unknown,
 ): { intent: string; label: string; response: string }[] {
@@ -260,11 +260,15 @@ export function formatOperatingHours(raw: unknown): string {
 // Currency-aware money formatter. KWD / BHD / OMR use 3 decimals
 // (1 unit = 1000 minor); USD / EUR / etc. use 2 (1 unit = 100 minor).
 // Returns e.g. "1.250 KWD" or "$4.50" depending on the currency.
+// ISO 4217 minor-unit = 3 currencies (1 major = 1000 minor); everything else
+// here is 2 (1 major = 100). Kept in sync with voice-payment.ts THREE_DP.
+const THREE_DECIMAL_CURRENCIES = new Set(['BHD', 'IQD', 'JOD', 'KWD', 'LYD', 'OMR', 'TND']);
 export function formatMoney(minor: number | null, currency: string | null): string {
   if (minor == null) return '';
   const code = (currency ?? 'USD').toUpperCase();
-  const minorPerMajor = code === 'KWD' || code === 'BHD' || code === 'OMR' || code === 'JOD' ? 1000 : 100;
-  const decimals = code === 'KWD' || code === 'BHD' || code === 'OMR' || code === 'JOD' ? 3 : 2;
+  const three = THREE_DECIMAL_CURRENCIES.has(code);
+  const minorPerMajor = three ? 1000 : 100;
+  const decimals = three ? 3 : 2;
   const major = (minor / minorPerMajor).toFixed(decimals);
   return `${major} ${code}`;
 }
@@ -276,8 +280,17 @@ export function formatMoney(minor: number | null, currency: string | null): stri
 //
 // `tx` is any Prisma-shaped client — we accept the wider type because the
 // concrete tenant transaction client narrows further than we need.
+// `opts.includePrivateFaqs` relaxes the FAQ gate to isPublished-only (ignoring
+// the public/private visibility toggle). Used by the VOICE path only: a phone
+// call can't render links or markdown, so the Public/Private switch — which
+// governs the public website + read API — shouldn't also starve the voicebot.
+// Default keeps the WhatsApp/Messenger/read-API behavior unchanged.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
+export async function gatherBotData(
+  tx: any,
+  orgId: string,
+  opts: { includePrivateFaqs?: boolean } = {},
+): Promise<BotData> {
   // Phase 10.1 — KB consolidated into FAQs. Every approved KnowledgeBase
   // row has been copied into `faqs` via migration; the bot now reads ONE
   // Q&A source. The kb[] slot in BotData stays for backward-compat with
@@ -334,7 +347,12 @@ export async function gatherBotData(tx: any, orgId: string): Promise<BotData> {
     }),
     tx.businessInfo.findFirst({ where: { organizationId: orgId } }),
     tx.fAQ.findMany({
-      where: { organizationId: orgId, isPublished: true, visibility: 'public' },
+      where: {
+        organizationId: orgId,
+        isPublished: true,
+        // Voice relaxes this to published-only (see opts.includePrivateFaqs).
+        ...(opts.includePrivateFaqs ? {} : { visibility: 'public' }),
+      },
       select: { id: true, question: true, answer: true },
       take: 30,
     }),

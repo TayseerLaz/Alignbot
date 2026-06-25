@@ -523,6 +523,10 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
           eventKind: 'faq_changed',
           payload: { id: f.id, action: 'created' },
         });
+        // F2: invalidate explicitly (matching the delete paths) so the voice/
+        // chatbot read caches don't serve a stale FAQ set in the brief window
+        // before the fire-and-forget webhook chain flushes it.
+        void invalidateReadCache(orgId);
         reply.code(201);
         return {
           data: {
@@ -581,6 +585,7 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
           eventKind: 'faq_changed',
           payload: { id: f.id, action: 'updated' },
         });
+        void invalidateReadCache(orgId); // F2 — see faq-create note
         return {
           data: {
             id: f.id,
@@ -725,6 +730,7 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
           eventKind: 'policy_changed',
           payload: { id: p.id, kind: p.kind },
         });
+        void invalidateReadCache(orgId); // F2 — see faq-create note
         return {
           data: {
             id: p.id,

@@ -39,6 +39,10 @@ export const phoneIntegrationSchema = z.object({
   name: z.string(),
   phoneNumber: z.string(),
   isActive: z.boolean(),
+  // Per-line AI switch. When false the line still records calls but the
+  // voicebot gets no persona/config (the AI brain is off for this number).
+  // Defaulted so older clients stay valid.
+  botEnabled: z.boolean().default(true),
   // Display-only prefix of the auto-issued voice key (e.g. "ak_live_abc123"),
   // or null if the key was revoked out-of-band.
   keyPrefix: z.string().nullable(),
@@ -59,6 +63,8 @@ export const updatePhoneIntegrationBodySchema = z
     name: z.string().trim().min(2).max(80).optional(),
     phoneNumber: rawPhoneNumber.optional(),
     isActive: z.boolean().optional(),
+    // Per-line AI bot on/off switch.
+    botEnabled: z.boolean().optional(),
   })
   .refine((b) => Object.keys(b).length > 0, 'Nothing to update.');
 export type UpdatePhoneIntegrationBody = z.infer<typeof updatePhoneIntegrationBodySchema>;

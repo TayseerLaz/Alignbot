@@ -30,6 +30,8 @@ export const NotificationKind = {
   org_suspended_for_billing: 'org_suspended_for_billing',
   // Cart flow — bot or operator creates a cart → bell ping for admins.
   cart_received: 'cart_received',
+  // Booking flow — a voice/chat booking lands → bell ping (voice has no thread).
+  booking_received: 'booking_received',
   // Payments (F-04) — a gateway webhook confirmed an order was paid.
   order_paid: 'order_paid',
   // Quota usage crossed a threshold (75/80/85/90/95/100% of a plan cap).

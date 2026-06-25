@@ -17,6 +17,7 @@ import { startDunningTick } from './jobs/dunning-tick.js';
 import { startImportWorker } from './jobs/import.js';
 import { startSequenceTick } from './jobs/sequence-tick.js';
 import { startInboxConsistencyTick } from './jobs/inbox-consistency.js';
+import { startVoiceCallReaperTick } from './jobs/voice-call-reaper.js';
 import { startSyncWorker } from './jobs/sync.js';
 import { startShopifyWorker } from './jobs/shopify.js';
 import { startUptimeProbe } from './jobs/uptime-probe.js';
@@ -144,6 +145,10 @@ async function main() {
   // inbox. Also repairs any pre-existing orphans on first run after boot.
   const inboxConsistencyTick = startInboxConsistencyTick();
   log.info({ name: inboxConsistencyTick.name }, 'tick started');
+  // S6 — voice-call reaper: hourly sweep that flips voice calls stuck
+  // in_progress (a lost end event) to 'dropped' so hung calls don't linger.
+  const voiceCallReaperTick = startVoiceCallReaperTick();
+  log.info({ name: voiceCallReaperTick.name }, 'tick started');
 
   const workers = [
     startImportWorker(),

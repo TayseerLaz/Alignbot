@@ -1,6 +1,7 @@
 // Voice prompt compiler — turns one tenant's BotData into a single system
 // prompt for the OpenAI Realtime speech model running inside the Aseer-time
-// voice media gateway.
+// voice media gateway, PLUS the structured order/booking form config the
+// gateway uses to build its submit_order / submit_booking tool parameters.
 //
 // Differences from the WhatsApp prompt in bot-engine.ts, on purpose:
 //   - One static prompt per tenant (no per-message top-K packing): the
@@ -8,10 +9,10 @@
 //     bot may need must be in the prompt up front. Catalog is capped hard.
 //   - Phone-call style rules: short spoken sentences, no lists, no emoji,
 //     no markdown, no [IMAGE:]/[BOOKING:]/[CART:] markers — none of those
-//     can be rendered on a voice call.
-//   - The escape hatch is the voicebot's `transfer_to_human` tool, so the
-//     prompt instructs the model to use it instead of WhatsApp escalation
-//     phrasing.
+//     can be rendered on a voice call. Orders/bookings are completed by
+//     CALLING the submit_order / submit_booking functions, not by emitting
+//     markers.
+//   - The escape hatch is the voicebot's `transfer_to_human` tool.
 //
 // Same non-negotiables as bot-engine.ts: never invent products, prices, or
 // facts not present in the data, and never put literal example product names
@@ -22,8 +23,11 @@
 // newlines collapsed on single-line fields so catalog data cannot fabricate
 // instruction lines — and per-field caps + a total budget keep the compiled
 // prompt well inside the realtime session's context.
+import type { VoiceFormField, voiceConfigSchema } from '@aligned/shared';
+import type { z } from 'zod';
+
 import type { BotData } from './bot-engine.js';
-import { formatMoney, formatOperatingHours } from './bot-engine.js';
+import { extractIntents, formatMoney, formatOperatingHours } from './bot-engine.js';
 import { stripHtmlForBot } from '../modules/catalog/shared.js';
 
 // Spoken-style variants of bot-engine's PERSONALITY_DESCRIPTIONS (those
@@ -56,8 +60,10 @@ const LANGUAGE_NAMES: Record<string, string> = {
 // gatherBotData caps its queries at 30 products / 30 services / 30 FAQs /
 // 10 policies (bot-engine.ts `take:` clauses) — these compile-side caps only
 // matter if those queries ever widen, but keeping them aligned documents the
-// real bound.
+// real bound. MAX_SERVICES added so services can't inflate the prompt faster
+// than products (parity fix — products were already capped, services weren't).
 const MAX_PRODUCTS = 30;
+const MAX_SERVICES = 30;
 const MAX_FAQS = 30;
 
 // Per-field character caps (phone prompts need facts, not essays) and the
@@ -68,12 +74,14 @@ const CAP = {
   tagline: 200,
   about: 1200,
   shortDescription: 200,
+  productDescription: 400,
   faqQuestion: 300,
   faqAnswer: 600,
   policy: 800,
   personality: 500,
   greeting: 300,
   fallback: 300,
+  phrasing: 500,
 };
 const TOTAL_BUDGET = 24_000;
 
@@ -142,20 +150,52 @@ function languageRule(languages: string | null | undefined): string {
   );
 }
 
-export interface CompiledVoiceConfig {
-  instructions: string;
-  greeting: string | null;
-  languages: string;
-  businessName: string | null;
+// A tenant chat greeting is only usable on a call if it's plain spoken text —
+// no emoji, markdown, URLs, or markers (those read terribly or break on a
+// voice line). When it passes we honor the operator's wording (e.g. a French
+// business that authored "Bonjour, bienvenue…"); otherwise we synthesize a
+// neutral English opener.
+function spokenSafeGreeting(raw: string | null | undefined): string | null {
+  const g = clean(raw, CAP.greeting);
+  if (!g) return null;
+  if (/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(g)) return null; // emoji
+  if (/[*_#`~|<>]|https?:\/\/|\[[A-Z_]+/.test(g)) return null; // markdown/URL/markers
+  if (g.length > 160) return null;
+  return g;
 }
 
-export function compileVoiceConfig(data: BotData, orgName: string): CompiledVoiceConfig {
+// Structured form config the gateway turns into dynamic tool params.
+type VoiceConfigWire = z.infer<typeof voiceConfigSchema>;
+
+function mapFields(
+  fields: { key: string; label: string; type: string; required: boolean; options?: string[] }[],
+): VoiceFormField[] {
+  return fields.map((f) => ({
+    key: f.key,
+    label: f.label,
+    type: f.type,
+    required: f.required,
+    ...(f.options && f.options.length > 0 ? { options: f.options } : {}),
+  }));
+}
+
+export interface CompiledVoiceConfig extends VoiceConfigWire {
+  // Sections dropped to fit TOTAL_BUDGET (F3 — surfaced so the route can log
+  // it instead of silently starving the bot of policies/FAQs).
+  truncatedSections: string[];
+}
+
+export function compileVoiceConfig(
+  data: BotData,
+  orgName: string,
+  // Precomputed open booking slots (operator-timezone labels). Empty = no
+  // availability configured; the bot then takes any requested time.
+  openSlots: string[] = [],
+): CompiledVoiceConfig {
   const { config, biz, faqs, policies, locations, contactChannels, services } = data;
   const businessName = clean(biz?.legalName, 120) || clean(orgName, 120) || 'this business';
   // Org currency wins over the per-row column, same as bot-engine
-  // (formatMoney(p.priceMinor, biz?.currency ?? p.currency)) — rows default
-  // to "USD" while imports often only set the org currency, and minor-unit
-  // math differs (KWD/BHD/OMR/JOD are 1000s, not 100s).
+  // (formatMoney(p.priceMinor, biz?.currency ?? p.currency)).
   const orgCurrency = biz?.currency ?? null;
 
   const personalityKey = config?.personality ?? config?.detectedTone ?? 'friendly';
@@ -177,26 +217,87 @@ export function compileVoiceConfig(data: BotData, orgName: string): CompiledVoic
       `- ${languageRule(config?.languages)}`,
       '- Keep every reply under 25 words. Natural spoken sentences only — no lists, no bullet points, no emoji, no markdown, nothing that only works in writing.',
       '- Greet ONCE at the very start of the call and never re-greet.',
-      '- Only state facts found in the BUSINESS DATA below. If the answer is not there, say you will have someone follow up and offer to take the caller\'s name and number — never invent or guess products, prices, hours, or policies.',
+      "- Only state facts found in the BUSINESS DATA below. If the answer is not there, say you will have someone follow up and offer to take the caller's name and number — never invent or guess products, prices, hours, or policies.",
       '- When taking an order, booking, or message, read back the key details (name, number, time, items) before confirming.',
       '- Never ask for card numbers or payment details. If the caller wants to pay, say a payment link will be sent.',
+      '- The caller speaks; they cannot press dial-pad keys to make selections — ask them to SAY their choices, never to "press" a number.',
       '- HUMAN TRANSFER (do this immediately — do not try to handle it yourself): the MOMENT the caller asks for a human, agent, person, representative, manager, or "someone real", OR has a complaint, refund, or sensitive issue, OR asks something not in the BUSINESS DATA — say ONE short line in their language like "Sure, connecting you to a colleague now, please hold", then immediately call the transfer_to_human function. Never promise to transfer without actually calling the function, and do not keep chatting after.',
     ].join('\n'),
   );
 
-  // Ordering — only advertised when the tenant has the shop enabled. The
-  // submit_order function is defined on the voicebot side; here we tell the
-  // model HOW and WHEN to use it.
-  if (data.shopForm) {
+  // ---- TAKING ORDERS — field-driven (parity with the WhatsApp shop flow) ----
+  const shop = data.shopForm;
+  if (shop) {
+    const cur = orgCurrency ?? shop.currency ?? 'USD';
+    const fieldLines = shop.fields.map((f) => {
+      const choices = f.options && f.options.length > 0 ? ` (say one of: ${f.options.join(', ')})` : '';
+      return `  • "${f.label}"${f.required ? '' : ' (optional)'}${choices}`;
+    });
+    const min = shop.minOrderMinor != null ? formatMoney(shop.minOrderMinor, cur) : null;
+    const fee = shop.deliveryFeeMinor != null ? formatMoney(shop.deliveryFeeMinor, cur) : null;
+    const freeAbove =
+      shop.freeDeliveryAboveMinor != null ? formatMoney(shop.freeDeliveryAboveMinor, cur) : null;
+    const confirmLine = clean(shop.confirmationMessage, 300);
+    const intents =
+      shop.intentKeywords && shop.intentKeywords.length > 0
+        ? shop.intentKeywords.join(', ')
+        : 'order, buy, delivery, menu';
+
     sections.push(
       [
         'TAKING ORDERS (you can place orders for callers):',
+        `- Enter order mode when the caller wants to order/buy (any of: ${intents}).`,
         '- Take orders ONLY for items in the menu under BUSINESS DATA, and quote prices ONLY from there. If a caller asks for something not on the menu, say it is unavailable — never invent items or prices.',
-        '- Collect: each item and its quantity, the customer\'s name, a WhatsApp number to send the bill to (default to the number they are calling from — read it back to confirm), and whether it is pickup or delivery (get the address if delivery).',
-        '- When the caller says that is everything, READ BACK the full order — every item with its quantity, the name, pickup or delivery, and the total — and ask them to confirm.',
-        '- ONLY after they clearly confirm, call the submit_order function with the items (each item\'s name and quantity), the customer name, the WhatsApp/phone number for the bill, and the fulfillment details. Do NOT say the order is placed until the function returns a confirmation.',
-        '- After the function confirms, tell the caller the order is placed, read the total, and let them know a payment link is being sent to their WhatsApp now. Never take card or payment-card numbers.',
-      ].join('\n'),
+        `- Prices are in ${cur}.${fee ? ` Delivery costs ${fee}${freeAbove ? `, free over ${freeAbove}` : ''} — state it in the summary.` : ''}`,
+        '- On each item the caller adds, confirm it with its price and the running subtotal so far.',
+        fieldLines.length > 0
+          ? `- Besides the items, collect these details, asking one or two at a time, using the exact wording:\n${fieldLines.join('\n')}`
+          : '- Besides the items, collect the customer\'s name.',
+        "- Also collect the customer's name and a WhatsApp number to send the bill to (default to the number they are calling from — read it back to confirm).",
+        min
+          ? `- Minimum order is ${min}. If the subtotal is below that, tell the caller and ask them to add more — do NOT place the order until it meets the minimum.`
+          : '',
+        '- When the caller says that is everything, READ BACK the full order — every item with its quantity, the details you collected, the delivery fee if any, and the GRAND TOTAL — and ask them to confirm.',
+        '- ONLY after they clearly confirm, call the submit_order function with the items (each item\'s name and quantity), the customer name, the WhatsApp/phone number, and EVERY detail you collected. Do NOT say the order is placed until the function returns a confirmation.',
+        '- If the caller says they want to ADD to an order they already have in progress (see CALLER CONTEXT if present), pass continueExisting=true to submit_order so it is merged, not duplicated.',
+        `- After the function confirms, tell the caller the order is placed, read the total, and let them know a payment link is being sent to their WhatsApp now.${confirmLine ? ` You may close with: "${confirmLine}"` : ''} Never take card or payment-card numbers.`,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  }
+
+  // ---- TAKING BOOKINGS — field-driven (parity with the WhatsApp booking flow)
+  const booking = data.bookingForm;
+  if (booking) {
+    const fieldLines = booking.fields.map(
+      (f) => `  • "${f.label}"${f.required ? '' : ' (optional)'}`,
+    );
+    const tz = booking.availability?.timezone || null;
+    const intents =
+      booking.intentKeywords && booking.intentKeywords.length > 0
+        ? booking.intentKeywords.join(', ')
+        : 'book, appointment, reservation, schedule, reserve';
+
+    sections.push(
+      [
+        'TAKING BOOKINGS (you can schedule appointments):',
+        `- Enter booking mode when the caller wants to book/schedule/reserve a "${booking.title}" (any of: ${intents}).`,
+        fieldLines.length > 0
+          ? `- Collect these details, asking one or two at a time, using the exact wording:\n${fieldLines.join('\n')}`
+          : '',
+        "- Also collect the caller's name and a phone number.",
+        openSlots.length > 0
+          ? `- For the date and time you may ONLY offer these open slots${tz ? ` (times are ${tz})` : ''}; say a few of them. If the caller asks for a time that is not in this list, tell them it is unavailable and offer the closest open one. NEVER invent or accept a time that is not listed:\n${openSlots
+              .slice(0, 8)
+              .map((s) => `  • ${s}`)
+              .join('\n')}`
+          : '- For the date and time, pin it down clearly: always confirm AM vs PM and resolve relative words ("tomorrow", "Friday") to an explicit date before continuing.',
+        '- Read back every detail and the chosen time, and ask the caller to confirm.',
+        '- ONLY after they clearly confirm, call the submit_booking function with every detail you collected (store the date/time as the exact slot you offered). Do NOT say it is booked until the function returns a confirmation.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
     );
   }
 
@@ -256,7 +357,12 @@ export function compileVoiceConfig(data: BotData, orgName: string): CompiledVoic
                   `${clean(v.name, 60)}${v.priceMinor != null ? ` ${formatMoney(v.priceMinor, orgCurrency ?? p.currency)}` : ''}`,
               )
               .join(', ');
-            const desc = clean(p.shortDescription, CAP.shortDescription);
+            // Prefer the full description (allergen / nutrition / spec detail a
+            // caller may ask about) then fall back to the short one — parity
+            // with the WhatsApp prompt, which uses description || shortDescription.
+            const desc =
+              cleanBlock(p.description, CAP.productDescription) ||
+              clean(p.shortDescription, CAP.shortDescription);
             return [
               `- ${clean(p.name, 120)}`,
               price ? ` — ${price}` : '',
@@ -273,6 +379,7 @@ export function compileVoiceConfig(data: BotData, orgName: string): CompiledVoic
     dataLines.push(
       'Services:\n' +
         services
+          .slice(0, MAX_SERVICES)
           .map((s) => {
             const price = formatMoney(s.basePriceMinor, orgCurrency ?? s.currency);
             const desc = clean(s.shortDescription, CAP.shortDescription);
@@ -310,6 +417,20 @@ export function compileVoiceConfig(data: BotData, orgName: string): CompiledVoic
 
   sections.push(dataLines.join('\n\n'));
 
+  // Operator-authored preferred phrasings (Conversation flow / response
+  // templates) — parity with the WhatsApp prompt, which embeds these so the
+  // bot answers labelled intents in the operator's on-brand wording.
+  const intents = extractIntents(config?.conversationFlow, config?.responseTemplates);
+  if (intents.length > 0) {
+    sections.push(
+      'PREFERRED PHRASINGS (use this wording when the caller asks about these topics; keep it spoken and short):\n' +
+        intents
+          .slice(0, 12)
+          .map((i) => `- ${clean(i.label, 80)}: ${clean(i.response, CAP.phrasing)}`)
+          .join('\n'),
+    );
+  }
+
   // Operator-authored escalation fallback wording, if any.
   const escalation = (config?.escalationRules ?? {}) as Record<string, unknown>;
   const fallback =
@@ -320,28 +441,59 @@ export function compileVoiceConfig(data: BotData, orgName: string): CompiledVoic
 
   // Total budget: drop the heaviest optional sections (policies first, then
   // FAQs) rather than serving a prompt that crowds out the conversation.
+  const truncatedSections: string[] = [];
   let instructions = sections.join('\n\n');
   if (instructions.length > TOTAL_BUDGET && policySection) {
     instructions = instructions.replace(`\n\n${policySection}`, '');
+    truncatedSections.push('policies');
   }
   if (instructions.length > TOTAL_BUDGET && faqSection) {
     instructions = instructions.replace(`\n\n${faqSection}`, '');
+    truncatedSections.push('faqs');
   }
   if (instructions.length > TOTAL_BUDGET) {
     instructions = instructions.slice(0, TOTAL_BUDGET);
+    truncatedSections.push('hard-cut');
   }
 
-  // Voice ALWAYS opens in English, then mirrors the caller (per the language
-  // rule). The tenant's BotConfig.greeting is authored for chat (often Arabizi
-  // / emoji), which would force a non-English open and can't be spoken cleanly,
-  // so we synthesize a short spoken English greeting from the business name
-  // instead. (WhatsApp keeps its own greeting — this only affects voice.)
-  const greeting = `Hello, thanks for calling ${businessName}. How can I help you today?`;
+  // Voice opens with the operator's spoken greeting when it's call-safe,
+  // otherwise a synthesized English opener (the language rule then mirrors the
+  // caller). The tenant's BotConfig.greeting is authored for chat (often
+  // Arabizi / emoji), so it only wins when spokenSafeGreeting accepts it.
+  const greeting =
+    spokenSafeGreeting(config?.greeting) ??
+    `Hello, thanks for calling ${businessName}. How can I help you today?`;
+
+  // Structured form config for the gateway's dynamic tool params.
+  const orderForm: VoiceConfigWire['orderForm'] = shop
+    ? {
+        title: clean(shop.title, 120) || 'Order',
+        currency: orgCurrency ?? shop.currency ?? 'USD',
+        fields: mapFields(shop.fields),
+        minOrderMinor: shop.minOrderMinor,
+        deliveryFeeMinor: shop.deliveryFeeMinor,
+        freeDeliveryAboveMinor: shop.freeDeliveryAboveMinor,
+        confirmationMessage: clean(shop.confirmationMessage, 300),
+        intentKeywords: shop.intentKeywords ?? [],
+      }
+    : null;
+  const bookingFormWire: VoiceConfigWire['bookingForm'] = booking
+    ? {
+        title: clean(booking.title, 120) || 'Booking',
+        fields: mapFields(booking.fields),
+        intentKeywords: booking.intentKeywords ?? [],
+        timezone: booking.availability?.timezone ?? null,
+        openSlots: openSlots.slice(0, 8),
+      }
+    : null;
 
   return {
     instructions,
     greeting,
     languages: config?.languages ?? 'en',
     businessName,
+    orderForm,
+    bookingForm: bookingFormWire,
+    truncatedSections,
   };
 }

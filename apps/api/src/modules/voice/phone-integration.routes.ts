@@ -40,6 +40,7 @@ type LineRow = {
   name: string;
   phoneNumber: string;
   isActive: boolean;
+  botEnabled: boolean;
   lastCallAt: Date | null;
   createdAt: Date;
   apiKey: { prefix: string; revokedAt: Date | null } | null;
@@ -52,6 +53,7 @@ function toDto(line: LineRow) {
     name: line.name,
     phoneNumber: line.phoneNumber,
     isActive: line.isActive,
+    botEnabled: line.botEnabled,
     // A revoked key can't authenticate, so surface it as "no working key".
     keyPrefix: line.apiKey && !line.apiKey.revokedAt ? line.apiKey.prefix : null,
     lastCallAt: line.lastCallAt?.toISOString() ?? null,
@@ -186,7 +188,7 @@ export default async function phoneIntegrationRoutes(app: FastifyInstance) {
     {
       schema: {
         tags: ['phone-integrations'],
-        summary: 'Update a phone line (name / number / active).',
+        summary: 'Update a phone line (name / number / active / AI bot).',
         params: z.object({ id: uuidSchema }),
         body: updatePhoneIntegrationBodySchema,
         response: { 200: itemEnvelopeSchema(phoneIntegrationSchema) },
@@ -208,6 +210,7 @@ export default async function phoneIntegrationRoutes(app: FastifyInstance) {
                 ? { phoneNumber: normalizePhoneNumber(b.phoneNumber) }
                 : {}),
               ...(b.isActive !== undefined ? { isActive: b.isActive } : {}),
+              ...(b.botEnabled !== undefined ? { botEnabled: b.botEnabled } : {}),
             },
             include: LINE_INCLUDE,
           });

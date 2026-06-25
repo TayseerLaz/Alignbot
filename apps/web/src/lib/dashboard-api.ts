@@ -330,6 +330,20 @@ export async function getReplyQuality(): Promise<ReplyQualityData> {
   return res.data;
 }
 
+// ---------- 14b. Orders by channel · 7d ------------------------------------
+
+export interface OrdersByChannelData {
+  currency: string;
+  channels: { channel: string; orders: number; revenueMinor: number }[];
+}
+
+export async function getOrdersByChannel(): Promise<OrdersByChannelData> {
+  const res = await api.get<{ data: OrdersByChannelData }>(
+    '/api/v1/dashboard/widgets/orders-by-channel',
+  );
+  return res.data;
+}
+
 // ---------- 14. Voice calls · 7d -------------------------------------------
 
 export interface VoiceData {

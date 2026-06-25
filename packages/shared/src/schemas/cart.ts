@@ -26,6 +26,10 @@ export const cartItemSchema = z.object({
   unitPriceMinor: z.number().int().nonnegative(),
   lineTotalMinor: z.number().int().nonnegative(),
   notes: z.string().nullable(),
+  // Voice orders: a spoken item that didn't resolve to a catalog product lands
+  // on the order at price 0 with this flag set, for the operator to price.
+  // Optional + defaulted so older clients / non-voice carts stay valid.
+  needsPricing: z.boolean().default(false),
   createdAt: z.string().datetime(),
 });
 export type CartItemDto = z.infer<typeof cartItemSchema>;
@@ -52,6 +56,13 @@ export const cartSchema = z.object({
   status: z.enum(CART_STATUSES),
   notes: z.string().nullable(),
   itemsCount: z.number().int().nonnegative(),
+  // Origin channel: 'whatsapp' | 'messenger' | 'instagram' | 'voice'. Defaulted
+  // so older clients (and carts created before the column existed) stay valid.
+  channel: z.string().default('whatsapp'),
+  // For voice carts: the phone line the order came in on + its display name
+  // (so the UI can show "via <line>"). Null for non-voice / when unresolved.
+  phoneIntegrationId: uuidSchema.nullable().default(null),
+  phoneIntegrationName: z.string().nullable().default(null),
   // Payment confirmation (F-04). paymentStatus: null = no online payment,
   // 'pending' = link issued, 'paid' = gateway webhook confirmed.
   paymentProvider: z.string().nullable(),

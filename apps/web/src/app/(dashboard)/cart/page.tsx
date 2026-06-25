@@ -1,7 +1,15 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Filter, MessageSquare, ShoppingCart, Trash2 } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  Filter,
+  MessageSquare,
+  PhoneCall,
+  ShoppingCart,
+  Trash2,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
@@ -51,6 +59,7 @@ interface CartItem {
   unitPriceMinor: number;
   lineTotalMinor: number;
   notes: string | null;
+  needsPricing: boolean;
   createdAt: string;
 }
 
@@ -68,6 +77,9 @@ interface Cart {
   status: Status;
   notes: string | null;
   itemsCount: number;
+  channel: string;
+  phoneIntegrationId: string | null;
+  phoneIntegrationName: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -109,6 +121,32 @@ function itemsSummary(items: CartItem[]): string {
 
 function StatusBadge({ status }: { status: Status }) {
   return <Badge variant={STATUS_BADGE[status]}>{status}</Badge>;
+}
+
+// Origin-channel pill. Voice orders get a distinct badge (with the originating
+// phone line when known) so operators can tell a phone order at a glance.
+const CHANNEL_LABELS: Record<string, string> = {
+  whatsapp: 'WhatsApp',
+  messenger: 'Messenger',
+  instagram: 'Instagram',
+  voice: 'Voice',
+};
+
+function ChannelBadge({ cart }: { cart: Cart }) {
+  if (cart.channel === 'voice') {
+    return (
+      <Badge variant="brand" className="gap-1">
+        <PhoneCall className="size-3" />
+        Voice{cart.phoneIntegrationName ? ` · ${cart.phoneIntegrationName}` : ''}
+      </Badge>
+    );
+  }
+  // WhatsApp is the default origin; only surface a pill for the non-default
+  // channels so the common case stays uncluttered.
+  if (cart.channel && cart.channel !== 'whatsapp') {
+    return <Badge variant="muted">{CHANNEL_LABELS[cart.channel] ?? cart.channel}</Badge>;
+  }
+  return null;
 }
 
 export default function CartPage() {
@@ -293,7 +331,10 @@ function CartRow({
           {new Date(cart.createdAt).toLocaleString()}
         </td>
         <td className="px-6 py-4">
-          <div className="font-medium">{cart.customerName ?? cart.customerPhone}</div>
+          <div className="flex items-center gap-2">
+            <span className="font-medium">{cart.customerName ?? cart.customerPhone}</span>
+            <ChannelBadge cart={cart} />
+          </div>
           <div className="font-mono text-[11px] text-foreground-subtle">{cart.customerPhone}</div>
           {cart.threadId ? (
             <Link
@@ -312,6 +353,11 @@ function CartRow({
           <div className="mt-0.5 line-clamp-2 text-xs text-foreground-muted">
             {itemsSummary(cart.items)}
           </div>
+          {cart.items.some((it) => it.needsPricing) ? (
+            <Badge variant="warning" className="mt-1">
+              Needs pricing
+            </Badge>
+          ) : null}
         </td>
         <td className="whitespace-nowrap px-6 py-4 text-right font-mono text-sm">
           {formatMoney(cart.totalMinor, cart.currency)}
@@ -369,7 +415,12 @@ function CartRow({
                     {cart.items.map((it) => (
                       <tr key={it.id} className="border-b border-border/50 last:border-0">
                         <td className="py-2">
-                          <div className="font-medium">{it.name}</div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium">{it.name}</span>
+                            {it.needsPricing ? (
+                              <Badge variant="warning">Needs pricing</Badge>
+                            ) : null}
+                          </div>
                           {it.variantLabel ? (
                             <div className="text-[10px] text-foreground-subtle">
                               {it.variantLabel}

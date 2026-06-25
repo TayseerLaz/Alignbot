@@ -195,6 +195,9 @@ enum NotificationKind {
   // Cart flow — pings admins when a new cart lands so the inbox stays
   // out of the kitchen's way.
   cart_received
+  // Booking flow — voice/chat booking lands → bell ping (voice has no inbox
+  // thread, so the notification is the only operator surface).
+  booking_received
   // Payment confirmation (F-04) — a gateway webhook confirmed an order paid.
   order_paid
   // Quota usage crossed a threshold (75/80/85/90/95/100% of a plan cap).
@@ -1560,6 +1563,13 @@ model Booking {
   id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId     String    @map("organization_id") @db.Uuid
   threadId           String?   @map("thread_id") @db.Uuid
+  // Origin channel: 'whatsapp' | 'messenger' | 'instagram' | 'voice'. Voice
+  // bookings have threadId=null; this lets /bookings badge them and the reminder
+  // tick skip voice-origin rows (callers aren't WhatsApp-reachable).
+  channel            String    @default("whatsapp")
+  // For voice bookings, the originating call's UUID (links the booking back to
+  // its transcript). Free text (AudioSocket UUID), not an FK.
+  callUuid           String?   @map("call_uuid")
   customerPhone      String    @map("customer_phone")
   customerName       String?   @map("customer_name")
   // Frozen snapshot of the form at booking time:
@@ -1607,6 +1617,18 @@ model Cart {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId String   @map("organization_id") @db.Uuid
   threadId       String?  @map("thread_id") @db.Uuid
+  // Origin channel of the order: 'whatsapp' | 'messenger' | 'instagram' | 'voice'.
+  // Voice orders have threadId=null, so before this column they were only
+  // distinguishable by a notes string — unfilterable + unreportable. Defaults to
+  // 'whatsapp' so historical rows + the WhatsApp hot path are unaffected.
+  channel        String   @default("whatsapp")
+  // For voice orders, the phone line (DID) the call came in on, so operators can
+  // route fulfillment by line. SetNull so deleting a line keeps order history.
+  phoneIntegrationId String? @map("phone_integration_id") @db.Uuid
+  // For voice orders, the originating call's UUID — links the order to its
+  // transcript AND makes order submission idempotent (a retried submit_order
+  // with the same callUuid returns the existing order instead of duplicating).
+  callUuid       String?  @map("call_uuid")
   customerPhone  String   @map("customer_phone")
   customerName   String?  @map("customer_name")
   // Frozen snapshot of the shopForm's `fields[]` answers — same shape
@@ -1637,12 +1659,17 @@ model Cart {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  thread       WhatsAppThread? @relation(fields: [threadId], references: [id], onDelete: SetNull)
-  items        CartItem[]
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  thread           WhatsAppThread?   @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  phoneIntegration PhoneIntegration? @relation(fields: [phoneIntegrationId], references: [id], onDelete: SetNull)
+  items            CartItem[]
 
   @@index([organizationId, status, createdAt(sort: Desc)])
   @@index([organizationId, customerPhone])
+  // Per-channel analytics + filtering (voice vs whatsapp vs messenger orders).
+  @@index([organizationId, channel, createdAt(sort: Desc)], map: "carts_org_channel_created_idx")
+  // Voice order idempotency + traceability lookup by originating call.
+  @@index([organizationId, callUuid], map: "carts_org_call_uuid_idx")
   // Fast webhook correlation: look up the order by gateway + external ref.
   @@index([organizationId, paymentProvider, paymentRef])
   @@map("carts")
@@ -1664,6 +1691,10 @@ model CartItem {
   quantity       Int      @default(1)
   unitPriceMinor Int      @map("unit_price_minor")
   lineTotalMinor Int      @map("line_total_minor")
+  // True when this line came from a voice order whose spoken name could NOT be
+  // matched to the catalog: it's stored at price 0 and the operator must price
+  // it before fulfilment. Distinguishes "needs pricing" from a genuinely-free item.
+  needsPricing   Boolean  @default(false) @map("needs_pricing")
   notes          String?
   createdAt      DateTime @default(now()) @map("created_at")
 
@@ -2263,6 +2294,7 @@ model Contact {
   tags         ContactTag[]
   recipients   BroadcastRecipient[]
   enrollments  SequenceEnrollment[]
+  voiceCalls   VoiceCall[]
 
   @@unique([organizationId, phoneE164])
   @@index([organizationId, createdAt(sort: Desc)])
@@ -2732,6 +2764,13 @@ model VoiceCall {
   // Caller ID exactly as the PBX/gateway delivered it (format varies per
   // trunk — may or may not be E.164).
   callerId       String?          @map("caller_id")
+  // Caller ID run through normalizePhoneNumber once at call start, so cross-call
+  // history + Contact linkage don't re-normalize per row. Null for withheld /
+  // anonymous callers (normalizes to < 2 digits).
+  callerPhoneNormalized String?   @map("caller_phone_normalized")
+  // The Contact this caller resolved to (by normalized phone), when known.
+  // SetNull so deleting a contact doesn't erase call history.
+  contactId      String?          @map("contact_id") @db.Uuid
   dialedExten    String?          @map("dialed_exten")
   outcome        VoiceCallOutcome @default(in_progress)
   // Why the call ended the way it did: the model's stated transfer reason on
@@ -2750,11 +2789,13 @@ model VoiceCall {
 
   organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   phoneIntegration PhoneIntegration? @relation(fields: [phoneIntegrationId], references: [id], onDelete: SetNull)
+  contact          Contact?          @relation(fields: [contactId], references: [id], onDelete: SetNull)
   turns            VoiceCallTurn[]
 
   @@unique([organizationId, callUuid])
   @@index([organizationId, startedAt(sort: Desc)])
   @@index([phoneIntegrationId, startedAt(sort: Desc)])
+  @@index([organizationId, callerPhoneNormalized, startedAt(sort: Desc)], map: "voice_calls_org_caller_norm_idx")
   @@map("voice_calls")
 }
 
@@ -2800,6 +2841,10 @@ model PhoneIntegration {
   // Normalized dialed number (DID). Matched against the call's dialed exten.
   phoneNumber    String    @map("phone_number")
   isActive       Boolean   @default(true) @map("is_active")
+  // Per-line AI switch (mirrors WhatsAppChannel.botEnabled). When false the
+  // voicebot still records the call but loadVoiceConfig returns no persona, so
+  // the line answers without the AI brain. Defaults true (no behavior change).
+  botEnabled     Boolean   @default(true) @map("bot_enabled")
   // The voice-scoped API key auto-issued for this line. SetNull if the key is
   // revoked out-of-band; the line keeps working in gateway mode (which doesn't
   // use the key) and can be re-keyed.
@@ -2812,6 +2857,7 @@ model PhoneIntegration {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   apiKey       ApiKey?      @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
   calls        VoiceCall[]
+  carts        Cart[]
 
   @@unique([phoneNumber])
   @@index([organizationId, isActive])

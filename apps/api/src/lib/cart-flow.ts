@@ -275,11 +275,24 @@ export async function captureCart(args: {
   customerId: string;
   customerName: string | null;
   cartMarkerPayload: {
-    items?: { sku?: string; name?: string; quantity?: number; unitPriceMinor?: number; notes?: string }[];
+    items?: {
+      sku?: string;
+      name?: string;
+      quantity?: number;
+      unitPriceMinor?: number;
+      notes?: string;
+      // Voice: spoken item that couldn't be matched to the catalog (price 0,
+      // operator must price it). Distinguishes from a genuinely-free item.
+      needsPricing?: boolean;
+    }[];
     fields?: Record<string, unknown>;
   };
   shopForm: ShopFormLite;
   products: CatalogProductLite[];
+  // Origin channel + voice-call attribution (defaults preserve WhatsApp behavior).
+  channel?: string;
+  phoneIntegrationId?: string | null;
+  callUuid?: string | null;
 }): Promise<{ id: string; itemsCount: number; totalMinor: number; currency: string } | null> {
   return withTenant(args.orgId, async (tx) => {
     const draft = await tx.cart.findFirst({
@@ -293,6 +306,7 @@ export async function captureCart(args: {
       name: string;
       quantity: number;
       unitPriceMinor: number;
+      needsPricing: boolean;
     }[] = [];
     if (draft && draft.items.length > 0) {
       for (const it of draft.items) {
@@ -302,6 +316,7 @@ export async function captureCart(args: {
           name: it.name,
           quantity: it.quantity,
           unitPriceMinor: it.unitPriceMinor,
+          needsPricing: false,
         });
       }
     } else {
@@ -316,6 +331,7 @@ export async function captureCart(args: {
           name,
           quantity: Math.max(1, Math.floor(Number(it.quantity ?? 1))),
           unitPriceMinor: Math.max(0, Math.floor(Number(it.unitPriceMinor ?? matched?.priceMinor ?? 0))),
+          needsPricing: it.needsPricing === true,
         });
       }
     }
@@ -333,6 +349,13 @@ export async function captureCart(args: {
       value: (args.cartMarkerPayload.fields ?? {})[f.key] ?? null,
     }));
 
+    // Origin metadata — only set when provided (voice path), so the WhatsApp /
+    // Messenger callers keep the column defaults (channel='whatsapp').
+    const originData: Record<string, unknown> = {};
+    if (args.channel) originData.channel = args.channel;
+    if (args.phoneIntegrationId !== undefined) originData.phoneIntegrationId = args.phoneIntegrationId;
+    if (args.callUuid !== undefined) originData.callUuid = args.callUuid;
+
     let cartId: string;
     if (draft) {
       await tx.cart.update({
@@ -346,6 +369,7 @@ export async function captureCart(args: {
           totalMinor,
           itemsCount,
           currency: args.shopForm.currency,
+          ...originData,
         },
       });
       cartId = draft.id;
@@ -362,6 +386,7 @@ export async function captureCart(args: {
             quantity: it.quantity,
             unitPriceMinor: it.unitPriceMinor,
             lineTotalMinor: it.quantity * it.unitPriceMinor,
+            needsPricing: it.needsPricing,
           })),
         });
       }
@@ -379,6 +404,7 @@ export async function captureCart(args: {
           itemsCount,
           currency: args.shopForm.currency,
           status: 'new',
+          ...originData,
           items: {
             createMany: {
               data: lineItems.map((it) => ({
@@ -389,6 +415,7 @@ export async function captureCart(args: {
                 quantity: it.quantity,
                 unitPriceMinor: it.unitPriceMinor,
                 lineTotalMinor: it.quantity * it.unitPriceMinor,
+                needsPricing: it.needsPricing,
               })),
             },
           },

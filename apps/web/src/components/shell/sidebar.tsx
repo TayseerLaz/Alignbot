@@ -15,6 +15,7 @@ import {
   type LucideIcon,
   Megaphone,
   Package,
+  PhoneCall,
   Settings,
   ShieldCheck,
   ShoppingCart,
@@ -71,6 +72,7 @@ const groups: NavGroup[] = [
     label: 'Operate',
     items: [
       { href: '/inbox-full', label: 'Inbox', icon: Inbox, badgeKey: 'inboxEscalated', newTab: true },
+      { href: '/voice-calls', label: 'Voice calls', icon: PhoneCall },
       { href: '/contacts', label: 'Contacts', icon: ContactIcon },
       { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone },
       // Canned replies moved INTO the inbox (a dialog from the inbox header),

@@ -37,6 +37,7 @@ import { ConversionFunnelWidget } from './widgets/conversion-funnel';
 import { InboxSnapshotWidget } from './widgets/inbox-snapshot';
 import { KpiStripWidget } from './widgets/kpi-strip';
 import { OnboardingChecklistWidget } from './widgets/onboarding-checklist';
+import { OrdersByChannelWidget } from './widgets/orders-by-channel';
 import { OutreachCampaignsWidget } from './widgets/outreach-campaigns';
 import { RecentActivityWidget } from './widgets/recent-activity';
 import { ReplyQualityWidget } from './widgets/reply-quality';
@@ -57,7 +58,8 @@ export type WidgetId =
   | 'channel-mix'
   | 'audience'
   | 'reply-quality'
-  | 'voice-calls';
+  | 'voice-calls'
+  | 'orders-by-channel';
 
 /**
  * Where the widget lives on the page. The dashboard places `full`
@@ -210,6 +212,15 @@ export const WIDGETS: WidgetDef[] = [
     slot: 'half',
     defaultOn: false,
     Component: VoiceCallsWidget,
+  },
+  {
+    id: 'orders-by-channel',
+    title: 'Orders by channel · 7d',
+    description: 'Orders + revenue broken out by WhatsApp / Messenger / Instagram / voice.',
+    icon: ShoppingBag,
+    slot: 'half',
+    defaultOn: false,
+    Component: OrdersByChannelWidget,
   },
 ];
 

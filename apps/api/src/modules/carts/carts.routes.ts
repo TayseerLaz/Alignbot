@@ -42,6 +42,7 @@ function serializeItem(it: NonNullable<CartItemRow>) {
     unitPriceMinor: it.unitPriceMinor,
     lineTotalMinor: it.lineTotalMinor,
     notes: it.notes,
+    needsPricing: it.needsPricing ?? false,
     createdAt: it.createdAt.toISOString(),
   };
 }
@@ -49,6 +50,8 @@ function serializeItem(it: NonNullable<CartItemRow>) {
 function serializeCart(
   c: NonNullable<CartRow>,
   items: NonNullable<CartItemRow>[],
+  // Display name for the cart's originating phone line, when known (voice).
+  phoneIntegrationName: string | null = null,
 ) {
   return {
     id: c.id,
@@ -64,6 +67,9 @@ function serializeCart(
     status: c.status as (typeof CART_STATUSES)[number],
     notes: c.notes,
     itemsCount: c.itemsCount,
+    channel: c.channel ?? 'whatsapp',
+    phoneIntegrationId: c.phoneIntegrationId,
+    phoneIntegrationName,
     paymentProvider: c.paymentProvider,
     paymentStatus: c.paymentStatus,
     paidAt: c.paidAt ? c.paidAt.toISOString() : null,
@@ -143,8 +149,28 @@ export default async function cartsRoutes(app: FastifyInstance) {
           arr.push(it);
           byCart.set(it.cartId, arr);
         }
+        // Resolve originating phone-line names for voice carts on this page.
+        const lineIds = Array.from(
+          new Set(page.map((c) => c.phoneIntegrationId).filter((id): id is string => !!id)),
+        );
+        const lineNames = lineIds.length
+          ? new Map(
+              (
+                await tx.phoneIntegration.findMany({
+                  where: { id: { in: lineIds } },
+                  select: { id: true, name: true },
+                })
+              ).map((l) => [l.id, l.name]),
+            )
+          : new Map<string, string>();
         return {
-          data: page.map((c) => serializeCart(c, byCart.get(c.id) ?? [])),
+          data: page.map((c) =>
+            serializeCart(
+              c,
+              byCart.get(c.id) ?? [],
+              c.phoneIntegrationId ? lineNames.get(c.phoneIntegrationId) ?? null : null,
+            ),
+          ),
           nextCursor: hasMore ? encodeCursor({ id: page[page.length - 1]!.id }) : null,
         };
       });
@@ -171,7 +197,13 @@ export default async function cartsRoutes(app: FastifyInstance) {
           where: { cartId: c.id },
           orderBy: { createdAt: 'asc' },
         });
-        return { data: serializeCart(c, items) };
+        const line = c.phoneIntegrationId
+          ? await tx.phoneIntegration.findFirst({
+              where: { id: c.phoneIntegrationId },
+              select: { name: true },
+            })
+          : null;
+        return { data: serializeCart(c, items, line?.name ?? null) };
       });
     },
   );

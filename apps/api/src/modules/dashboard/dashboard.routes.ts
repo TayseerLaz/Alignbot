@@ -895,6 +895,71 @@ export default async function dashboardRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- GET /dashboard/widgets/orders-by-channel --------------------
+  // Orders + revenue broken out by the cart's origin channel (whatsapp /
+  // messenger / instagram / voice) over the last 7 days. "Order" = a captured
+  // cart in a real state ('new' | 'confirmed' | 'completed'); drafts +
+  // cancelled are excluded (same rule as the sales widget). Revenue is summed
+  // per channel in minor units — the web layer formats with the dominant
+  // currency (mixing currencies in one bar would be meaningless, but a single
+  // org is almost always single-currency, so this stays honest in practice).
+  r.get(
+    '/dashboard/widgets/orders-by-channel',
+    {
+      schema: {
+        tags: ['dashboard'],
+        summary: 'Orders + revenue by channel (last 7 days) for the dashboard widget.',
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              currency: z.string(),
+              channels: z.array(
+                z.object({
+                  channel: z.string(),
+                  orders: z.number().int(),
+                  revenueMinor: z.number().int(),
+                }),
+              ),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const data = await app.tenant(req, async (tx) => {
+        const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const [grp, byCurrency] = await Promise.all([
+          tx.cart.groupBy({
+            by: ['channel'],
+            where: { status: { in: ORDER_STATES }, createdAt: { gte: weekAgo } },
+            _sum: { totalMinor: true },
+            _count: { _all: true },
+          }),
+          // Dominant currency for display (the one carrying the most orders).
+          tx.cart.groupBy({
+            by: ['currency'],
+            where: { status: { in: ORDER_STATES }, createdAt: { gte: weekAgo } },
+            _count: { _all: true },
+          }),
+        ]);
+        let dom = byCurrency[0] ?? null;
+        for (const g of byCurrency) {
+          if (g._count._all > (dom?._count._all ?? 0)) dom = g;
+        }
+        const channels = grp
+          .map((g) => ({
+            channel: g.channel,
+            orders: g._count._all,
+            revenueMinor: g._sum.totalMinor ?? 0,
+          }))
+          .sort((a, b) => b.orders - a.orders);
+        return { currency: dom?.currency ?? 'USD', channels };
+      });
+      return { data };
+    },
+  );
+
   // ---------- GET /dashboard/widgets/audience -----------------------------
   // Contact-list health + compliance: total, new this week, opted-out, and
   // operator-blocked. The web layer derives the opt-out rate. Soft-deleted

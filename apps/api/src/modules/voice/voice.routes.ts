@@ -22,9 +22,12 @@ import {
   listEnvelopeSchema,
   normalizePhoneNumber,
   startVoiceCallBodySchema,
+  submitVoiceBookingBodySchema,
   submitVoiceOrderBodySchema,
   uuidSchema,
+  voiceBookingResultSchema,
   voiceCallDetailSchema,
+  voiceCallerContextSchema,
   voiceCallSchema,
   voiceCallUuidSchema,
   voiceConfigSchema,
@@ -35,16 +38,38 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
-import { gatherBotData } from '../../lib/bot-engine.js';
+import { formatMoney, gatherBotData } from '../../lib/bot-engine.js';
+import { computeOpenSlots } from '../../lib/booking-slots.js';
 import { withRlsBypass, withTenant } from '../../lib/db.js';
 import type { Tx } from '../../lib/db.js';
 import { badRequest, conflict, forbidden, notFound } from '../../lib/errors.js';
 import { readCacheGet, readCacheSet } from '../../lib/read-cache.js';
+import { createVoiceBooking } from '../../lib/voice-booking.js';
 import { createVoiceOrder } from '../../lib/voice-order.js';
 import { compileVoiceConfig } from '../../lib/voice-prompt.js';
 import { decodeCursor, encodeCursor } from '../catalog/shared.js';
 
 type VoiceConfigEnvelope = { data: z.infer<typeof voiceConfigSchema> };
+
+// Multi-locale opt-out keywords (mirrors the WhatsApp / Messenger STOP_RE). A
+// caller who SAYS a lone "stop" / "unsubscribe" / "إيقاف" on a call opts out of
+// follow-up messaging; the end-of-call transcript scan flips optedOutAt.
+const STOP_RE =
+  /\b(stop|unsubscribe|opt\s*out|إيقاف|اوقف|الغاء|توقف)\b/i;
+
+// A caller phone is usable only if it normalises to a real number. Withheld /
+// anonymous caller IDs ("anonymous", "Restricted", "Private", "unknown") strip
+// to an empty/too-short string; we must NOT store '' as a customer key (it would
+// collide every withheld caller onto one Contact). Falls back to a per-call
+// placeholder so the order is still traceable to its call.
+function resolveCallerPhone(raw: string | null | undefined, callUuid: string): {
+  phone: string;
+  withheld: boolean;
+} {
+  const n = raw ? normalizePhoneNumber(raw) : '';
+  if (n.length >= 2) return { phone: n, withheld: false };
+  return { phone: `voice_${callUuid.slice(0, 8)}`, withheld: true };
+}
 
 // Compile (or fetch from the 60s-fresh / 5min-stale Redis cache) the org's
 // realtime voice config. Shared by GET /voice/config (api-key) and
@@ -52,6 +77,7 @@ type VoiceConfigEnvelope = { data: z.infer<typeof voiceConfigSchema> };
 // config. The cache key is the same one catalog writes flush.
 async function loadVoiceConfig(
   orgId: string,
+  log?: { warn: (o: unknown, m?: string) => void },
 ): Promise<{ value: VoiceConfigEnvelope; cache: 'HIT' | 'STALE' | 'MISS' }> {
   // Per-tenant access control: ALIGNED-admin can turn the phone/voice
   // integration off. With it off the voicebot gets no persona/config, so it
@@ -68,13 +94,49 @@ async function loadVoiceConfig(
   }
   const hit = await readCacheGet<VoiceConfigEnvelope>(orgId, 'voice-config', null);
   if (hit && !hit.stale) return { value: hit.value, cache: 'HIT' };
-  const value = await withTenant(orgId, async (tx) => {
+  // Gather grounding (FAQ gate RELAXED for voice — published-only, since a call
+  // can't render the public/private distinction) + org name in one tenant tx;
+  // booking slots are computed AFTER (computeOpenSlots opens its own tx).
+  const gathered = await withTenant(orgId, async (tx) => {
     const org = await tx.organization.findUnique({ where: { id: orgId }, select: { name: true } });
-    const data = await gatherBotData(tx, orgId);
-    return { data: compileVoiceConfig(data, org?.name ?? 'this business') };
+    const data = await gatherBotData(tx, orgId, { includePrivateFaqs: true });
+    return { orgName: org?.name ?? 'this business', data };
   });
+  let openSlots: string[] = [];
+  const av = gathered.data.bookingForm?.availability;
+  if (av?.enabled) {
+    openSlots = (await computeOpenSlots(orgId, av, new Date(), 8)).map((s) => s.label);
+  }
+  const compiled = compileVoiceConfig(gathered.data, gathered.orgName, openSlots);
+  const { truncatedSections, ...wire } = compiled;
+  if (truncatedSections.length > 0 && log) {
+    log.warn(
+      { orgId, dropped: truncatedSections },
+      'voice config exceeded budget; sections dropped',
+    );
+  }
+  const value: VoiceConfigEnvelope = { data: wire };
   await readCacheSet(orgId, 'voice-config', null, value);
   return { value, cache: hit?.stale ? 'STALE' : 'MISS' };
+}
+
+// Per-line bot switch (M1): the voicebot calls /voice/config with the LINE's
+// API key. If that line has botEnabled=false the AI brain is off for it (the
+// line still records calls, but gets no persona). Checked per-request (not
+// cached) so toggling takes effect immediately. Returns the line id if found.
+async function lineBotGate(apiKeyId: string): Promise<void> {
+  const line = await withRlsBypass((tx) =>
+    tx.phoneIntegration.findFirst({
+      where: { apiKeyId },
+      select: { botEnabled: true, isActive: true },
+    }),
+  );
+  if (line && (!line.botEnabled || !line.isActive)) {
+    throw forbidden(
+      ApiErrorCode.FEATURE_DISABLED,
+      'The AI bot is turned off for this phone line.',
+    );
+  }
 }
 
 // Resolved identity for a call-lifecycle write. Two credentials map onto it:
@@ -167,8 +229,9 @@ export default async function voiceRoutes(app: FastifyInstance) {
     },
     async (req, reply) => {
       requireScope(req, 'voice:config');
+      await lineBotGate(req.apiKey!.id);
       const orgId = req.apiKey!.organizationId;
-      const { value, cache } = await loadVoiceConfig(orgId);
+      const { value, cache } = await loadVoiceConfig(orgId, req.log);
       reply.header('x-cache', cache);
       return value;
     },
@@ -189,7 +252,34 @@ export default async function voiceRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const { orgId, phoneIntegrationId } = await authenticateVoiceWrite(app, req);
       const b = req.body;
+      // Normalise the caller for returning-caller recognition + opt-out gating.
+      // Withheld/anonymous callers strip to a too-short string → no Contact (we
+      // must NOT key every withheld caller onto phone='').
+      const normalized = b.callerId ? normalizePhoneNumber(b.callerId) : '';
+      const callerPhoneNormalized = normalized.length >= 2 ? normalized : null;
       const row = await withTenant(orgId, async (tx) => {
+        // Auto-upsert a Contact (parity with WhatsApp/Messenger inbound) so the
+        // operator block button + /contacts + opt-out work for voice callers too.
+        // channel='voice' only on CREATE — an existing WhatsApp contact who calls
+        // keeps their channel (and broadcast eligibility).
+        let contactId: string | null = null;
+        if (callerPhoneNormalized) {
+          const contact = await tx.contact.upsert({
+            where: {
+              organizationId_phoneE164: { organizationId: orgId, phoneE164: callerPhoneNormalized },
+            },
+            create: {
+              organizationId: orgId,
+              phoneE164: callerPhoneNormalized,
+              channel: 'voice',
+              lastInboundAt: new Date(),
+              source: 'inbox_auto',
+            },
+            update: { lastInboundAt: new Date() },
+            select: { id: true },
+          });
+          contactId = contact.id;
+        }
         // Never overwrite stored metadata (call records are historical), but
         // DO fill nulls: when turns/end arrived first, ensureCall created the
         // row with no callerId/dialedExten/line and the late start event
@@ -201,6 +291,8 @@ export default async function voiceRoutes(app: FastifyInstance) {
             organizationId: orgId,
             callUuid: b.callUuid,
             callerId: b.callerId ?? null,
+            callerPhoneNormalized,
+            contactId,
             dialedExten: b.dialedExten ?? null,
             phoneIntegrationId,
             startedAt: b.startedAt ? new Date(b.startedAt) : new Date(),
@@ -211,6 +303,12 @@ export default async function voiceRoutes(app: FastifyInstance) {
           await tx.voiceCall.updateMany({
             where: { id: call.id, callerId: null },
             data: { callerId: b.callerId },
+          });
+        }
+        if (callerPhoneNormalized) {
+          await tx.voiceCall.updateMany({
+            where: { id: call.id, callerPhoneNormalized: null },
+            data: { callerPhoneNormalized, contactId },
           });
         }
         if (b.dialedExten != null) {
@@ -307,6 +405,29 @@ export default async function voiceRoutes(app: FastifyInstance) {
             endedAt: b.endedAt ? new Date(b.endedAt) : new Date(),
           },
         });
+        // Compliance (C2): if the caller SAID a lone "stop"/"unsubscribe" during
+        // the call, flip the contact's optedOutAt so follow-up bills/broadcasts
+        // stay silent. Parity with the WhatsApp/Messenger STOP handling.
+        const full = await tx.voiceCall.findUnique({
+          where: { id: call.id },
+          select: { callerPhoneNormalized: true },
+        });
+        if (full?.callerPhoneNormalized) {
+          const callerTurns = await tx.voiceCallTurn.findMany({
+            where: { voiceCallId: call.id, role: 'caller' },
+            select: { text: true },
+          });
+          if (callerTurns.some((t) => STOP_RE.test(t.text))) {
+            await tx.contact.updateMany({
+              where: {
+                organizationId: orgId,
+                phoneE164: full.callerPhoneNormalized,
+                optedOutAt: null,
+              },
+              data: { optedOutAt: new Date() },
+            });
+          }
+        }
         return call;
       });
       return { data: { id: row.id } };
@@ -330,77 +451,224 @@ export default async function voiceRoutes(app: FastifyInstance) {
       },
     },
     async (req) => {
-      const { orgId } = await authenticateVoiceWrite(app, req);
+      const { orgId, phoneIntegrationId } = await authenticateVoiceWrite(app, req);
       const { callUuid } = req.params;
       const b = req.body;
 
-      // Resolve/auto-create the call and load the catalog + shop config in one
-      // tenant transaction (captureCart opens its own).
+      // Resolve/auto-create the call and load the catalog + shop config. The
+      // contact tells us whether to suppress the WhatsApp bill (opt-out).
       const ctx = await withTenant(orgId, async (tx) => {
         const call = await ensureCall(tx, orgId, callUuid);
         const full = await tx.voiceCall.findUnique({
           where: { id: call.id },
-          select: { callerId: true },
+          select: { callerId: true, callerPhoneNormalized: true, phoneIntegrationId: true },
         });
         const data = await gatherBotData(tx, orgId);
-        return { callerId: full?.callerId ?? null, data };
+        const phone = full?.callerPhoneNormalized ?? null;
+        const contact = phone
+          ? await tx.contact.findFirst({
+              where: { organizationId: orgId, phoneE164: phone },
+              select: { optedOutAt: true, blockedAt: true },
+            })
+          : null;
+        return {
+          callerId: full?.callerId ?? null,
+          linePhoneIntegrationId: full?.phoneIntegrationId ?? phoneIntegrationId ?? null,
+          data,
+          optedOut: !!(contact?.optedOutAt || contact?.blockedAt),
+        };
       });
 
       if (!ctx.data.shopForm) {
-        throw badRequest(
-          ApiErrorCode.VALIDATION_ERROR,
-          'Ordering is not enabled for this business.',
-        );
+        throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'Ordering is not enabled for this business.');
       }
 
-      const callerPhone = b.phone
-        ? normalizePhoneNumber(b.phone)
-        : ctx.callerId
-          ? normalizePhoneNumber(ctx.callerId)
-          : 'voice';
+      // Withheld/anonymous caller → a per-call placeholder, never an empty phone.
+      const { phone: callerPhone } = resolveCallerPhone(b.phone ?? ctx.callerId, callUuid);
 
-      // Fulfillment details — kept on the cart. captureCart retains those whose
-      // key matches the tenant's shopForm fields; the rest still inform the note.
-      const fields: Record<string, unknown> = {};
-      if (b.customerName) fields.name = b.customerName;
-      if (b.phone ?? ctx.callerId) fields.phone = b.phone ?? ctx.callerId;
-      if (b.fulfillment) fields.fulfillment = b.fulfillment;
-      if (b.address) fields.address = b.address;
-      if (b.notes) fields.notes = b.notes;
-
-      const result = await createVoiceOrder({
+      const outcome = await createVoiceOrder({
         orgId,
         callUuid,
         callerPhone,
         customerName: b.customerName ?? null,
         items: b.items,
-        fields,
+        // Field answers keyed by the tenant's configured shopForm keys — this is
+        // the fix: they land in the right operator columns (no synthetic notes).
+        fields: b.fields ?? {},
         data: ctx.data,
+        phoneIntegrationId: ctx.linePhoneIntegrationId,
+        continueExisting: b.continueExisting === true,
+        suppressBill: ctx.optedOut,
       });
-      if (!result) {
-        throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'Could not capture any order items.');
+
+      if (!outcome.ok) {
+        const shop = ctx.data.shopForm;
+        if (outcome.reason === 'missing_required') {
+          throw badRequest(
+            ApiErrorCode.VALIDATION_ERROR,
+            `Missing required detail(s): ${outcome.missing.join(', ')}. Ask the caller for them before confirming.`,
+          );
+        }
+        if (outcome.reason === 'below_min') {
+          throw badRequest(
+            ApiErrorCode.VALIDATION_ERROR,
+            `Order is below the ${formatMoney(outcome.minOrderMinor, outcome.currency)} minimum (currently ${formatMoney(outcome.subtotalMinor, outcome.currency)}). Ask the caller to add more.`,
+          );
+        }
+        throw badRequest(
+          ApiErrorCode.VALIDATION_ERROR,
+          shop ? 'Could not capture any order items.' : 'Ordering is not enabled for this business.',
+        );
       }
 
-      // Tag the cart so operators see it's a phone order + which call it came
-      // from (voice has no inbox thread to open).
-      const detail = [
-        b.fulfillment ? b.fulfillment : null,
-        b.address ? `to ${b.address}` : null,
-        b.notes ? b.notes : null,
-        result.unmatched.length > 0 ? `unmatched: ${result.unmatched.join(', ')}` : null,
-      ]
-        .filter(Boolean)
-        .join(' · ');
-      await withTenant(orgId, (tx) =>
-        tx.cart.updateMany({
-          where: { id: result.orderId },
-          data: {
-            notes: `Voice order — call ${callUuid.slice(0, 8)} · ${callerPhone}${detail ? ` · ${detail}` : ''}`,
-          },
-        }),
-      );
+      return { data: outcome.result };
+    },
+  );
 
-      return { data: result };
+  // ---------- POST /voice/calls/:callUuid/booking ---------------------------
+  // The voicebot's `submit_booking` tool. Captures a finalized appointment into
+  // a real Booking ('new') so it lands in /bookings and alerts operators.
+  r.post(
+    '/voice/calls/:callUuid/booking',
+    {
+      schema: {
+        tags: ['voice'],
+        summary: 'Submit a finalized booking captured during a voice call.',
+        params: z.object({ callUuid: voiceCallUuidSchema }),
+        body: submitVoiceBookingBodySchema,
+        response: { 200: itemEnvelopeSchema(voiceBookingResultSchema) },
+        security: [{ apiKey: [] }],
+      },
+    },
+    async (req) => {
+      const { orgId } = await authenticateVoiceWrite(app, req);
+      const { callUuid } = req.params;
+      const b = req.body;
+
+      const ctx = await withTenant(orgId, async (tx) => {
+        const call = await ensureCall(tx, orgId, callUuid);
+        const full = await tx.voiceCall.findUnique({
+          where: { id: call.id },
+          select: { callerId: true, callerPhoneNormalized: true },
+        });
+        const data = await gatherBotData(tx, orgId);
+        return { callerId: full?.callerId ?? null, data };
+      });
+
+      if (!ctx.data.bookingForm) {
+        throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'Bookings are not enabled for this business.');
+      }
+
+      const { phone: callerPhone } = resolveCallerPhone(b.phone ?? ctx.callerId, callUuid);
+
+      const outcome = await createVoiceBooking({
+        orgId,
+        callUuid,
+        callerPhone,
+        customerName: b.customerName ?? null,
+        fields: b.fields,
+        bookingForm: ctx.data.bookingForm,
+      });
+
+      if (!outcome.ok) {
+        if (outcome.reason === 'missing_required') {
+          throw badRequest(
+            ApiErrorCode.VALIDATION_ERROR,
+            `Missing required detail(s): ${outcome.missing.join(', ')}. Ask the caller for them before confirming.`,
+          );
+        }
+        throw badRequest(ApiErrorCode.VALIDATION_ERROR, 'Bookings are not enabled for this business.');
+      }
+
+      return { data: outcome.result };
+    },
+  );
+
+  // ---------- GET /voice/caller-context -------------------------------------
+  // Per-caller history fetched by the voicebot at call start (it has the caller
+  // ID) and injected into the realtime prompt: greet by name, surface an
+  // in-progress order to resume, and offer to reorder a recent order. NEVER
+  // cached (caller-specific). Also returns opt-out/block so the voicebot can
+  // decline to engage an opted-out/blocked caller.
+  r.get(
+    '/voice/caller-context',
+    {
+      schema: {
+        tags: ['voice'],
+        summary: 'Per-caller history (name, open order, recent orders) for the realtime prompt.',
+        querystring: z.object({ phone: z.string().trim().min(1).max(40) }),
+        response: { 200: itemEnvelopeSchema(voiceCallerContextSchema) },
+        security: [{ apiKey: [] }],
+      },
+      preHandler: [app.requireApiKey],
+    },
+    async (req) => {
+      requireScope(req, 'voice:config');
+      const orgId = req.apiKey!.organizationId;
+      const phone = normalizePhoneNumber(req.query.phone);
+      const empty = {
+        known: false,
+        name: null,
+        optedOut: false,
+        blocked: false,
+        openOrder: null,
+        pastOrders: [],
+      };
+      if (phone.length < 2) return { data: empty };
+
+      const ctx = await withTenant(orgId, async (tx) => {
+        const contact = await tx.contact.findFirst({
+          where: { organizationId: orgId, phoneE164: phone },
+          select: { displayName: true, whatsappName: true, optedOutAt: true, blockedAt: true },
+        });
+        const carts = await tx.cart.findMany({
+          where: { organizationId: orgId, customerPhone: phone },
+          orderBy: { createdAt: 'desc' },
+          take: 6,
+          include: { items: { select: { name: true, quantity: true } } },
+        });
+        return { contact, carts };
+      });
+
+      const summarize = (items: { name: string; quantity: number }[]) =>
+        items
+          .map((i) => `${i.quantity}x ${i.name}`)
+          .join(', ')
+          .slice(0, 200);
+      const open =
+        ctx.carts.find(
+          (c) => (c.status === 'new' || c.status === 'confirmed') && c.paymentStatus !== 'paid',
+        ) ?? null;
+      const past = ctx.carts.filter((c) => c.id !== open?.id).slice(0, 3);
+      const name =
+        ctx.contact?.displayName ||
+        ctx.contact?.whatsappName ||
+        ctx.carts.find((c) => c.customerName)?.customerName ||
+        null;
+
+      return {
+        data: {
+          known: !!ctx.contact || ctx.carts.length > 0,
+          name,
+          optedOut: !!ctx.contact?.optedOutAt,
+          blocked: !!ctx.contact?.blockedAt,
+          openOrder: open
+            ? {
+                itemsSummary: summarize(open.items),
+                totalMinor: open.totalMinor,
+                currency: open.currency,
+                status: open.status,
+                createdAt: open.createdAt.toISOString(),
+              }
+            : null,
+          pastOrders: past.map((c) => ({
+            itemsSummary: summarize(c.items),
+            totalMinor: c.totalMinor,
+            currency: c.currency,
+            createdAt: c.createdAt.toISOString(),
+          })),
+        },
+      };
     },
   );
 
@@ -426,12 +694,16 @@ export default async function voiceRoutes(app: FastifyInstance) {
       const line = await withRlsBypass((tx) =>
         tx.phoneIntegration.findFirst({
           where: { phoneNumber: did, isActive: true },
-          select: { id: true, organizationId: true },
+          select: { id: true, organizationId: true, botEnabled: true },
         }),
       );
       if (!line) throw notFound('No active phone line matches that number.');
+      // Per-line AI switch (M1) — a line with the bot off resolves no config.
+      if (!line.botEnabled) {
+        throw forbidden(ApiErrorCode.FEATURE_DISABLED, 'The AI bot is turned off for this phone line.');
+      }
 
-      const { value, cache } = await loadVoiceConfig(line.organizationId);
+      const { value, cache } = await loadVoiceConfig(line.organizationId, req.log);
       reply.header('x-cache', cache);
       return {
         data: {

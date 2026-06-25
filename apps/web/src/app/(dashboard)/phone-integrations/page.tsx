@@ -31,6 +31,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SkeletonRows } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { api, ApiError } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -39,6 +40,7 @@ interface PhoneLineRow {
   name: string;
   phoneNumber: string;
   isActive: boolean;
+  botEnabled: boolean;
   keyPrefix: string | null;
   lastCallAt: string | null;
   callCount: number;
@@ -80,6 +82,16 @@ export default function PhoneIntegrationsPage() {
       api.patch(`/api/v1/phone-integrations/${line.id}`, { isActive: !line.isActive }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['phone-integrations'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Update failed'),
+  });
+
+  const toggleBot = useMutation({
+    mutationFn: (line: PhoneLineRow) =>
+      api.patch(`/api/v1/phone-integrations/${line.id}`, { botEnabled: !line.botEnabled }),
+    onSuccess: (_res, line) => {
+      queryClient.invalidateQueries({ queryKey: ['phone-integrations'] });
+      toast.success(line.botEnabled ? 'AI bot turned off for this line' : 'AI bot turned on');
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Update failed'),
   });
@@ -135,6 +147,7 @@ export default function PhoneIntegrationsPage() {
                         <Badge variant={line.isActive ? 'success' : 'muted'}>
                           {line.isActive ? 'Active' : 'Paused'}
                         </Badge>
+                        {line.botEnabled ? null : <Badge variant="warning">AI bot off</Badge>}
                         {line.keyPrefix ? null : (
                           <Badge variant="danger">No key</Badge>
                         )}
@@ -149,6 +162,15 @@ export default function PhoneIntegrationsPage() {
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
+                      <label className="mr-1 flex items-center gap-2 text-xs text-foreground-muted">
+                        <span className="hidden sm:inline">AI bot</span>
+                        <Switch
+                          checked={line.botEnabled}
+                          disabled={toggleBot.isPending && toggleBot.variables?.id === line.id}
+                          onCheckedChange={() => toggleBot.mutate(line)}
+                          aria-label={`AI bot for ${line.name}`}
+                        />
+                      </label>
                       <Button
                         size="sm"
                         variant="ghost"

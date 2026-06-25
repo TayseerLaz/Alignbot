@@ -18,6 +18,42 @@ export type VoiceCallOutcome = (typeof voiceCallOutcomes)[number];
 export const voiceTurnRoles = ['caller', 'assistant'] as const;
 export type VoiceTurnRole = (typeof voiceTurnRoles)[number];
 
+// One operator-configured form field (shop or booking). The voicebot uses
+// these to build the `fields` object of its submit_order / submit_booking
+// tools dynamically, so the realtime model returns answers under the tenant's
+// EXACT field keys (no guessing, no hardcoded key drift).
+export const voiceFormFieldSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  type: z.string(),
+  required: z.boolean(),
+  options: z.array(z.string()).optional(),
+});
+export type VoiceFormField = z.infer<typeof voiceFormFieldSchema>;
+
+// Structured shop-form config for the gateway. Null = ordering not enabled.
+export const voiceOrderFormSchema = z.object({
+  title: z.string(),
+  currency: z.string(),
+  fields: z.array(voiceFormFieldSchema),
+  minOrderMinor: z.number().int().nullable(),
+  deliveryFeeMinor: z.number().int().nullable(),
+  freeDeliveryAboveMinor: z.number().int().nullable(),
+  confirmationMessage: z.string().nullable(),
+  intentKeywords: z.array(z.string()),
+});
+
+// Structured booking-form config. Null = bookings not enabled. `openSlots` are
+// precomputed human labels (operator timezone) the bot may offer; empty when
+// availability is off (the operator takes any requested time).
+export const voiceBookingFormSchema = z.object({
+  title: z.string(),
+  fields: z.array(voiceFormFieldSchema),
+  intentKeywords: z.array(z.string()),
+  timezone: z.string().nullable(),
+  openSlots: z.array(z.string()),
+});
+
 /** GET /voice/config response payload. */
 export const voiceConfigSchema = z.object({
   // Full system-prompt for the realtime speech model, compiled from
@@ -30,6 +66,10 @@ export const voiceConfigSchema = z.object({
   // Comma-separated language codes from BotConfig.languages (e.g. "en,ar").
   languages: z.string(),
   businessName: z.string().nullable(),
+  // Structured form config so the gateway can build dynamic tool params and
+  // doesn't have to parse the prose prompt. Null when the feature is off.
+  orderForm: voiceOrderFormSchema.nullable(),
+  bookingForm: voiceBookingFormSchema.nullable(),
 });
 
 // The AudioSocket call UUID is dashed-lowercase hex (derived from SHA1 of the
@@ -79,6 +119,10 @@ export type EndVoiceCallBody = z.infer<typeof endVoiceCallBodySchema>;
 // never sees SKUs (the spoken prompt lists items by name), so items arrive as
 // spoken names + quantities and the server matches them to the catalog. Mirrors
 // the WhatsApp/Messenger order: a real Cart (status 'new') is created.
+//
+// `fields` is keyed by the tenant's CONFIGURED shopForm field keys (the voicebot
+// builds the tool params from /voice/config orderForm.fields), so answers land
+// in the right operator columns instead of a hardcoded {address,notes} blob.
 export const submitVoiceOrderBodySchema = z.object({
   items: z
     .array(
@@ -91,11 +135,13 @@ export const submitVoiceOrderBodySchema = z.object({
     .min(1)
     .max(50),
   customerName: z.string().trim().max(120).nullish(),
-  fulfillment: z.enum(['pickup', 'delivery']).nullish(),
-  address: z.string().trim().max(400).nullish(),
   // Defaults to the call's caller ID when omitted.
   phone: z.string().trim().max(40).nullish(),
-  notes: z.string().trim().max(500).nullish(),
+  // Operator-configured shopForm answers, keyed by field `key`.
+  fields: z.record(z.string(), z.string().max(2000)).optional(),
+  // When true, append to the caller's most recent OPEN order instead of creating
+  // a new one (returning-caller continuity / "add to my order").
+  continueExisting: z.boolean().optional(),
 });
 export type SubmitVoiceOrderBody = z.infer<typeof submitVoiceOrderBodySchema>;
 
@@ -105,10 +151,65 @@ export const voiceOrderResultSchema = z.object({
   totalMinor: z.number().int(),
   currency: z.string(),
   // How many spoken items resolved to a catalog product, and which didn't
-  // (those still land on the order at price 0 for the operator to price).
+  // (those still land on the order at price 0, flagged needsPricing, for the
+  // operator to price).
   matched: z.number().int(),
   unmatched: z.array(z.string()),
+  // True when this submission was merged into an existing open order or was a
+  // duplicate retry (idempotent) rather than a brand-new order.
+  merged: z.boolean().default(false),
 });
+
+// POST /voice/calls/:uuid/booking — the voicebot's `submit_booking` tool. The
+// answers are keyed by the tenant's bookingForm field keys (built from
+// /voice/config bookingForm.fields). A real Booking (status 'new') is created.
+export const submitVoiceBookingBodySchema = z.object({
+  fields: z.record(z.string(), z.string().max(2000)),
+  customerName: z.string().trim().max(120).nullish(),
+  phone: z.string().trim().max(40).nullish(),
+});
+export type SubmitVoiceBookingBody = z.infer<typeof submitVoiceBookingBodySchema>;
+
+export const voiceBookingResultSchema = z.object({
+  bookingId: uuidSchema,
+  // Resolved appointment instant (ISO) when a slot was matched, else null.
+  appointmentAt: z.string().datetime().nullable(),
+  // True when the matched slot was already at capacity (created with a warning
+  // for the operator to review).
+  slotWasFull: z.boolean(),
+});
+
+// GET /voice/caller-context?phone= — per-caller history injected into the
+// realtime prompt at call start so a returning caller is greeted by name and
+// can resume an open order or reorder. NEVER cached (caller-specific).
+export const voiceCallerContextSchema = z.object({
+  known: z.boolean(),
+  name: z.string().nullable(),
+  // The caller opted out (STOP) or was blocked by an operator — the bot must
+  // stay silent / not market to them.
+  optedOut: z.boolean(),
+  blocked: z.boolean(),
+  // The caller's most recent unfinished order, if any (resumable).
+  openOrder: z
+    .object({
+      itemsSummary: z.string(),
+      totalMinor: z.number().int(),
+      currency: z.string(),
+      status: z.string(),
+      createdAt: z.string().datetime(),
+    })
+    .nullable(),
+  // A few recent completed orders so the bot can offer "the usual".
+  pastOrders: z.array(
+    z.object({
+      itemsSummary: z.string(),
+      totalMinor: z.number().int(),
+      currency: z.string(),
+      createdAt: z.string().datetime(),
+    }),
+  ),
+});
+export type VoiceCallerContext = z.infer<typeof voiceCallerContextSchema>;
 
 /** Portal-facing call summary (list + detail). */
 export const voiceCallSchema = z.object({

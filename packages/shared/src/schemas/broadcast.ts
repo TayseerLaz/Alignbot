@@ -44,7 +44,10 @@ export const contactDtoSchema = z.object({
   timezone: z.string().nullable(),
   // Origin channel: 'whatsapp' (real number) | 'instagram' | 'messenger'.
   channel: z.string().default('whatsapp'),
-  attributes: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+  // Free-form per-contact data. Values may be scalars OR arrays/objects (e.g.
+  // an importer storing `shopifyTags: [...]`), so this is intentionally
+  // permissive — a too-strict union here 500s the whole list on serialize.
+  attributes: z.record(z.string(), z.unknown()),
   source: z.enum(CONTACT_SOURCES as [ContactSource, ...ContactSource[]]),
   tags: z.array(z.string()),
   lastInboundAt: z.string().datetime().nullable(),

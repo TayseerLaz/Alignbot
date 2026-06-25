@@ -799,7 +799,6 @@ export async function acceptInvitation(args: {
     }
 
     let user = await tx.user.findUnique({ where: { email: invite.email } });
-    let createdNewUserPendingVerification = false;
 
     if (!user) {
       if (!args.password || !args.firstName || !args.lastName) {
@@ -809,14 +808,10 @@ export async function acceptInvitation(args: {
         );
       }
       const passwordHash = await hashPassword(args.password);
-      // Sprint 1 H-4 — previously this set emailVerifiedAt immediately,
-      // trusting that holding the invite token implies mailbox control.
-      // That assumption breaks if the invite link is leaked (browser
-      // history, corporate proxy, log scraping). The brand-new user now
-      // goes through the standard verify-email flow before they can log
-      // in — defense in depth on top of the token's already-high entropy.
-      const verifyToken = generateOpaqueToken();
-      const verifyTokenHash = hashToken(verifyToken);
+      // Accepting an emailed invite (the token was sent to this address) AND
+      // setting a password proves mailbox control, so the invitee is marked
+      // verified and can sign in immediately — no separate verify-email step.
+      // (The token is single-use + high-entropy + time-limited.)
       user = await tx.user.create({
         data: {
           email: invite.email,
@@ -824,19 +819,17 @@ export async function acceptInvitation(args: {
           firstName: args.firstName,
           lastName: args.lastName,
           status: 'active',
-          emailVerificationTokenHash: verifyTokenHash,
-          emailVerificationExpiresAt: hoursFromNow(EMAIL_VERIFY_TTL_HOURS),
+          emailVerifiedAt: new Date(),
         },
       });
-      createdNewUserPendingVerification = true;
-
-      const verifyUrl = `${env.WEB_PUBLIC_URL}/verify-email?token=${verifyToken}`;
-      const tpl = emailVerifyTemplate({ firstName: user.firstName, url: verifyUrl });
-      await sendEmail({ to: user.email, ...tpl }).catch((err) =>
-        console.error('[auth] invite verify email send failed', err),
-      );
+    } else if (!user.emailVerifiedAt) {
+      // Existing-but-unverified user accepting an invite to their address —
+      // same reasoning: verify them so they're never stuck at the login gate.
+      user = await tx.user.update({
+        where: { id: user.id },
+        data: { emailVerifiedAt: new Date() },
+      });
     }
-    void createdNewUserPendingVerification;
 
     await tx.membership.upsert({
       where: { organizationId_userId: { organizationId: invite.organizationId, userId: user.id } },

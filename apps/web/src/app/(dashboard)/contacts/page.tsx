@@ -823,7 +823,7 @@ function DuplicatesDialog({
         </DialogHeader>
         <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
           {groups.length === 0 ? (
-            <p className="py-6 text-center text-sm text-foreground-muted">No duplicates 🎉</p>
+            <p className="py-6 text-center text-sm text-foreground-muted">No duplicates</p>
           ) : (
             groups.map((g) => {
               const keepId = keepByKey[g.key] ?? g.contacts[0]?.id ?? '';

@@ -509,6 +509,10 @@ model Membership {
   userId         String   @map("user_id") @db.Uuid
   role           OrgRole  @default(viewer)
   isActive       Boolean  @default(true) @map("is_active")
+  // Protected/owner membership: cannot have its role changed, be deactivated,
+  // or be removed by ANYONE (even another admin). Used to lock the primary
+  // ALIGNED HQ owner account so a second admin can't demote or remove it.
+  isProtected    Boolean  @default(false) @map("is_protected")
   // Phase 3 §5.1.1 — skill-based routing. Free-form lowercase tags
   // (e.g. ["billing", "spanish", "tier-2"]). Threads with a
   // `requiredSkill` are auto-assigned only to members carrying it.

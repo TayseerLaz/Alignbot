@@ -81,6 +81,9 @@ export const listContactsQuerySchema = z.object({
   tag: z.string().trim().max(40).optional(),
   channel: z.enum(['whatsapp', 'instagram', 'messenger']).optional(),
   cursor: z.string().optional(),
+  // 1-based page for offset pagination (the contacts UI uses numbered pages +
+  // a total count). When omitted, cursor pagination is used (broadcast wizard).
+  page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 export type ListContactsQuery = z.infer<typeof listContactsQuerySchema>;

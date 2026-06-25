@@ -344,7 +344,7 @@ export default async function contactsRoutes(app: FastifyInstance) {
     },
     async (req) =>
       app.tenant(req, async (tx) => {
-        const { search, tag, channel, cursor, limit } = req.query;
+        const { search, tag, channel, cursor, page, limit } = req.query;
         const where: Record<string, unknown> = { deletedAt: null };
         if (search) {
           const trimmed = search.trim();
@@ -362,6 +362,23 @@ export default async function contactsRoutes(app: FastifyInstance) {
         } else if (channel) {
           where.channel = channel;
         }
+
+        // Page-offset mode (numbered pages + total). The contacts UI uses this.
+        if (page !== undefined) {
+          const [total, rows] = await Promise.all([
+            tx.contact.count({ where }),
+            tx.contact.findMany({
+              where,
+              include: { tags: { select: { tag: true } } },
+              take: limit,
+              skip: (page - 1) * limit,
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            }),
+          ]);
+          return { data: rows.map(toContactDto), nextCursor: null, total };
+        }
+
+        // Cursor mode (default) — used by the broadcast wizard's infinite list.
         const rows = await tx.contact.findMany({
           where,
           include: { tags: { select: { tag: true } } },

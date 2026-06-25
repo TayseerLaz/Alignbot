@@ -84,6 +84,7 @@ export default async function memberRoutes(app: FastifyInstance) {
             skills: m.skills,
             status: m.user.status,
             isActive: m.isActive,
+            protected: m.isProtected,
             lastLoginAt: m.user.lastLoginAt?.toISOString() ?? null,
             createdAt: m.createdAt.toISOString(),
           })),
@@ -133,6 +134,14 @@ export default async function memberRoutes(app: FastifyInstance) {
       return app.tenant(req, async (tx) => {
         const membership = await tx.membership.findUnique({ where: { id: req.params.id } });
         if (!membership) throw notFound('Member not found.');
+
+        // Protected/owner account — its role can't be changed by anyone.
+        if (membership.isProtected) {
+          throw forbidden(
+            ApiErrorCode.FORBIDDEN,
+            'This account is protected — its role cannot be changed.',
+          );
+        }
 
         // Prevent demoting the last admin.
         if (membership.role === 'admin' && req.body.role !== 'admin') {
@@ -188,6 +197,7 @@ export default async function memberRoutes(app: FastifyInstance) {
             skills: updated.skills,
             status: updated.user.status,
             isActive: updated.isActive,
+            protected: updated.isProtected,
             lastLoginAt: updated.user.lastLoginAt?.toISOString() ?? null,
             createdAt: updated.createdAt.toISOString(),
           },
@@ -216,6 +226,12 @@ export default async function memberRoutes(app: FastifyInstance) {
           include: { user: true },
         });
         if (!membership) throw notFound('Member not found.');
+        if (membership.isProtected) {
+          throw forbidden(
+            ApiErrorCode.FORBIDDEN,
+            'This account is protected and cannot be deactivated.',
+          );
+        }
         if (membership.userId === req.auth!.userId) {
           throw forbidden(ApiErrorCode.FORBIDDEN, 'You cannot deactivate yourself.');
         }
@@ -314,6 +330,9 @@ export default async function memberRoutes(app: FastifyInstance) {
           include: { user: true },
         });
         if (!membership) throw notFound('Member not found.');
+        if (membership.isProtected) {
+          throw forbidden(ApiErrorCode.FORBIDDEN, 'This account is protected and cannot be removed.');
+        }
         if (membership.userId === req.auth!.userId) {
           throw forbidden(ApiErrorCode.FORBIDDEN, 'You cannot remove yourself.');
         }

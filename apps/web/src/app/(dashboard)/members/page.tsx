@@ -51,6 +51,7 @@ interface Member {
   role: OrgRole;
   status: 'pending' | 'active' | 'disabled';
   isActive: boolean;
+  protected?: boolean;
   lastLoginAt: string | null;
   createdAt: string;
 }
@@ -207,13 +208,18 @@ export default function MembersPage() {
                             <p className="font-medium">
                               {fullName(m.firstName, m.lastName, m.email)}
                               {isSelf ? <span className="ml-2 text-xs text-foreground-subtle">(you)</span> : null}
+                              {m.protected ? (
+                                <span className="ml-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-300">
+                                  Protected
+                                </span>
+                              ) : null}
                             </p>
                             <p className="text-xs text-foreground-subtle">{m.email}</p>
                           </div>
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        {isAdmin && !isSelf ? (
+                        {isAdmin && !isSelf && !m.protected ? (
                           <Select
                             value={m.role}
                             onValueChange={(role) =>
@@ -247,7 +253,7 @@ export default function MembersPage() {
                         {m.lastLoginAt ? new Date(m.lastLoginAt).toLocaleString() : '—'}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        {isAdmin && !isSelf ? (
+                        {isAdmin && !isSelf && !m.protected ? (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon">

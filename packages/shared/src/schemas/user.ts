@@ -14,6 +14,8 @@ export const memberSchema = z.object({
   skills: z.array(z.string()).default([]),
   status: z.nativeEnum(UserStatus),
   isActive: z.boolean(),
+  // Protected/owner membership — role/deactivate/remove are blocked for it.
+  protected: z.boolean().default(false),
   lastLoginAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
 });

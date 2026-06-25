@@ -1,9 +1,21 @@
 'use client';
 
 import type { ContactDto } from '@aligned/shared';
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, Info, Pencil, Plus, Save, Search, Trash2, Upload, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  Ban,
+  ChevronLeft,
+  ChevronRight,
+  Info,
+  Pencil,
+  Plus,
+  Save,
+  Search,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { CustomerInfoSheet } from '@/components/customer/customer-info-sheet';
@@ -37,28 +49,33 @@ export default function ContactsPage() {
   const [importOpen, setImportOpen] = useState(false);
   // Phone of the contact whose info slide-over is open (null = closed).
   const [infoPhone, setInfoPhone] = useState<string | null>(null);
+  // Numbered pagination: 1-based page + selectable page size.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
-  // Cursor-paginated so EVERY contact is reachable, not just the first 100.
-  const contactsQuery = useInfiniteQuery({
-    queryKey: ['contacts', { search, tag: tagFilter, channel: channelFilter }],
-    initialPageParam: null as string | null,
-    queryFn: ({ pageParam }) =>
-      api.get<{ data: ContactDto[]; nextCursor: string | null }>(
+  // Any filter / page-size change resets back to page 1.
+  useEffect(() => {
+    setPage(1);
+  }, [search, tagFilter, channelFilter, pageSize]);
+
+  const contactsQuery = useQuery({
+    queryKey: ['contacts', { search, tag: tagFilter, channel: channelFilter, page, pageSize }],
+    queryFn: () =>
+      api.get<{ data: ContactDto[]; total?: number }>(
         `/api/v1/contacts?` +
           new URLSearchParams({
             ...(search ? { search } : {}),
             ...(tagFilter ? { tag: tagFilter } : {}),
             ...(channelFilter !== 'all' ? { channel: channelFilter } : {}),
-            ...(pageParam ? { cursor: pageParam } : {}),
-            limit: '100',
+            page: String(page),
+            limit: String(pageSize),
           }).toString(),
       ),
-    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    placeholderData: (prev) => prev, // keep the old page visible while the next loads
   });
-  const contacts = useMemo(
-    () => contactsQuery.data?.pages.flatMap((p) => p.data) ?? [],
-    [contactsQuery.data],
-  );
+  const contacts = useMemo(() => contactsQuery.data?.data ?? [], [contactsQuery.data]);
+  const totalContacts = contactsQuery.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalContacts / pageSize));
 
   const tagsQuery = useQuery({
     queryKey: ['contacts', 'tags'],
@@ -88,14 +105,13 @@ export default function ContactsPage() {
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
   });
 
-  const total = contacts.length;
   const tags = useMemo(() => tagsQuery.data?.data ?? [], [tagsQuery.data]);
 
-  // Reload the list after a contact is added/imported. `resetQueries` drops the
-  // loaded pages and refetches page 1 (newest first) so the new contact is
-  // visible immediately even if the operator had paged down or set a filter.
+  // Reload after a contact is added/imported. Jump to page 1 (newest first) so
+  // the new contact is visible immediately, and refetch the list + tags.
   const reloadContacts = () => {
-    void qc.resetQueries({ queryKey: ['contacts'] });
+    setPage(1);
+    void qc.invalidateQueries({ queryKey: ['contacts'] });
     void qc.invalidateQueries({ queryKey: ['contacts', 'tags'] });
   };
 
@@ -173,7 +189,9 @@ export default function ContactsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>{total} contact{total === 1 ? '' : 's'}</CardTitle>
+          <CardTitle>
+            {totalContacts.toLocaleString()} contact{totalContacts === 1 ? '' : 's'}
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -224,16 +242,56 @@ export default function ContactsPage() {
               </tbody>
             </table>
           </div>
-          {contactsQuery.hasNextPage ? (
-            <div className="flex justify-center border-t border-border p-3">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => contactsQuery.fetchNextPage()}
-                loading={contactsQuery.isFetchingNextPage}
-              >
-                Load more contacts
-              </Button>
+          {totalContacts > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border p-3 text-sm">
+              {/* Range + per-page selector */}
+              <div className="flex items-center gap-3 text-foreground-muted">
+                <span>
+                  {((page - 1) * pageSize + 1).toLocaleString()}–
+                  {Math.min(page * pageSize, totalContacts).toLocaleString()} of{' '}
+                  {totalContacts.toLocaleString()}
+                </span>
+                <label className="flex items-center gap-1.5">
+                  <span className="text-xs uppercase tracking-wide text-foreground-subtle">
+                    Per page
+                  </span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                    className="rounded-md border border-border bg-surface px-2 py-1 text-sm"
+                  >
+                    {[25, 50, 100].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              {/* Page navigation */}
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1 || contactsQuery.isFetching}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="size-4" /> Back
+                </Button>
+                <span className="text-foreground-muted">
+                  Page {page} of {totalPages.toLocaleString()}
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages || contactsQuery.isFetching}
+                  aria-label="Next page"
+                >
+                  Next <ChevronRight className="size-4" />
+                </Button>
+              </div>
             </div>
           ) : null}
         </CardContent>

@@ -656,7 +656,14 @@ async function loadProduct(tx: Prisma.TransactionClient, id: string) {
       id: v.id,
       sku: v.sku,
       name: v.name,
-      options: (v.options as Record<string, string | number | boolean>) ?? {},
+      // options is a key→value map. Tolerate legacy/imported rows that stored
+      // it as an array (e.g. ["M","L"]) by mapping to { "Option 1": "M", … } so
+      // the detail endpoint never 500s on response validation.
+      options: Array.isArray(v.options)
+        ? Object.fromEntries(
+            (v.options as unknown[]).map((val, i) => [`Option ${i + 1}`, val as string | number | boolean]),
+          )
+        : ((v.options as Record<string, string | number | boolean>) ?? {}),
       priceMinor: v.priceMinor,
       stockQuantity: v.stockQuantity,
       isAvailable: v.isAvailable,

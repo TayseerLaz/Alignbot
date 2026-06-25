@@ -98,6 +98,9 @@ export interface ShopifyProduct {
   body_html?: string;
   product_type?: string;
   status?: string;
+  // Product-level option names (e.g. [{name:'Size'},{name:'Color'}]) — map onto
+  // variant.option1/2/3 to build a labeled options object.
+  options?: { name?: string; position?: number }[];
   variants?: ShopifyVariant[];
   images?: { src?: string }[];
 }

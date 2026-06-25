@@ -107,14 +107,27 @@ function normProduct(p: ShopifyProduct, shopCurrency: string): NormalizedItem | 
   const id = p.id != null ? String(p.id) : (p.handle ?? '');
   if (!id) return null;
   const sku = p.handle || `shopify-${id}`;
-  const variants = (p.variants ?? []).map((v, i) => ({
-    name: v.title || 'Default',
-    sku: v.sku || null,
-    priceMinor: priceToMinor(v.price),
-    stockQuantity: typeof v.inventory_quantity === 'number' ? v.inventory_quantity : null,
-    options: [v.option1, v.option2, v.option3].filter((x): x is string => !!x),
-    sortOrder: i,
-  }));
+  // Map variant option1/2/3 onto the product's option names → a labeled object
+  // ({ Size: 'M', Color: 'Red' }), the shape the catalog + detail API expect.
+  const optionNames = (p.options ?? [])
+    .slice()
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    .map((o) => o.name);
+  const variants = (p.variants ?? []).map((v, i) => {
+    const vals = [v.option1, v.option2, v.option3];
+    const options: Record<string, string> = {};
+    vals.forEach((val, idx) => {
+      if (val) options[optionNames[idx] || `Option ${idx + 1}`] = val;
+    });
+    return {
+      name: v.title || 'Default',
+      sku: v.sku || null,
+      priceMinor: priceToMinor(v.price),
+      stockQuantity: typeof v.inventory_quantity === 'number' ? v.inventory_quantity : null,
+      options,
+      sortOrder: i,
+    };
+  });
   const firstVariant = p.variants?.[0];
   const stockTotal = (p.variants ?? []).reduce(
     (s, v) => s + (typeof v.inventory_quantity === 'number' ? v.inventory_quantity : 0),

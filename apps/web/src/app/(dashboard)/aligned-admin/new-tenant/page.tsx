@@ -1,6 +1,6 @@
 'use client';
 
-import { ORG_FEATURES } from '@aligned/shared';
+import { ORG_FEATURES, ORG_FEATURE_DEFAULT_DISABLED } from '@aligned/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ClipboardCheck, Copy } from 'lucide-react';
 import Link from 'next/link';
@@ -66,8 +66,11 @@ export default function NewTenantPage() {
   const [adminEmail, setEmail] = useState('');
   const [adminPassword, setPwd] = useState('');
   const [sendWelcomeEmail, setSendEmail] = useState(true);
-  // Features start enabled; toggling a checkbox OFF adds its key here.
-  const [disabledFeatures, setDisabledFeatures] = useState<string[]>([]);
+  // Features start enabled; toggling a checkbox OFF adds its key here. Opt-in
+  // features (e.g. Shopify) start DISABLED so new tenants don't get them by default.
+  const [disabledFeatures, setDisabledFeatures] = useState<string[]>([
+    ...ORG_FEATURE_DEFAULT_DISABLED,
+  ]);
 
   const [created, setCreated] = useState<CreatedTenant | null>(null);
 

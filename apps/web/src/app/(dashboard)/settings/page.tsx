@@ -59,6 +59,7 @@ export default function SettingsPage() {
   const isOrgAdmin = organization?.role === 'admin';
   const disabledFeatures = organization?.disabledFeatures ?? [];
   const phoneOn = !disabledFeatures.includes('phone');
+  const shopifyOn = !disabledFeatures.includes('shopify');
   // Messenger + Instagram share the /settings/messenger page. Show it while
   // EITHER channel is enabled; hide the whole section only when BOTH are off.
   const messagingOn =
@@ -165,12 +166,14 @@ export default function SettingsPage() {
               title="WhatsApp"
               description="Connect your Meta WhatsApp Business number + manage templates."
             />
-            <SettingsLink
-              href="/connectors"
-              icon={ShoppingBag}
-              title="Shopify"
-              description="Sync your Shopify products & orders into the platform via an API connector."
-            />
+            {shopifyOn ? (
+              <SettingsLink
+                href="/settings/shopify"
+                icon={ShoppingBag}
+                title="Shopify"
+                description="Connect your Shopify store, scrape products, customers & policies, then review and import."
+              />
+            ) : null}
             {phoneOn ? (
               <SettingsLink
                 href="/phone-integrations"

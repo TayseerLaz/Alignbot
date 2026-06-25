@@ -99,6 +99,11 @@ SELECT _aligned_apply_tenant_rls('sync_runs');
 SELECT _aligned_apply_tenant_rls('webhook_endpoints');
 SELECT _aligned_apply_tenant_rls('webhook_deliveries');
 
+-- ---------- Shopify integration ---------------------------------------------
+SELECT _aligned_apply_tenant_rls('shopify_connections');
+SELECT _aligned_apply_tenant_rls('shopify_scrape_runs');
+SELECT _aligned_apply_tenant_rls('shopify_staged_items');
+
 -- ---------- versioning + notifications (Day 4) ------------------------------
 SELECT _aligned_apply_tenant_rls('catalog_revisions');
 SELECT _aligned_apply_tenant_rls('notifications');

@@ -70,7 +70,10 @@ export async function recordCredentialAudit(args: {
     organizationId: args.organizationId,
     actorUserId: args.actorUserId ?? null,
     entityType: 'integration',
-    entityId: args.integration,
+    // entity_id is a UUID column — the integration name isn't a UUID, so it
+    // lives in entityType + metadata.integration. (Passing the name here made
+    // the credential-trail insert fail the UUID parse for every integration.)
+    entityId: undefined,
     metadata: {
       integration: args.integration,
       fieldsSet,

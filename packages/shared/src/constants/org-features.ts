@@ -87,11 +87,29 @@ export const ORG_FEATURES = [
       'The conversation inbox + canned replies. Disable for accounts that should not handle conversations at all (e.g. an admin-only HQ).',
     hrefs: ['/inbox', '/inbox-full'],
   },
+  {
+    key: 'shopify',
+    label: 'Shopify sync',
+    description:
+      'Connect a Shopify store to scrape products, customers, business info and policies into the platform (with a review + approve step) and keep them in sync. Opt-in: OFF by default for every tenant — enable it only for stores on a Shopify plan.',
+    hrefs: ['/settings/shopify'],
+    // Opt-in feature: new orgs start with this DISABLED. See ORG_FEATURE_DEFAULT_DISABLED.
+    defaultDisabled: true,
+  },
 ] as const;
 
 export type OrgFeatureKey = (typeof ORG_FEATURES)[number]['key'];
 
 export const ORG_FEATURE_KEYS = ORG_FEATURES.map((f) => f.key) as OrgFeatureKey[];
+
+/**
+ * Opt-in features: keys that should be DISABLED by default for every org (new
+ * tenants start with these in `disabledFeatures`; existing orgs are backfilled
+ * by the feature's migration). An ALIGNED admin enables them per tenant.
+ */
+export const ORG_FEATURE_DEFAULT_DISABLED = ORG_FEATURES.filter(
+  (f) => 'defaultDisabled' in f && f.defaultDisabled,
+).map((f) => f.key) as OrgFeatureKey[];
 
 /** True if `href` belongs to a feature that's in the disabled list. */
 export function isHrefDisabled(href: string, disabled: string[]): boolean {

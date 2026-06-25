@@ -1273,21 +1273,37 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       // real customer-facing copy instead of a "[template] name"
       // placeholder, and there's no "see more" truncation: operators
       // can read the whole thing without scrolling on a phone.
-      const bodyComponent = metaComponents.find((c) => (c.type ?? '').toUpperCase() === 'BODY');
-      const bodyTemplate = bodyComponent?.text ?? '';
-      const renderedBody = bodyTemplate
-        ? bodyTemplate.replace(/{{\s*(\d+)\s*}}/g, (_match, idx: string) => {
-            const i = Number(idx) - 1;
-            return parameters[i] ?? `{{${idx}}}`;
-          })
-        : '';
-      // Compose: [template tag line] + body. The leading tag makes it
-      // obvious in the inbox that this was a template send, not a
-      // free-form message. Fall back to a plain marker when the
-      // Meta-side components fetch failed.
+      // Render the FULL customer-facing template — header (text) + body +
+      // footer, each with {{n}} interpolated — and capture the button labels so
+      // the inbox bubble shows exactly what the recipient sees, buttons and all,
+      // rather than a "[template] name" placeholder.
+      const interpolate = (tpl: string, vals: string[]) =>
+        tpl.replace(/{{\s*(\d+)\s*}}/g, (_m, idx: string) => vals[Number(idx) - 1] ?? `{{${idx}}}`);
+      const compByType = (want: string) =>
+        metaComponents.find((c) => (c.type ?? '').toUpperCase() === want) as
+          | (MetaComp & { buttons?: { type?: string; text?: string; url?: string }[] })
+          | undefined;
+
+      const headerComp = compByType('HEADER');
+      const headerText =
+        headerComp && (headerComp.format ?? '').toUpperCase() === 'TEXT' && headerComp.text
+          ? interpolate(headerComp.text, headerTextParam ? [headerTextParam] : [])
+          : '';
+      const bodyComponent = compByType('BODY');
+      const renderedBody = bodyComponent?.text ? interpolate(bodyComponent.text, parameters) : '';
+      const footerText = compByType('FOOTER')?.text ?? '';
+      // Button labels (all kinds — quick-reply, URL, phone). Shown as pills.
+      const buttonLabels = (compByType('BUTTONS')?.buttons ?? [])
+        .map((b) => (b.text ?? '').trim())
+        .filter(Boolean);
+
+      // Compose: [template tag line] + header + body + footer. The leading tag
+      // makes it obvious this was a template send. Fall back to a plain marker
+      // when the Meta-side components fetch failed.
       const tagLine = `📨 Template · ${templateName}${templateLanguage !== 'en_US' ? ` (${templateLanguage})` : ''}`;
-      const previewBody = renderedBody
-        ? `${tagLine}\n\n${renderedBody}`
+      const renderedFull = [headerText, renderedBody, footerText].filter(Boolean).join('\n\n');
+      const previewBody = renderedFull
+        ? `${tagLine}\n\n${renderedFull}`
         : parameters.length > 0
         ? `${tagLine} · ${parameters.join(' / ')}`
         : tagLine;
@@ -1321,7 +1337,9 @@ export default async function whatsappRoutes(app: FastifyInstance) {
             toNumber: to,
             messageType: 'template',
             body: previewBody,
-            rawPayload: payload as never,
+            // Stamp the button labels so the inbox renders them as pills under
+            // the bubble (it reads rawPayload.quickReplies).
+            rawPayload: { ...(payload as Record<string, unknown>), quickReplies: buttonLabels } as never,
           },
         });
       }).catch((err) => req.log.error({ err }, '[whatsapp] test-send persist failed'));

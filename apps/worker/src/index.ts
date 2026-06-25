@@ -18,6 +18,7 @@ import { startImportWorker } from './jobs/import.js';
 import { startSequenceTick } from './jobs/sequence-tick.js';
 import { startInboxConsistencyTick } from './jobs/inbox-consistency.js';
 import { startSyncWorker } from './jobs/sync.js';
+import { startShopifyWorker } from './jobs/shopify.js';
 import { startUptimeProbe } from './jobs/uptime-probe.js';
 import { startWebhookDeliveryWorker } from './jobs/webhook-delivery.js';
 import { prisma } from './jobs/db.js';
@@ -153,6 +154,7 @@ async function main() {
     startBroadcastFanoutWorker(),
     startBroadcastSendWorker(),
     startEmailWorker(),
+    startShopifyWorker(),
   ];
 
   for (const w of workers) {

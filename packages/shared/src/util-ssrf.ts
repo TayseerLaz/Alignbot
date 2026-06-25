@@ -64,8 +64,17 @@ export class SsrfRebindError extends Error {
 export function ssrfSafeLookup(
   hostname: string,
   options: unknown,
-  callback: (err: Error | null, address: string, family: number) => void,
+  // net.LookupFunction is overloaded: with `{ all: true }` the callback expects
+  // an ARRAY of {address, family}; otherwise a single (address, family). undici
+  // calls us in `all` mode on newer versions, so we must honour both shapes or
+  // the connection fails with ERR_INVALID_IP_ADDRESS.
+  callback: (
+    err: Error | null,
+    address: string | { address: string; family: number }[],
+    family?: number,
+  ) => void,
 ): void {
+  const wantsAll = !!(options && typeof options === 'object' && (options as { all?: boolean }).all);
   dnsLookup(hostname, { all: true, verbatim: true }, (err, addresses) => {
     if (err) return callback(err, '', 0);
     if (!addresses.length) {
@@ -81,7 +90,14 @@ export function ssrfSafeLookup(
         0,
       );
     }
-    const first = addresses[0]!;
-    callback(null, first.address, first.family);
+    if (wantsAll) {
+      callback(
+        null,
+        addresses.map((a) => ({ address: a.address, family: a.family })),
+      );
+    } else {
+      const first = addresses[0]!;
+      callback(null, first.address, first.family);
+    }
   });
 }

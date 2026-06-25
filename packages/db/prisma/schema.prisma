@@ -188,6 +188,10 @@ enum NotificationKind {
   generic
   // Phase 5.9 — billing dunning auto-suspend.
   org_suspended_for_billing
+  // Shopify — a scrape finished and items are waiting in the review queue,
+  // or a commit/import run completed.
+  shopify_review_ready
+  shopify_import_done
   // Cart flow — pings admins when a new cart lands so the inbox stays
   // out of the kitchen's way.
   cart_received
@@ -254,6 +258,29 @@ enum SyncTrigger {
   scheduled
   manual
   webhook
+}
+
+// Shopify integration ---------------------------------------------------------
+enum ShopifyConnectionStatus {
+  active
+  failing
+  disabled
+}
+
+enum ShopifyStagedSection {
+  product
+  contact
+  business_info
+  policy
+  faq
+  location
+}
+
+enum ShopifyStagedStatus {
+  pending
+  approved
+  rejected
+  imported
 }
 
 enum WebhookDeliveryStatus {
@@ -367,6 +394,10 @@ model Organization {
   importJobRows         ImportJobRow[]
   apiConnectors         ApiConnector[]
   syncRuns              SyncRun[]
+  // Shopify integration
+  shopifyConnection     ShopifyConnection?
+  shopifyScrapeRuns     ShopifyScrapeRun[]
+  shopifyStagedItems    ShopifyStagedItem[]
   webhookEndpoints      WebhookEndpoint[]
   webhookDeliveries     WebhookDelivery[]
   // Day 4
@@ -1100,6 +1131,99 @@ model SyncRun {
   @@index([connectorId, createdAt(sort: Desc)])
   @@index([organizationId, status, createdAt(sort: Desc)])
   @@map("sync_runs")
+}
+
+// ----------------------------------------------------------------------------
+// Shopify integration — connect a merchant's Shopify store, scrape its catalog
+// /customers/business-info into a staging area for review+approval, then commit
+// approved items into the live catalog. Auto-sync (cron) + webhooks keep
+// already-imported items current. Gated by the `shopify` org feature.
+// ----------------------------------------------------------------------------
+
+model ShopifyConnection {
+  id             String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String                  @unique @map("organization_id") @db.Uuid
+  // Permanent myshopify domain, e.g. "1tnjz1-wa.myshopify.com".
+  storeDomain    String                  @map("store_domain")
+  // AES-256-GCM encrypted JSON: { accessToken: "shpat_…", apiSecret: "shpss_…" }.
+  // Same enc:v1: scheme as ApiConnector.authConfig (encryptJsonSecret).
+  credentials    String?
+  status         ShopifyConnectionStatus @default(active)
+  // Display name / currency captured on verify (for the settings UI).
+  shopName       String?                 @map("shop_name")
+  shopCurrency   String?                 @map("shop_currency")
+  lastVerifyStatus String?               @map("last_verify_status")
+  // Auto-sync: when true a repeatable BullMQ job re-scrapes on this cron.
+  autoSyncEnabled Boolean                @default(true) @map("auto_sync_enabled")
+  scheduleCron   String?                 @map("schedule_cron")
+  webhookRegisteredAt DateTime?          @map("webhook_registered_at")
+  lastScrapeAt   DateTime?               @map("last_scrape_at")
+  lastSuccessAt  DateTime?               @map("last_success_at")
+  consecutiveFailures Int                @default(0) @map("consecutive_failures")
+  createdById    String?                 @map("created_by_id") @db.Uuid
+  createdAt      DateTime                @default(now()) @map("created_at")
+  updatedAt      DateTime                @updatedAt @map("updated_at")
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scrapeRuns   ShopifyScrapeRun[]
+  stagedItems  ShopifyStagedItem[]
+
+  @@map("shopify_connections")
+}
+
+model ShopifyScrapeRun {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String        @map("organization_id") @db.Uuid
+  connectionId   String        @map("connection_id") @db.Uuid
+  // 'scrape' pulls from Shopify into staging; 'commit' imports approved rows.
+  phase          String        @default("scrape")
+  trigger        SyncTrigger
+  status         SyncRunStatus @default(pending)
+  startedAt      DateTime?     @map("started_at")
+  finishedAt     DateTime?     @map("finished_at")
+  productsFound  Int           @default(0) @map("products_found")
+  contactsFound  Int           @default(0) @map("contacts_found")
+  otherFound     Int           @default(0) @map("other_found")
+  recordsImported Int          @default(0) @map("records_imported")
+  recordsFailed  Int           @default(0) @map("records_failed")
+  errorMessage   String?       @map("error_message")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   ShopifyConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, createdAt(sort: Desc)])
+  @@index([organizationId, status, createdAt(sort: Desc)])
+  @@map("shopify_scrape_runs")
+}
+
+model ShopifyStagedItem {
+  id             String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String               @map("organization_id") @db.Uuid
+  connectionId   String               @map("connection_id") @db.Uuid
+  scrapeRunId    String?              @map("scrape_run_id") @db.Uuid
+  section        ShopifyStagedSection
+  // Stable Shopify identifier (product id, customer id, policy kind, page id…).
+  externalId     String               @map("external_id")
+  title          String
+  // Normalized to the existing upsert shape (productSchema / contact / etc.).
+  normalized     Json
+  // Original Shopify payload, kept for debugging + re-normalization.
+  raw            Json?
+  status         ShopifyStagedStatus  @default(pending)
+  // Set once committed — doubles as the Shopify→local link for live updates.
+  resultEntityId String?              @map("result_entity_id")
+  errorMessage   String?              @map("error_message")
+  importedAt     DateTime?            @map("imported_at")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   ShopifyConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, section, externalId])
+  @@index([organizationId, section, status])
+  @@map("shopify_staged_items")
 }
 
 // ----------------------------------------------------------------------------

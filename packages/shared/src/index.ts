@@ -26,5 +26,6 @@ export * from './schemas/cart.js';
 export * from './schemas/leads.js';
 export * from './schemas/voice.js';
 export * from './schemas/phone-integration.js';
+export * from './schemas/shopify.js';
 export * from './types/api-error.js';
 export * from './util-url-guard.js';

@@ -22,6 +22,8 @@ export const QUEUE_DATA_EXPORT = 'data-export';
 // Phase 4 — Broadcasts.
 export const QUEUE_BROADCAST_FANOUT = 'broadcast-fanout';
 export const QUEUE_BROADCAST_SEND = 'broadcast-send';
+// Shopify integration — one queue, two phases (scrape → staging, commit → import).
+export const QUEUE_SHOPIFY = 'shopify';
 
 // ----- Job payload types (single source of truth shared with worker) ------
 export interface ImportJobPayload {
@@ -79,6 +81,19 @@ export interface BroadcastSendPayload {
   organizationId: string;
   broadcastId: string;
   recipientId: string;
+}
+
+// Shopify — one payload, two phases.
+//   scrape: pull from Shopify into shopify_staged_items for review.
+//   commit: import the approved staged rows into the live catalog.
+// scrapeRunId is pre-allocated for manual/webhook triggers; NULL for scheduled
+// (the repeatable cron payload is shared across fires, so the worker creates it).
+export interface ShopifyJobPayload {
+  organizationId: string;
+  connectionId: string;
+  scrapeRunId: string | null;
+  phase: 'scrape' | 'commit';
+  trigger: 'scheduled' | 'manual' | 'webhook';
 }
 
 // ----- Queue singletons (lazy) --------------------------------------------
@@ -140,6 +155,13 @@ export function getBroadcastSendQueue(): Queue<BroadcastSendPayload> {
     broadcastSendQueue = new Queue(QUEUE_BROADCAST_SEND, { connection: getConnection() });
   }
   return broadcastSendQueue;
+}
+
+// Shopify integration queue.
+let shopifyQueue: Queue<ShopifyJobPayload> | null = null;
+export function getShopifyQueue(): Queue<ShopifyJobPayload> {
+  if (!shopifyQueue) shopifyQueue = new Queue(QUEUE_SHOPIFY, { connection: getConnection() });
+  return shopifyQueue;
 }
 
 // QueueEvents — used by API to subscribe to progress (e.g. for SSE on imports).

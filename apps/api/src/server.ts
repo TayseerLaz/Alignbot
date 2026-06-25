@@ -46,6 +46,8 @@ import productRoutes from './modules/catalog/product.routes.js';
 import serviceRoutes from './modules/catalog/service.routes.js';
 import connectorRoutes from './modules/connectors/connector.routes.js';
 import inboundWebhookRoutes from './modules/connectors/inbound-webhook.routes.js';
+import shopifyRoutes from './modules/shopify/shopify.routes.js';
+import shopifyWebhookRoutes from './modules/shopify/shopify-webhook.routes.js';
 import contactsRoutes from './modules/contacts/contacts.routes.js';
 import broadcastsRoutes from './modules/broadcasts/broadcasts.routes.js';
 import segmentsRoutes from './modules/segments/segments.routes.js';
@@ -341,6 +343,7 @@ export async function buildServer() {
   await app.register(cartsRoutes, { prefix: '/api/v1' });
   await app.register(importRoutes, { prefix: '/api/v1' });
   await app.register(connectorRoutes, { prefix: '/api/v1' });
+  await app.register(shopifyRoutes, { prefix: '/api/v1' });
   await app.register(webhookEndpointRoutes, { prefix: '/api/v1' });
   await app.register(apiKeyRoutes, { prefix: '/api/v1' });
   await app.register(phoneIntegrationRoutes, { prefix: '/api/v1' });
@@ -366,6 +369,7 @@ export async function buildServer() {
 
   // Routes — public (HMAC-verified, no JWT)
   await app.register(inboundWebhookRoutes, { prefix: '/api/v1' });
+  await app.register(shopifyWebhookRoutes, { prefix: '/api/v1' });
 
   // Routes — public payment-confirmation webhooks (gateway-signed, no JWT)
   await app.register(paymentWebhookRoutes, { prefix: '/api/v1' });

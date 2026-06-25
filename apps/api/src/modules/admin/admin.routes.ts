@@ -9,6 +9,7 @@ import {
   adminUpdateOrgBodySchema,
   ApiErrorCode,
   ORG_FEATURE_KEYS,
+  ORG_FEATURE_DEFAULT_DISABLED,
   itemEnvelopeSchema,
   leadSchema,
   listEnvelopeSchema,
@@ -182,12 +183,18 @@ export default async function adminRoutes(app: FastifyInstance) {
         const password = body.adminPassword ?? generateTempPassword();
         const passwordHash = await hashPassword(password);
 
+        // Opt-in features (e.g. Shopify) always start DISABLED on a new org —
+        // an ALIGNED admin turns them on per-tenant later from the features
+        // panel. (Absence from disabledFeatures can't distinguish "enable me"
+        // from a non-UI client that doesn't know the key, so we force them off.)
         const organization = await tx.organization.create({
           data: {
             slug,
             name: body.organizationName,
             status: 'active',
-            disabledFeatures: Array.from(new Set(body.disabledFeatures ?? [])),
+            disabledFeatures: Array.from(
+              new Set([...(body.disabledFeatures ?? []), ...ORG_FEATURE_DEFAULT_DISABLED]),
+            ),
           },
         });
         const admin = await tx.user.create({

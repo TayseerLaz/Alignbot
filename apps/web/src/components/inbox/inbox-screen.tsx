@@ -1688,8 +1688,10 @@ function Bubble({
             {message.body ?? <em className="opacity-70">[{message.messageType ?? 'media'}]</em>}
           </p>
         )}
-        {/* Quick-reply buttons the bot offered (Messenger / Instagram). Shown
-            as non-interactive pills so the operator sees the customer's options. */}
+        {/* Buttons shown under the bubble as non-interactive pills: quick-reply
+            options the bot offered (Messenger / Instagram) and the buttons on a
+            sent WhatsApp template, so the operator sees exactly what the
+            customer received. */}
         {message.quickReplies && message.quickReplies.length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {message.quickReplies.map((label, i) => (

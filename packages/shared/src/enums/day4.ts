@@ -34,6 +34,9 @@ export const NotificationKind = {
   order_paid: 'order_paid',
   // Quota usage crossed a threshold (75/80/85/90/95/100% of a plan cap).
   quota_warning: 'quota_warning',
+  // Shopify — a scrape finished with items to review, or an import completed.
+  shopify_review_ready: 'shopify_review_ready',
+  shopify_import_done: 'shopify_import_done',
 } as const;
 export type NotificationKind = (typeof NotificationKind)[keyof typeof NotificationKind];
 

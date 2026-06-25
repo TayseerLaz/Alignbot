@@ -91,6 +91,14 @@ export default function ContactsPage() {
   const total = contacts.length;
   const tags = useMemo(() => tagsQuery.data?.data ?? [], [tagsQuery.data]);
 
+  // Reload the list after a contact is added/imported. `resetQueries` drops the
+  // loaded pages and refetches page 1 (newest first) so the new contact is
+  // visible immediately even if the operator had paged down or set a filter.
+  const reloadContacts = () => {
+    void qc.resetQueries({ queryKey: ['contacts'] });
+    void qc.invalidateQueries({ queryKey: ['contacts', 'tags'] });
+  };
+
   return (
     <>
       <PageHeader
@@ -231,22 +239,8 @@ export default function ContactsPage() {
         </CardContent>
       </Card>
 
-      <CreateContactDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        onCreated={() => {
-          qc.invalidateQueries({ queryKey: ['contacts'] });
-          qc.invalidateQueries({ queryKey: ['contacts', 'tags'] });
-        }}
-      />
-      <ImportCsvDialog
-        open={importOpen}
-        onOpenChange={setImportOpen}
-        onDone={() => {
-          qc.invalidateQueries({ queryKey: ['contacts'] });
-          qc.invalidateQueries({ queryKey: ['contacts', 'tags'] });
-        }}
-      />
+      <CreateContactDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={reloadContacts} />
+      <ImportCsvDialog open={importOpen} onOpenChange={setImportOpen} onDone={reloadContacts} />
       <CustomerInfoSheet
         phone={infoPhone}
         open={infoPhone !== null}

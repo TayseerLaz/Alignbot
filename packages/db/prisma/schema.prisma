@@ -94,6 +94,8 @@ enum AuditAction {
   // Integration credentials a tenant entered — ALIGNED-HQ-only (hidden from the
   // tenant's own audit view); the values are stored encrypted in the metadata.
   integration_credentials_set
+  // A contact unsubscribed (STOP / template opt-out button). Tenant + HQ visible.
+  contact_unsubscribed
   // Catalog (Day 2)
   product_created
   product_updated
@@ -2403,6 +2405,10 @@ model Broadcast {
   // ContactTag.tag against this list (mode picks OR vs AND).
   audienceTags        String[]              @default([]) @map("audience_tags")
   audienceTagsMode    String                @default("any") @map("audience_tags_mode") // 'any' (OR) | 'all' (AND)
+  // Compliance override: when true, recipients who unsubscribed (optedOutAt)
+  // are NOT skipped by the send worker — the operator explicitly chose "send
+  // anyway". Default false: opted-out contacts are always skipped.
+  includeOptedOut     Boolean               @default(false) @map("include_opted_out")
   // A/B test
   abTest              Boolean               @default(false) @map("ab_test")
   variantATemplateId  String                @map("variant_a_template_id") @db.Uuid

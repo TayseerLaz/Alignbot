@@ -97,6 +97,9 @@ export default function NewBroadcastPage() {
   // Step 4
   const [scheduleLater, setScheduleLater] = useState(false);
   const [scheduleAt, setScheduleAt] = useState('');
+  // Compliance: by default unsubscribed contacts are skipped. Operator can
+  // explicitly choose to send to them anyway.
+  const [includeOptedOut, setIncludeOptedOut] = useState(false);
 
   // Data
   const channelsQuery = useQuery({
@@ -201,6 +204,7 @@ export default function NewBroadcastPage() {
         audienceTags: audienceKind === 'tags' ? tagAudience : undefined,
         audienceTagsMode: audienceKind === 'tags' ? tagAudienceMode : undefined,
         manualPhones,
+        includeOptedOut,
         abTest,
         variantATemplateId: variantATemplateId!,
         variantBTemplateId: abTest ? variantBTemplateId ?? undefined : undefined,
@@ -726,6 +730,29 @@ export default function NewBroadcastPage() {
                   className="mt-2 max-w-xs"
                 />
               ) : null}
+            </div>
+
+            {/* Unsubscribe compliance note + explicit override. */}
+            <div className="border-t border-border pt-4">
+              <div className="rounded-md border border-red-300 bg-red-50 p-3">
+                <p className="text-sm font-medium text-red-800">
+                  Unsubscribed contacts won&apos;t receive this broadcast
+                </p>
+                <p className="mt-1 text-sm text-red-700">
+                  Contacts who unsubscribed (tagged{' '}
+                  <code className="rounded bg-red-100 px-1">unsubscribed</code>) are skipped. Only
+                  override this if you have a lawful reason to message them again — re-sending to
+                  people who opted out can violate WhatsApp policy.
+                </p>
+                <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm font-medium text-red-800">
+                  <input
+                    type="checkbox"
+                    checked={includeOptedOut}
+                    onChange={(e) => setIncludeOptedOut(e.target.checked)}
+                  />
+                  Send anyway — include unsubscribed contacts
+                </label>
+              </div>
             </div>
           </CardContent>
         </Card>

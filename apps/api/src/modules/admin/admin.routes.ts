@@ -1638,6 +1638,78 @@ export default async function adminRoutes(app: FastifyInstance) {
   //   AI plan + usage — per-tenant tier + cost roll-up
   // ============================================================
 
+  // ---------- GET /aligned-admin/orgs/:id/broadcasts --------------------
+  // A tenant's broadcasts with messages-sent + recipient counts, so HQ can see
+  // (per the org's detail profile) how much each tenant has broadcast.
+  r.get(
+    '/aligned-admin/orgs/:id/broadcasts',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: "A tenant's broadcasts with messages-sent + recipient counts.",
+        params: z.object({ id: uuidSchema }),
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              totals: z.object({
+                broadcasts: z.number().int(),
+                recipients: z.number().int(),
+                sent: z.number().int(),
+              }),
+              broadcasts: z.array(
+                z.object({
+                  id: uuidSchema,
+                  name: z.string(),
+                  status: z.string(),
+                  totalRecipients: z.number().int(),
+                  sentCount: z.number().int(),
+                  deliveredCount: z.number().int(),
+                  readCount: z.number().int(),
+                  createdAt: z.string(),
+                }),
+              ),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const orgId = req.params.id;
+      return withRlsBypass(async (tx) => {
+        const rows = await tx.broadcast.findMany({
+          where: { organizationId: orgId },
+          orderBy: { createdAt: 'desc' },
+          take: 100,
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            totalRecipients: true,
+            sentCount: true,
+            deliveredCount: true,
+            readCount: true,
+            createdAt: true,
+          },
+        });
+        const totals = rows.reduce(
+          (acc, b) => {
+            acc.recipients += b.totalRecipients;
+            acc.sent += b.sentCount;
+            return acc;
+          },
+          { broadcasts: rows.length, recipients: 0, sent: 0 },
+        );
+        return {
+          data: {
+            totals,
+            broadcasts: rows.map((b) => ({ ...b, createdAt: b.createdAt.toISOString() })),
+          },
+        };
+      });
+    },
+  );
+
   // ---------- GET /aligned-admin/orgs/:id/ai-usage ----------------------
   // Token + USD usage rolled up per day/week/month. Reads
   // MessageProvenance rows (one per bot reply) for the org, groups by

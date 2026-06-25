@@ -71,6 +71,20 @@ interface AiUsage {
   thisMonth: { tokens: number; usd: number; replies: number };
 }
 
+interface OrgBroadcasts {
+  totals: { broadcasts: number; recipients: number; sent: number };
+  broadcasts: {
+    id: string;
+    name: string;
+    status: string;
+    totalRecipients: number;
+    sentCount: number;
+    deliveredCount: number;
+    readCount: number;
+    createdAt: string;
+  }[];
+}
+
 interface ExportRow {
   id: string;
   status: 'pending' | 'running' | 'succeeded' | 'failed';
@@ -105,8 +119,13 @@ export default function OrgDetailPage() {
     queryFn: () => api.get<{ data: AiUsage }>(`/api/v1/aligned-admin/orgs/${id}/ai-usage`),
     refetchInterval: 30_000,
   });
+  const broadcastsQ = useQuery({
+    queryKey: ['admin-org-broadcasts', id],
+    queryFn: () => api.get<{ data: OrgBroadcasts }>(`/api/v1/aligned-admin/orgs/${id}/broadcasts`),
+  });
   const d = detailsQ.data?.data;
   const usage = usageQ.data?.data;
+  const broadcasts = broadcastsQ.data?.data;
   const currentPlan = usage?.aiPlan ?? org?.aiPlan ?? 'basic';
   const status = d?.status ?? org?.status ?? 'active';
 
@@ -503,6 +522,59 @@ export default function OrgDetailPage() {
                         <td className="px-4 py-2">{m.totpEnabled ? 'On' : '—'}</td>
                         <td className="px-4 py-2 text-foreground-muted">
                           {m.lastLoginAt ? formatRelative(m.lastLoginAt) : 'never'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Broadcasts — messages sent + recipients per campaign for this tenant */}
+        <Card className="lg:col-span-3">
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <span>Broadcasts</span>
+              {broadcasts ? (
+                <span className="text-xs font-normal text-foreground-muted">
+                  {broadcasts.totals.broadcasts} campaigns · {broadcasts.totals.sent.toLocaleString()} sent ·{' '}
+                  {broadcasts.totals.recipients.toLocaleString()} recipients
+                </span>
+              ) : null}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {!broadcasts || broadcasts.broadcasts.length === 0 ? (
+              <p className="px-6 py-6 text-center text-sm text-foreground-muted">
+                No broadcasts sent yet.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-border bg-surface-muted text-xs uppercase tracking-wide text-foreground-subtle">
+                    <tr>
+                      <th className="px-4 py-2">Campaign</th>
+                      <th className="px-4 py-2">Status</th>
+                      <th className="px-4 py-2 text-right">Recipients</th>
+                      <th className="px-4 py-2 text-right">Sent</th>
+                      <th className="px-4 py-2 text-right">Delivered</th>
+                      <th className="px-4 py-2 text-right">Read</th>
+                      <th className="px-4 py-2">Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {broadcasts.broadcasts.map((b) => (
+                      <tr key={b.id} className="border-b border-border last:border-0">
+                        <td className="px-4 py-2 font-medium text-foreground">{b.name}</td>
+                        <td className="px-4 py-2 text-foreground-muted">{b.status}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{b.totalRecipients.toLocaleString()}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{b.sentCount.toLocaleString()}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{b.deliveredCount.toLocaleString()}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{b.readCount.toLocaleString()}</td>
+                        <td className="px-4 py-2 text-foreground-muted">
+                          {new Date(b.createdAt).toLocaleDateString()}
                         </td>
                       </tr>
                     ))}

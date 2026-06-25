@@ -243,9 +243,12 @@ export function startBroadcastSendWorker() {
       }
 
       // Phase 5.3 — opt-out gate. Skip without retry; counts as failed-soft.
-      // Blocked contacts are skipped the same way (operator block).
-      if (recipient.contact?.optedOutAt || recipient.contact?.blockedAt) {
-        const blocked = !!recipient.contact?.blockedAt;
+      // Blocked contacts are ALWAYS skipped (operator block). Opted-out
+      // (unsubscribed) contacts are skipped UNLESS the operator chose "send
+      // anyway" on this broadcast (broadcast.includeOptedOut).
+      const blocked = !!recipient.contact?.blockedAt;
+      const optedOut = !!recipient.contact?.optedOutAt && !broadcast.includeOptedOut;
+      if (blocked || optedOut) {
         await prisma.broadcastRecipient.update({
           where: { id: recipientId },
           data: {

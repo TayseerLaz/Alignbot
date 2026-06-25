@@ -63,6 +63,7 @@ interface BroadcastRow {
   segmentId: string | null;
   audienceTags: string[];
   audienceTagsMode: string;
+  includeOptedOut: boolean;
   abTest: boolean;
   variantATemplateId: string;
   variantBTemplateId: string | null;
@@ -111,6 +112,7 @@ function toDto(row: BroadcastRow) {
     segmentId: row.segmentId,
     audienceTags: row.audienceTags ?? [],
     audienceTagsMode: ((row.audienceTagsMode ?? 'any') as 'any' | 'all'),
+    includeOptedOut: row.includeOptedOut,
     abTest: row.abTest,
     variantATemplateId: row.variantATemplateId,
     variantBTemplateId: row.variantBTemplateId,
@@ -316,6 +318,7 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
             segmentId: body.segmentId ?? null,
             audienceTags: normalizedTags,
             audienceTagsMode: body.audienceTagsMode ?? 'any',
+            includeOptedOut: body.includeOptedOut ?? false,
             abTest: body.abTest,
             variantATemplateId: body.variantATemplateId,
             variantBTemplateId: body.variantBTemplateId ?? null,
@@ -416,6 +419,7 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
             audienceKind: body.audienceKind ?? undefined,
             csvAssetId: body.csvAssetId !== undefined ? body.csvAssetId : undefined,
             segmentId: body.segmentId !== undefined ? body.segmentId : undefined,
+            includeOptedOut: body.includeOptedOut ?? undefined,
             abTest: body.abTest ?? undefined,
             variantATemplateId: body.variantATemplateId ?? undefined,
             variantBTemplateId:

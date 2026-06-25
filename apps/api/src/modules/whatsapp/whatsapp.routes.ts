@@ -2611,7 +2611,13 @@ export default async function whatsappRoutes(app: FastifyInstance) {
             const STOP_RE = /^\s*(stop|unsubscribe|quit|cancel|end|opt\s*out|alto|para|arr[eê]ter|stopper|اوقف|إيقاف)\s*\.?\s*$/i;
             if (m.from) {
               const phoneE164 = `+${m.from}`;
-              const isStop = STOP_RE.test(bodyText);
+              // Opt-out is either a typed STOP keyword, OR a tap on a marketing
+              // template's opt-out button (button/interactive reply whose label
+              // contains stop / unsubscribe / "stop promotions").
+              const isButtonReply = m.type === 'button' || m.type === 'interactive';
+              const isStop =
+                STOP_RE.test(bodyText) ||
+                (isButtonReply && /\b(stop|unsubscrib|opt[\s-]?out|stop\s+promotions)\b/i.test(bodyText));
               // Meta inbound payloads include a parallel contacts[] array
               // with profile.name and wa_id matching the message's from.
               const inboundContact = (value.contacts ?? []).find(
@@ -2629,7 +2635,15 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 '[whatsapp] inbound profile extraction',
               );
               await withRlsBypass(async (tx) => {
-                await tx.contact.upsert({
+                // Read prior opt-out state so we only tag + audit a NEW opt-out.
+                const prior = await tx.contact.findUnique({
+                  where: {
+                    organizationId_phoneE164: { organizationId: channel.organizationId, phoneE164 },
+                  },
+                  select: { optedOutAt: true },
+                });
+                const wasNewlyOptedOut = isStop && !prior?.optedOutAt;
+                const contact = await tx.contact.upsert({
                   where: {
                     organizationId_phoneE164: {
                       organizationId: channel.organizationId,
@@ -2657,6 +2671,16 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                     ...(isStop ? { optedOutAt: new Date() } : {}),
                   },
                 });
+                if (isStop) {
+                  const { recordContactOptOut } = await import('../../lib/opt-out.js');
+                  await recordContactOptOut(tx, {
+                    organizationId: channel.organizationId,
+                    contactId: contact.id,
+                    phoneE164,
+                    channel: 'whatsapp',
+                    wasNewlyOptedOut,
+                  });
+                }
               }).catch((err) =>
                 req.log.error({ err }, '[whatsapp] contact upsert failed'),
               );

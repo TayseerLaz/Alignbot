@@ -35,6 +35,30 @@ export default function AnalyticsPage() {
   });
   const a = q.data?.data;
 
+  // Broadcasts the tenant has sent — messages sent + how many users reached.
+  const broadcastsQ = useQuery({
+    queryKey: ['analytics-broadcasts'],
+    queryFn: () =>
+      api.get<{
+        data: {
+          id: string;
+          name: string;
+          status: string;
+          totalRecipients: number;
+          sentCount: number;
+          deliveredCount: number;
+          readCount: number;
+          createdAt: string;
+        }[];
+      }>('/api/v1/broadcasts?limit=50'),
+    refetchInterval: 60_000,
+  });
+  const broadcasts = broadcastsQ.data?.data ?? [];
+  const broadcastTotals = broadcasts.reduce(
+    (acc, b) => ({ sent: acc.sent + b.sentCount, recipients: acc.recipients + b.totalRecipients }),
+    { sent: 0, recipients: 0 },
+  );
+
   const max = Math.max(1, ...(a?.volume.map((v) => v.inbound + v.outbound) ?? [0]));
 
   return (
@@ -215,6 +239,58 @@ export default function AnalyticsPage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Broadcasts — messages sent + recipients per campaign. */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <MessageCircle className="size-4" /> Broadcasts
+                </span>
+                <span className="text-xs font-normal text-foreground-muted">
+                  {broadcastTotals.sent.toLocaleString()} messages sent ·{' '}
+                  {broadcastTotals.recipients.toLocaleString()} recipients
+                </span>
+              </CardTitle>
+              <CardDescription>
+                Each campaign you&apos;ve sent — how many messages went out and to how many users.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {broadcasts.length === 0 ? (
+                <p className="px-6 py-6 text-center text-sm text-foreground-muted">
+                  No broadcasts sent yet.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="border-b border-border bg-surface-muted text-xs uppercase tracking-wide text-foreground-subtle">
+                      <tr>
+                        <th className="px-4 py-2">Campaign</th>
+                        <th className="px-4 py-2">Status</th>
+                        <th className="px-4 py-2 text-right">Recipients</th>
+                        <th className="px-4 py-2 text-right">Sent</th>
+                        <th className="px-4 py-2 text-right">Delivered</th>
+                        <th className="px-4 py-2 text-right">Read</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {broadcasts.map((b) => (
+                        <tr key={b.id} className="border-b border-border last:border-0">
+                          <td className="px-4 py-2 font-medium text-foreground">{b.name}</td>
+                          <td className="px-4 py-2 text-foreground-muted">{b.status}</td>
+                          <td className="px-4 py-2 text-right tabular-nums">{b.totalRecipients.toLocaleString()}</td>
+                          <td className="px-4 py-2 text-right tabular-nums">{b.sentCount.toLocaleString()}</td>
+                          <td className="px-4 py-2 text-right tabular-nums">{b.deliveredCount.toLocaleString()}</td>
+                          <td className="px-4 py-2 text-right tabular-nums">{b.readCount.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </>
       )}
     </>

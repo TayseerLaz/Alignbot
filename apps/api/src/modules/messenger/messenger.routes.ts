@@ -568,8 +568,13 @@ async function handleMessengerEvents(
     // long numeric string with no leading '+', so it can't collide with a real
     // WhatsApp +E.164 number. STOP keywords (multi-locale) set optedOutAt.
     const isStop = !!text && STOP_RE.test(text);
-    await withRlsBypass((tx) =>
-      tx.contact.upsert({
+    await withRlsBypass(async (tx) => {
+      const prior = await tx.contact.findUnique({
+        where: { organizationId_phoneE164: { organizationId: orgId, phoneE164: psid } },
+        select: { optedOutAt: true },
+      });
+      const wasNewlyOptedOut = isStop && !prior?.optedOutAt;
+      const contact = await tx.contact.upsert({
         where: { organizationId_phoneE164: { organizationId: orgId, phoneE164: psid } },
         create: {
           organizationId: orgId,
@@ -586,8 +591,18 @@ async function handleMessengerEvents(
           ...(profileName ? { displayName: profileName } : {}),
           ...(isStop ? { optedOutAt: new Date() } : {}),
         },
-      }),
-    ).catch((err) => log.error({ err }, '[messenger] contact upsert failed'));
+      });
+      if (isStop) {
+        const { recordContactOptOut } = await import('../../lib/opt-out.js');
+        await recordContactOptOut(tx, {
+          organizationId: orgId,
+          contactId: contact.id,
+          phoneE164: psid,
+          channel: channelKind,
+          wasNewlyOptedOut,
+        });
+      }
+    }).catch((err) => log.error({ err }, '[messenger] contact upsert failed'));
 
     publishInboxEvent(orgId); // show the inbound in the inbox instantly
 

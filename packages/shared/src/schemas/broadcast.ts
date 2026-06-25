@@ -194,6 +194,7 @@ export const broadcastDtoSchema = z.object({
   // Tag-based audience (audienceKind = 'tags'). Empty for other kinds.
   audienceTags: z.array(z.string()).default([]),
   audienceTagsMode: z.enum(['any', 'all']).default('any'),
+  includeOptedOut: z.boolean().default(false),
   abTest: z.boolean(),
   variantATemplateId: uuidSchema,
   variantBTemplateId: uuidSchema.nullable(),
@@ -236,6 +237,8 @@ export const createBroadcastBodySchema = z.object({
   audienceTags: z.array(z.string().trim().min(1).max(40)).max(50).optional(),
   audienceTagsMode: z.enum(['any', 'all']).optional(),
   manualPhones: z.array(phoneE164Schema).max(10000).optional(),
+  // Compliance override: include contacts who unsubscribed ("send anyway").
+  includeOptedOut: z.boolean().default(false),
   abTest: z.boolean().default(false),
   variantATemplateId: uuidSchema,
   variantBTemplateId: uuidSchema.optional().nullable(),

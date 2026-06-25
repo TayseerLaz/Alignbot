@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Building2, CreditCard, Download, Key, MessageCircle, Phone, Trash2, User, Users } from 'lucide-react';
+import { ArrowRight, Building2, CreditCard, Download, Key, MessageCircle, Phone, ShoppingBag, Trash2, User, Users } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -164,6 +164,12 @@ export default function SettingsPage() {
               icon={MessageCircle}
               title="WhatsApp"
               description="Connect your Meta WhatsApp Business number + manage templates."
+            />
+            <SettingsLink
+              href="/connectors"
+              icon={ShoppingBag}
+              title="Shopify"
+              description="Sync your Shopify products & orders into the platform via an API connector."
             />
             {phoneOn ? (
               <SettingsLink

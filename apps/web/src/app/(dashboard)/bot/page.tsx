@@ -699,7 +699,7 @@ function CrawlResultsViewer({ jobId }: { jobId: string }) {
                 </div>
               ) : null}
               <div className="overflow-hidden rounded border border-border">
-                <table className="w-full text-xs">
+                <div className="overflow-x-auto"><table className="w-full text-xs">
                   <thead className="bg-surface-muted text-foreground-subtle">
                     <tr>
                       <th className="px-2 py-1 text-left font-medium">URL</th>
@@ -769,7 +769,7 @@ function CrawlResultsViewer({ jobId }: { jobId: string }) {
                       );
                     })}
                   </tbody>
-                </table>
+                </table></div>
               </div>
             </>
           )}

@@ -240,7 +240,7 @@ export default function CartPage() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <table className="w-full text-left text-sm">
+          <div className="overflow-x-auto"><table className="w-full text-left text-sm">
             <thead className="border-b border-border bg-surface-muted text-xs uppercase tracking-wide text-foreground-subtle">
               <tr>
                 <th className="w-10 px-4 py-3" />
@@ -290,7 +290,7 @@ export default function CartPage() {
                 );
               })}
             </tbody>
-          </table>
+          </table></div>
         </CardContent>
       </Card>
     </>
@@ -402,7 +402,7 @@ function CartRow({
                 <div className="mb-2 text-xs font-medium uppercase tracking-wide text-foreground-subtle">
                   Line items
                 </div>
-                <table className="w-full text-sm">
+                <div className="overflow-x-auto"><table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border text-xs text-foreground-subtle">
                       <th className="py-1 text-left font-medium">Item</th>
@@ -473,7 +473,7 @@ function CartRow({
                       </td>
                     </tr>
                   </tbody>
-                </table>
+                </table></div>
               </div>
               <div>
                 <div className="mb-2 text-xs font-medium uppercase tracking-wide text-foreground-subtle">

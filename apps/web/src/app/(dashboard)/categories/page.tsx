@@ -192,7 +192,7 @@ export default function CategoriesPage() {
           </div>
         ) : null}
         <CardContent className="p-0">
-          <table className="w-full text-left text-sm">
+          <div className="overflow-x-auto"><table className="w-full text-left text-sm">
             <thead className="border-b border-border bg-surface-muted text-xs uppercase tracking-wide text-foreground-subtle">
               <tr>
                 <th className="w-10 px-4 py-3">
@@ -270,7 +270,7 @@ export default function CategoriesPage() {
                 );
               })}
             </tbody>
-          </table>
+          </table></div>
         </CardContent>
       </Card>
 

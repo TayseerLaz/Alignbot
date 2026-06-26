@@ -326,7 +326,7 @@ function RunHistory({ connectorId }: { connectorId: string }) {
       ) : (runs.data?.data ?? []).length === 0 ? (
         <p className="px-4 py-4 text-center text-xs text-foreground-muted">No runs yet.</p>
       ) : (
-        <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto"><table className="w-full text-left text-xs">
           <thead className="bg-surface-muted text-foreground-subtle">
             <tr>
               <th className="px-3 py-2">When</th>
@@ -365,7 +365,7 @@ function RunHistory({ connectorId }: { connectorId: string }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </div>
   );

@@ -131,7 +131,7 @@ export default function VoiceCallsPage() {
               description="When a caller reaches your AI voicebot, the call and its transcript appear here."
             />
           ) : (
-            <table className="w-full text-left text-sm">
+            <div className="overflow-x-auto"><table className="w-full text-left text-sm">
               <thead className="border-b border-border bg-surface-muted text-xs uppercase tracking-wide text-foreground-subtle">
                 <tr>
                   <th className="px-6 py-3">Started</th>
@@ -177,7 +177,7 @@ export default function VoiceCallsPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           )}
         </CardContent>
       </Card>

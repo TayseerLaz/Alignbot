@@ -97,7 +97,7 @@ export default function RevenuePage() {
               <CardDescription>How tenants split across plans + MRR contribution.</CardDescription>
             </CardHeader>
             <CardContent>
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto"><table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs uppercase text-foreground-subtle">
                     <th className="py-2">Plan</th>
@@ -114,7 +114,7 @@ export default function RevenuePage() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </CardContent>
           </Card>
         </>

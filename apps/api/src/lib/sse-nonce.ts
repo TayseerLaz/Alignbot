@@ -35,10 +35,16 @@ export async function issueSseNonce(claims: SseAuthClaims): Promise<string> {
   return nonce;
 }
 
+// Atomic GET+DEL via Lua so it works on Redis < 6.2 (the native GETDEL command
+// only exists from 6.2.0; prod runs 6.0.x, where calling getdel throws
+// "unknown command" — which previously 500'd every SSE/EventSource connection).
+const GETDEL_LUA =
+  "local v = redis.call('GET', KEYS[1]); if v then redis.call('DEL', KEYS[1]) end; return v";
+
 export async function consumeSseNonce(nonce: string): Promise<SseAuthClaims | null> {
   if (!nonce || typeof nonce !== 'string' || nonce.length < 16) return null;
-  // GETDEL is atomic — guarantees single-use semantics across replicas.
-  const raw = await getRedis().getdel(`${NONCE_PREFIX}${nonce}`);
+  // Atomic single-use consume — guarantees single-use semantics across replicas.
+  const raw = (await getRedis().eval(GETDEL_LUA, 1, `${NONCE_PREFIX}${nonce}`)) as string | null;
   if (!raw) return null;
   try {
     return JSON.parse(raw) as SseAuthClaims;

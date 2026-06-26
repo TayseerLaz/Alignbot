@@ -170,9 +170,22 @@ export async function capCheck(
   }
 
   if (current >= cap) {
+    // Human-readable, area-specific so the UI never shows a vague error — the
+    // operator sees exactly which plan limit they hit.
+    const AREA: Record<CapKind, string> = {
+      product: 'product',
+      service: 'service',
+      member: 'team-member',
+      monthly_message: 'monthly message',
+      monthly_broadcast: 'monthly broadcast',
+      monthly_import: 'monthly import',
+      api_key: 'API-key',
+      webhook: 'webhook',
+    };
+    const area = AREA[kind] ?? kind;
     throw badRequest(
       ApiErrorCode.RATE_LIMITED,
-      `Plan cap reached for "${kind}" (${current}/${cap}). Upgrade your plan to continue.`,
+      `Plan limit reached — you've used all ${cap} of your ${area} allowance (${current}/${cap}). Upgrade your plan to continue.`,
     );
   }
 }

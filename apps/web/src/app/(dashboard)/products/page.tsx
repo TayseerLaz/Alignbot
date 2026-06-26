@@ -331,11 +331,11 @@ export default function ProductsPage() {
                       />
                     </th>
                     <th className="px-4 py-3">Product</th>
-                    <th className="px-4 py-3">SKU</th>
-                    <th className="px-4 py-3">Category</th>
+                    <th className="hidden px-4 py-3 lg:table-cell">SKU</th>
+                    <th className="hidden px-4 py-3 md:table-cell">Category</th>
                     <th className="px-4 py-3 text-right">Price</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Updated</th>
+                    <th className="hidden px-4 py-3 sm:table-cell">Status</th>
+                    <th className="hidden px-4 py-3 lg:table-cell">Updated</th>
                     <th className="w-12 px-4 py-3" />
                   </tr>
                 </thead>
@@ -382,14 +382,16 @@ export default function ProductsPage() {
                           </div>
                         </Link>
                       </td>
-                      <td className="px-4 py-3 font-mono text-xs text-foreground-muted">{p.sku}</td>
-                      <td className="px-4 py-3 text-foreground-muted">
+                      <td className="hidden px-4 py-3 font-mono text-xs text-foreground-muted lg:table-cell">
+                        {p.sku}
+                      </td>
+                      <td className="hidden px-4 py-3 text-foreground-muted md:table-cell">
                         {p.categoryName ?? <span className="text-foreground-subtle">—</span>}
                       </td>
                       <td className="px-4 py-3 text-right font-medium">
                         {formatMoney(p.priceMinor, p.currency)}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="hidden px-4 py-3 sm:table-cell">
                         {p.isAvailable ? (
                           <Badge variant="success">
                             <CheckCircle2 className="mr-1 size-3" /> Available
@@ -398,7 +400,9 @@ export default function ProductsPage() {
                           <Badge variant="muted">Unavailable</Badge>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-foreground-muted">{formatRelative(p.updatedAt)}</td>
+                      <td className="hidden px-4 py-3 text-foreground-muted lg:table-cell">
+                        {formatRelative(p.updatedAt)}
+                      </td>
                       <td className="px-4 py-3 text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>

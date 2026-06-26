@@ -143,13 +143,13 @@ function BroadcastsTab() {
           <table className="w-full text-left text-sm">
             <thead className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
               <tr>
-                <th className="px-6 py-3">Name</th>
-                <th className="px-6 py-3">Status</th>
-                <th className="px-6 py-3">Audience</th>
-                <th className="px-6 py-3">Sent / Delivered / Read</th>
-                <th className="px-6 py-3">Scheduled</th>
-                <th className="px-6 py-3">Resend</th>
-                <th className="w-20 px-6 py-3" />
+                <th className="px-4 py-3 sm:px-6">Name</th>
+                <th className="px-4 py-3 sm:px-6">Status</th>
+                <th className="hidden px-6 py-3 lg:table-cell">Audience</th>
+                <th className="hidden px-6 py-3 sm:table-cell">Sent / Delivered / Read</th>
+                <th className="hidden px-6 py-3 lg:table-cell">Scheduled</th>
+                <th className="hidden px-6 py-3 md:table-cell">Resend</th>
+                <th className="w-16 px-4 py-3 sm:w-20 sm:px-6" />
               </tr>
             </thead>
             <tbody>
@@ -169,19 +169,19 @@ function BroadcastsTab() {
               ) : null}
               {broadcastsQuery.data?.data.map((b) => (
                 <tr key={b.id} className="border-b border-border last:border-0">
-                  <td className="px-6 py-4 font-medium">
+                  <td className="px-4 py-4 font-medium sm:px-6">
                     <Link href={`/broadcasts/${b.id}`} className="hover:underline">
                       {b.name}
                     </Link>
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-4 py-4 sm:px-6">
                     <span
                       className={`inline-flex rounded-full px-2 py-0.5 text-xs ${STATUS_CLASS[b.status]}`}
                     >
                       {BROADCAST_STATUS_LABELS[b.status]}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-foreground-muted">
+                  <td className="hidden px-6 py-4 text-foreground-muted lg:table-cell">
                     {b.audienceKind === 'csv'
                       ? 'CSV'
                       : b.audienceKind === 'segment'
@@ -196,7 +196,7 @@ function BroadcastsTab() {
                     {' · '}
                     <span className="font-mono text-xs">{b.totalRecipients}</span>
                   </td>
-                  <td className="px-6 py-4 font-mono text-sm text-foreground-muted">
+                  <td className="hidden px-6 py-4 font-mono text-sm text-foreground-muted sm:table-cell">
                     {b.sentCount} / {b.deliveredCount} / {b.readCount}
                     {b.respondedCount > 0 ? (
                       <span className="ml-2 font-sans text-emerald-600">
@@ -207,14 +207,14 @@ function BroadcastsTab() {
                       <span className="ml-2 text-red-600">· {b.failedCount} failed</span>
                     ) : null}
                   </td>
-                  <td className="px-6 py-4 text-foreground-muted">
+                  <td className="hidden px-6 py-4 text-foreground-muted lg:table-cell">
                     {b.scheduledFor
                       ? new Date(b.scheduledFor).toLocaleString()
                       : b.startedAt
                         ? new Date(b.startedAt).toLocaleString()
                         : '—'}
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="hidden px-6 py-4 md:table-cell">
                     {b.status === 'completed' ||
                     b.status === 'sending' ||
                     b.status === 'paused' ||

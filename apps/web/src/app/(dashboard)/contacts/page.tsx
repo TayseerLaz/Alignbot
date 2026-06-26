@@ -470,10 +470,10 @@ function ContactRow({
           <span className="font-mono">{contact.phoneE164}</span>
         )}
       </td>
-      <td className="px-6 py-3 text-sm text-foreground-muted">
+      <td className="hidden px-6 py-3 text-sm text-foreground-muted lg:table-cell">
         {contact.whatsappName ?? '—'}
       </td>
-      <td className="px-6 py-3 text-sm">
+      <td className="px-4 py-3 text-sm sm:px-6">
         {editing ? (
           <Input
             value={name}
@@ -493,7 +493,7 @@ function ContactRow({
           </span>
         )}
       </td>
-      <td className="px-6 py-3">
+      <td className="hidden px-6 py-3 md:table-cell">
         <div className="flex flex-wrap gap-1">
           {contact.tags.map((t) => (
             <span
@@ -505,11 +505,13 @@ function ContactRow({
           ))}
         </div>
       </td>
-      <td className="px-6 py-3 text-sm text-foreground-muted">{contact.source}</td>
-      <td className="px-6 py-3 text-sm text-foreground-muted">
+      <td className="hidden px-6 py-3 text-sm text-foreground-muted lg:table-cell">
+        {contact.source}
+      </td>
+      <td className="hidden px-6 py-3 text-sm text-foreground-muted sm:table-cell">
         {contact.lastInboundAt ? new Date(contact.lastInboundAt).toLocaleDateString() : '—'}
       </td>
-      <td className="px-6 py-3 text-right">
+      <td className="px-4 py-3 text-right sm:px-6">
         {editing ? (
           <div className="flex items-center justify-end gap-1">
             <Button size="icon" variant="ghost" onClick={cancel} aria-label="Cancel">

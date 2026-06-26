@@ -341,15 +341,15 @@ function MonthGrid({
   const weekdayHeaders = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-surface">
-      <div className="grid grid-cols-7 border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
+    <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+      <div className="grid min-w-[680px] grid-cols-7 border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
         {weekdayHeaders.map((d) => (
           <div key={d} className="px-3 py-2 text-center">
             {d}
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-7">
+      <div className="grid min-w-[680px] grid-cols-7">
         {days.map((d, i) => {
           const inMonth = d.getMonth() === anchor.getMonth();
           const isToday = sameDay(d, today);

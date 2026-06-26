@@ -166,6 +166,27 @@ export default function ContactsPage() {
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
   });
 
+  // Add / remove a tag on a contact (used by the inline edit row).
+  const addTag = useMutation({
+    mutationFn: ({ id, tag }: { id: string; tag: string }) =>
+      api.post(`/api/v1/contacts/${id}/tags`, { tag }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contacts'] });
+      qc.invalidateQueries({ queryKey: ['contacts', 'tags'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Could not add tag'),
+  });
+  const removeTag = useMutation({
+    mutationFn: ({ id, tag }: { id: string; tag: string }) =>
+      api.delete(`/api/v1/contacts/${id}/tags/${encodeURIComponent(tag)}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contacts'] });
+      qc.invalidateQueries({ queryKey: ['contacts', 'tags'] });
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Could not remove tag'),
+  });
+
   const tags = useMemo(() => tagsQuery.data?.data ?? [], [tagsQuery.data]);
 
   // Reload after a contact is added/imported. Jump to page 1 (newest first) so
@@ -318,6 +339,8 @@ export default function ContactsPage() {
                     onDelete={() => {
                       if (window.confirm(`Delete ${c.phoneE164}?`)) deleteMutation.mutate(c.id);
                     }}
+                    onAddTag={(tag) => addTag.mutate({ id: c.id, tag })}
+                    onRemoveTag={(tag) => removeTag.mutate({ id: c.id, tag })}
                   />
                 ))}
               </tbody>

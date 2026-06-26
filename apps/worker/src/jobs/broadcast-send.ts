@@ -12,9 +12,100 @@ import { DelayedError, Worker } from 'bullmq';
 
 import { emitWebhookEvent } from '../lib/emit-webhook.js';
 import { getConnection } from '../lib/redis.js';
+import { safeFetch } from '../lib/safe-fetch.js';
+import { getObjectStream } from '../lib/storage.js';
 
 import { prisma } from './db.js';
 import { recordOutboundTemplate } from './inbox-consistency.js';
+
+// Resolve a template's media-header (IMAGE/VIDEO/DOCUMENT) sample into a WhatsApp
+// media id usable in a send-time header component. Uploads the sample to
+// /{phone_number_id}/media once and caches the id per template (Redis, 24h) so a
+// broadcast to N recipients uploads once, not N times.
+async function resolveTemplateHeaderMedia(
+  template: { id: string; components: unknown },
+  channel: { phoneNumberId: string | null; accessToken: string | null },
+): Promise<{ format: 'image' | 'video' | 'document'; id: string } | { error: string } | null> {
+  const comps = Array.isArray(template.components)
+    ? (template.components as Record<string, unknown>[])
+    : [];
+  const header = comps.find(
+    (c) =>
+      String(c.type ?? '').toUpperCase() === 'HEADER' &&
+      ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(String(c.format ?? '').toUpperCase()),
+  );
+  if (!header) return null; // text-only template — nothing to do
+  if (!channel.phoneNumberId || !channel.accessToken) {
+    return { error: 'WhatsApp channel is missing its phone number or access token.' };
+  }
+  const phoneNumberId = channel.phoneNumberId;
+  const accessToken = channel.accessToken;
+  const format = String(header.format).toLowerCase() as 'image' | 'video' | 'document';
+  const example = (header.example ?? {}) as { header_handle?: unknown };
+  const handleUrl = Array.isArray(example.header_handle) ? example.header_handle[0] : null;
+  if (typeof handleUrl !== 'string' || !handleUrl) {
+    return { error: 'This template’s header has no sample media to broadcast.' };
+  }
+
+  const redis = getConnection();
+  // Bust the cache automatically if the sample image changes.
+  let hash = 0;
+  for (let i = 0; i < handleUrl.length; i++) hash = (hash * 31 + handleUrl.charCodeAt(i)) | 0;
+  const cacheKey = `wa-tpl-media:${template.id}:${(hash >>> 0).toString(36)}`;
+  const cached = await redis.get(cacheKey);
+  if (cached) return { format, id: cached };
+
+  const mimeFor = (s: string): string => {
+    const ext = (s.split('?')[0]!.split('.').pop() ?? '').toLowerCase();
+    if (ext === 'png') return 'image/png';
+    if (ext === 'webp') return 'image/webp';
+    if (ext === 'gif') return 'image/gif';
+    if (ext === 'mp4') return 'video/mp4';
+    if (ext === 'pdf') return 'application/pdf';
+    return 'image/jpeg';
+  };
+
+  // Fetch the sample bytes — prefer our own storage (private bucket), else the
+  // external URL via the SSRF-safe fetcher.
+  let bytes: Buffer;
+  let mime = mimeFor(handleUrl);
+  try {
+    const storageKey = decodeURIComponent(new URL(handleUrl).pathname.replace(/^\/+/, ''));
+    const stream = await getObjectStream(storageKey);
+    const chunks: Buffer[] = [];
+    for await (const c of stream) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c as Buffer));
+    bytes = Buffer.concat(chunks);
+  } catch {
+    try {
+      const res = await safeFetch(handleUrl, { signal: AbortSignal.timeout(20_000) });
+      if (!res.ok) return { error: `Couldn’t fetch the header media (HTTP ${res.status}).` };
+      mime = (res.headers.get('content-type') ?? '').split(';')[0]!.trim() || mime;
+      bytes = Buffer.from(await res.arrayBuffer());
+    } catch {
+      return { error: 'Couldn’t read the template’s header media.' };
+    }
+  }
+
+  // Upload to WhatsApp media → reusable media id.
+  try {
+    const fd = new FormData();
+    fd.append('messaging_product', 'whatsapp');
+    fd.append('type', mime);
+    fd.append('file', new Blob([bytes], { type: mime }), `header.${mime.split('/')[1] ?? 'bin'}`);
+    const up = await fetch(
+      `https://graph.facebook.com/v20.0/${encodeURIComponent(phoneNumberId)}/media`,
+      { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: fd },
+    );
+    const upj = (await up.json().catch(() => null)) as { id?: string; error?: unknown } | null;
+    if (!up.ok || !upj?.id) {
+      return { error: `WhatsApp rejected the header media: ${JSON.stringify(upj?.error ?? upj)}` };
+    }
+    await redis.set(cacheKey, upj.id, 'EX', 86_400);
+    return { format, id: upj.id };
+  } catch (err) {
+    return { error: `Header media upload failed: ${err instanceof Error ? err.message : 'unknown'}` };
+  }
+}
 
 const QUEUE_SEND = 'broadcast-send';
 const SEND_CONCURRENCY = Number(process.env.BROADCAST_SEND_CONCURRENCY ?? 10);
@@ -114,6 +205,7 @@ async function callMeta(args: {
   templateName: string;
   language: string;
   variables: Record<string, string>;
+  headerMedia?: { format: 'image' | 'video' | 'document'; id: string };
 }): Promise<{
   ok: boolean;
   metaMessageId: string | null;
@@ -133,7 +225,16 @@ async function callMeta(args: {
     text: args.variables[String(idx)] ?? '',
   }));
 
-  const components = parameters.length > 0 ? [{ type: 'body', parameters }] : [];
+  const components: Record<string, unknown>[] = [];
+  if (args.headerMedia) {
+    components.push({
+      type: 'header',
+      parameters: [
+        { type: args.headerMedia.format, [args.headerMedia.format]: { id: args.headerMedia.id } },
+      ],
+    });
+  }
+  if (parameters.length > 0) components.push({ type: 'body', parameters });
 
   const payload = {
     messaging_product: 'whatsapp',
@@ -336,26 +437,18 @@ export function startBroadcastSendWorker() {
         return;
       }
 
-      // Media-header templates (IMAGE/VIDEO/DOCUMENT) need the header media
-      // supplied at send time — broadcasting them isn't supported yet, so fail
-      // with a CLEAR reason instead of Meta's cryptic 132012 parameter error.
-      const tplComponents = Array.isArray(template.components)
-        ? (template.components as unknown as Record<string, unknown>[])
-        : [];
-      const mediaHeader = tplComponents.find(
-        (c) =>
-          String(c.type ?? '').toUpperCase() === 'HEADER' &&
-          ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(String(c.format ?? '').toUpperCase()),
-      );
-      if (mediaHeader) {
+      // Media-header templates (IMAGE/VIDEO/DOCUMENT): upload the header sample
+      // to WhatsApp and include it as a header component. If that fails, fail
+      // the recipient with a CLEAR reason (not Meta's cryptic 132012).
+      const headerMedia = await resolveTemplateHeaderMedia(template, channel);
+      if (headerMedia && 'error' in headerMedia) {
         await prisma.broadcastRecipient.update({
           where: { id: recipientId },
           data: {
             status: 'failed',
             failedAt: new Date(),
-            metaErrorCode: 'media_header_unsupported',
-            metaErrorMessage:
-              'This template has an image/video/document header, which can’t be broadcast yet. Use a text-only template for broadcasts.',
+            metaErrorCode: 'header_media',
+            metaErrorMessage: headerMedia.error,
           },
         });
         await prisma.broadcast.update({
@@ -379,6 +472,7 @@ export function startBroadcastSendWorker() {
         templateName: template.name,
         language: template.language,
         variables,
+        headerMedia: headerMedia ?? undefined,
       });
 
       if (out.ok) {

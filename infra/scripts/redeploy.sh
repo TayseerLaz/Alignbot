@@ -127,10 +127,23 @@ pnpm --filter @aligned/db exec prisma migrate deploy
 WEB_CHANGED=0
 if echo "$CHANGED" | grep -q '^apps/web/'; then
   echo "▶ web source changed — rebuilding Next…"
-  rm -rf apps/web/.next
-  # Bound Node's heap so a single build can't balloon and OOM the box (paired
-  # with the swapfile above). 2 GB is comfortably enough for this app's build.
-  NODE_OPTIONS="--max-old-space-size=2048" pnpm --filter @aligned/web build
+  # Next 15.5 intermittently fails the final "Collecting build traces" step with
+  # ENOENT on a *.nft.json it wrote moments earlier (a concurrency race on this
+  # box). The compiled .next is otherwise complete, and a plain retry succeeds —
+  # so retry up to 3× on a clean .next before treating the build as failed. We
+  # are NOT using `output: standalone`, so traces don't affect `next start`; the
+  # retry just gets us a clean exit-0 with the final manifests written.
+  web_built=0
+  for attempt in 1 2 3; do
+    rm -rf apps/web/.next
+    # Bound Node's heap so a single build can't balloon and OOM the box (paired
+    # with the swapfile above). 2 GB is comfortably enough for this app's build.
+    if NODE_OPTIONS="--max-old-space-size=2048" pnpm --filter @aligned/web build; then
+      web_built=1; break
+    fi
+    echo "  ⚠ web build attempt $attempt failed — retrying…"
+  done
+  [ "$web_built" = 1 ] || { echo "✗ web build failed after 3 attempts"; exit 1; }
   WEB_CHANGED=1
 else
   echo "▶ web unchanged — skipping web build."

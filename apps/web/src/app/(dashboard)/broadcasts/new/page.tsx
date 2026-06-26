@@ -34,6 +34,7 @@ interface Template {
   language: string;
   category: string;
   bodyText: string;
+  components?: Record<string, unknown>[] | null;
   status: string;
 }
 
@@ -55,6 +56,34 @@ function extractTemplateParams(body: string): number[] {
   const set = new Set<number>();
   for (const m of matches) set.add(Number(m[1]));
   return [...set].sort((a, b) => a - b);
+}
+
+// Every fillable variable in a template — dynamic TEXT header, body {{n}}, and
+// dynamic URL-button params — as { key, label } pairs. The key matches what the
+// send worker reads (header_text / "1".."n" / button_url_<index>).
+function templateVarFields(t: Template | undefined): { key: string; label: string }[] {
+  if (!t) return [];
+  const fields: { key: string; label: string }[] = [];
+  const comps = Array.isArray(t.components) ? t.components : [];
+  const hasVar = (s: unknown) => /\{\{\s*1\s*\}\}/.test(String(s ?? ''));
+  const header = comps.find(
+    (c) =>
+      String((c as { type?: string }).type ?? '').toUpperCase() === 'HEADER' &&
+      String((c as { format?: string }).format ?? '').toUpperCase() === 'TEXT',
+  ) as { text?: string } | undefined;
+  if (header && hasVar(header.text)) fields.push({ key: 'header_text', label: 'Header {{1}}' });
+  for (const p of extractTemplateParams(t.bodyText)) {
+    fields.push({ key: String(p), label: `Body {{${p}}}` });
+  }
+  const buttons = comps.find(
+    (c) => String((c as { type?: string }).type ?? '').toUpperCase() === 'BUTTONS',
+  ) as { buttons?: { type?: string; url?: string; text?: string }[] } | undefined;
+  (buttons?.buttons ?? []).forEach((b, i) => {
+    if (String(b.type ?? '').toUpperCase() === 'URL' && hasVar(b.url)) {
+      fields.push({ key: `button_url_${i}`, label: `Button link {{1}} (${b.text || 'URL'})` });
+    }
+  });
+  return fields;
 }
 
 export default function NewBroadcastPage() {
@@ -163,8 +192,9 @@ export default function NewBroadcastPage() {
 
   const variantATemplate = approvedTemplates.find((t) => t.id === variantATemplateId);
   const variantBTemplate = approvedTemplates.find((t) => t.id === variantBTemplateId);
-  const paramsA = variantATemplate ? extractTemplateParams(variantATemplate.bodyText) : [];
-  const paramsB = variantBTemplate ? extractTemplateParams(variantBTemplate.bodyText) : [];
+  // All fillable fields (header / body / URL buttons), memoized per template.
+  const fieldsA = useMemo(() => templateVarFields(variantATemplate), [variantATemplate]);
+  const fieldsB = useMemo(() => templateVarFields(variantBTemplate), [variantBTemplate]);
 
   // Wipe variable mapping if template changes.
   useEffect(() => {
@@ -245,8 +275,10 @@ export default function NewBroadcastPage() {
       return manualPhonesRaw.split(/[\n,;]/).filter((p) => p.trim()).length > 0;
     }
     if (step === 2) {
-      return paramsA.every((p) => variantAVariables[String(p)]) &&
-        (!abTest || paramsB.every((p) => variantBVariables[String(p)]));
+      return (
+        fieldsA.every((f) => variantAVariables[f.key]) &&
+        (!abTest || fieldsB.every((f) => variantBVariables[f.key]))
+      );
     }
     return true;
   }, [
@@ -262,8 +294,8 @@ export default function NewBroadcastPage() {
     manualPhonesRaw,
     selectAllContacts,
     selectedContacts,
-    paramsA,
-    paramsB,
+    fieldsA,
+    fieldsB,
     variantAVariables,
     variantBVariables,
   ]);
@@ -655,22 +687,22 @@ export default function NewBroadcastPage() {
             <CardTitle>Personalization</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {paramsA.length === 0 ? (
+            {fieldsA.length === 0 ? (
               <p className="text-sm text-foreground-muted">
                 Variant A template has no variables. Nothing to map here.
               </p>
             ) : (
               <div className="space-y-3">
                 <p className="text-sm font-medium">Variant A · {variantATemplate?.name}</p>
-                {paramsA.map((p) => (
+                {fieldsA.map((f) => (
                   <VariableRow
-                    key={`a-${p}`}
-                    paramIndex={p}
+                    key={`a-${f.key}`}
+                    label={f.label}
                     audienceKind={audienceKind}
                     csvHeaders={csvHeaders}
-                    value={variantAVariables[String(p)]}
+                    value={variantAVariables[f.key]}
                     onChange={(src) =>
-                      setVariantAVariables((prev) => ({ ...prev, [String(p)]: src }))
+                      setVariantAVariables((prev) => ({ ...prev, [f.key]: src }))
                     }
                   />
                 ))}
@@ -679,15 +711,15 @@ export default function NewBroadcastPage() {
             {abTest && variantBTemplate ? (
               <div className="space-y-3 border-t border-border pt-4">
                 <p className="text-sm font-medium">Variant B · {variantBTemplate.name}</p>
-                {paramsB.map((p) => (
+                {fieldsB.map((f) => (
                   <VariableRow
-                    key={`b-${p}`}
-                    paramIndex={p}
+                    key={`b-${f.key}`}
+                    label={f.label}
                     audienceKind={audienceKind}
                     csvHeaders={csvHeaders}
-                    value={variantBVariables[String(p)]}
+                    value={variantBVariables[f.key]}
                     onChange={(src) =>
-                      setVariantBVariables((prev) => ({ ...prev, [String(p)]: src }))
+                      setVariantBVariables((prev) => ({ ...prev, [f.key]: src }))
                     }
                   />
                 ))}
@@ -814,13 +846,13 @@ export default function NewBroadcastPage() {
 
 // ---------- Variable row -------------------------------------------------
 function VariableRow({
-  paramIndex,
+  label,
   audienceKind,
   csvHeaders,
   value,
   onChange,
 }: {
-  paramIndex: number;
+  label: string;
   audienceKind: AudienceKind;
   csvHeaders: string[];
   value: VariableSource | undefined;
@@ -829,7 +861,9 @@ function VariableRow({
   const kind = value?.kind ?? 'static';
   return (
     <div className="grid grid-cols-12 items-center gap-2 text-sm">
-      <div className="col-span-1 font-mono text-foreground-muted">{`{{${paramIndex}}}`}</div>
+      <div className="col-span-2 truncate font-mono text-xs text-foreground-muted" title={label}>
+        {label}
+      </div>
       <div className="col-span-3">
         <Select
           value={kind}
@@ -852,7 +886,7 @@ function VariableRow({
           </SelectContent>
         </Select>
       </div>
-      <div className="col-span-8">
+      <div className="col-span-7">
         {value?.kind === 'static' ? (
           <Input
             value={value.value}

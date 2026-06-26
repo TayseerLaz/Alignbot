@@ -48,7 +48,7 @@ export function VoiceCallsWidget() {
                 </span>
                 <span className="text-xs text-foreground-subtle">calls handled</span>
               </div>
-              <dl className="grid grid-cols-3 gap-2 text-sm">
+              <dl className="grid grid-cols-1 min-[400px]:grid-cols-3 gap-2 text-sm">
                 <div>
                   <dt className="text-xs text-foreground-subtle">Completed</dt>
                   <dd className="text-lg font-semibold text-emerald-700">

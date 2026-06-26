@@ -49,7 +49,7 @@ export function OutreachCampaignsWidget() {
               <span className="font-medium">&ldquo;{q.data.active.name}&rdquo; broadcast</span>
               <span className="text-foreground-subtle">— {statusLabel(q.data.active.status)}</span>
             </div>
-            <div className="grid grid-cols-3 gap-2 rounded-md bg-surface-muted/60 p-3 text-center">
+            <div className="grid grid-cols-1 min-[400px]:grid-cols-3 gap-2 rounded-md bg-surface-muted/60 p-3 text-center">
               <FunnelStat label="Sent" value={formatThousands(q.data.active.sent)} />
               <FunnelStat label="Delivered" value={formatThousands(q.data.active.delivered)} />
               <FunnelStat

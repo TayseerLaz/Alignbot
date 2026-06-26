@@ -38,11 +38,14 @@ const buttonVariants = cva(
       },
       size: {
         // `default` is the canonical shadcn name; `md` is the project's — same size.
-        default: 'h-8 px-3.5',
-        sm: 'h-7 px-2.5 text-xs gap-1',
-        md: 'h-8 px-3.5',
+        // Touch devices (pointer:coarse) get larger tap targets while pointer
+        // (mouse) keeps the dense desktop sizing — so phones/tablets are comfy
+        // without bloating the desktop toolbars.
+        default: 'h-8 px-3.5 [@media(pointer:coarse)]:h-10',
+        sm: 'h-7 px-2.5 text-xs gap-1 [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:px-3',
+        md: 'h-8 px-3.5 [@media(pointer:coarse)]:h-10',
         lg: 'h-10 px-5 text-[15px]',
-        icon: 'h-8 w-8 p-0',
+        icon: 'h-8 w-8 p-0 [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:w-10',
       },
     },
     defaultVariants: { variant: 'primary', size: 'md' },

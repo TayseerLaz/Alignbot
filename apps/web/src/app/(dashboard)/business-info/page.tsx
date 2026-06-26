@@ -554,7 +554,7 @@ function LocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
               onChange={(e) => setDraft({ ...draft, addressLine1: e.target.value })}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>City</Label>
               <Input value={draft.city} onChange={(e) => setDraft({ ...draft, city: e.target.value })} />

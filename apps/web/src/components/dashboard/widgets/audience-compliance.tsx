@@ -47,7 +47,7 @@ export function AudienceComplianceWidget() {
                   ) : null}
                 </span>
               </div>
-              <dl className="grid grid-cols-3 gap-2 text-sm">
+              <dl className="grid grid-cols-1 min-[400px]:grid-cols-3 gap-2 text-sm">
                 <Stat
                   label="Opted out"
                   value={formatThousands(q.data.optedOut)}

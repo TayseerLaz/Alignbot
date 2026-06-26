@@ -312,7 +312,7 @@ export default function OrgDetailPage() {
             <Row label="Last activity">
               {org?.lastActivityAt ? formatRelative(org.lastActivityAt) : '—'}
             </Row>
-            <div className="grid grid-cols-3 gap-2 pt-2">
+            <div className="grid grid-cols-1 min-[400px]:grid-cols-3 gap-2 pt-2">
               <Metric label="Products" value={d?.counts.products} />
               <Metric label="Services" value={d?.counts.services} />
               <Metric label="FAQs" value={d?.counts.faqs} />

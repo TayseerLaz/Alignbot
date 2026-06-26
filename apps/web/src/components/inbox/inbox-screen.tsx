@@ -1243,7 +1243,7 @@ function ThreadHeader({
             className="shrink-0 gap-1 border border-border"
             title="Customer info"
           >
-            <Info className="size-4" /> Info
+            <Info className="size-4" /> <span className="hidden sm:inline">Info</span>
           </Button>
         </div>
 
@@ -1273,7 +1273,7 @@ function ThreadHeader({
               onClick={onAssignSelf}
               title="Take this thread (you become the assignee)"
             >
-              <UserCheck className="size-3.5" /> Take
+              <UserCheck className="size-3.5" /> <span className="hidden sm:inline">Take</span>
             </Button>
             {aiEnabled && (
               <>
@@ -1305,7 +1305,7 @@ function ThreadHeader({
               onClick={onHandoff}
               title="Escalate to a human + post an internal note"
             >
-              <AlertTriangle className="size-3.5" /> Handoff
+              <AlertTriangle className="size-3.5" /> <span className="hidden sm:inline">Handoff</span>
             </Button>
           </div>
           {/* Secondary actions tucked into one overflow menu so the header

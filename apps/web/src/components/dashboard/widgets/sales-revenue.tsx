@@ -46,7 +46,7 @@ export function SalesRevenueWidget() {
             </span>
             <span className="text-xs text-foreground-subtle">revenue</span>
           </div>
-          <dl className="grid grid-cols-3 gap-2 text-sm">
+          <dl className="grid grid-cols-1 min-[400px]:grid-cols-3 gap-2 text-sm">
             <Stat label="Orders" value={formatThousands(q.data.orders7d)} href="/orders" />
             <Stat label="Avg order" value={formatMoney(q.data.aovMinor, q.data.currency)} />
             <Stat label="Paid" value={formatThousands(q.data.paid7d)} />

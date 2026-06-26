@@ -336,6 +336,35 @@ export function startBroadcastSendWorker() {
         return;
       }
 
+      // Media-header templates (IMAGE/VIDEO/DOCUMENT) need the header media
+      // supplied at send time — broadcasting them isn't supported yet, so fail
+      // with a CLEAR reason instead of Meta's cryptic 132012 parameter error.
+      const tplComponents = Array.isArray(template.components)
+        ? (template.components as unknown as Record<string, unknown>[])
+        : [];
+      const mediaHeader = tplComponents.find(
+        (c) =>
+          String(c.type ?? '').toUpperCase() === 'HEADER' &&
+          ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(String(c.format ?? '').toUpperCase()),
+      );
+      if (mediaHeader) {
+        await prisma.broadcastRecipient.update({
+          where: { id: recipientId },
+          data: {
+            status: 'failed',
+            failedAt: new Date(),
+            metaErrorCode: 'media_header_unsupported',
+            metaErrorMessage:
+              'This template has an image/video/document header, which can’t be broadcast yet. Use a text-only template for broadcasts.',
+          },
+        });
+        await prisma.broadcast.update({
+          where: { id: broadcastId },
+          data: { failedCount: { increment: 1 } },
+        });
+        return;
+      }
+
       await prisma.broadcastRecipient.update({
         where: { id: recipientId },
         data: { attemptCount: { increment: 1 } },

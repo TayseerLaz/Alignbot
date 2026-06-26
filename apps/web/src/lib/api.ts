@@ -198,8 +198,19 @@ export async function apiFetch<T>(path: string, opts: RequestOpts = {}): Promise
 
 export const api = {
   get: <T>(path: string, opts: RequestOpts = {}) => apiFetch<T>(path, { ...opts, method: 'GET', ensureAuth: true }),
+  // Authenticated POSTs proactively refresh a near-expired token BEFORE sending
+  // (like GET/PUT/PATCH/DELETE). Previously POST only refreshed reactively after
+  // a 401 — so a long form (e.g. the broadcast wizard) could submit with an
+  // expired token, the reactive refresh could fail, and the user got logged out
+  // mid-flow (broadcast created but not sent). Anonymous POSTs (login/signup/
+  // refresh) never pre-refresh.
   post: <T>(path: string, body?: unknown, opts: RequestOpts = {}) =>
-    apiFetch<T>(path, { ...opts, method: 'POST', body }),
+    apiFetch<T>(path, {
+      ...opts,
+      method: 'POST',
+      body,
+      ensureAuth: opts.ensureAuth ?? !opts.anonymous,
+    }),
   put: <T>(path: string, body?: unknown, opts: RequestOpts = {}) =>
     apiFetch<T>(path, { ...opts, method: 'PUT', body, ensureAuth: true }),
   patch: <T>(path: string, body?: unknown, opts: RequestOpts = {}) =>

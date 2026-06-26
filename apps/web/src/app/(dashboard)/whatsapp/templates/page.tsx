@@ -529,14 +529,17 @@ function CreateTemplateDialog({
             ) : null}
             {['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerFormat) ? (
               <>
-                <Input
-                  placeholder={`Paste a public ${headerFormat.toLowerCase()} URL, or upload below`}
-                  value={headerMediaUrl}
-                  onChange={(e) => setHeaderMediaUrl(e.target.value)}
-                />
-                {headerFormat !== 'VIDEO' ? (
+                {headerFormat === 'VIDEO' ? (
+                  // Video upload isn't supported yet — paste a public direct
+                  // video link; we download it and register it with Meta.
+                  <Input
+                    placeholder="Paste a public direct video URL (e.g. https://…/clip.mp4)"
+                    value={headerMediaUrl}
+                    onChange={(e) => setHeaderMediaUrl(e.target.value)}
+                  />
+                ) : (
+                  // Image / document: upload only (we host it; no fragile links).
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-foreground-subtle">or</span>
                     <Button
                       type="button"
                       size="sm"
@@ -544,8 +547,14 @@ function CreateTemplateDialog({
                       loading={uploadingMedia}
                       onClick={() => mediaInputRef.current?.click()}
                     >
-                      <Upload className="size-4" /> Upload from device
+                      <Upload className="size-4" />{' '}
+                      {headerMediaUrl ? `Replace ${headerFormat.toLowerCase()}` : `Upload ${headerFormat.toLowerCase()}`}
                     </Button>
+                    {headerMediaUrl ? (
+                      <span className="text-xs text-emerald-600">✓ uploaded</span>
+                    ) : (
+                      <span className="text-xs text-foreground-subtle">required</span>
+                    )}
                     <input
                       ref={mediaInputRef}
                       type="file"
@@ -554,7 +563,7 @@ function CreateTemplateDialog({
                       onChange={(e) => void onUploadMedia(e.target.files?.[0])}
                     />
                   </div>
-                ) : null}
+                )}
                 {headerMediaUrl && headerFormat === 'IMAGE' ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -564,8 +573,9 @@ function CreateTemplateDialog({
                   />
                 ) : null}
                 <p className="text-xs text-foreground-subtle">
-                  Paste a public CDN/S3 link, or upload from your device (we host it). Meta downloads
-                  it to register the template; after approval Meta stores its own copy.
+                  {headerFormat === 'VIDEO'
+                    ? 'Paste a public direct video link. Meta downloads it to register the template; after approval Meta stores its own copy.'
+                    : 'Upload from your device — we host it and Meta downloads it to register the template. After approval Meta stores its own copy.'}
                 </p>
               </>
             ) : null}

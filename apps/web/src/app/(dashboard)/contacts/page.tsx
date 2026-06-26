@@ -279,18 +279,18 @@ export default function ContactsPage() {
             <table className="w-full text-left text-sm">
               <thead className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
                 <tr>
-                  <th className="px-6 py-3">Phone / Account</th>
+                  <th className="px-4 py-3 sm:px-6">Phone / Account</th>
                   <th
-                    className="px-6 py-3"
+                    className="hidden px-6 py-3 lg:table-cell"
                     title="The customer's WhatsApp profile name — what they set in WhatsApp → Settings → Profile → Name. Read-only; auto-fills when they message you."
                   >
                     WhatsApp nickname
                   </th>
-                  <th className="px-6 py-3">Name (your label)</th>
-                  <th className="px-6 py-3">Tags</th>
-                  <th className="px-6 py-3">Source</th>
-                  <th className="px-6 py-3">Last inbound</th>
-                  <th className="w-20 px-6 py-3" />
+                  <th className="px-4 py-3 sm:px-6">Name (your label)</th>
+                  <th className="hidden px-6 py-3 md:table-cell">Tags</th>
+                  <th className="hidden px-6 py-3 lg:table-cell">Source</th>
+                  <th className="hidden px-6 py-3 sm:table-cell">Last inbound</th>
+                  <th className="w-16 px-4 py-3 sm:w-20 sm:px-6" />
                 </tr>
               </thead>
               <tbody>
@@ -450,7 +450,7 @@ function ContactRow({
   // it on every inbound; renaming it here would just get overwritten.
   return (
     <tr className="border-b border-border last:border-0">
-      <td className="px-6 py-3 text-sm">
+      <td className="px-4 py-3 text-sm sm:px-6">
         {isSocial ? (
           <span className="inline-flex items-center gap-1.5">
             <span className="rounded-full bg-fuchsia-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-fuchsia-700">

@@ -19,7 +19,10 @@ export const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-lg bg-surface p-7 shadow-lg',
+        // Mobile-safe: never wider than the viewport (minus a gutter), never
+        // taller than the screen — scroll inside instead of overflowing. Tighter
+        // padding on phones. The max-w override (lg/2xl/…) still caps the width.
+        'fixed left-1/2 top-1/2 z-50 grid max-h-[calc(100dvh-1.5rem)] w-[calc(100%-1.5rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-lg bg-surface p-5 shadow-lg sm:p-7',
         'duration-[var(--dur)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
         className,
       )}

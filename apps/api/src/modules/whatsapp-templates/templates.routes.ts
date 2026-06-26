@@ -21,6 +21,99 @@ import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
 import { badRequest, notFound } from '../../lib/errors.js';
+import { presignGetUrl } from '../../lib/storage.js';
+
+// Meta requires media-header (IMAGE/VIDEO/DOCUMENT) template samples to be a
+// HANDLE from its resumable-upload API — NOT a plain URL. We upload the sample
+// to `/{app_id}/uploads`, push the bytes, and use the returned handle. Without
+// this, Meta rejects the template with "Missing sample parameter for title type".
+async function uploadSampleToMeta(args: {
+  appId: string;
+  accessToken: string;
+  sampleUrl: string;
+}): Promise<string> {
+  // The stored handle is a (possibly expired) Wasabi URL — re-presign fresh
+  // from its storage key so the bytes are always fetchable at submit time.
+  let bytes: Buffer;
+  let mime = 'image/jpeg';
+  try {
+    const u = new URL(args.sampleUrl);
+    const storageKey = decodeURIComponent(u.pathname.replace(/^\/+/, ''));
+    const fresh = await presignGetUrl(storageKey);
+    const imgRes = await fetch(fresh, { signal: AbortSignal.timeout(20_000) });
+    if (!imgRes.ok) throw new Error(`sample fetch HTTP ${imgRes.status}`);
+    mime = (imgRes.headers.get('content-type') ?? '').split(';')[0]!.trim() || 'image/jpeg';
+    bytes = Buffer.from(await imgRes.arrayBuffer());
+  } catch (err) {
+    throw badRequest(
+      ApiErrorCode.VALIDATION_ERROR,
+      `Could not read the header sample image (${err instanceof Error ? err.message : 'unknown'}).`,
+    );
+  }
+
+  // 1. Open a resumable-upload session.
+  const startRes = await fetch(
+    `https://graph.facebook.com/v20.0/${encodeURIComponent(args.appId)}/uploads` +
+      `?file_length=${bytes.length}&file_type=${encodeURIComponent(mime)}` +
+      `&access_token=${encodeURIComponent(args.accessToken)}`,
+    { method: 'POST', signal: AbortSignal.timeout(15_000) },
+  );
+  const startJson = (await startRes.json().catch(() => null)) as { id?: string; error?: unknown } | null;
+  if (!startRes.ok || !startJson?.id) {
+    throw badRequest(
+      ApiErrorCode.VALIDATION_ERROR,
+      `Meta upload session failed: ${JSON.stringify(startJson?.error ?? startJson)}`,
+    );
+  }
+
+  // 2. Upload the bytes; Meta returns the handle `h`.
+  const upRes = await fetch(`https://graph.facebook.com/v20.0/${startJson.id}`, {
+    method: 'POST',
+    headers: { Authorization: `OAuth ${args.accessToken}`, file_offset: '0' },
+    body: bytes,
+    signal: AbortSignal.timeout(30_000),
+  });
+  const upJson = (await upRes.json().catch(() => null)) as { h?: string; error?: unknown } | null;
+  if (!upRes.ok || !upJson?.h) {
+    throw badRequest(
+      ApiErrorCode.VALIDATION_ERROR,
+      `Meta sample upload failed: ${JSON.stringify(upJson?.error ?? upJson)}`,
+    );
+  }
+  return upJson.h;
+}
+
+// Replace media-header URL samples with Meta handles in-place (clones the
+// components so the stored row keeps the URL for re-display).
+async function resolveMediaHeaderSamples(
+  components: Record<string, unknown>[],
+  appId: string | null,
+  accessToken: string,
+): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  for (const raw of components) {
+    const c = { ...(raw as Record<string, unknown>) };
+    const type = String(c.type ?? '').toUpperCase();
+    const format = String(c.format ?? '').toUpperCase();
+    if (type === 'HEADER' && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(format)) {
+      const example = (c.example ?? {}) as { header_handle?: unknown };
+      const handle = Array.isArray(example.header_handle) ? example.header_handle[0] : undefined;
+      // Only upload when it's still a URL (not an already-resolved Meta handle).
+      if (typeof handle === 'string' && /^https?:\/\//.test(handle)) {
+        if (!appId) {
+          throw badRequest(
+            ApiErrorCode.VALIDATION_ERROR,
+            'Set the Meta App ID on the WhatsApp page to submit templates with an image/video/document header.',
+          );
+        }
+        const metaHandle = await uploadSampleToMeta({ appId, accessToken, sampleUrl: handle });
+        c.example = { header_handle: [metaHandle] };
+      }
+    }
+    out.push(c);
+  }
+  return out;
+}
 
 const templateDtoSchema = z.object({
   id: uuidSchema,
@@ -213,13 +306,17 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
         const storedComponents = Array.isArray(tpl.components)
           ? (tpl.components as unknown as Record<string, unknown>[])
           : null;
+        // Media-header samples must be Meta upload handles, not URLs — resolve
+        // them now (uploads the image to Meta's resumable-upload API).
+        const components =
+          storedComponents && storedComponents.length > 0
+            ? await resolveMediaHeaderSamples(storedComponents, channel.appId, channel.accessToken)
+            : [{ type: 'BODY', text: tpl.bodyText }];
         const payload = {
           name: tpl.name,
           language: tpl.language,
           category: tpl.category,
-          components: storedComponents && storedComponents.length > 0
-            ? storedComponents
-            : [{ type: 'BODY', text: tpl.bodyText }],
+          components,
         };
 
         let resBody = '';

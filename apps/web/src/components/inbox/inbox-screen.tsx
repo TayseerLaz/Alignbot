@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
+  ArrowLeft,
   Ban,
   Check,
   CheckCircle2,
@@ -434,7 +435,15 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
           fullscreen ? '' : 'rounded-lg',
         )}
       >
-        <div className="flex min-h-0 flex-col border-r border-border">
+        {/* Mobile master-detail: show the thread LIST when nothing is selected,
+            and the CONVERSATION when a thread is open. Both panes show side-by-
+            side from lg up. */}
+        <div
+          className={cn(
+            'min-h-0 flex-col border-r border-border lg:flex',
+            activeId ? 'hidden lg:flex' : 'flex',
+          )}
+        >
           {/* Filters pinned to the top of the thread-list column so the
               conversation pane on the right gets the full vertical space. */}
           <div className="grid shrink-0 grid-cols-1 gap-2 border-b border-border bg-surface-muted/40 px-3 py-3">
@@ -501,20 +510,28 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
             flaggedByThread={flaggedByThread}
           />
         </div>
-        <ThreadView
-          thread={active}
-          onChanged={() => {
-            queryClient.invalidateQueries({ queryKey: ['inbox-threads'] });
-            if (active) queryClient.invalidateQueries({ queryKey: ['inbox-thread', active.id] });
-            // Inbox-counts drives the red Inbox badge in the sidebar.
-            // Any thread change (status flip, assign, tag, etc.) can
-            // shift the counts so we invalidate eagerly — the actual
-            // refetch is gated by staleTime on the sidebar query.
-            queryClient.invalidateQueries({ queryKey: ['sidebar-inbox-counts'] });
-          }}
-          onDeleted={() => setActiveId(null)}
-          currentUserId={session?.user.id ?? null}
-        />
+        <div
+          className={cn(
+            'min-h-0 min-w-0 flex-col lg:flex',
+            activeId ? 'flex' : 'hidden lg:flex',
+          )}
+        >
+          <ThreadView
+            thread={active}
+            onBack={() => setActiveId(null)}
+            onChanged={() => {
+              queryClient.invalidateQueries({ queryKey: ['inbox-threads'] });
+              if (active) queryClient.invalidateQueries({ queryKey: ['inbox-thread', active.id] });
+              // Inbox-counts drives the red Inbox badge in the sidebar.
+              // Any thread change (status flip, assign, tag, etc.) can
+              // shift the counts so we invalidate eagerly — the actual
+              // refetch is gated by staleTime on the sidebar query.
+              queryClient.invalidateQueries({ queryKey: ['sidebar-inbox-counts'] });
+            }}
+            onDeleted={() => setActiveId(null)}
+            currentUserId={session?.user.id ?? null}
+          />
+        </div>
       </div>
 
       {/* Canned-reply management — now a feature inside the inbox (was a separate
@@ -662,6 +679,7 @@ function ThreadView({
   thread,
   onChanged,
   onDeleted,
+  onBack,
   currentUserId,
 }: {
   thread: Thread | null;
@@ -669,6 +687,8 @@ function ThreadView({
   // Fires after a successful hard-delete so the parent can clear the
   // selection and remove the now-gone thread from the right pane.
   onDeleted: () => void;
+  // Mobile: go back to the thread list (deselect).
+  onBack: () => void;
   currentUserId: string | null;
 }) {
   const queryClient = useQueryClient();
@@ -950,6 +970,7 @@ function ThreadView({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <ThreadHeader
         thread={thread}
+        onBack={onBack}
         aiEnabled={aiEnabled}
         onStatusChange={(s) => setStatus.mutate(s)}
         onAssignSelf={() => currentUserId && setAssignee.mutate(currentUserId)}
@@ -1052,6 +1073,7 @@ function ThreadView({
 function ThreadHeader({
   thread,
   aiEnabled,
+  onBack,
   onStatusChange,
   onAssignSelf,
   onUnassign,
@@ -1069,6 +1091,7 @@ function ThreadHeader({
 }: {
   thread: Thread;
   aiEnabled: boolean;
+  onBack: () => void;
   onStatusChange: (s: ThreadStatus) => void;
   onAssignSelf: () => void;
   onUnassign: () => void;
@@ -1129,6 +1152,15 @@ function ThreadHeader({
       {/* Row 1 — identity + actions */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-3">
+          {/* Mobile-only: back to the thread list (master-detail). */}
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="Back to conversations"
+            className="-ml-1 flex size-9 shrink-0 items-center justify-center rounded-full text-foreground-muted transition hover:bg-surface-muted hover:text-foreground lg:hidden"
+          >
+            <ArrowLeft className="size-5" />
+          </button>
           {/* Avatar circle with the first character of the visible name */}
           <div
             aria-hidden

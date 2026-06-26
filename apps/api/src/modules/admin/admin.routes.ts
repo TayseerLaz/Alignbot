@@ -808,6 +808,74 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- GET /aligned-admin/users ------------------------------------
+  // Every user across every tenant, with their org membership(s). Answers
+  // "where are the N total users" — the dashboard counts distinct User rows,
+  // which can exceed the sum of per-org members (multi-org users, HQ admins,
+  // inactive memberships, or users with no membership at all).
+  r.get(
+    '/aligned-admin/users',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'All users across every tenant (ALIGNED admins only).',
+        response: {
+          200: listEnvelopeSchema(
+            z.object({
+              id: uuidSchema,
+              name: z.string().nullable(),
+              email: z.string(),
+              status: z.string(),
+              emailVerified: z.boolean(),
+              isAlignedAdmin: z.boolean(),
+              createdAt: z.string().datetime(),
+              memberships: z.array(
+                z.object({
+                  organizationName: z.string().nullable(),
+                  organizationSlug: z.string().nullable(),
+                  role: z.string(),
+                  isActive: z.boolean(),
+                }),
+              ),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async () => {
+      const users = await withRlsBypass((tx) =>
+        tx.user.findMany({
+          orderBy: { createdAt: 'desc' },
+          include: {
+            memberships: {
+              include: { organization: { select: { name: true, slug: true } } },
+              orderBy: { createdAt: 'asc' },
+            },
+          },
+        }),
+      );
+      return {
+        data: users.map((u) => ({
+          id: u.id,
+          name: `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || null,
+          email: u.email,
+          status: u.status,
+          emailVerified: u.emailVerifiedAt !== null,
+          isAlignedAdmin: u.isAlignedAdmin,
+          createdAt: u.createdAt.toISOString(),
+          memberships: u.memberships.map((m) => ({
+            organizationName: m.organization?.name ?? null,
+            organizationSlug: m.organization?.slug ?? null,
+            role: m.role,
+            isActive: m.isActive,
+          })),
+        })),
+        nextCursor: null,
+      };
+    },
+  );
+
   // ---------- GET /aligned-admin/system -----------------------------------
   // System health snapshot. Exact numbers (queue depth, redis info) are pulled live.
   r.get(

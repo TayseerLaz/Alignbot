@@ -45,8 +45,12 @@ interface NavItem {
   // Role-aware placement: `adminOnly` shows the item only to ALIGNED admins;
   // `hideForAdmin` hides it from admins (because it's relocated into the
   // ALIGNED HQ group for them, but stays in Configure for regular tenants).
+  // `hideForAdminHome` hides it only while the admin is in their OWN HQ account
+  // (it stays visible when the admin is controlling a tenant, so tenant-only
+  // features like voice calls still show inside that tenant's portal).
   adminOnly?: boolean;
   hideForAdmin?: boolean;
+  hideForAdminHome?: boolean;
 }
 
 type BadgeKey = 'inboxEscalated' | 'leadsNew';
@@ -72,7 +76,7 @@ const groups: NavGroup[] = [
     label: 'Operate',
     items: [
       { href: '/inbox-full', label: 'Inbox', icon: Inbox, badgeKey: 'inboxEscalated', newTab: true },
-      { href: '/voice-calls', label: 'Voice calls', icon: PhoneCall },
+      { href: '/voice-calls', label: 'Voice calls', icon: PhoneCall, hideForAdminHome: true },
       { href: '/contacts', label: 'Contacts', icon: ContactIcon },
       { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone },
       // Canned replies moved INTO the inbox (a dialog from the inbox header),
@@ -159,6 +163,12 @@ export function Sidebar({
 
   const { open: openAiSupport } = useAiSupport();
   const isAdmin = !!session?.user.isAlignedAdmin;
+  // "Admin home" = an ALIGNED admin viewing their OWN HQ org (not controlling a
+  // tenant). Controlling = active org isn't one of the admin's own memberships.
+  const adminOrgIds = new Set((session?.availableOrganizations ?? []).map((o) => o.id));
+  const isControlling =
+    isAdmin && !!session?.organization && !adminOrgIds.has(session.organization.id);
+  const isAdminHome = isAdmin && !isControlling;
   const disabledFeatures = session?.organization?.disabledFeatures ?? [];
   const visibleGroups = groups
     .map((g) => ({
@@ -167,7 +177,8 @@ export function Sidebar({
         (it) =>
           !isHrefDisabled(it.href, disabledFeatures) &&
           !(it.adminOnly && !isAdmin) &&
-          !(it.hideForAdmin && isAdmin),
+          !(it.hideForAdmin && isAdmin) &&
+          !(it.hideForAdminHome && isAdminHome),
       ),
     }))
     .filter((g) => g.items.length > 0);

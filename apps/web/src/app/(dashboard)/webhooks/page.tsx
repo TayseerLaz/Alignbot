@@ -208,11 +208,11 @@ function DeliveryHistory({ endpointId }: { endpointId: string }) {
           <thead className="bg-surface-muted text-foreground-subtle">
             <tr>
               <th className="px-3 py-2">When</th>
-              <th className="px-3 py-2">Event</th>
+              <th className="hidden px-3 py-2 md:table-cell">Event</th>
               <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2">HTTP</th>
-              <th className="px-3 py-2">Attempts</th>
-              <th className="px-3 py-2">Error</th>
+              <th className="hidden px-3 py-2 sm:table-cell">HTTP</th>
+              <th className="hidden px-3 py-2 sm:table-cell">Attempts</th>
+              <th className="hidden px-3 py-2 lg:table-cell">Error</th>
               <th className="px-3 py-2 text-right">Action</th>
             </tr>
           </thead>
@@ -220,7 +220,7 @@ function DeliveryHistory({ endpointId }: { endpointId: string }) {
             {list.data?.data.map((d) => (
               <tr key={d.id} className="border-t border-border">
                 <td className="px-3 py-2">{formatRelative(d.attemptedAt ?? d.createdAt)}</td>
-                <td className="px-3 py-2 font-mono text-[11px]">{d.eventKind}</td>
+                <td className="hidden px-3 py-2 font-mono text-[11px] md:table-cell">{d.eventKind}</td>
                 <td className="px-3 py-2">
                   {d.status === 'delivered' ? (
                     <Badge variant="success">
@@ -234,9 +234,9 @@ function DeliveryHistory({ endpointId }: { endpointId: string }) {
                     <Badge variant="muted">{d.status}</Badge>
                   )}
                 </td>
-                <td className="px-3 py-2 tabular-nums">{d.responseStatus ?? '—'}</td>
-                <td className="px-3 py-2 tabular-nums">{d.attempts}</td>
-                <td className="truncate px-3 py-2 text-foreground-subtle">{d.errorMessage ?? '—'}</td>
+                <td className="hidden px-3 py-2 tabular-nums sm:table-cell">{d.responseStatus ?? '—'}</td>
+                <td className="hidden px-3 py-2 tabular-nums sm:table-cell">{d.attempts}</td>
+                <td className="hidden truncate px-3 py-2 text-foreground-subtle lg:table-cell">{d.errorMessage ?? '—'}</td>
                 <td className="px-3 py-2 text-right">
                   {d.status !== 'delivered' ? (
                     <Button size="icon" variant="ghost" aria-label="Retry" onClick={() => retry.mutate(d.id)}>

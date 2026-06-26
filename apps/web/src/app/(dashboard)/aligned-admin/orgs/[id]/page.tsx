@@ -505,8 +505,8 @@ export default function OrgDetailPage() {
                     <tr>
                       <th className="px-4 py-2">Email</th>
                       <th className="px-4 py-2">Role</th>
-                      <th className="px-4 py-2">2FA</th>
-                      <th className="px-4 py-2">Last login</th>
+                      <th className="hidden px-4 py-2 sm:table-cell">2FA</th>
+                      <th className="hidden px-4 py-2 md:table-cell">Last login</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -519,8 +519,8 @@ export default function OrgDetailPage() {
                           {!m.isActive ? <Badge variant="muted" className="ml-2">inactive</Badge> : null}
                         </td>
                         <td className="px-4 py-2"><Badge variant="muted">{m.role}</Badge></td>
-                        <td className="px-4 py-2">{m.totpEnabled ? 'On' : '—'}</td>
-                        <td className="px-4 py-2 text-foreground-muted">
+                        <td className="hidden px-4 py-2 sm:table-cell">{m.totpEnabled ? 'On' : '—'}</td>
+                        <td className="hidden px-4 py-2 text-foreground-muted md:table-cell">
                           {m.lastLoginAt ? formatRelative(m.lastLoginAt) : 'never'}
                         </td>
                       </tr>
@@ -556,24 +556,24 @@ export default function OrgDetailPage() {
                   <thead className="border-b border-border bg-surface-muted text-xs uppercase tracking-wide text-foreground-subtle">
                     <tr>
                       <th className="px-4 py-2">Campaign</th>
-                      <th className="px-4 py-2">Status</th>
-                      <th className="px-4 py-2 text-right">Recipients</th>
+                      <th className="hidden px-4 py-2 sm:table-cell">Status</th>
+                      <th className="hidden px-4 py-2 text-right md:table-cell">Recipients</th>
                       <th className="px-4 py-2 text-right">Sent</th>
-                      <th className="px-4 py-2 text-right">Delivered</th>
-                      <th className="px-4 py-2 text-right">Read</th>
-                      <th className="px-4 py-2">Created</th>
+                      <th className="hidden px-4 py-2 text-right lg:table-cell">Delivered</th>
+                      <th className="hidden px-4 py-2 text-right lg:table-cell">Read</th>
+                      <th className="hidden px-4 py-2 md:table-cell">Created</th>
                     </tr>
                   </thead>
                   <tbody>
                     {broadcasts.broadcasts.map((b) => (
                       <tr key={b.id} className="border-b border-border last:border-0">
                         <td className="px-4 py-2 font-medium text-foreground">{b.name}</td>
-                        <td className="px-4 py-2 text-foreground-muted">{b.status}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">{b.totalRecipients.toLocaleString()}</td>
+                        <td className="hidden px-4 py-2 text-foreground-muted sm:table-cell">{b.status}</td>
+                        <td className="hidden px-4 py-2 text-right tabular-nums md:table-cell">{b.totalRecipients.toLocaleString()}</td>
                         <td className="px-4 py-2 text-right tabular-nums">{b.sentCount.toLocaleString()}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">{b.deliveredCount.toLocaleString()}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">{b.readCount.toLocaleString()}</td>
-                        <td className="px-4 py-2 text-foreground-muted">
+                        <td className="hidden px-4 py-2 text-right tabular-nums lg:table-cell">{b.deliveredCount.toLocaleString()}</td>
+                        <td className="hidden px-4 py-2 text-right tabular-nums lg:table-cell">{b.readCount.toLocaleString()}</td>
+                        <td className="hidden px-4 py-2 text-foreground-muted md:table-cell">
                           {new Date(b.createdAt).toLocaleDateString()}
                         </td>
                       </tr>

@@ -330,19 +330,19 @@ function RunHistory({ connectorId }: { connectorId: string }) {
           <thead className="bg-surface-muted text-foreground-subtle">
             <tr>
               <th className="px-3 py-2">When</th>
-              <th className="px-3 py-2">Trigger</th>
+              <th className="hidden px-3 py-2 md:table-cell">Trigger</th>
               <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2 text-right">Fetched</th>
-              <th className="px-3 py-2 text-right">Upserted</th>
-              <th className="px-3 py-2 text-right">Failed</th>
-              <th className="px-3 py-2">Error</th>
+              <th className="hidden px-3 py-2 text-right lg:table-cell">Fetched</th>
+              <th className="hidden px-3 py-2 text-right lg:table-cell">Upserted</th>
+              <th className="hidden px-3 py-2 text-right sm:table-cell">Failed</th>
+              <th className="hidden px-3 py-2 md:table-cell">Error</th>
             </tr>
           </thead>
           <tbody>
             {runs.data?.data.map((r) => (
               <tr key={r.id} className="border-t border-border">
                 <td className="px-3 py-2">{formatRelative(r.startedAt ?? r.createdAt)}</td>
-                <td className="px-3 py-2 text-foreground-muted">{r.trigger}</td>
+                <td className="hidden px-3 py-2 text-foreground-muted md:table-cell">{r.trigger}</td>
                 <td className="px-3 py-2">
                   <Badge
                     variant={
@@ -358,10 +358,10 @@ function RunHistory({ connectorId }: { connectorId: string }) {
                     {r.status}
                   </Badge>
                 </td>
-                <td className="px-3 py-2 text-right tabular-nums">{r.recordsFetched}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{r.recordsUpserted}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{r.recordsFailed}</td>
-                <td className="truncate px-3 py-2 text-foreground-subtle">{r.errorMessage ?? '—'}</td>
+                <td className="hidden px-3 py-2 text-right tabular-nums lg:table-cell">{r.recordsFetched}</td>
+                <td className="hidden px-3 py-2 text-right tabular-nums lg:table-cell">{r.recordsUpserted}</td>
+                <td className="hidden px-3 py-2 text-right tabular-nums sm:table-cell">{r.recordsFailed}</td>
+                <td className="hidden truncate px-3 py-2 text-foreground-subtle md:table-cell">{r.errorMessage ?? '—'}</td>
               </tr>
             ))}
           </tbody>

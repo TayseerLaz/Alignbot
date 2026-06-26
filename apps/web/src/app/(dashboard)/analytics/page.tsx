@@ -267,22 +267,22 @@ export default function AnalyticsPage() {
                     <thead className="border-b border-border bg-surface-muted text-xs uppercase tracking-wide text-foreground-subtle">
                       <tr>
                         <th className="px-4 py-2">Campaign</th>
-                        <th className="px-4 py-2">Status</th>
-                        <th className="px-4 py-2 text-right">Recipients</th>
+                        <th className="hidden px-4 py-2 sm:table-cell">Status</th>
+                        <th className="hidden px-4 py-2 text-right md:table-cell">Recipients</th>
                         <th className="px-4 py-2 text-right">Sent</th>
-                        <th className="px-4 py-2 text-right">Delivered</th>
-                        <th className="px-4 py-2 text-right">Read</th>
+                        <th className="hidden px-4 py-2 text-right lg:table-cell">Delivered</th>
+                        <th className="hidden px-4 py-2 text-right lg:table-cell">Read</th>
                       </tr>
                     </thead>
                     <tbody>
                       {broadcasts.map((b) => (
                         <tr key={b.id} className="border-b border-border last:border-0">
                           <td className="px-4 py-2 font-medium text-foreground">{b.name}</td>
-                          <td className="px-4 py-2 text-foreground-muted">{b.status}</td>
-                          <td className="px-4 py-2 text-right tabular-nums">{b.totalRecipients.toLocaleString()}</td>
+                          <td className="hidden px-4 py-2 text-foreground-muted sm:table-cell">{b.status}</td>
+                          <td className="hidden px-4 py-2 text-right tabular-nums md:table-cell">{b.totalRecipients.toLocaleString()}</td>
                           <td className="px-4 py-2 text-right tabular-nums">{b.sentCount.toLocaleString()}</td>
-                          <td className="px-4 py-2 text-right tabular-nums">{b.deliveredCount.toLocaleString()}</td>
-                          <td className="px-4 py-2 text-right tabular-nums">{b.readCount.toLocaleString()}</td>
+                          <td className="hidden px-4 py-2 text-right tabular-nums lg:table-cell">{b.deliveredCount.toLocaleString()}</td>
+                          <td className="hidden px-4 py-2 text-right tabular-nums lg:table-cell">{b.readCount.toLocaleString()}</td>
                         </tr>
                       ))}
                     </tbody>

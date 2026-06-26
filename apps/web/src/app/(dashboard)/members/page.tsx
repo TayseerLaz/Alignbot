@@ -160,18 +160,18 @@ export default function MembersPage() {
             <table className="w-full text-left text-sm">
               <thead className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
                 <tr>
-                  <th className="px-6 py-3">Member</th>
+                  <th className="px-4 py-3 sm:px-6">Member</th>
                   <th className="px-6 py-3">Role</th>
-                  <th className="px-6 py-3">Status</th>
-                  <th className="px-6 py-3">Last login</th>
-                  <th className="w-12 px-6 py-3" />
+                  <th className="hidden px-6 py-3 sm:table-cell">Status</th>
+                  <th className="hidden px-6 py-3 md:table-cell">Last login</th>
+                  <th className="w-12 px-4 py-3 sm:px-6" />
                 </tr>
               </thead>
               <tbody>
                 {membersQuery.isLoading
                   ? Array.from({ length: 5 }).map((_, i) => (
                       <tr key={`s-${i}`} className="border-b border-border last:border-0">
-                        <td className="px-6 py-4">
+                        <td className="px-4 py-4 sm:px-6">
                           <div className="flex items-center gap-3">
                             <Skeleton className="size-9 rounded-full" />
                             <div className="space-y-1.5">
@@ -183,13 +183,13 @@ export default function MembersPage() {
                         <td className="px-6 py-4">
                           <Skeleton className="h-4 w-20" />
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="hidden px-6 py-4 sm:table-cell">
                           <Skeleton className="h-5 w-16 rounded-full" />
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="hidden px-6 py-4 md:table-cell">
                           <Skeleton className="h-4 w-24" />
                         </td>
-                        <td className="px-6 py-4" />
+                        <td className="px-4 py-4 sm:px-6" />
                       </tr>
                     ))
                   : null}
@@ -199,7 +199,7 @@ export default function MembersPage() {
                   const isSelf = session?.user.id === m.userId;
                   return (
                     <tr key={m.membershipId} className="border-b border-border last:border-0">
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-4 sm:px-6">
                         <div className="flex items-center gap-3">
                           <Avatar className="size-9">
                             <AvatarFallback>{initials(m.firstName, m.lastName, m.email)}</AvatarFallback>
@@ -241,7 +241,7 @@ export default function MembersPage() {
                           <span className="text-foreground-muted">{ORG_ROLE_LABELS[m.role]}</span>
                         )}
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="hidden px-6 py-4 sm:table-cell">
                         <span className={`inline-flex rounded-full px-2 py-0.5 text-xs ${badge.className}`}>
                           {badge.label}
                         </span>
@@ -249,10 +249,10 @@ export default function MembersPage() {
                           <span className="ml-2 text-xs text-foreground-subtle">deactivated</span>
                         ) : null}
                       </td>
-                      <td className="px-6 py-4 text-foreground-muted">
+                      <td className="hidden px-6 py-4 text-foreground-muted md:table-cell">
                         {m.lastLoginAt ? new Date(m.lastLoginAt).toLocaleString() : '—'}
                       </td>
-                      <td className="px-6 py-4 text-right">
+                      <td className="px-4 py-4 text-right sm:px-6">
                         {isAdmin && !isSelf && !m.protected ? (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -321,11 +321,11 @@ export default function MembersPage() {
                 <table className="w-full text-left text-sm">
                   <thead className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
                     <tr>
-                      <th className="px-6 py-3">Email</th>
+                      <th className="px-4 py-3 sm:px-6">Email</th>
                       <th className="px-6 py-3">Role</th>
-                      <th className="px-6 py-3">Invited by</th>
-                      <th className="px-6 py-3">Expires</th>
-                      <th className="w-12 px-6 py-3" />
+                      <th className="hidden px-6 py-3 md:table-cell">Invited by</th>
+                      <th className="hidden px-6 py-3 sm:table-cell">Expires</th>
+                      <th className="w-12 px-4 py-3 sm:px-6" />
                     </tr>
                   </thead>
                   <tbody>
@@ -333,13 +333,13 @@ export default function MembersPage() {
                       .filter((i) => i.status === 'pending')
                       .map((i) => (
                         <tr key={i.id} className="border-b border-border last:border-0">
-                          <td className="px-6 py-4">{i.email}</td>
+                          <td className="px-4 py-4 sm:px-6">{i.email}</td>
                           <td className="px-6 py-4 text-foreground-muted">{ORG_ROLE_LABELS[i.role]}</td>
-                          <td className="px-6 py-4 text-foreground-muted">{i.invitedByName ?? '—'}</td>
-                          <td className="px-6 py-4 text-foreground-muted">
+                          <td className="hidden px-6 py-4 text-foreground-muted md:table-cell">{i.invitedByName ?? '—'}</td>
+                          <td className="hidden px-6 py-4 text-foreground-muted sm:table-cell">
                             {new Date(i.expiresAt).toLocaleDateString()}
                           </td>
-                          <td className="px-6 py-4 text-right">
+                          <td className="px-4 py-4 text-right sm:px-6">
                             <Button
                               variant="ghost"
                               size="icon"

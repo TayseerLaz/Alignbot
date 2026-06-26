@@ -244,11 +244,11 @@ export default function CartPage() {
             <thead className="border-b border-border bg-surface-muted text-xs uppercase tracking-wide text-foreground-subtle">
               <tr>
                 <th className="w-10 px-4 py-3" />
-                <th className="px-6 py-3">Created</th>
+                <th className="hidden px-6 py-3 md:table-cell">Created</th>
                 <th className="px-6 py-3">Customer</th>
-                <th className="px-6 py-3">Items</th>
+                <th className="hidden px-6 py-3 sm:table-cell">Items</th>
                 <th className="px-6 py-3 text-right">Total</th>
-                <th className="px-6 py-3">Status</th>
+                <th className="hidden px-6 py-3 lg:table-cell">Status</th>
                 <th className="w-20 px-6 py-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -327,7 +327,7 @@ function CartRow({
             )}
           </button>
         </td>
-        <td className="whitespace-nowrap px-6 py-4 text-xs text-foreground-muted">
+        <td className="hidden whitespace-nowrap px-6 py-4 text-xs text-foreground-muted md:table-cell">
           {new Date(cart.createdAt).toLocaleString()}
         </td>
         <td className="px-6 py-4">
@@ -345,7 +345,7 @@ function CartRow({
             </Link>
           ) : null}
         </td>
-        <td className="px-6 py-4">
+        <td className="hidden px-6 py-4 sm:table-cell">
           <div className="text-sm">
             <span className="font-medium">{cart.itemsCount}</span>{' '}
             <span className="text-foreground-muted">item{cart.itemsCount === 1 ? '' : 's'}</span>
@@ -367,7 +367,7 @@ function CartRow({
             </div>
           ) : null}
         </td>
-        <td className="px-6 py-4">
+        <td className="hidden px-6 py-4 lg:table-cell">
           <Select value={cart.status} onValueChange={(v) => onStatus(v as Status)}>
             <SelectTrigger className="w-36">
               <SelectValue>
@@ -406,8 +406,8 @@ function CartRow({
                   <thead>
                     <tr className="border-b border-border text-xs text-foreground-subtle">
                       <th className="py-1 text-left font-medium">Item</th>
-                      <th className="py-1 text-right font-medium">Qty</th>
-                      <th className="py-1 text-right font-medium">Unit</th>
+                      <th className="hidden py-1 text-right font-medium sm:table-cell">Qty</th>
+                      <th className="hidden py-1 text-right font-medium md:table-cell">Unit</th>
                       <th className="py-1 text-right font-medium">Total</th>
                     </tr>
                   </thead>
@@ -437,8 +437,8 @@ function CartRow({
                             </div>
                           ) : null}
                         </td>
-                        <td className="py-2 text-right font-mono text-sm">{it.quantity}</td>
-                        <td className="py-2 text-right font-mono text-sm">
+                        <td className="hidden py-2 text-right font-mono text-sm sm:table-cell">{it.quantity}</td>
+                        <td className="hidden py-2 text-right font-mono text-sm md:table-cell">
                           {formatMoney(it.unitPriceMinor, cart.currency)}
                         </td>
                         <td className="py-2 text-right font-mono text-sm">

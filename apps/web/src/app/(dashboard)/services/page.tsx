@@ -287,13 +287,13 @@ export default function ServicesPage() {
                         onChange={toggleAll}
                       />
                     </th>
-                    <th className="px-4 py-3">Service</th>
-                    <th className="px-4 py-3">Category</th>
-                    <th className="px-4 py-3">Duration</th>
+                    <th className="px-4 py-3 sm:px-6">Service</th>
+                    <th className="hidden px-4 py-3 md:table-cell">Category</th>
+                    <th className="hidden px-4 py-3 lg:table-cell">Duration</th>
                     <th className="px-4 py-3 text-right">Starts at</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Updated</th>
-                    <th className="w-12 px-4 py-3" />
+                    <th className="hidden px-4 py-3 sm:table-cell">Status</th>
+                    <th className="hidden px-4 py-3 lg:table-cell">Updated</th>
+                    <th className="w-12 px-4 py-3 sm:px-6" />
                   </tr>
                 </thead>
                 <tbody>
@@ -308,7 +308,7 @@ export default function ServicesPage() {
                           onChange={() => toggleOne(s.id)}
                         />
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 sm:px-6">
                         <Link href={`/services/${s.id}`} className="block">
                           <p className="font-medium">{s.name}</p>
                           {s.shortDescription ? (
@@ -316,10 +316,10 @@ export default function ServicesPage() {
                           ) : null}
                         </Link>
                       </td>
-                      <td className="px-4 py-3 text-foreground-muted">
+                      <td className="hidden px-4 py-3 text-foreground-muted md:table-cell">
                         {s.categoryName ?? <span className="text-foreground-subtle">—</span>}
                       </td>
-                      <td className="px-4 py-3 text-foreground-muted">
+                      <td className="hidden px-4 py-3 text-foreground-muted lg:table-cell">
                         {s.durationMinutes ? (
                           <span className="inline-flex items-center gap-1">
                             <Clock className="size-3.5" /> {s.durationMinutes} min
@@ -334,15 +334,15 @@ export default function ServicesPage() {
                           {PRICE_UNIT_LABELS[s.priceUnit]}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="hidden px-4 py-3 sm:table-cell">
                         {s.isAvailable ? (
                           <Badge variant="success">Available</Badge>
                         ) : (
                           <Badge variant="muted">Unavailable</Badge>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-foreground-muted">{formatRelative(s.updatedAt)}</td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="hidden px-4 py-3 text-foreground-muted lg:table-cell">{formatRelative(s.updatedAt)}</td>
+                      <td className="px-4 py-3 text-right sm:px-6">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon">

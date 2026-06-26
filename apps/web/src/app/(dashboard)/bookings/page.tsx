@@ -411,14 +411,14 @@ export default function BookingsPage() {
           <div className="overflow-x-auto"><table className="w-full text-left text-sm">
             <thead className="border-b border-border bg-surface-muted text-xs uppercase tracking-wide text-foreground-subtle">
               <tr>
-                <th className="px-6 py-3">Date</th>
-                <th className="px-6 py-3">Time</th>
-                <th className="px-6 py-3">Customer</th>
-                <th className="px-6 py-3">Answers</th>
-                <th className="px-6 py-3">Notes</th>
+                <th className="hidden px-6 py-3 sm:table-cell">Date</th>
+                <th className="hidden px-6 py-3 sm:table-cell">Time</th>
+                <th className="px-4 py-3 sm:px-6">Customer</th>
+                <th className="hidden px-6 py-3 lg:table-cell">Answers</th>
+                <th className="hidden px-6 py-3 lg:table-cell">Notes</th>
                 <th className="px-6 py-3">Status</th>
-                <th className="px-6 py-3">Reminder</th>
-                <th className="w-32 px-6 py-3 text-right">Actions</th>
+                <th className="hidden px-6 py-3 md:table-cell">Reminder</th>
+                <th className="w-32 px-4 py-3 text-right sm:px-6">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -476,7 +476,7 @@ export default function BookingsPage() {
                 );
                 return (
                 <tr key={b.id} className="border-b border-border last:border-0 align-top">
-                  <td className="whitespace-nowrap px-6 py-4 text-sm font-medium">
+                  <td className="hidden whitespace-nowrap px-6 py-4 text-sm font-medium sm:table-cell">
                     {dateLabel}
                     {!apt.dateRaw ? (
                       <div className="text-[10px] font-normal text-foreground-subtle">
@@ -491,10 +491,10 @@ export default function BookingsPage() {
                       </div>
                     ) : null}
                   </td>
-                  <td className="whitespace-nowrap px-6 py-4 font-mono text-sm">
+                  <td className="hidden whitespace-nowrap px-6 py-4 font-mono text-sm sm:table-cell">
                     {timeLabel}
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-4 py-4 sm:px-6">
                     <div className="font-medium">{b.customerName ?? b.customerPhone}</div>
                     <div className="font-mono text-[11px] text-foreground-subtle">
                       {b.customerPhone}
@@ -508,7 +508,7 @@ export default function BookingsPage() {
                       </Link>
                     ) : null}
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="hidden px-6 py-4 lg:table-cell">
                     {otherFields.length > 0 ? (
                       <dl className="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
                         {otherFields.map((f) => (
@@ -530,7 +530,7 @@ export default function BookingsPage() {
                       </span>
                     )}
                   </td>
-                  <td className="max-w-xs px-6 py-4 align-top text-xs">
+                  <td className="hidden max-w-xs px-6 py-4 align-top text-xs lg:table-cell">
                     {notesValue ? (
                       <span className="whitespace-pre-wrap break-words text-foreground">
                         {notesValue}
@@ -556,7 +556,7 @@ export default function BookingsPage() {
                       </SelectContent>
                     </Select>
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="hidden px-6 py-4 md:table-cell">
                     {(() => {
                       // Reminders only fire for confirmed bookings — Meta
                       // session-window rules + the user's spec require it.
@@ -685,7 +685,7 @@ export default function BookingsPage() {
                       );
                     })()}
                   </td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-4 py-4 text-right sm:px-6">
                     <Button
                       size="icon"
                       variant="ghost"

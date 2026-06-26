@@ -205,11 +205,11 @@ export default function CategoriesPage() {
                   />
                 </th>
                 <th className="w-10 px-4 py-3" />
-                <th className="px-6 py-3">Name</th>
-                <th className="px-6 py-3">Slug</th>
-                <th className="px-6 py-3">Products</th>
-                <th className="px-6 py-3">Services</th>
-                <th className="w-12 px-6 py-3" />
+                <th className="px-4 py-3 sm:px-6">Name</th>
+                <th className="hidden px-6 py-3 lg:table-cell">Slug</th>
+                <th className="hidden px-6 py-3 sm:table-cell">Products</th>
+                <th className="hidden px-6 py-3 sm:table-cell">Services</th>
+                <th className="w-12 px-4 py-3 sm:px-6" />
               </tr>
             </thead>
             <tbody>
@@ -222,19 +222,19 @@ export default function CategoriesPage() {
                       <td className="px-4 py-4">
                         <Skeleton className="h-4 w-4" />
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-4 sm:px-6">
                         <Skeleton className="h-4 w-32" />
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="hidden px-6 py-4 lg:table-cell">
                         <Skeleton className="h-4 w-24" />
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="hidden px-6 py-4 sm:table-cell">
                         <Skeleton className="h-4 w-8" />
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="hidden px-6 py-4 sm:table-cell">
                         <Skeleton className="h-4 w-8" />
                       </td>
-                      <td className="px-6 py-4" />
+                      <td className="px-4 py-4 sm:px-6" />
                     </tr>
                   ))
                 : null}
@@ -343,11 +343,11 @@ function CategoryRowGroup({
         <td className="px-4 py-4">
           <Chevron className="size-4 text-foreground-muted" />
         </td>
-        <td className="px-6 py-4 font-medium">{cat.name}</td>
-        <td className="px-6 py-4 font-mono text-xs text-foreground-muted">{cat.slug}</td>
-        <td className="px-6 py-4 font-mono text-sm">{productCount}</td>
-        <td className="px-6 py-4 font-mono text-sm">{serviceCount}</td>
-        <td className="px-6 py-4 text-right">
+        <td className="px-4 py-4 font-medium sm:px-6">{cat.name}</td>
+        <td className="hidden px-6 py-4 font-mono text-xs text-foreground-muted lg:table-cell">{cat.slug}</td>
+        <td className="hidden px-6 py-4 font-mono text-sm sm:table-cell">{productCount}</td>
+        <td className="hidden px-6 py-4 font-mono text-sm sm:table-cell">{serviceCount}</td>
+        <td className="px-4 py-4 text-right sm:px-6">
           <Button
             size="icon"
             variant="ghost"

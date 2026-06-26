@@ -703,9 +703,9 @@ function CrawlResultsViewer({ jobId }: { jobId: string }) {
                   <thead className="bg-surface-muted text-foreground-subtle">
                     <tr>
                       <th className="px-2 py-1 text-left font-medium">URL</th>
-                      <th className="px-2 py-1 text-left font-medium">Title</th>
+                      <th className="hidden px-2 py-1 text-left font-medium md:table-cell">Title</th>
                       <th className="px-2 py-1 text-right font-medium">Status</th>
-                      <th className="px-2 py-1 text-right font-medium">Chars</th>
+                      <th className="hidden px-2 py-1 text-right font-medium sm:table-cell">Chars</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -728,7 +728,7 @@ function CrawlResultsViewer({ jobId }: { jobId: string }) {
                                 </span>
                               ) : null}
                             </td>
-                            <td className="max-w-[16rem] truncate px-2 py-1">
+                            <td className="hidden max-w-[16rem] truncate px-2 py-1 md:table-cell">
                               {p.title ?? <span className="text-foreground-subtle">—</span>}
                             </td>
                             <td className="px-2 py-1 text-right">
@@ -743,7 +743,7 @@ function CrawlResultsViewer({ jobId }: { jobId: string }) {
                                 {p.fetchStatus ?? 'err'}
                               </span>
                             </td>
-                            <td className="px-2 py-1 text-right tabular-nums">
+                            <td className="hidden px-2 py-1 text-right tabular-nums sm:table-cell">
                               {p.chars.toLocaleString()}
                             </td>
                           </tr>

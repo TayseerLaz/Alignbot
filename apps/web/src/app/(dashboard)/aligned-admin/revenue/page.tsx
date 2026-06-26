@@ -101,7 +101,7 @@ export default function RevenuePage() {
                 <thead>
                   <tr className="text-left text-xs uppercase text-foreground-subtle">
                     <th className="py-2">Plan</th>
-                    <th>Tenants</th>
+                    <th className="hidden sm:table-cell">Tenants</th>
                     <th>MRR</th>
                   </tr>
                 </thead>
@@ -109,7 +109,7 @@ export default function RevenuePage() {
                   {r.byPlan.map((p) => (
                     <tr key={p.planCode}>
                       <td className="py-2 capitalize">{p.planCode}</td>
-                      <td>{p.tenantCount}</td>
+                      <td className="hidden sm:table-cell">{p.tenantCount}</td>
                       <td className="font-mono">{money(p.mrrMinor, p.currency)}</td>
                     </tr>
                   ))}

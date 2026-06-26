@@ -142,9 +142,9 @@ export default function LeadsPage() {
                   <tr>
                     <th className="px-4 py-3 font-medium">Name</th>
                     <th className="px-4 py-3 font-medium">WhatsApp number</th>
-                    <th className="px-4 py-3 font-medium">Source</th>
-                    <th className="px-4 py-3 font-medium">Status</th>
-                    <th className="px-4 py-3 font-medium">Captured</th>
+                    <th className="hidden px-4 py-3 font-medium lg:table-cell">Source</th>
+                    <th className="hidden px-4 py-3 font-medium sm:table-cell">Status</th>
+                    <th className="hidden px-4 py-3 font-medium md:table-cell">Captured</th>
                     <th className="px-4 py-3" />
                   </tr>
                 </thead>
@@ -163,8 +163,8 @@ export default function LeadsPage() {
                           {lead.phone}
                         </a>
                       </td>
-                      <td className="px-4 py-3 text-muted-foreground">{lead.source}</td>
-                      <td className="px-4 py-3">
+                      <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">{lead.source}</td>
+                      <td className="hidden px-4 py-3 sm:table-cell">
                         <select
                           value={lead.status}
                           onChange={(e) =>
@@ -179,7 +179,7 @@ export default function LeadsPage() {
                           ))}
                         </select>
                       </td>
-                      <td className="px-4 py-3 text-muted-foreground">
+                      <td className="hidden px-4 py-3 text-muted-foreground md:table-cell">
                         {formatRelative(lead.createdAt)}
                       </td>
                       <td className="px-4 py-3 text-right">

@@ -405,16 +405,21 @@ function ContactRow({
   saving,
   onShowInfo,
   onDelete,
+  onAddTag,
+  onRemoveTag,
 }: {
   contact: ContactDto;
   onSave: (patch: { displayName?: string | null; phoneE164?: string; blocked?: boolean }) => void;
   saving: boolean;
   onShowInfo: () => void;
   onDelete: () => void;
+  onAddTag: (tag: string) => void;
+  onRemoveTag: (tag: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [phone, setPhone] = useState(contact.phoneE164);
   const [name, setName] = useState(contact.displayName ?? '');
+  const [tagDraft, setTagDraft] = useState('');
 
   // Instagram/Messenger contacts: phoneE164 holds a PSID, not a real number.
   // Show the @username (parsed from the display name) + a channel badge instead.
@@ -494,15 +499,44 @@ function ContactRow({
         )}
       </td>
       <td className="hidden px-6 py-3 md:table-cell">
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap items-center gap-1">
           {contact.tags.map((t) => (
             <span
               key={t}
-              className="rounded-full bg-surface-muted px-2 py-0.5 text-xs text-foreground-muted"
+              className="inline-flex items-center gap-1 rounded-full bg-surface-muted px-2 py-0.5 text-xs text-foreground-muted"
             >
               {t}
+              {editing ? (
+                <button
+                  type="button"
+                  onClick={() => onRemoveTag(t)}
+                  className="text-foreground-subtle hover:text-rose-600"
+                  aria-label={`Remove tag ${t}`}
+                >
+                  <X className="size-3" />
+                </button>
+              ) : null}
             </span>
           ))}
+          {editing ? (
+            <input
+              value={tagDraft}
+              onChange={(e) => setTagDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  const t = tagDraft.trim();
+                  if (t && !contact.tags.includes(t)) onAddTag(t);
+                  setTagDraft('');
+                }
+              }}
+              placeholder="+ tag"
+              aria-label="Add tag"
+              className="h-6 w-20 rounded-full border border-dashed border-border bg-transparent px-2 text-xs outline-none focus:border-brand-400"
+            />
+          ) : contact.tags.length === 0 ? (
+            <span className="text-xs text-foreground-subtle">—</span>
+          ) : null}
         </div>
       </td>
       <td className="hidden px-6 py-3 text-sm text-foreground-muted lg:table-cell">

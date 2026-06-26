@@ -302,12 +302,12 @@ export default function AlignedAdminPage() {
                 <thead className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
                   <tr>
                     <th className="px-4 py-3">Org</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">AI plan</th>
-                    <th className="px-4 py-3 text-right">Members</th>
-                    <th className="px-4 py-3 text-right">Products</th>
-                    <th className="px-4 py-3 text-right">Services</th>
-                    <th className="px-4 py-3">Last activity</th>
+                    <th className="hidden px-4 py-3 sm:table-cell">Status</th>
+                    <th className="hidden px-4 py-3 md:table-cell">AI plan</th>
+                    <th className="hidden px-4 py-3 text-right lg:table-cell">Members</th>
+                    <th className="hidden px-4 py-3 text-right lg:table-cell">Products</th>
+                    <th className="hidden px-4 py-3 text-right lg:table-cell">Services</th>
+                    <th className="hidden px-4 py-3 md:table-cell">Last activity</th>
                     <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -334,7 +334,7 @@ export default function AlignedAdminPage() {
                           <p className="font-mono text-xs text-foreground-subtle">{o.slug}</p>
                         </Link>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="hidden px-4 py-3 sm:table-cell">
                         <Badge
                           variant={
                             o.status === 'active' ? 'success' : o.status === 'suspended' ? 'warning' : 'muted'
@@ -343,7 +343,7 @@ export default function AlignedAdminPage() {
                           {o.status}
                         </Badge>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="hidden px-4 py-3 md:table-cell">
                         <Badge
                           variant={o.aiPlan === 'max' ? 'coral' : o.aiPlan === 'middle' ? 'info' : 'muted'}
                           title={AI_PLAN_DESCRIPTION[o.aiPlan]}
@@ -351,10 +351,10 @@ export default function AlignedAdminPage() {
                           {AI_PLAN_LABEL[o.aiPlan]}
                         </Badge>
                       </td>
-                      <td className="px-4 py-3 text-right tabular-nums">{o.memberCount}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{o.productCount}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{o.serviceCount}</td>
-                      <td className="px-4 py-3 text-foreground-muted">
+                      <td className="hidden px-4 py-3 text-right tabular-nums lg:table-cell">{o.memberCount}</td>
+                      <td className="hidden px-4 py-3 text-right tabular-nums lg:table-cell">{o.productCount}</td>
+                      <td className="hidden px-4 py-3 text-right tabular-nums lg:table-cell">{o.serviceCount}</td>
+                      <td className="hidden px-4 py-3 text-foreground-muted md:table-cell">
                         {o.lastActivityAt ? formatRelative(o.lastActivityAt) : '—'}
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -680,9 +680,9 @@ function OrgDetailsDialog({ org, onClose }: { org: OrgRow | null; onClose: () =>
                   <thead className="bg-surface-muted text-foreground-subtle">
                     <tr>
                       <th className="px-2 py-1 text-left font-medium">Email</th>
-                      <th className="px-2 py-1 text-left font-medium">Role</th>
-                      <th className="px-2 py-1 text-left font-medium">Status</th>
-                      <th className="px-2 py-1 text-left font-medium">Last login</th>
+                      <th className="hidden px-2 py-1 text-left font-medium lg:table-cell">Role</th>
+                      <th className="hidden px-2 py-1 text-left font-medium sm:table-cell">Status</th>
+                      <th className="hidden px-2 py-1 text-left font-medium md:table-cell">Last login</th>
                       <th className="px-2 py-1 text-right font-medium">Action</th>
                     </tr>
                   </thead>
@@ -701,8 +701,8 @@ function OrgDetailsDialog({ org, onClose }: { org: OrgRow | null; onClose: () =>
                             </div>
                           ) : null}
                         </td>
-                        <td className="px-2 py-1.5 capitalize">{m.role}</td>
-                        <td className="px-2 py-1.5">
+                        <td className="hidden px-2 py-1.5 capitalize lg:table-cell">{m.role}</td>
+                        <td className="hidden px-2 py-1.5 sm:table-cell">
                           <div className="flex flex-wrap gap-1">
                             {m.isActive ? (
                               <span className="rounded bg-emerald-100 px-1 text-[10px] text-emerald-800">
@@ -734,7 +734,7 @@ function OrgDetailsDialog({ org, onClose }: { org: OrgRow | null; onClose: () =>
                             ) : null}
                           </div>
                         </td>
-                        <td className="px-2 py-1.5 text-foreground-muted">
+                        <td className="hidden px-2 py-1.5 text-foreground-muted md:table-cell">
                           {m.lastLoginAt ? formatRelative(m.lastLoginAt) : '—'}
                         </td>
                         <td className="px-2 py-1.5 text-right">
@@ -1166,8 +1166,8 @@ function AiUsageDialog({
                   <thead className="text-xs uppercase tracking-wide text-foreground-subtle">
                     <tr className="border-b border-border">
                       <th className="px-4 py-2 text-left font-medium">Model</th>
-                      <th className="px-4 py-2 text-right font-medium">Replies</th>
-                      <th className="px-4 py-2 text-right font-medium">Tokens</th>
+                      <th className="hidden px-4 py-2 text-right font-medium sm:table-cell">Replies</th>
+                      <th className="hidden px-4 py-2 text-right font-medium md:table-cell">Tokens</th>
                       <th className="px-4 py-2 text-right font-medium">USD</th>
                     </tr>
                   </thead>
@@ -1175,10 +1175,10 @@ function AiUsageDialog({
                     {data.byModel.map((m) => (
                       <tr key={m.model} className="border-b border-border last:border-0">
                         <td className="px-4 py-2 font-mono text-xs">{m.model}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">
+                        <td className="hidden px-4 py-2 text-right tabular-nums sm:table-cell">
                           {m.replies.toLocaleString()}
                         </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
+                        <td className="hidden px-4 py-2 text-right tabular-nums md:table-cell">
                           {m.tokens.toLocaleString()}
                         </td>
                         <td className="px-4 py-2 text-right tabular-nums">${m.usd.toFixed(3)}</td>

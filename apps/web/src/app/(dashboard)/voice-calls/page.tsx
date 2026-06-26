@@ -134,11 +134,11 @@ export default function VoiceCallsPage() {
             <div className="overflow-x-auto"><table className="w-full text-left text-sm">
               <thead className="border-b border-border bg-surface-muted text-xs uppercase tracking-wide text-foreground-subtle">
                 <tr>
-                  <th className="px-6 py-3">Started</th>
+                  <th className="px-4 py-3 sm:px-6">Started</th>
                   <th className="px-6 py-3">Caller</th>
                   <th className="px-6 py-3">Outcome</th>
-                  <th className="px-6 py-3 text-right">Duration</th>
-                  <th className="px-6 py-3 text-right">Turns</th>
+                  <th className="hidden px-6 py-3 text-right sm:table-cell">Duration</th>
+                  <th className="hidden px-6 py-3 text-right sm:table-cell">Turns</th>
                 </tr>
               </thead>
               <tbody>
@@ -148,7 +148,7 @@ export default function VoiceCallsPage() {
                     onClick={() => setOpenId(c.id)}
                     className="cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-surface-muted/40"
                   >
-                    <td className="whitespace-nowrap px-6 py-4 text-xs text-foreground-muted">
+                    <td className="whitespace-nowrap px-4 py-4 text-xs text-foreground-muted sm:px-6">
                       {new Date(c.startedAt).toLocaleString()}
                       <div className="text-[10px] text-foreground-subtle">
                         {formatRelative(c.startedAt)}
@@ -170,10 +170,10 @@ export default function VoiceCallsPage() {
                         </div>
                       ) : null}
                     </td>
-                    <td className="whitespace-nowrap px-6 py-4 text-right font-mono text-sm">
+                    <td className="hidden whitespace-nowrap px-6 py-4 text-right font-mono text-sm sm:table-cell">
                       {callDuration(c)}
                     </td>
-                    <td className="px-6 py-4 text-right font-mono text-sm">{c.turnCount}</td>
+                    <td className="hidden px-6 py-4 text-right font-mono text-sm sm:table-cell">{c.turnCount}</td>
                   </tr>
                 ))}
               </tbody>

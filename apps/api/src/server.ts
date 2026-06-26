@@ -295,7 +295,14 @@ export async function buildServer() {
     },
     transform: jsonSchemaTransform,
   });
-  await app.register(swaggerUi, { routePrefix: '/docs' });
+  // SECURITY: the full Swagger UI + /docs/json map every backend route
+  // (including admin / impersonation / revenue). Never serve it publicly in
+  // production — gate behind an explicit opt-in env so it stays available in
+  // dev/staging. (The OpenAPI `swagger` plugin above only generates the spec
+  // in-memory; without the UI registration there is no /docs or /docs/json.)
+  const docsPublic = env.NODE_ENV !== 'production' || process.env.API_DOCS_PUBLIC === 'true';
+  if (docsPublic) {
+    await app.register(swaggerUi, { routePrefix: '/docs' });
 
   // Filtered chatbot-only Swagger UI on /docs/chatbot using its own swagger plugin.
   await app.register(async (chatbotScope) => {
@@ -318,6 +325,7 @@ export async function buildServer() {
     });
     await chatbotScope.register(swaggerUi, { routePrefix: '/docs/chatbot' });
   });
+  }
 
   // App-specific
   await app.register(errorHandler);

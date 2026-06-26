@@ -27,16 +27,23 @@ export default async function leadsRoutes(app: FastifyInstance) {
           201: z.object({ data: z.object({ ok: z.literal(true), id: z.string().uuid() }) }),
         },
       },
-      // Public — no preHandler. Tight per-IP cap to deter form spam.
+      // Public — no preHandler. Strict per-IP cap (5/hour) to deter form spam.
       config: {
         rateLimit: {
           max: 5,
-          timeWindow: '1 minute',
+          timeWindow: '1 hour',
           keyGenerator: (req) => `lead-capture:${req.ip}`,
         },
       },
     },
     async (req, reply) => {
+      // Honeypot: a hidden field bots auto-fill. If set, fake success (so the
+      // bot can't detect the rejection) but never save the lead.
+      if (req.body.website && req.body.website.trim().length > 0) {
+        req.log.info({ ip: req.ip }, '[leads] honeypot tripped — dropping spam submission');
+        reply.code(201);
+        return { data: { ok: true as const, id: '00000000-0000-0000-0000-000000000000' } };
+      }
       const { name, phone } = req.body;
       const resolvedSource = req.body.source?.trim() || 'hader_landing';
       const lead = await withRlsBypass((tx) =>

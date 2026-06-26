@@ -10,6 +10,9 @@ export const leadCaptureBodySchema = z.object({
     .trim()
     .regex(/^\+?[0-9]{6,18}$/, 'Enter a valid number (digits only).'),
   source: z.string().trim().max(60).optional(),
+  // Honeypot: a hidden field real users never fill. Bots auto-fill every input,
+  // so a non-empty value means a bot — the server silently drops it.
+  website: z.string().max(200).optional(),
 });
 export type LeadCaptureBody = z.infer<typeof leadCaptureBodySchema>;
 

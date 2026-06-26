@@ -21,6 +21,8 @@ import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
 import { badRequest, notFound } from '../../lib/errors.js';
+import { env } from '../../lib/env.js';
+import { safeFetch } from '../../lib/safe-fetch.js';
 import { presignGetUrl } from '../../lib/storage.js';
 
 // Meta requires media-header (IMAGE/VIDEO/DOCUMENT) template samples to be a
@@ -32,18 +34,34 @@ async function uploadSampleToMeta(args: {
   accessToken: string;
   sampleUrl: string;
 }): Promise<string> {
-  // The stored handle is a (possibly expired) Wasabi URL — re-presign fresh
-  // from its storage key so the bytes are always fetchable at submit time.
+  // Fetch the sample bytes. If it's one of OUR stored objects, re-presign fresh
+  // from its storage key (the stored URL may be expired). Otherwise it's a
+  // pasted external URL — fetch it directly through the SSRF-safe fetcher.
   let bytes: Buffer;
   let mime = 'image/jpeg';
   try {
-    const u = new URL(args.sampleUrl);
-    const storageKey = decodeURIComponent(u.pathname.replace(/^\/+/, ''));
-    const fresh = await presignGetUrl(storageKey);
-    const imgRes = await fetch(fresh, { signal: AbortSignal.timeout(20_000) });
-    if (!imgRes.ok) throw new Error(`sample fetch HTTP ${imgRes.status}`);
-    mime = (imgRes.headers.get('content-type') ?? '').split(';')[0]!.trim() || 'image/jpeg';
-    bytes = Buffer.from(await imgRes.arrayBuffer());
+    const ourHost = env.WASABI_PUBLIC_URL_BASE ? new URL(env.WASABI_PUBLIC_URL_BASE).host : null;
+    let u: URL | null = null;
+    try {
+      u = new URL(args.sampleUrl);
+    } catch {
+      u = null;
+    }
+    const isOurs = !!(u && ourHost && u.host === ourHost);
+    if (isOurs && u) {
+      const storageKey = decodeURIComponent(u.pathname.replace(/^\/+/, ''));
+      const fresh = await presignGetUrl(storageKey);
+      const imgRes = await fetch(fresh, { signal: AbortSignal.timeout(20_000) });
+      if (!imgRes.ok) throw new Error(`sample fetch HTTP ${imgRes.status}`);
+      mime = (imgRes.headers.get('content-type') ?? '').split(';')[0]!.trim() || 'image/jpeg';
+      bytes = Buffer.from(await imgRes.arrayBuffer());
+    } else {
+      // External, user-pasted URL — SSRF-guarded fetch.
+      const imgRes = await safeFetch(args.sampleUrl, { signal: AbortSignal.timeout(20_000) });
+      if (!imgRes.ok) throw new Error(`sample fetch HTTP ${imgRes.status}`);
+      mime = (imgRes.headers.get('content-type') ?? '').split(';')[0]!.trim() || 'image/jpeg';
+      bytes = Buffer.from(await imgRes.arrayBuffer());
+    }
   } catch (err) {
     throw badRequest(
       ApiErrorCode.VALIDATION_ERROR,

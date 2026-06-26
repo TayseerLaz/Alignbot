@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle2, Clock, MessageSquare, Plus, RefreshCw, Send, Trash2, Upload, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock, Eye, MessageSquare, Plus, RefreshCw, Send, Trash2, Upload, XCircle } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -25,6 +25,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { TemplatePreview } from '@/components/whatsapp/template-preview';
 import { api, ApiError } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 import { uploadFile } from '@/lib/upload';
@@ -65,6 +66,8 @@ const STATUS_ICON: Record<string, typeof Clock> = {
 export default function TemplatesPage({ showHeader = true }: { showHeader?: boolean } = {}) {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  // Template whose WhatsApp preview popup is open (null = closed).
+  const [previewTemplate, setPreviewTemplate] = useState<Template | null>(null);
 
   const list = useQuery({
     queryKey: ['whatsapp-templates'],
@@ -192,9 +195,14 @@ export default function TemplatesPage({ showHeader = true }: { showHeader?: bool
                 return (
                   <li key={t.id} className="px-6 py-4">
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewTemplate(t)}
+                        className="group min-w-0 flex-1 cursor-pointer text-left"
+                        title="Preview how this looks in WhatsApp"
+                      >
                         <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-mono font-semibold">{t.name}</p>
+                          <p className="font-mono font-semibold group-hover:underline">{t.name}</p>
                           <Badge variant={STATUS_VARIANT[t.status] ?? 'muted'} className="gap-1">
                             <StatusIcon className="size-3" /> {t.status}
                           </Badge>
@@ -220,8 +228,16 @@ export default function TemplatesPage({ showHeader = true }: { showHeader?: bool
                           updated {formatRelative(t.updatedAt)}
                           {t.metaTemplateId ? <> · meta id {t.metaTemplateId}</> : null}
                         </p>
-                      </div>
+                      </button>
                       <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setPreviewTemplate(t)}
+                          title="Preview how this looks in WhatsApp"
+                        >
+                          <Eye className="size-3.5" /> Preview
+                        </Button>
                         {t.status === 'draft' || t.status === 'rejected' ? (
                           <Button
                             size="sm"
@@ -262,6 +278,30 @@ export default function TemplatesPage({ showHeader = true }: { showHeader?: bool
       </Card>
 
       <CreateTemplateDialog open={createOpen} onOpenChange={setCreateOpen} />
+
+      {/* WhatsApp preview popup — how the template lands on the customer's phone. */}
+      <Dialog open={previewTemplate !== null} onOpenChange={(o) => !o && setPreviewTemplate(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-base">{previewTemplate?.name}</DialogTitle>
+            <DialogDescription>
+              Preview of how this message appears in WhatsApp. Variables show example
+              values, or {'{{n}}'} placeholders where no example was set.
+            </DialogDescription>
+          </DialogHeader>
+          {previewTemplate ? (
+            <TemplatePreview
+              components={previewTemplate.components}
+              bodyText={previewTemplate.bodyText}
+            />
+          ) : null}
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setPreviewTemplate(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

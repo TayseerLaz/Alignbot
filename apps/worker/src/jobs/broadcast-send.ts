@@ -206,6 +206,9 @@ async function callMeta(args: {
   language: string;
   variables: Record<string, string>;
   headerMedia?: { format: 'image' | 'video' | 'document'; id: string };
+  // The template's full component spec — used to place a dynamic TEXT-header
+  // value and dynamic URL-button parameters in the right send components.
+  components?: Record<string, unknown>[];
 }): Promise<{
   ok: boolean;
   metaMessageId: string | null;
@@ -225,7 +228,10 @@ async function callMeta(args: {
     text: args.variables[String(idx)] ?? '',
   }));
 
+  const tplComps = Array.isArray(args.components) ? args.components : [];
   const components: Record<string, unknown>[] = [];
+
+  // HEADER: media (uploaded id) OR a dynamic TEXT header ({{1}} → variables.header_text).
   if (args.headerMedia) {
     components.push({
       type: 'header',
@@ -233,8 +239,37 @@ async function callMeta(args: {
         { type: args.headerMedia.format, [args.headerMedia.format]: { id: args.headerMedia.id } },
       ],
     });
+  } else {
+    const textHeader = tplComps.find(
+      (c) =>
+        String(c.type ?? '').toUpperCase() === 'HEADER' &&
+        String(c.format ?? '').toUpperCase() === 'TEXT',
+    );
+    const headerVal = args.variables.header_text;
+    if (textHeader && /\{\{\s*1\s*\}\}/.test(String(textHeader.text ?? '')) && headerVal) {
+      components.push({ type: 'header', parameters: [{ type: 'text', text: headerVal }] });
+    }
   }
+
+  // BODY: positional {{1}}, {{2}}, … from numeric variable keys.
   if (parameters.length > 0) components.push({ type: 'body', parameters });
+
+  // BUTTONS: dynamic URL buttons ({{1}} in the URL → variables.button_url_<index>).
+  const buttonsComp = tplComps.find((c) => String(c.type ?? '').toUpperCase() === 'BUTTONS') as
+    | { buttons?: { type?: string; url?: string }[] }
+    | undefined;
+  (buttonsComp?.buttons ?? []).forEach((b, i) => {
+    if (String(b.type ?? '').toUpperCase() !== 'URL') return;
+    if (!/\{\{\s*1\s*\}\}/.test(String(b.url ?? ''))) return;
+    const val = args.variables[`button_url_${i}`];
+    if (!val) return;
+    components.push({
+      type: 'button',
+      sub_type: 'url',
+      index: String(i),
+      parameters: [{ type: 'text', text: val }],
+    });
+  });
 
   const payload = {
     messaging_product: 'whatsapp',
@@ -473,6 +508,9 @@ export function startBroadcastSendWorker() {
         language: template.language,
         variables,
         headerMedia: headerMedia ?? undefined,
+        components: Array.isArray(template.components)
+          ? (template.components as Record<string, unknown>[])
+          : undefined,
       });
 
       if (out.ok) {

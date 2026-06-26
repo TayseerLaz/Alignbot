@@ -51,6 +51,9 @@ interface NavItem {
   adminOnly?: boolean;
   hideForAdmin?: boolean;
   hideForAdminHome?: boolean;
+  // When an ALIGNED admin is in their own HQ account, route this item here
+  // instead of `href` (e.g. Activity log → the cross-tenant view).
+  adminHomeHref?: string;
 }
 
 type BadgeKey = 'inboxEscalated' | 'leadsNew';
@@ -110,7 +113,9 @@ const groups: NavGroup[] = [
       // for regular tenants but move into the ALIGNED HQ group for admins.
       { href: '/aligned-admin', label: 'Tenants', icon: ShieldCheck, adminOnly: true },
       { href: '/members', label: 'Members', icon: Users, hideForAdmin: true },
-      { href: '/audit-log', label: 'Activity log', icon: Activity },
+      // ALIGNED admins in HQ get the cross-tenant activity log (all tenants);
+      // regular tenants + admins controlling a tenant get the org-scoped one.
+      { href: '/audit-log', label: 'Activity log', icon: Activity, adminHomeHref: '/aligned-admin/audit' },
       // Developer integrations (Connectors / Webhooks / API keys) live under
       // Settings now, not the nav. Routes still resolve + the command palette
       // (⌘K) still reaches them.
@@ -158,9 +163,6 @@ export function Sidebar({
     leadsNew: leadsCount.data?.data.new ?? 0,
   };
 
-  const isActive = (item: NavItem) =>
-    item.exact ? pathname === item.href : pathname.startsWith(item.href);
-
   const { open: openAiSupport } = useAiSupport();
   const isAdmin = !!session?.user.isAlignedAdmin;
   // "Admin home" = an ALIGNED admin viewing their OWN HQ org (not controlling a
@@ -169,6 +171,14 @@ export function Sidebar({
   const isControlling =
     isAdmin && !!session?.organization && !adminOrgIds.has(session.organization.id);
   const isAdminHome = isAdmin && !isControlling;
+
+  // The destination for an item, honouring the admin-home override.
+  const hrefFor = (item: NavItem) =>
+    isAdminHome && item.adminHomeHref ? item.adminHomeHref : item.href;
+  const isActive = (item: NavItem) => {
+    const href = hrefFor(item);
+    return item.exact ? pathname === href : pathname.startsWith(href);
+  };
   const disabledFeatures = session?.organization?.disabledFeatures ?? [];
   const visibleGroups = groups
     .map((g) => ({
@@ -191,7 +201,7 @@ export function Sidebar({
     return (
       <Link
         key={item.href}
-        href={item.href}
+        href={hrefFor(item)}
         onClick={onNavigate}
         target={item.newTab ? 'aligned-inbox' : undefined}
         rel={item.newTab ? 'noopener noreferrer' : undefined}

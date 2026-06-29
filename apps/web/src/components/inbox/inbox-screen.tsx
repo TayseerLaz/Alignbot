@@ -491,6 +491,13 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
           {/* Filters pinned to the top of the thread-list column so the
               conversation pane on the right gets the full vertical space. */}
           <div className="grid shrink-0 grid-cols-1 gap-2 border-b border-border bg-surface-muted/40 px-3 py-3">
+            {/* Thread count — shown on phones (desktop has it in the top strip). */}
+            <div className="flex items-center gap-1.5 text-xs font-medium text-foreground-muted lg:hidden">
+              <MessageCircle className="size-3.5 text-brand-600" />
+              {threads.length < totalThreads
+                ? `${threads.length} of ${totalThreads} threads`
+                : `${totalThreads} thread${totalThreads === 1 ? '' : 's'}`}
+            </div>
             <Input
               placeholder="Search by phone, name, or message…"
               value={filterQ}
@@ -3220,6 +3227,34 @@ function ReplyBox({
             </div>
           ) : null}
         </div>
+        {/* Send / Add-note lives in the toolbar row (far right) — the composer
+            footer was removed so the chat keeps maximum height. */}
+        <Button
+          type="button"
+          size="sm"
+          className="gap-1"
+          loading={
+            mode === 'reply' ? (pendingAttachment ? sendingMedia : loading) : addingNote
+          }
+          disabled={
+            mode === 'reply'
+              ? pendingAttachment
+                ? sendingMedia
+                : body.trim().length === 0
+              : body.trim().length === 0
+          }
+          onClick={submit}
+        >
+          {mode === 'reply' ? (
+            <>
+              <Send className="size-3.5" /> Send
+            </>
+          ) : (
+            <>
+              <CheckCircle2 className="size-3.5" /> Add note
+            </>
+          )}
+        </Button>
       </div>
       <div className="p-3">
         {pendingAttachment ? (
@@ -3261,46 +3296,6 @@ function ReplyBox({
           onChange={(e) => setBody(e.target.value)}
           aria-label={mode === 'reply' ? 'Reply message' : 'Internal note'}
         />
-        <div className="mt-2 flex items-center justify-between gap-2">
-          {/* Helper text — hidden on phones for chat space; the "outside 24h"
-              note was dropped (templates live in the ⋯ menu). */}
-          <p className="hidden text-[11px] text-foreground-muted sm:block">
-            {mode === 'reply'
-              ? pendingAttachment
-                ? 'Click Send to deliver this attachment with your caption.'
-                : ''
-              : 'Notes are stored on the thread, never sent to Meta.'}
-          </p>
-          <Button
-            type="button"
-            className="ml-auto h-10 px-6 text-sm sm:h-9 sm:px-4"
-            loading={
-              mode === 'reply'
-                ? pendingAttachment
-                  ? sendingMedia
-                  : loading
-                : addingNote
-            }
-            disabled={
-              mode === 'reply'
-                ? pendingAttachment
-                  ? sendingMedia
-                  : body.trim().length === 0
-                : body.trim().length === 0
-            }
-            onClick={submit}
-          >
-            {mode === 'reply' ? (
-              <>
-                <Send className="size-4" /> Send
-              </>
-            ) : (
-              <>
-                <CheckCircle2 className="size-4" /> Add note
-              </>
-            )}
-          </Button>
-        </div>
       </div>
       {/* Template-send dialog. Mounted inside ReplyBox so it has the
           right `to` in scope. Closes itself on a successful send + the

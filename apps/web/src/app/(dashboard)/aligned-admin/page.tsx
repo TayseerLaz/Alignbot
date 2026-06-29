@@ -69,6 +69,8 @@ interface OrgRow {
   productCount: number;
   serviceCount: number;
   broadcastMessages: number;
+  billableConversations: number;
+  broadcastCostUsd: number;
   aiTokens: number;
   aiCostUsd: number;
   aiCostBreakdown: { model: string; tokens: number; usd: number }[];
@@ -269,6 +271,42 @@ export default function AlignedAdminPage() {
           label="Users"
           value={sys?.users.total ?? '—'}
           hint={sys ? `${sys.users.pending} pending verify` : undefined}
+        />
+      </div>
+
+      {/* Cost tables — broadcast (WhatsApp) + AI, ranked by spend. */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <CostTable
+          title="Broadcast costs"
+          subtitle="Billable WhatsApp conversations (24h) × rate, all-time"
+          rows={orgRows
+            .map((o) => ({
+              id: o.id,
+              name: o.name,
+              metric: o.billableConversations,
+              metricLabel: o.billableConversations.toLocaleString(),
+              cost: o.broadcastCostUsd,
+            }))
+            .filter((r) => r.cost > 0 || r.metric > 0)
+            .sort((a, b) => b.cost - a.cost)}
+          metricHeader="Conversations"
+          loading={orgs.isLoading}
+        />
+        <CostTable
+          title="AI costs"
+          subtitle="Per-model token spend, all-time"
+          rows={orgRows
+            .map((o) => ({
+              id: o.id,
+              name: o.name,
+              metric: o.aiTokens,
+              metricLabel: o.aiTokens.toLocaleString(),
+              cost: o.aiCostUsd,
+            }))
+            .filter((r) => r.cost > 0 || r.metric > 0)
+            .sort((a, b) => b.cost - a.cost)}
+          metricHeader="Tokens"
+          loading={orgs.isLoading}
         />
       </div>
 
@@ -961,6 +999,79 @@ function StatCard({
         </div>
         <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
         {hint ? <p className="mt-0.5 text-xs text-foreground-subtle">{hint}</p> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Ranked per-tenant cost table for the admin dashboard (broadcast / AI).
+function CostTable({
+  title,
+  subtitle,
+  rows,
+  metricHeader,
+  loading,
+}: {
+  title: string;
+  subtitle: string;
+  rows: { id: string; name: string; metric: number; metricLabel: string; cost: number }[];
+  metricHeader: string;
+  loading: boolean;
+}) {
+  const total = rows.reduce((s, r) => s + r.cost, 0);
+  const top = rows.slice(0, 20);
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-baseline justify-between text-base">
+          <span>{title}</span>
+          <span className="tabular-nums text-primary">${total.toFixed(2)}</span>
+        </CardTitle>
+        <p className="text-xs text-foreground-subtle">{subtitle}</p>
+      </CardHeader>
+      <CardContent className="p-0">
+        {loading ? (
+          <SkeletonRows rows={5} cols={3} className="px-3 py-2" />
+        ) : rows.length === 0 ? (
+          <p className="px-6 py-8 text-center text-sm text-foreground-muted">No spend yet.</p>
+        ) : (
+          <div className="max-h-80 overflow-y-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
+                <tr>
+                  <th className="px-4 py-2">Tenant</th>
+                  <th className="px-4 py-2 text-right">{metricHeader}</th>
+                  <th className="px-4 py-2 text-right">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {top.map((r) => (
+                  <tr key={r.id} className="border-b border-border/50 hover:bg-surface-muted/50">
+                    <td className="px-4 py-2">
+                      <Link
+                        href={`/aligned-admin/orgs/${r.id}/billing`}
+                        className="hover:text-primary hover:underline"
+                      >
+                        {r.name}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-foreground-muted">
+                      {r.metricLabel}
+                    </td>
+                    <td className="px-4 py-2 text-right font-medium tabular-nums">
+                      ${r.cost.toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {rows.length > top.length ? (
+              <p className="px-4 py-2 text-xs text-foreground-subtle">
+                + {rows.length - top.length} more tenants
+              </p>
+            ) : null}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

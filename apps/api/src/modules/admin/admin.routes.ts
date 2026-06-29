@@ -73,6 +73,10 @@ export default async function adminRoutes(app: FastifyInstance) {
               // Broadcast messages actually sent (≈ users reached) + AI usage
               // (total tokens and exact USD cost) — admin-only metrics.
               broadcastMessages: z.number().int(),
+              // Billable 24h template conversations (day-bucket approx) + their
+              // estimated cost — powers the dashboard broadcast-costs table.
+              billableConversations: z.number().int(),
+              broadcastCostUsd: z.number(),
               aiTokens: z.number().int(),
               aiCostUsd: z.number(),
               // Per-model cost breakdown (Claude / OpenAI / Groq each priced
@@ -115,7 +119,24 @@ export default async function adminRoutes(app: FastifyInstance) {
           orderBy: { createdAt: 'desc' },
           take: req.query.limit,
         });
-        const { tokensToUsd } = await import('../../lib/ai-pricing.js');
+        const { tokensToUsd, whatsappMessageCostUsd } = await import('../../lib/ai-pricing.js');
+        // Billable WhatsApp conversations per org — Meta bills once per 24h
+        // template conversation per user. One grouped query for all orgs;
+        // the 24h window is approximated by a calendar-day bucket (the exact
+        // greedy-24h count lives on the per-tenant billing page).
+        const convRows = await tx.$queryRawUnsafe<
+          { organization_id: string; conversations: bigint }[]
+        >(
+          `SELECT organization_id, COUNT(*)::bigint AS conversations FROM (
+             SELECT organization_id, phone_e164, date_trunc('day', sent_at) AS d
+             FROM broadcast_recipients
+             WHERE sent_at IS NOT NULL
+             GROUP BY organization_id, phone_e164, date_trunc('day', sent_at)
+           ) t GROUP BY organization_id`,
+        );
+        const convByOrg = new Map(
+          convRows.map((r) => [r.organization_id, Number(r.conversations)]),
+        );
         return Promise.all(
           rows.map(async (o) => {
             const [memberCount, productCount, serviceCount, lastAudit, wa, bcAgg, aiGroups] =
@@ -169,6 +190,8 @@ export default async function adminRoutes(app: FastifyInstance) {
               productCount,
               serviceCount,
               broadcastMessages: bcAgg._sum.sentCount ?? 0,
+              billableConversations: convByOrg.get(o.id) ?? 0,
+              broadcastCostUsd: Number(whatsappMessageCostUsd(convByOrg.get(o.id) ?? 0).toFixed(2)),
               aiTokens,
               aiCostUsd: Number(aiCostUsd.toFixed(4)),
               aiCostBreakdown,

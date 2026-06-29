@@ -1005,7 +1005,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   // Edit a user from the HQ users console: name, account status, email-verified
   // flag, and HQ-admin grant. Guards against self-lockout.
   r.patch(
-    '/aligned-admin/users/:id',
+    '/aligned-admin/users/:id/account',
     {
       schema: {
         tags: ['admin'],

@@ -214,7 +214,7 @@ function UserDetailDialog({ userId, onClose }: { userId: string; onClose: () => 
 
   const save = useMutation({
     mutationFn: () =>
-      api.patch(`/api/v1/aligned-admin/users/${userId}`, {
+      api.patch(`/api/v1/aligned-admin/users/${userId}/account`, {
         firstName: form?.firstName.trim() || null,
         lastName: form?.lastName.trim() || null,
         status: form?.status,

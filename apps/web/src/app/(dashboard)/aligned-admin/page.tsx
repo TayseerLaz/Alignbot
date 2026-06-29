@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   Trash2,
   Users,
+  Wallet,
   X,
 } from 'lucide-react';
 import { ORG_FEATURES } from '@aligned/shared';
@@ -49,6 +50,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { SkeletonRows, SkeletonText } from '@/components/ui/skeleton';
 import { api, ApiError, setAccessToken } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
@@ -66,6 +68,11 @@ interface OrgRow {
   memberCount: number;
   productCount: number;
   serviceCount: number;
+  broadcastMessages: number;
+  aiTokens: number;
+  aiCostUsd: number;
+  aiCostBreakdown: { model: string; tokens: number; usd: number }[];
+  monthlyPaidUsd: number | null;
   lastActivityAt: string | null;
   aiPlan: AiPlan;
   disabledFeatures: string[];
@@ -208,6 +215,7 @@ export default function AlignedAdminPage() {
   const [detailsOpenFor, setDetailsOpenFor] = useState<OrgRow | null>(null);
   const [aiOpenFor, setAiOpenFor] = useState<OrgRow | null>(null);
   const [accessOpenFor, setAccessOpenFor] = useState<OrgRow | null>(null);
+  const [billingOpenFor, setBillingOpenFor] = useState<OrgRow | null>(null);
 
   if (!session?.user.isAlignedAdmin) {
     return (
@@ -305,8 +313,10 @@ export default function AlignedAdminPage() {
                     <th className="hidden px-4 py-3 sm:table-cell">Status</th>
                     <th className="hidden px-4 py-3 md:table-cell">AI plan</th>
                     <th className="hidden px-4 py-3 text-right lg:table-cell">Members</th>
-                    <th className="hidden px-4 py-3 text-right lg:table-cell">Products</th>
-                    <th className="hidden px-4 py-3 text-right lg:table-cell">Services</th>
+                    <th className="hidden px-4 py-3 text-right lg:table-cell">Broadcast msgs</th>
+                    <th className="hidden px-4 py-3 text-right lg:table-cell">AI tokens</th>
+                    <th className="hidden px-4 py-3 text-right md:table-cell">AI cost</th>
+                    <th className="hidden px-4 py-3 text-right lg:table-cell">Paid / mo</th>
                     <th className="hidden px-4 py-3 md:table-cell">Last activity</th>
                     <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
@@ -352,8 +362,30 @@ export default function AlignedAdminPage() {
                         </Badge>
                       </td>
                       <td className="hidden px-4 py-3 text-right tabular-nums lg:table-cell">{o.memberCount}</td>
-                      <td className="hidden px-4 py-3 text-right tabular-nums lg:table-cell">{o.productCount}</td>
-                      <td className="hidden px-4 py-3 text-right tabular-nums lg:table-cell">{o.serviceCount}</td>
+                      <td className="hidden px-4 py-3 text-right tabular-nums lg:table-cell">
+                        {o.broadcastMessages.toLocaleString()}
+                      </td>
+                      <td className="hidden px-4 py-3 text-right tabular-nums lg:table-cell">
+                        {o.aiTokens.toLocaleString()}
+                      </td>
+                      <td
+                        className="hidden cursor-help px-4 py-3 text-right tabular-nums underline decoration-dotted underline-offset-2 md:table-cell"
+                        title={
+                          o.aiCostBreakdown.length
+                            ? o.aiCostBreakdown
+                                .map(
+                                  (b) =>
+                                    `${b.model}: $${b.usd.toFixed(2)} (${b.tokens.toLocaleString()} tokens)`,
+                                )
+                                .join('\n')
+                            : 'No AI usage yet'
+                        }
+                      >
+                        ${o.aiCostUsd.toFixed(2)}
+                      </td>
+                      <td className="hidden px-4 py-3 text-right tabular-nums lg:table-cell">
+                        {o.monthlyPaidUsd != null ? `$${o.monthlyPaidUsd.toFixed(2)}` : '—'}
+                      </td>
                       <td className="hidden px-4 py-3 text-foreground-muted md:table-cell">
                         {o.lastActivityAt ? formatRelative(o.lastActivityAt) : '—'}
                       </td>
@@ -375,6 +407,9 @@ export default function AlignedAdminPage() {
                             </DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => setAiOpenFor(o)}>
                               <Cpu className="size-4" /> AI usage &amp; plan
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => setBillingOpenFor(o)}>
+                              <Wallet className="size-4" /> Billing &amp; overview
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onSelect={() => setAccessOpenFor(o)}
@@ -462,7 +497,158 @@ export default function AlignedAdminPage() {
         onClose={() => setAccessOpenFor(null)}
         onChanged={() => queryClient.invalidateQueries({ queryKey: ['admin-orgs'] })}
       />
+      <BillingDialog
+        org={billingOpenFor}
+        onClose={() => setBillingOpenFor(null)}
+        onSaved={() => queryClient.invalidateQueries({ queryKey: ['admin-orgs'] })}
+      />
     </>
+  );
+}
+
+// ---------- Billing & overview dialog -------------------------------------
+// Per-tenant: what they pay (manual, editable) vs what they cost (AI spend),
+// plus the key account facts. Margin is estimated over the tenant's lifetime
+// (monthly payment × months active − all-time AI cost).
+function BillingDialog({
+  org,
+  onClose,
+  onSaved,
+}: {
+  org: OrgRow | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [amount, setAmount] = useState('');
+  useEffect(() => {
+    if (org) setAmount(org.monthlyPaidUsd != null ? String(org.monthlyPaidUsd) : '');
+  }, [org]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.patch(`/api/v1/aligned-admin/orgs/${org!.id}/billing`, {
+        monthlyPaidUsd: amount.trim() === '' ? null : Number(amount),
+      }),
+    onSuccess: () => {
+      toast.success('Billing updated');
+      onSaved();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Could not save billing'),
+  });
+
+  if (!org) return null;
+
+  const monthly = org.monthlyPaidUsd ?? 0;
+  const created = new Date(org.createdAt).getTime();
+  const monthsActive = Math.max(1, Math.round((Date.now() - created) / (1000 * 60 * 60 * 24 * 30)));
+  const estPaid = monthly * monthsActive;
+  const cost = org.aiCostUsd;
+  const margin = estPaid - cost;
+
+  return (
+    <Dialog open={!!org} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Billing &amp; overview — {org.name}</DialogTitle>
+          <DialogDescription>
+            What this tenant pays vs what they cost. Payment is entered manually.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Monthly payment (USD)</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="e.g. 49.00"
+                className="max-w-[12rem]"
+              />
+              <Button onClick={() => save.mutate()} loading={save.isPending}>
+                Save
+              </Button>
+            </div>
+          </div>
+
+          {/* Paid vs cost summary */}
+          <div className="grid grid-cols-3 gap-2 rounded-md border border-border p-3 text-center">
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">
+                Est. paid ({monthsActive} mo)
+              </p>
+              <p className="mt-0.5 text-lg font-semibold tabular-nums">${estPaid.toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">
+                AI cost (all-time)
+              </p>
+              <p className="mt-0.5 text-lg font-semibold tabular-nums">${cost.toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">Margin</p>
+              <p
+                className={`mt-0.5 text-lg font-semibold tabular-nums ${
+                  margin >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                }`}
+              >
+                ${margin.toFixed(2)}
+              </p>
+            </div>
+          </div>
+
+          {/* AI cost breakdown */}
+          {org.aiCostBreakdown.length > 0 ? (
+            <div>
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-foreground-subtle">
+                AI cost by model
+              </p>
+              <ul className="divide-y divide-border rounded-md border border-border text-sm">
+                {org.aiCostBreakdown.map((b) => (
+                  <li key={b.model} className="flex items-center justify-between px-3 py-1.5">
+                    <span className="font-mono text-xs">{b.model}</span>
+                    <span className="tabular-nums text-foreground-muted">
+                      ${b.usd.toFixed(2)} · {b.tokens.toLocaleString()} tok
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {/* Key facts */}
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+            <Fact label="AI plan" value={AI_PLAN_LABEL[org.aiPlan]} />
+            <Fact label="Members" value={String(org.memberCount)} />
+            <Fact label="Broadcast msgs" value={org.broadcastMessages.toLocaleString()} />
+            <Fact label="AI tokens" value={org.aiTokens.toLocaleString()} />
+            <Fact label="Products" value={String(org.productCount)} />
+            <Fact label="Services" value={String(org.serviceCount)} />
+            <Fact
+              label="Created"
+              value={new Date(org.createdAt).toLocaleDateString()}
+            />
+            <Fact
+              label="Last activity"
+              value={org.lastActivityAt ? formatRelative(org.lastActivityAt) : '—'}
+            />
+          </dl>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between border-b border-border/60 py-1">
+      <dt className="text-foreground-subtle">{label}</dt>
+      <dd className="font-medium tabular-nums">{value}</dd>
+    </div>
   );
 }
 

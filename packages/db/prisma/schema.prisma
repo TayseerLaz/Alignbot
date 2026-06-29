@@ -373,6 +373,9 @@ model Organization {
   // 'ai' additionally turns off the bot's auto-reply (manual inbox only — a
   // pure social-media handler). Empty = full access. See ORG_FEATURES in shared.
   disabledFeatures String[] @default([]) @map("disabled_features")
+  // What this tenant pays ALIGNED per month (USD), entered manually by an
+  // ALIGNED admin. Drives the per-tenant Billing & overview (paid vs cost).
+  monthlyPaidUsd   Float?   @map("monthly_paid_usd")
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
 

@@ -80,6 +80,8 @@ export default async function adminRoutes(app: FastifyInstance) {
               aiCostBreakdown: z.array(
                 z.object({ model: z.string(), tokens: z.number().int(), usd: z.number() }),
               ),
+              // Manual monthly payment (USD) — null until an admin sets it.
+              monthlyPaidUsd: z.number().nullable(),
               lastActivityAt: z.string().datetime().nullable(),
               // Per-tenant AI tier surfaced on the admin list so the
               // tenants table at /aligned-admin can render a colored
@@ -170,6 +172,7 @@ export default async function adminRoutes(app: FastifyInstance) {
               aiTokens,
               aiCostUsd: Number(aiCostUsd.toFixed(4)),
               aiCostBreakdown,
+              monthlyPaidUsd: (o as { monthlyPaidUsd?: number | null }).monthlyPaidUsd ?? null,
               lastActivityAt: lastAudit?.createdAt.toISOString() ?? null,
               aiPlan: (o as { aiPlan?: 'basic' | 'middle' | 'max' | 'ultra' }).aiPlan ?? 'basic',
               disabledFeatures:
@@ -1161,6 +1164,34 @@ export default async function adminRoutes(app: FastifyInstance) {
         entityType: 'user',
         entityId: id,
         metadata: { via: 'hq_users_console' },
+      });
+      return { data: { id } };
+    },
+  );
+
+  // ---------- PATCH /aligned-admin/orgs/:id/billing -----------------------
+  // Set the manual monthly payment (USD) for a tenant — powers Billing & overview.
+  r.patch(
+    '/aligned-admin/orgs/:id/billing',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Set a tenant’s manual monthly payment (ALIGNED admins only).',
+        params: z.object({ id: uuidSchema }),
+        body: z.object({ monthlyPaidUsd: z.number().min(0).nullable() }),
+        response: { 200: itemEnvelopeSchema(z.object({ id: uuidSchema })) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const { id } = req.params;
+      await withRlsBypass(async (tx) => {
+        const org = await tx.organization.findUnique({ where: { id }, select: { id: true } });
+        if (!org) throw notFound('Organization not found.');
+        await tx.organization.update({
+          where: { id },
+          data: { monthlyPaidUsd: req.body.monthlyPaidUsd } as never,
+        });
       });
       return { data: { id } };
     },

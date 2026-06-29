@@ -55,6 +55,46 @@ export function tokensToUsd(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Non-LLM cost rates — voice transcription, WhatsApp messaging, object storage.
+// These let the billing page show a full "what this tenant costs us" picture.
+// All are best-effort estimates (LABEL them "est." in the UI): we don't store
+// audio duration, Meta's per-message price is country/category dependent, and
+// storage is billed monthly by Wasabi. Edit + redeploy if rates change.
+// ---------------------------------------------------------------------------
+export const COST_RATES = {
+  /**
+   * Estimated USD per inbound voice-note transcription. We route most English
+   * notes to Groq Whisper (~$0.00185/min) and Arabic to OpenAI gpt-4o-transcribe
+   * (~$0.006/min). With a typical ~20s note this averages out to a small flat
+   * figure — used only when we can't measure duration.
+   */
+  transcriptionUsd: 0.003,
+  /**
+   * Estimated USD per outbound WhatsApp message (broadcast / template send).
+   * Meta bills per conversation by country + category; this is a blended
+   * marketing-conversation estimate. Adjust to your dominant market.
+   */
+  whatsappMessageUsd: 0.03,
+  /** Wasabi storage, USD per GB per month (≈ $6.99/TB/mo). */
+  storageUsdPerGbMonth: 0.0068,
+} as const;
+
+/** Estimated transcription cost for a count of voice notes. */
+export function transcriptionCostUsd(count: number): number {
+  return Math.max(0, count) * COST_RATES.transcriptionUsd;
+}
+
+/** Estimated WhatsApp messaging cost for a count of outbound messages. */
+export function whatsappMessageCostUsd(count: number): number {
+  return Math.max(0, count) * COST_RATES.whatsappMessageUsd;
+}
+
+/** Estimated monthly storage cost for a number of stored bytes. */
+export function storageCostUsd(bytes: number): number {
+  return (Math.max(0, bytes) / 1_000_000_000) * COST_RATES.storageUsdPerGbMonth;
+}
+
 function normaliseModelKey(modelLabel: string): ChatModelKey | null {
   const m = modelLabel.toLowerCase().trim();
   if (m.includes('groq:') || m.includes('llama-3.3-70b')) {

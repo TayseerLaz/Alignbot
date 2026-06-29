@@ -96,6 +96,14 @@ export const ORG_FEATURES = [
     // Opt-in feature: new orgs start with this DISABLED. See ORG_FEATURE_DEFAULT_DISABLED.
     defaultDisabled: true,
   },
+  {
+    key: 'voice_transcription',
+    label: 'Voice note transcription',
+    description:
+      'Automatically transcribe inbound WhatsApp voice notes with Whisper so the inbox shows the text (and the bot can answer them). Incurs a per-note transcription cost. Turn OFF to keep voice notes playable but skip transcription. ON by default.',
+    // No page to hide — this gates the inbound transcription path only.
+    hrefs: [],
+  },
 ] as const;
 
 export type OrgFeatureKey = (typeof ORG_FEATURES)[number]['key'];

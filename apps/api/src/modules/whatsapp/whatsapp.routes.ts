@@ -210,9 +210,9 @@ async function transcribeInboundVoice(args: {
         return done.body.replace(/^🎙\s*/, '').trim();
       }
     }
-    // Run both DB lookups in parallel — channel (for media token) +
-    // last-bot-language (for transcribe provider).
-    const [channel, prevBotMessage] = await Promise.all([
+    // Run lookups in parallel — channel (for media token), last-bot-language
+    // (for transcribe provider) + the org's feature flags (transcription gate).
+    const [channel, prevBotMessage, org] = await Promise.all([
       withRlsBypass((tx) =>
         tx.whatsAppChannel.findFirst({
           where: { organizationId: args.organizationId, isPrimary: true },
@@ -230,8 +230,17 @@ async function transcribeInboundVoice(args: {
           select: { body: true },
         }),
       ),
+      withRlsBypass((tx) =>
+        tx.organization.findUnique({
+          where: { id: args.organizationId },
+          select: { disabledFeatures: true },
+        }),
+      ),
     ]);
     if (!channel?.accessToken) return null;
+    // Per-tenant toggle: when voice transcription is OFF we still download +
+    // store the audio (so it's playable) but skip the paid Whisper call.
+    const transcriptionEnabled = !(org?.disabledFeatures ?? []).includes('voice_transcription');
 
     // Language signal: does the last bot reply contain Arabic codepoints?
     // No → likely an English/Latin conversation → Groq Whisper. Yes → Arabic →
@@ -269,29 +278,35 @@ async function transcribeInboundVoice(args: {
     }
     const buf = Buffer.from(await fileRes.arrayBuffer());
 
-    // Step 3: Whisper transcribe.
-    const { transcribeAudio } = await import('../../lib/openai.js');
+    // Step 3: Whisper transcribe — only when the tenant has the feature ON.
     const mime = (args.mediaMime ?? urlJson.mime_type ?? 'audio/ogg').split(';')[0]!.trim();
     const ext = mime === 'audio/ogg' ? 'ogg' : mime === 'audio/mp4' ? 'm4a' : 'webm';
-    const transcribeStart = Date.now();
-    const { text, language, provider: transcribeProviderActual } = await transcribeAudio({
-      organizationId: args.organizationId,
-      bytes: buf,
-      filename: `inbound-${args.mediaId}.${ext}`,
-      mimeType: mime,
-      provider: transcribeProvider,
-    });
-    args.log.info(
-      {
-        mediaId: args.mediaId,
-        language,
-        chars: text.length,
-        preview: text.slice(0, 200),
-        provider: transcribeProviderActual,
-        transcribeMs: Date.now() - transcribeStart,
-      },
-      '[whatsapp] Whisper transcript',
-    );
+    let text = '';
+    if (transcriptionEnabled) {
+      const { transcribeAudio } = await import('../../lib/openai.js');
+      const transcribeStart = Date.now();
+      const res = await transcribeAudio({
+        organizationId: args.organizationId,
+        bytes: buf,
+        filename: `inbound-${args.mediaId}.${ext}`,
+        mimeType: mime,
+        provider: transcribeProvider,
+      });
+      text = res.text;
+      args.log.info(
+        {
+          mediaId: args.mediaId,
+          language: res.language,
+          chars: res.text.length,
+          preview: res.text.slice(0, 200),
+          provider: res.provider,
+          transcribeMs: Date.now() - transcribeStart,
+        },
+        '[whatsapp] Whisper transcript',
+      );
+    } else {
+      args.log.info({ mediaId: args.mediaId }, '[whatsapp] voice transcription disabled for org — storing audio only');
+    }
     // Step 4: ALWAYS store the audio file — even when transcription came back
     // empty (silent clip, unsupported language, provider hiccup) — so the
     // operator can still LISTEN to the voice note. The transcript, when present,

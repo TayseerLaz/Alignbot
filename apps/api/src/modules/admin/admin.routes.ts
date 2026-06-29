@@ -1197,6 +1197,246 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- GET /aligned-admin/orgs/:id/overview ------------------------
+  // Full per-tenant cost & usage breakdown for a time range — powers the
+  // dedicated Billing & overview PAGE. Every cost source: AI tokens (per model),
+  // voice transcription, Wasabi storage, WhatsApp messaging/broadcasts.
+  // Time-ranged metrics use [from,to]; storage + counts + numbers are snapshots.
+  r.get(
+    '/aligned-admin/orgs/:id/overview',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Per-tenant cost & usage breakdown for a date range.',
+        params: z.object({ id: uuidSchema }),
+        querystring: z.object({
+          from: z.string().datetime().optional(),
+          to: z.string().datetime().optional(),
+        }),
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              org: z.object({
+                id: uuidSchema,
+                name: z.string(),
+                slug: z.string(),
+                status: z.string(),
+                aiPlan: z.string(),
+                monthlyPaidUsd: z.number().nullable(),
+                createdAt: z.string().datetime(),
+                disabledFeatures: z.array(z.string()),
+              }),
+              range: z.object({ from: z.string().datetime(), to: z.string().datetime() }),
+              ai: z.object({
+                tokens: z.number().int(),
+                costUsd: z.number(),
+                byModel: z.array(
+                  z.object({ model: z.string(), tokens: z.number().int(), usd: z.number() }),
+                ),
+              }),
+              transcription: z.object({
+                enabled: z.boolean(),
+                count: z.number().int(),
+                voiceNotesTotal: z.number().int(),
+                costUsd: z.number(),
+              }),
+              storage: z.object({
+                totalBytes: z.number(),
+                objectCount: z.number().int(),
+                addedBytes: z.number(),
+                monthlyCostUsd: z.number(),
+              }),
+              whatsapp: z.object({
+                numbers: z.number().int(),
+                broadcasts: z.number().int(),
+                broadcastMessages: z.number().int(),
+                outboundMessages: z.number().int(),
+                inboundMessages: z.number().int(),
+                costUsd: z.number(),
+              }),
+              counts: z.object({
+                members: z.number().int(),
+                products: z.number().int(),
+                services: z.number().int(),
+                contacts: z.number().int(),
+              }),
+              totals: z.object({
+                estimatedCostUsd: z.number(),
+                monthlyPaidUsd: z.number().nullable(),
+              }),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const { id } = req.params;
+      const to = req.query.to ? new Date(req.query.to) : new Date();
+      const from = req.query.from
+        ? new Date(req.query.from)
+        : new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const inRange = { gte: from, lte: to };
+
+      const { tokensToUsd, transcriptionCostUsd, whatsappMessageCostUsd, storageCostUsd } =
+        await import('../../lib/ai-pricing.js');
+
+      const data = await withRlsBypass(async (tx) => {
+        const org = await tx.organization.findUnique({
+          where: { id },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            status: true,
+            createdAt: true,
+            monthlyPaidUsd: true,
+            aiPlan: true,
+            disabledFeatures: true,
+          } as never,
+        });
+        if (!org) throw notFound('Organization not found.');
+        const o = org as unknown as {
+          id: string;
+          name: string;
+          slug: string;
+          status: string;
+          createdAt: Date;
+          monthlyPaidUsd: number | null;
+          aiPlan: string | null;
+          disabledFeatures: string[] | null;
+        };
+
+        const [
+          aiGroups,
+          transcribedCount,
+          voiceNotesTotal,
+          storageAll,
+          storageAdded,
+          bcAgg,
+          broadcastsCount,
+          outboundMessages,
+          inboundMessages,
+          numbers,
+          members,
+          products,
+          services,
+          contacts,
+        ] = await Promise.all([
+          tx.messageProvenance.groupBy({
+            by: ['model'],
+            where: { organizationId: id, createdAt: inRange },
+            _sum: { promptTokens: true, completionTokens: true },
+          }),
+          tx.whatsAppMessage.count({
+            where: {
+              organizationId: id,
+              direction: 'inbound',
+              messageType: { in: ['audio', 'voice'] },
+              body: { startsWith: '🎙' },
+              receivedAt: inRange,
+            },
+          }),
+          tx.whatsAppMessage.count({
+            where: {
+              organizationId: id,
+              direction: 'inbound',
+              messageType: { in: ['audio', 'voice'] },
+              receivedAt: inRange,
+            },
+          }),
+          tx.asset.aggregate({ where: { organizationId: id }, _sum: { byteSize: true }, _count: true }),
+          tx.asset.aggregate({
+            where: { organizationId: id, createdAt: inRange },
+            _sum: { byteSize: true },
+          }),
+          tx.broadcast.aggregate({
+            where: { organizationId: id, createdAt: inRange },
+            _sum: { sentCount: true },
+          }),
+          tx.broadcast.count({ where: { organizationId: id, createdAt: inRange } }),
+          tx.whatsAppMessage.count({
+            where: { organizationId: id, direction: 'outbound', receivedAt: inRange },
+          }),
+          tx.whatsAppMessage.count({
+            where: { organizationId: id, direction: 'inbound', receivedAt: inRange },
+          }),
+          tx.whatsAppChannel.count({ where: { organizationId: id } }),
+          tx.membership.count({ where: { organizationId: id, isActive: true } }),
+          tx.product.count({ where: { organizationId: id, deletedAt: null } }),
+          tx.service.count({ where: { organizationId: id, deletedAt: null } }),
+          tx.contact.count({ where: { organizationId: id } }),
+        ]);
+
+        let aiTokens = 0;
+        let aiCostUsd = 0;
+        const byModel: { model: string; tokens: number; usd: number }[] = [];
+        for (const g of aiGroups) {
+          const pt = g._sum.promptTokens ?? 0;
+          const ct = g._sum.completionTokens ?? 0;
+          const usd = tokensToUsd(g.model, pt, ct);
+          aiTokens += pt + ct;
+          aiCostUsd += usd;
+          byModel.push({ model: g.model, tokens: pt + ct, usd: Number(usd.toFixed(4)) });
+        }
+        byModel.sort((a, b) => b.usd - a.usd);
+
+        const totalBytes = storageAll._sum.byteSize ?? 0;
+        const addedBytes = storageAdded._sum.byteSize ?? 0;
+        const broadcastMessages = bcAgg._sum.sentCount ?? 0;
+
+        const transcriptionEnabled = !(o.disabledFeatures ?? []).includes('voice_transcription');
+        const transcriptionUsd = transcriptionCostUsd(transcribedCount);
+        const whatsappUsd = whatsappMessageCostUsd(broadcastMessages);
+        const storageMonthlyUsd = storageCostUsd(totalBytes);
+        const estimatedCostUsd =
+          aiCostUsd + transcriptionUsd + whatsappUsd + storageMonthlyUsd;
+
+        return {
+          org: {
+            id: o.id,
+            name: o.name,
+            slug: o.slug,
+            status: o.status,
+            aiPlan: o.aiPlan ?? 'basic',
+            monthlyPaidUsd: o.monthlyPaidUsd ?? null,
+            createdAt: o.createdAt.toISOString(),
+            disabledFeatures: o.disabledFeatures ?? [],
+          },
+          range: { from: from.toISOString(), to: to.toISOString() },
+          ai: { tokens: aiTokens, costUsd: Number(aiCostUsd.toFixed(4)), byModel },
+          transcription: {
+            enabled: transcriptionEnabled,
+            count: transcribedCount,
+            voiceNotesTotal,
+            costUsd: Number(transcriptionUsd.toFixed(4)),
+          },
+          storage: {
+            totalBytes,
+            objectCount: storageAll._count,
+            addedBytes,
+            monthlyCostUsd: Number(storageMonthlyUsd.toFixed(4)),
+          },
+          whatsapp: {
+            numbers,
+            broadcasts: broadcastsCount,
+            broadcastMessages,
+            outboundMessages,
+            inboundMessages,
+            costUsd: Number(whatsappUsd.toFixed(4)),
+          },
+          counts: { members, products, services, contacts },
+          totals: {
+            estimatedCostUsd: Number(estimatedCostUsd.toFixed(4)),
+            monthlyPaidUsd: o.monthlyPaidUsd ?? null,
+          },
+        };
+      });
+
+      return { data };
+    },
+  );
+
   // ---------- GET /aligned-admin/system -----------------------------------
   // System health snapshot. Exact numbers (queue depth, redis info) are pulled live.
   r.get(

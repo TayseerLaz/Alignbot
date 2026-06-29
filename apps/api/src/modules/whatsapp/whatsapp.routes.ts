@@ -130,12 +130,23 @@ function sniffMediaContainer(buf: Buffer): string | null {
 // system ffmpeg needed. Returns null on any failure → caller stores the original.
 async function transcodeAudioToMp3(input: Buffer): Promise<Buffer | null> {
   try {
-    const { default: ffmpegPath } = await import('ffmpeg-static');
-    if (!ffmpegPath) return null;
+    // Prefer the bundled ffmpeg-static binary, but it's frequently MISSING in
+    // production: pnpm doesn't run postinstall scripts by default, so the
+    // platform binary never downloads even though the package is listed. Fall
+    // back to a system ffmpeg on PATH (present on our servers). Without a working
+    // ffmpeg the OGG/Opus voice note is stored as-is → Safari can't play it.
+    const { existsSync } = await import('node:fs');
+    let ffmpegPath = 'ffmpeg';
+    try {
+      const mod = (await import('ffmpeg-static')) as { default?: string };
+      if (mod.default && existsSync(mod.default)) ffmpegPath = mod.default;
+    } catch {
+      /* ffmpeg-static unavailable → use system ffmpeg */
+    }
     const { spawn } = await import('node:child_process');
     return await new Promise<Buffer | null>((resolve) => {
       const ff = spawn(
-        ffmpegPath as unknown as string,
+        ffmpegPath,
         ['-i', 'pipe:0', '-vn', '-acodec', 'libmp3lame', '-q:a', '5', '-f', 'mp3', 'pipe:1'],
         { stdio: ['pipe', 'pipe', 'ignore'] },
       );

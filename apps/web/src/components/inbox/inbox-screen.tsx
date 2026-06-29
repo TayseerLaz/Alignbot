@@ -141,6 +141,8 @@ interface Message {
   headerImageUrl?: string | null;
   // 'image' | 'video' | 'document' — how to render headerImageUrl.
   headerMediaType?: string | null;
+  // Meta delivery state for outbound messages → WhatsApp-style ticks.
+  deliveryStatus?: 'sent' | 'delivered' | 'read' | 'failed' | null;
 }
 
 // Phase 8 / 1.3 — shape returned by GET /inbox/messages/:id/provenance.
@@ -1938,6 +1940,35 @@ function Bubble({
             </span>
           ) : null}
           <span>{formatRelative(message.receivedAt)}</span>
+          {/* WhatsApp-style delivery ticks (outbound only): ✓ sent, ✓✓ delivered
+              (grey), ✓✓ read (blue), ⚠ failed. */}
+          {isOut && message.deliveryStatus ? (
+            <span
+              title={
+                message.deliveryStatus === 'read'
+                  ? 'Read'
+                  : message.deliveryStatus === 'delivered'
+                    ? 'Delivered'
+                    : message.deliveryStatus === 'failed'
+                      ? 'Failed to send'
+                      : 'Sent'
+              }
+              className={cn(
+                'font-semibold leading-none tracking-tighter',
+                message.deliveryStatus === 'read'
+                  ? 'text-sky-300'
+                  : message.deliveryStatus === 'failed'
+                    ? 'text-red-200'
+                    : 'text-white/70',
+              )}
+            >
+              {message.deliveryStatus === 'failed'
+                ? '⚠'
+                : message.deliveryStatus === 'sent'
+                  ? '✓'
+                  : '✓✓'}
+            </span>
+          ) : null}
           {canAudit ? (
             <button
               type="button"

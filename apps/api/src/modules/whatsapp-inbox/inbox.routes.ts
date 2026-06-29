@@ -105,6 +105,9 @@ const messageDtoSchema = z.object({
   headerImageUrl: z.string().nullable(),
   // 'image' | 'video' | 'document' — how to render headerImageUrl.
   headerMediaType: z.string().nullable(),
+  // Meta delivery state for OUTBOUND messages — drives the WhatsApp-style
+  // ticks (sent ✓, delivered ✓✓, read ✓✓ blue, failed). Null on inbound.
+  deliveryStatus: z.enum(['sent', 'delivered', 'read', 'failed']).nullable(),
 });
 
 const noteDtoSchema = z.object({
@@ -788,6 +791,14 @@ export default async function inboxRoutes(app: FastifyInstance) {
                   : null,
               headerImageUrl,
               headerMediaType,
+              deliveryStatus:
+                m.direction === 'outbound' &&
+                (m.metaStatus === 'sent' ||
+                  m.metaStatus === 'delivered' ||
+                  m.metaStatus === 'read' ||
+                  m.metaStatus === 'failed')
+                  ? (m.metaStatus as 'sent' | 'delivered' | 'read' | 'failed')
+                  : null,
             };
           }),
           nextCursor: olderCursor,

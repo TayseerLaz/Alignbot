@@ -619,6 +619,13 @@ export async function resetPassword(token: string, newPassword: string, meta: Re
       passwordResetExpiresAt: null,
       failedLoginAttempts: 0,
       lockedUntil: null,
+      // Clicking a reset link delivered to their inbox proves they own the
+      // email — so there's no point making a tenant do a separate "verify your
+      // account" step afterwards. Mark verified, and flip a still-pending
+      // account to active so they can sign in immediately. (Disabled accounts
+      // stay disabled; already-verified users keep their original timestamp.)
+      emailVerifiedAt: user.emailVerifiedAt ?? new Date(),
+      ...(user.status === 'pending' ? { status: 'active' as const } : {}),
     },
   });
 

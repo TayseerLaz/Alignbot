@@ -10,23 +10,15 @@ import {
   Database,
   MessageCircle,
   Server,
-  ShieldCheck,
   Users,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
@@ -46,26 +38,13 @@ interface OrgRow {
   memberCount: number;
   productCount: number;
   serviceCount: number;
+  broadcastMessages: number;
+  aiTokens: number;
+  aiCostUsd: number;
   lastActivityAt: string | null;
   aiPlan: AiPlan;
   disabledFeatures: string[];
   whatsappNumber: string | null;
-}
-
-interface PlatformUser {
-  id: string;
-  name: string | null;
-  email: string;
-  status: string;
-  emailVerified: boolean;
-  isAlignedAdmin: boolean;
-  createdAt: string;
-  memberships: {
-    organizationName: string | null;
-    organizationSlug: string | null;
-    role: string;
-    isActive: boolean;
-  }[];
 }
 
 interface SystemHealth {
@@ -97,15 +76,7 @@ export function AdminPlatformDashboard({ greeting }: { greeting: string }) {
     queryFn: () => api.get<{ data: OrgRow[] }>('/api/v1/aligned-admin/orgs'),
   });
 
-  // "Total users" drill-down — who the platform's users are and which org(s)
-  // they belong to. Only fetched when the dialog is opened.
-  const [usersOpen, setUsersOpen] = useState(false);
-  const usersQuery = useQuery({
-    queryKey: ['admin-users'],
-    queryFn: () => api.get<{ data: PlatformUser[] }>('/api/v1/aligned-admin/users'),
-    enabled: usersOpen,
-  });
-
+  const router = useRouter();
   const sys = system.data?.data;
   const rows = orgs.data?.data ?? [];
 
@@ -162,7 +133,7 @@ export function AdminPlatformDashboard({ greeting }: { greeting: string }) {
             label="Total users"
             value={sys ? sys.users.total : '—'}
             hint={sys ? `${sys.users.pending} pending verify` : undefined}
-            onClick={() => setUsersOpen(true)}
+            onClick={() => router.push('/aligned-admin/users')}
           />
           <StatCard
             icon={Boxes}
@@ -320,8 +291,9 @@ export function AdminPlatformDashboard({ greeting }: { greeting: string }) {
                       <th className="px-4 py-3">Status</th>
                       <th className="px-4 py-3">AI plan</th>
                       <th className="px-4 py-3 text-right">Members</th>
-                      <th className="px-4 py-3 text-right">Products</th>
-                      <th className="px-4 py-3 text-right">Services</th>
+                      <th className="px-4 py-3 text-right">Broadcast msgs</th>
+                      <th className="px-4 py-3 text-right">AI tokens</th>
+                      <th className="px-4 py-3 text-right">AI cost</th>
                       <th className="px-4 py-3">Last activity</th>
                     </tr>
                   </thead>
@@ -352,8 +324,15 @@ export function AdminPlatformDashboard({ greeting }: { greeting: string }) {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums">{o.memberCount}</td>
-                        <td className="px-4 py-3 text-right tabular-nums">{o.productCount}</td>
-                        <td className="px-4 py-3 text-right tabular-nums">{o.serviceCount}</td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {o.broadcastMessages.toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {o.aiTokens.toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          ${o.aiCostUsd.toFixed(2)}
+                        </td>
                         <td className="px-4 py-3 text-foreground-muted">
                           {o.lastActivityAt ? formatRelative(o.lastActivityAt) : '—'}
                         </td>
@@ -367,74 +346,6 @@ export function AdminPlatformDashboard({ greeting }: { greeting: string }) {
         </Card>
       </div>
 
-      {/* Total-users drill-down: who the platform's users are + their org(s). */}
-      <Dialog open={usersOpen} onOpenChange={setUsersOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>All users{sys ? ` · ${sys.users.total}` : ''}</DialogTitle>
-            <DialogDescription>
-              Every account on the platform and the tenant(s) it belongs to. This counts
-              distinct accounts — someone in two orgs, an ALIGNED admin, or a user with no
-              active membership counts once here, so it can exceed the sum of per-tenant
-              member counts.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="max-h-[60vh] overflow-y-auto">
-            {usersQuery.isLoading ? (
-              <div className="space-y-3 py-2">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <Skeleton key={i} className="h-12 w-full" />
-                ))}
-              </div>
-            ) : (
-              <ul className="divide-y divide-border">
-                {(usersQuery.data?.data ?? []).map((u) => (
-                  <li key={u.id} className="py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{u.name ?? u.email.split('@')[0]}</span>
-                      {u.isAlignedAdmin ? (
-                        <Badge variant="default" className="gap-1">
-                          <ShieldCheck className="size-3" /> HQ admin
-                        </Badge>
-                      ) : null}
-                      <Badge
-                        variant={
-                          u.status === 'active'
-                            ? 'success'
-                            : u.status === 'pending'
-                              ? 'warning'
-                              : 'muted'
-                        }
-                      >
-                        {u.status}
-                      </Badge>
-                      {!u.emailVerified ? <Badge variant="warning">unverified</Badge> : null}
-                    </div>
-                    <p className="text-xs text-foreground-muted">{u.email}</p>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {u.memberships.length === 0 ? (
-                        <span className="text-xs italic text-foreground-subtle">
-                          No org membership
-                        </span>
-                      ) : (
-                        u.memberships.map((m, i) => (
-                          <span
-                            key={i}
-                            className="rounded-full bg-surface-muted px-2 py-0.5 text-xs text-foreground-muted"
-                          >
-                            {m.organizationName ?? m.organizationSlug ?? '—'} · {m.role}
-                            {!m.isActive ? ' (inactive)' : ''}
-                          </span>
-                        ))
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }

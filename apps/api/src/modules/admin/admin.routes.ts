@@ -70,6 +70,11 @@ export default async function adminRoutes(app: FastifyInstance) {
               memberCount: z.number().int(),
               productCount: z.number().int(),
               serviceCount: z.number().int(),
+              // Broadcast messages actually sent (≈ users reached) + AI usage
+              // (total tokens and exact USD cost) — admin-only metrics.
+              broadcastMessages: z.number().int(),
+              aiTokens: z.number().int(),
+              aiCostUsd: z.number(),
               lastActivityAt: z.string().datetime().nullable(),
               // Per-tenant AI tier surfaced on the admin list so the
               // tenants table at /aligned-admin can render a colored
@@ -103,24 +108,45 @@ export default async function adminRoutes(app: FastifyInstance) {
           orderBy: { createdAt: 'desc' },
           take: req.query.limit,
         });
+        const { tokensToUsd } = await import('../../lib/ai-pricing.js');
         return Promise.all(
           rows.map(async (o) => {
-            const [memberCount, productCount, serviceCount, lastAudit, wa] = await Promise.all([
-              tx.membership.count({ where: { organizationId: o.id, isActive: true } }),
-              tx.product.count({ where: { organizationId: o.id, deletedAt: null } }),
-              tx.service.count({ where: { organizationId: o.id, deletedAt: null } }),
-              tx.auditLog.findFirst({
-                where: { organizationId: o.id },
-                orderBy: { createdAt: 'desc' },
-                select: { createdAt: true },
-              }),
-              // Primary number first; fall back to any connected number.
-              tx.whatsAppChannel.findFirst({
-                where: { organizationId: o.id, displayPhoneNumber: { not: null } },
-                orderBy: { isPrimary: 'desc' },
-                select: { displayPhoneNumber: true },
-              }),
-            ]);
+            const [memberCount, productCount, serviceCount, lastAudit, wa, bcAgg, aiGroups] =
+              await Promise.all([
+                tx.membership.count({ where: { organizationId: o.id, isActive: true } }),
+                tx.product.count({ where: { organizationId: o.id, deletedAt: null } }),
+                tx.service.count({ where: { organizationId: o.id, deletedAt: null } }),
+                tx.auditLog.findFirst({
+                  where: { organizationId: o.id },
+                  orderBy: { createdAt: 'desc' },
+                  select: { createdAt: true },
+                }),
+                // Primary number first; fall back to any connected number.
+                tx.whatsAppChannel.findFirst({
+                  where: { organizationId: o.id, displayPhoneNumber: { not: null } },
+                  orderBy: { isPrimary: 'desc' },
+                  select: { displayPhoneNumber: true },
+                }),
+                // Total broadcast messages actually sent across all campaigns.
+                tx.broadcast.aggregate({
+                  where: { organizationId: o.id },
+                  _sum: { sentCount: true },
+                }),
+                // AI token usage grouped by model so we can price each correctly.
+                tx.messageProvenance.groupBy({
+                  by: ['model'],
+                  where: { organizationId: o.id },
+                  _sum: { promptTokens: true, completionTokens: true },
+                }),
+              ]);
+            let aiTokens = 0;
+            let aiCostUsd = 0;
+            for (const g of aiGroups) {
+              const pt = g._sum.promptTokens ?? 0;
+              const ct = g._sum.completionTokens ?? 0;
+              aiTokens += pt + ct;
+              aiCostUsd += tokensToUsd(g.model, pt, ct);
+            }
             return {
               id: o.id,
               slug: o.slug,
@@ -131,6 +157,9 @@ export default async function adminRoutes(app: FastifyInstance) {
               memberCount,
               productCount,
               serviceCount,
+              broadcastMessages: bcAgg._sum.sentCount ?? 0,
+              aiTokens,
+              aiCostUsd: Number(aiCostUsd.toFixed(4)),
               lastActivityAt: lastAudit?.createdAt.toISOString() ?? null,
               aiPlan: (o as { aiPlan?: 'basic' | 'middle' | 'max' | 'ultra' }).aiPlan ?? 'basic',
               disabledFeatures:
@@ -873,6 +902,158 @@ export default async function adminRoutes(app: FastifyInstance) {
         })),
         nextCursor: null,
       };
+    },
+  );
+
+  // ---------- GET /aligned-admin/users/:id --------------------------------
+  // One user with full info: org memberships + their recent activity (audit
+  // entries where they were the actor, across every tenant).
+  r.get(
+    '/aligned-admin/users/:id',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'One user with memberships + recent activity (ALIGNED admins only).',
+        params: z.object({ id: uuidSchema }),
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              id: uuidSchema,
+              firstName: z.string().nullable(),
+              lastName: z.string().nullable(),
+              name: z.string().nullable(),
+              email: z.string(),
+              status: z.string(),
+              emailVerified: z.boolean(),
+              isAlignedAdmin: z.boolean(),
+              createdAt: z.string().datetime(),
+              memberships: z.array(
+                z.object({
+                  organizationId: uuidSchema,
+                  organizationName: z.string().nullable(),
+                  organizationSlug: z.string().nullable(),
+                  role: z.string(),
+                  isActive: z.boolean(),
+                }),
+              ),
+              activity: z.array(
+                z.object({
+                  id: uuidSchema,
+                  action: z.string(),
+                  entityType: z.string().nullable(),
+                  organizationName: z.string().nullable(),
+                  createdAt: z.string().datetime(),
+                }),
+              ),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const { id } = req.params;
+      return withRlsBypass(async (tx) => {
+        const u = await tx.user.findUnique({
+          where: { id },
+          include: {
+            memberships: {
+              include: { organization: { select: { name: true, slug: true } } },
+              orderBy: { createdAt: 'asc' },
+            },
+          },
+        });
+        if (!u) throw notFound('User not found.');
+        const activity = await tx.auditLog.findMany({
+          where: { actorUserId: id },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+          include: { organization: { select: { name: true } } },
+        });
+        return {
+          data: {
+            id: u.id,
+            firstName: u.firstName,
+            lastName: u.lastName,
+            name: `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || null,
+            email: u.email,
+            status: u.status,
+            emailVerified: u.emailVerifiedAt !== null,
+            isAlignedAdmin: u.isAlignedAdmin,
+            createdAt: u.createdAt.toISOString(),
+            memberships: u.memberships.map((m) => ({
+              organizationId: m.organizationId,
+              organizationName: m.organization?.name ?? null,
+              organizationSlug: m.organization?.slug ?? null,
+              role: m.role,
+              isActive: m.isActive,
+            })),
+            activity: activity.map((a) => ({
+              id: a.id,
+              action: a.action,
+              entityType: a.entityType,
+              organizationName: a.organization?.name ?? null,
+              createdAt: a.createdAt.toISOString(),
+            })),
+          },
+        };
+      });
+    },
+  );
+
+  // ---------- PATCH /aligned-admin/users/:id ------------------------------
+  // Edit a user from the HQ users console: name, account status, email-verified
+  // flag, and HQ-admin grant. Guards against self-lockout.
+  r.patch(
+    '/aligned-admin/users/:id',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Edit a user (ALIGNED admins only).',
+        params: z.object({ id: uuidSchema }),
+        body: z.object({
+          firstName: z.string().trim().max(100).nullable().optional(),
+          lastName: z.string().trim().max(100).nullable().optional(),
+          status: z.enum(['active', 'disabled']).optional(),
+          emailVerified: z.boolean().optional(),
+          isAlignedAdmin: z.boolean().optional(),
+        }),
+        response: { 200: itemEnvelopeSchema(z.object({ id: uuidSchema })) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const { id } = req.params;
+      const b = req.body;
+      const actorId = req.auth!.userId;
+      // Don't let an admin lock themselves out from this very console.
+      if (id === actorId && (b.status === 'disabled' || b.isAlignedAdmin === false)) {
+        throw conflict('You cannot disable or remove HQ-admin from your own account here.');
+      }
+      await withRlsBypass(async (tx) => {
+        const exists = await tx.user.findUnique({ where: { id }, select: { id: true } });
+        if (!exists) throw notFound('User not found.');
+        await tx.user.update({
+          where: { id },
+          data: {
+            ...(b.firstName !== undefined ? { firstName: b.firstName } : {}),
+            ...(b.lastName !== undefined ? { lastName: b.lastName } : {}),
+            ...(b.status !== undefined ? { status: b.status } : {}),
+            ...(b.emailVerified !== undefined
+              ? { emailVerifiedAt: b.emailVerified ? new Date() : null }
+              : {}),
+            ...(b.isAlignedAdmin !== undefined ? { isAlignedAdmin: b.isAlignedAdmin } : {}),
+          },
+        });
+      });
+      await recordAudit({
+        action: 'user_updated',
+        actorUserId: actorId,
+        entityType: 'user',
+        entityId: id,
+        metadata: { fields: Object.keys(b), via: 'hq_users_console' },
+      });
+      return { data: { id } };
     },
   );
 

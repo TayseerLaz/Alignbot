@@ -41,6 +41,7 @@ interface OrgRow {
   broadcastMessages: number;
   aiTokens: number;
   aiCostUsd: number;
+  aiCostBreakdown: { model: string; tokens: number; usd: number }[];
   lastActivityAt: string | null;
   aiPlan: AiPlan;
   disabledFeatures: string[];
@@ -330,7 +331,19 @@ export function AdminPlatformDashboard({ greeting }: { greeting: string }) {
                         <td className="px-4 py-3 text-right tabular-nums">
                           {o.aiTokens.toLocaleString()}
                         </td>
-                        <td className="px-4 py-3 text-right tabular-nums">
+                        <td
+                          className="cursor-help px-4 py-3 text-right tabular-nums underline decoration-dotted underline-offset-2"
+                          title={
+                            o.aiCostBreakdown.length
+                              ? o.aiCostBreakdown
+                                  .map(
+                                    (b) =>
+                                      `${b.model}: $${b.usd.toFixed(2)} (${b.tokens.toLocaleString()} tokens)`,
+                                  )
+                                  .join('\n')
+                              : 'No AI usage yet'
+                          }
+                        >
                           ${o.aiCostUsd.toFixed(2)}
                         </td>
                         <td className="px-4 py-3 text-foreground-muted">

@@ -75,6 +75,11 @@ export default async function adminRoutes(app: FastifyInstance) {
               broadcastMessages: z.number().int(),
               aiTokens: z.number().int(),
               aiCostUsd: z.number(),
+              // Per-model cost breakdown (Claude / OpenAI / Groq each priced
+              // differently) so the table can show a total + hover detail.
+              aiCostBreakdown: z.array(
+                z.object({ model: z.string(), tokens: z.number().int(), usd: z.number() }),
+              ),
               lastActivityAt: z.string().datetime().nullable(),
               // Per-tenant AI tier surfaced on the admin list so the
               // tenants table at /aligned-admin can render a colored
@@ -141,12 +146,16 @@ export default async function adminRoutes(app: FastifyInstance) {
               ]);
             let aiTokens = 0;
             let aiCostUsd = 0;
+            const aiCostBreakdown: { model: string; tokens: number; usd: number }[] = [];
             for (const g of aiGroups) {
               const pt = g._sum.promptTokens ?? 0;
               const ct = g._sum.completionTokens ?? 0;
+              const usd = tokensToUsd(g.model, pt, ct);
               aiTokens += pt + ct;
-              aiCostUsd += tokensToUsd(g.model, pt, ct);
+              aiCostUsd += usd;
+              aiCostBreakdown.push({ model: g.model, tokens: pt + ct, usd: Number(usd.toFixed(4)) });
             }
+            aiCostBreakdown.sort((a, b) => b.usd - a.usd);
             return {
               id: o.id,
               slug: o.slug,
@@ -160,6 +169,7 @@ export default async function adminRoutes(app: FastifyInstance) {
               broadcastMessages: bcAgg._sum.sentCount ?? 0,
               aiTokens,
               aiCostUsd: Number(aiCostUsd.toFixed(4)),
+              aiCostBreakdown,
               lastActivityAt: lastAudit?.createdAt.toISOString() ?? null,
               aiPlan: (o as { aiPlan?: 'basic' | 'middle' | 'max' | 'ultra' }).aiPlan ?? 'basic',
               disabledFeatures:
@@ -1052,6 +1062,105 @@ export default async function adminRoutes(app: FastifyInstance) {
         entityType: 'user',
         entityId: id,
         metadata: { fields: Object.keys(b), via: 'hq_users_console' },
+      });
+      return { data: { id } };
+    },
+  );
+
+  // ---------- POST /aligned-admin/users/:id/link-org ----------------------
+  // Add the user as a member of another tenant (or update their role there).
+  r.post(
+    '/aligned-admin/users/:id/link-org',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Link a user to another organization (ALIGNED admins only).',
+        params: z.object({ id: uuidSchema }),
+        body: z.object({
+          organizationId: uuidSchema,
+          role: z.enum(['admin', 'editor', 'viewer']),
+        }),
+        response: { 200: itemEnvelopeSchema(z.object({ id: uuidSchema })) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const { id } = req.params;
+      const { organizationId, role } = req.body;
+      await withRlsBypass(async (tx) => {
+        const u = await tx.user.findUnique({ where: { id }, select: { id: true } });
+        if (!u) throw notFound('User not found.');
+        const org = await tx.organization.findUnique({
+          where: { id: organizationId },
+          select: { id: true },
+        });
+        if (!org) throw notFound('Organization not found.');
+        await tx.membership.upsert({
+          where: { organizationId_userId: { organizationId, userId: id } },
+          create: { organizationId, userId: id, role, isActive: true },
+          update: { role, isActive: true },
+        });
+      });
+      await recordAudit({
+        action: 'user_role_changed',
+        organizationId,
+        actorUserId: req.auth!.userId,
+        entityType: 'membership',
+        entityId: id,
+        metadata: { via: 'hq_link_org', role },
+      });
+      return { data: { id } };
+    },
+  );
+
+  // ---------- DELETE /aligned-admin/users/:id -----------------------------
+  // Delete an account: drop all memberships, anonymize the email (freeing it
+  // for reuse), disable login, and revoke every session. Mirrors the soft-
+  // delete the members module does when a user loses their last membership.
+  r.delete(
+    '/aligned-admin/users/:id',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Delete (anonymize) a user account (ALIGNED admins only).',
+        params: z.object({ id: uuidSchema }),
+        response: { 200: itemEnvelopeSchema(z.object({ id: uuidSchema })) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const { id } = req.params;
+      if (id === req.auth!.userId) throw conflict('You cannot delete your own account.');
+      await withRlsBypass(async (tx) => {
+        const u = await tx.user.findUnique({ where: { id }, select: { id: true } });
+        if (!u) throw notFound('User not found.');
+        await tx.membership.deleteMany({ where: { userId: id } });
+        await tx.user.update({
+          where: { id },
+          data: {
+            email: `removed+${id}@deleted.invalid`,
+            status: 'disabled',
+            passwordHash: '!',
+            isAlignedAdmin: false,
+            firstName: null,
+            lastName: null,
+            emailVerifiedAt: null,
+            emailVerificationTokenHash: null,
+            passwordResetTokenHash: null,
+            totpEnabled: false,
+            totpSecret: null,
+            sessions: {
+              updateMany: { where: { revokedAt: null }, data: { revokedAt: new Date() } },
+            },
+          },
+        });
+      });
+      await recordAudit({
+        action: 'user_removed',
+        actorUserId: req.auth!.userId,
+        entityType: 'user',
+        entityId: id,
+        metadata: { via: 'hq_users_console' },
       });
       return { data: { id } };
     },

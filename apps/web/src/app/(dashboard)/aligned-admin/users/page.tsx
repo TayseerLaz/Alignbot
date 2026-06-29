@@ -1,7 +1,18 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, Building2, Mail, Save, Search, ShieldCheck } from 'lucide-react';
+import {
+  Activity,
+  Building2,
+  Link2,
+  Mail,
+  MoreHorizontal,
+  Save,
+  Search,
+  Settings2,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -9,13 +20,21 @@ import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -64,12 +83,29 @@ function statusVariant(s: string): 'success' | 'warning' | 'muted' {
 }
 
 export default function AdminUsersPage() {
+  const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [openFor, setOpenFor] = useState<string | null>(null);
+  const [linkFor, setLinkFor] = useState<PlatformUser | null>(null);
 
   const list = useQuery({
     queryKey: ['admin-users'],
     queryFn: () => api.get<{ data: PlatformUser[] }>('/api/v1/aligned-admin/users'),
+  });
+  const orgsQuery = useQuery({
+    queryKey: ['admin-orgs-min'],
+    queryFn: () =>
+      api.get<{ data: { id: string; name: string; slug: string }[] }>('/api/v1/aligned-admin/orgs'),
+  });
+  const del = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/aligned-admin/users/${id}`),
+    onSuccess: () => {
+      toast.success('Account deleted');
+      qc.invalidateQueries({ queryKey: ['admin-users'] });
+      qc.invalidateQueries({ queryKey: ['admin-system'] });
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Could not delete account'),
   });
   const users = list.data?.data ?? [];
   const q = search.trim().toLowerCase();
@@ -86,7 +122,7 @@ export default function AdminUsersPage() {
     <>
       <PageHeader
         title="Users"
-        description="Every account on the platform — emails, organizations, activity. Click a user to view their full record and edit their account."
+        description="Every account on the platform — emails, organizations, activity. Use the actions menu on a row to manage, link to an organization, or delete an account."
       />
 
       <Card>
@@ -111,12 +147,13 @@ export default function AdminUsersPage() {
                   <th className="hidden px-6 py-3 md:table-cell">Organizations</th>
                   <th className="hidden px-6 py-3 sm:table-cell">Status</th>
                   <th className="hidden px-6 py-3 lg:table-cell">Joined</th>
+                  <th className="w-12 px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
                 {list.isLoading ? (
                   <tr>
-                    <td colSpan={4} className="p-4">
+                    <td colSpan={5} className="p-4">
                       <div className="space-y-3">
                         {Array.from({ length: 8 }).map((_, i) => (
                           <Skeleton key={i} className="h-10 w-full" />
@@ -126,7 +163,7 @@ export default function AdminUsersPage() {
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-6 py-12 text-center text-foreground-muted">
+                    <td colSpan={5} className="px-6 py-12 text-center text-foreground-muted">
                       No users match “{search}”.
                     </td>
                   </tr>
@@ -134,8 +171,7 @@ export default function AdminUsersPage() {
                   filtered.map((u) => (
                     <tr
                       key={u.id}
-                      onClick={() => setOpenFor(u.id)}
-                      className="cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-surface-muted/50"
+                      className="border-b border-border last:border-0 hover:bg-surface-muted/30"
                     >
                       <td className="px-4 py-3 sm:px-6">
                         <div className="flex flex-wrap items-center gap-2">
@@ -171,6 +207,40 @@ export default function AdminUsersPage() {
                       <td className="hidden px-6 py-3 text-foreground-muted lg:table-cell">
                         {formatRelative(u.createdAt)}
                       </td>
+                      <td className="px-4 py-3 text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button size="icon" variant="ghost" aria-label="User actions">
+                              <MoreHorizontal className="size-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-52">
+                            <DropdownMenuItem onClick={() => setOpenFor(u.id)}>
+                              <Settings2 className="size-4" /> Manage account
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setLinkFor(u)}>
+                              <Link2 className="size-4" /> Link to organization
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-rose-600 focus:bg-rose-50 focus:text-rose-700"
+                              onClick={async () => {
+                                if (
+                                  await confirmDialog({
+                                    title: `Delete ${u.name ?? u.email}?`,
+                                    body: 'This removes the account from every organization, frees the email, and permanently disables login. This cannot be undone.',
+                                    confirmLabel: 'Delete account',
+                                    destructive: true,
+                                  })
+                                ) {
+                                  del.mutate(u.id);
+                                }
+                              }}
+                            >
+                              <Trash2 className="size-4" /> Delete account
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -181,7 +251,105 @@ export default function AdminUsersPage() {
       </Card>
 
       {openFor ? <UserDetailDialog userId={openFor} onClose={() => setOpenFor(null)} /> : null}
+      {linkFor ? (
+        <LinkOrgDialog
+          user={linkFor}
+          orgs={orgsQuery.data?.data ?? []}
+          onClose={() => setLinkFor(null)}
+          onLinked={() => {
+            qc.invalidateQueries({ queryKey: ['admin-users'] });
+            setLinkFor(null);
+          }}
+        />
+      ) : null}
     </>
+  );
+}
+
+function LinkOrgDialog({
+  user,
+  orgs,
+  onClose,
+  onLinked,
+}: {
+  user: PlatformUser;
+  orgs: { id: string; name: string; slug: string }[];
+  onClose: () => void;
+  onLinked: () => void;
+}) {
+  // Orgs the user isn't already a member of.
+  const memberOrgIds = new Set(user.memberships.map((m) => m.organizationId));
+  const available = orgs.filter((o) => !memberOrgIds.has(o.id));
+  const [orgId, setOrgId] = useState('');
+  const [role, setRole] = useState<'admin' | 'editor' | 'viewer'>('admin');
+
+  const link = useMutation({
+    mutationFn: () =>
+      api.post(`/api/v1/aligned-admin/users/${user.id}/link-org`, { organizationId: orgId, role }),
+    onSuccess: () => {
+      toast.success('Account linked to organization');
+      onLinked();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Could not link account'),
+  });
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Link to organization</DialogTitle>
+          <DialogDescription>
+            Add <span className="font-medium">{user.name ?? user.email}</span> as a member of
+            another tenant.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Organization</Label>
+            <Select value={orgId} onValueChange={setOrgId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Choose a tenant…" />
+              </SelectTrigger>
+              <SelectContent>
+                {available.length === 0 ? (
+                  <div className="px-2 py-1.5 text-sm text-foreground-muted">
+                    Already in every organization.
+                  </div>
+                ) : (
+                  available.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Role</Label>
+            <Select value={role} onValueChange={(v) => setRole(v as 'admin' | 'editor' | 'viewer')}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="admin">Admin</SelectItem>
+                <SelectItem value="editor">Editor</SelectItem>
+                <SelectItem value="viewer">Viewer</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={() => link.mutate()} loading={link.isPending} disabled={!orgId}>
+            <Link2 className="size-4" /> Link account
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

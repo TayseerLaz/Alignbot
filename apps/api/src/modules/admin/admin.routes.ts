@@ -1250,6 +1250,7 @@ export default async function adminRoutes(app: FastifyInstance) {
                 numbers: z.number().int(),
                 broadcasts: z.number().int(),
                 broadcastMessages: z.number().int(),
+                billableConversations: z.number().int(),
                 outboundMessages: z.number().int(),
                 inboundMessages: z.number().int(),
                 costUsd: z.number(),
@@ -1322,6 +1323,8 @@ export default async function adminRoutes(app: FastifyInstance) {
           products,
           services,
           contacts,
+          recipientSends,
+          templateSends,
         ] = await Promise.all([
           tx.messageProvenance.groupBy({
             by: ['model'],
@@ -1366,7 +1369,50 @@ export default async function adminRoutes(app: FastifyInstance) {
           tx.product.count({ where: { organizationId: id, deletedAt: null } }),
           tx.service.count({ where: { organizationId: id, deletedAt: null } }),
           tx.contact.count({ where: { organizationId: id } }),
+          // Template-initiated sends for billable-conversation counting. Broadcast
+          // recipients (the bulk) + any standalone template messages. sentAt/
+          // receivedAt in range; we group per phone into 24h windows below.
+          tx.broadcastRecipient.findMany({
+            where: { organizationId: id, sentAt: inRange },
+            select: { phoneE164: true, sentAt: true },
+            take: 200_000,
+          }),
+          tx.whatsAppMessage.findMany({
+            where: {
+              organizationId: id,
+              direction: 'outbound',
+              messageType: 'template',
+              receivedAt: inRange,
+            },
+            select: { receivedAt: true, thread: { select: { customerPhone: true } } },
+            take: 200_000,
+          }),
         ]);
+
+        // Billable WhatsApp conversations: Meta charges once per 24h conversation
+        // a template opens with a user; everything inside that window (and inbound)
+        // is free. So we group every template send per phone into greedy 24h
+        // windows and count the windows — NOT raw message volume.
+        const sendsByPhone = new Map<string, number[]>();
+        const addSend = (phone: string | null | undefined, at: Date | null | undefined) => {
+          if (!phone || !at) return;
+          const arr = sendsByPhone.get(phone);
+          if (arr) arr.push(at.getTime());
+          else sendsByPhone.set(phone, [at.getTime()]);
+        };
+        for (const r of recipientSends) addSend(r.phoneE164, r.sentAt);
+        for (const m of templateSends) addSend(m.thread?.customerPhone, m.receivedAt);
+        let billableConversations = 0;
+        for (const times of sendsByPhone.values()) {
+          times.sort((a, b) => a - b);
+          let windowEnd = -Infinity;
+          for (const ts of times) {
+            if (ts >= windowEnd) {
+              billableConversations += 1;
+              windowEnd = ts + 24 * 60 * 60 * 1000;
+            }
+          }
+        }
 
         let aiTokens = 0;
         let aiCostUsd = 0;
@@ -1387,7 +1433,9 @@ export default async function adminRoutes(app: FastifyInstance) {
 
         const transcriptionEnabled = !(o.disabledFeatures ?? []).includes('voice_transcription');
         const transcriptionUsd = transcriptionCostUsd(transcribedCount);
-        const whatsappUsd = whatsappMessageCostUsd(broadcastMessages);
+        // Meta bills per 24h template conversation, not per message → price the
+        // billable conversation count.
+        const whatsappUsd = whatsappMessageCostUsd(billableConversations);
         const storageMonthlyUsd = storageCostUsd(totalBytes);
         const estimatedCostUsd =
           aiCostUsd + transcriptionUsd + whatsappUsd + storageMonthlyUsd;
@@ -1421,6 +1469,7 @@ export default async function adminRoutes(app: FastifyInstance) {
             numbers,
             broadcasts: broadcastsCount,
             broadcastMessages,
+            billableConversations,
             outboundMessages,
             inboundMessages,
             costUsd: Number(whatsappUsd.toFixed(4)),

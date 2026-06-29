@@ -35,6 +35,7 @@ interface Overview {
     numbers: number;
     broadcasts: number;
     broadcastMessages: number;
+    billableConversations: number;
     outboundMessages: number;
     inboundMessages: number;
     costUsd: number;
@@ -197,7 +198,7 @@ export default function OrgBillingPage() {
                 icon={<Send className="size-4" />}
                 label="WhatsApp messaging"
                 value={usd(o.whatsapp.costUsd)}
-                hint={`${o.whatsapp.broadcastMessages.toLocaleString()} broadcast msgs`}
+                hint={`${o.whatsapp.billableConversations.toLocaleString()} billable conversations (24h)`}
               />
               <StatCard
                 icon={<HardDrive className="size-4" />}
@@ -307,9 +308,13 @@ export default function OrgBillingPage() {
                 <CardContent className="space-y-1.5 text-sm">
                   <Row label="Connected numbers" value={String(o.whatsapp.numbers)} />
                   <Row label="Broadcasts sent" value={o.whatsapp.broadcasts.toLocaleString()} />
-                  <Row label="Broadcast messages" value={o.whatsapp.broadcastMessages.toLocaleString()} />
-                  <Row label="Outbound messages" value={o.whatsapp.outboundMessages.toLocaleString()} />
-                  <Row label="Inbound messages" value={o.whatsapp.inboundMessages.toLocaleString()} />
+                  <Row label="Template messages" value={o.whatsapp.broadcastMessages.toLocaleString()} />
+                  <Row
+                    label="Billable conversations (24h)"
+                    value={o.whatsapp.billableConversations.toLocaleString()}
+                  />
+                  <Row label="Outbound (free)" value={o.whatsapp.outboundMessages.toLocaleString()} />
+                  <Row label="Inbound (free)" value={o.whatsapp.inboundMessages.toLocaleString()} />
                   <Row label="Est. messaging cost" value={usd(o.whatsapp.costUsd)} />
                 </CardContent>
               </Card>
@@ -328,9 +333,12 @@ export default function OrgBillingPage() {
             </div>
 
             <p className="text-xs text-foreground-subtle">
-              AI cost is exact (per-model token pricing). Transcription, WhatsApp messaging and
-              storage are best-effort estimates using configured rates. Storage cost is monthly
-              (a snapshot of all files), not period-scoped.
+              AI cost is exact (per-model token pricing). WhatsApp cost follows Meta&apos;s
+              conversation model: a template opens a 24-hour conversation per user (billed once);
+              every message inside that window and all inbound messages are free — so we price the
+              count of billable conversations, not raw message volume. Transcription, WhatsApp and
+              storage use configured estimate rates. Storage cost is monthly (a snapshot of all
+              files), not period-scoped.
             </p>
           </>
         )}

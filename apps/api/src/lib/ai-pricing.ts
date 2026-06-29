@@ -71,9 +71,12 @@ export const COST_RATES = {
    */
   transcriptionUsd: 0.003,
   /**
-   * Estimated USD per outbound WhatsApp message (broadcast / template send).
-   * Meta bills per conversation by country + category; this is a blended
-   * marketing-conversation estimate. Adjust to your dominant market.
+   * Estimated USD per billable WhatsApp conversation — Meta opens a 24h
+   * conversation when a template is delivered to a user and bills ONCE for it;
+   * every message inside that window (and all inbound) is free. So we price the
+   * count of distinct (user, 24h-window) template conversations, NOT raw message
+   * volume. This is a blended marketing-conversation rate; adjust to your
+   * dominant market (e.g. Lebanon marketing ≈ this ballpark).
    */
   whatsappMessageUsd: 0.03,
   /** Wasabi storage, USD per GB per month (≈ $6.99/TB/mo). */

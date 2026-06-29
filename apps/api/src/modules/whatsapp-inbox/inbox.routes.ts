@@ -205,6 +205,8 @@ export default async function inboxRoutes(app: FastifyInstance) {
           channel: z.enum(['whatsapp', 'messenger', 'instagram']).optional(),
           // Multi-number: filter to a single WhatsApp number (its inbox).
           whatsAppChannelId: uuidSchema.optional(),
+          // Cursor (a thread id) for "load more" beyond the first page.
+          cursor: uuidSchema.optional(),
           limit: z.coerce.number().int().min(1).max(200).default(50),
         }),
         response: { 200: listEnvelopeSchema(threadDtoSchema) },
@@ -214,43 +216,53 @@ export default async function inboxRoutes(app: FastifyInstance) {
     async (req) => {
       const q = req.query;
       return app.tenant(req, async (tx) => {
-        const rows = await tx.whatsAppThread.findMany({
-          where: {
-            ...(q.status ? { status: q.status as never } : {}),
-            ...(q.assignee ? { assignedToUserId: q.assignee } : {}),
-            ...(q.tag ? { tags: { some: { tag: q.tag } } } : {}),
-            // Channel filter. Legacy WhatsApp rows may predate the `channel`
-            // column (null) — treat anything that isn't messenger/instagram as
-            // WhatsApp (avoids an `OR` key that would clash with search below).
-            ...(q.channel
-              ? q.channel === 'whatsapp'
-                ? { NOT: { channel: { in: ['messenger', 'instagram'] } as never } }
-                : { channel: q.channel as never }
-              : {}),
-            // Per-number inbox: restrict to one WhatsApp number.
-            ...(q.whatsAppChannelId ? { whatsAppChannelId: q.whatsAppChannelId } : {}),
-            // Search uses the rolling search_text blob OR matches the phone
-            // / preview directly so users can search for `+1415` as well.
-            ...(q.q
-              ? {
-                  OR: [
-                    { customerPhone: { contains: q.q } },
-                    { customerName: { contains: q.q, mode: 'insensitive' as const } },
-                    { lastMessagePreview: { contains: q.q, mode: 'insensitive' as const } },
-                    { searchText: { contains: q.q.toLowerCase() } },
-                  ],
-                }
-              : {}),
-          },
-          orderBy: { lastMessageAt: 'desc' },
-          take: q.limit,
-          include: {
-            assignedTo: { select: { firstName: true, lastName: true, email: true } },
-            whatsAppChannel: { select: { label: true, displayPhoneNumber: true } },
-            tags: { select: { tag: true } },
-            _count: { select: { notes: true } },
-          },
-        });
+        const where = {
+          ...(q.status ? { status: q.status as never } : {}),
+          ...(q.assignee ? { assignedToUserId: q.assignee } : {}),
+          ...(q.tag ? { tags: { some: { tag: q.tag } } } : {}),
+          // Channel filter. Legacy WhatsApp rows may predate the `channel`
+          // column (null) — treat anything that isn't messenger/instagram as
+          // WhatsApp (avoids an `OR` key that would clash with search below).
+          ...(q.channel
+            ? q.channel === 'whatsapp'
+              ? { NOT: { channel: { in: ['messenger', 'instagram'] } as never } }
+              : { channel: q.channel as never }
+            : {}),
+          // Per-number inbox: restrict to one WhatsApp number.
+          ...(q.whatsAppChannelId ? { whatsAppChannelId: q.whatsAppChannelId } : {}),
+          // Search uses the rolling search_text blob OR matches the phone
+          // / preview directly so users can search for `+1415` as well.
+          ...(q.q
+            ? {
+                OR: [
+                  { customerPhone: { contains: q.q } },
+                  { customerName: { contains: q.q, mode: 'insensitive' as const } },
+                  { lastMessagePreview: { contains: q.q, mode: 'insensitive' as const } },
+                  { searchText: { contains: q.q.toLowerCase() } },
+                ],
+              }
+            : {}),
+        };
+        // total = real count for this filter (so the UI shows e.g. "148"),
+        // independent of how many are loaded into the list (cursor-paged).
+        const [total, rows] = await Promise.all([
+          tx.whatsAppThread.count({ where }),
+          tx.whatsAppThread.findMany({
+            where,
+            // Stable order needs a tiebreaker so the cursor never skips/repeats.
+            orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
+            take: q.limit + 1,
+            ...(q.cursor ? { cursor: { id: q.cursor }, skip: 1 } : {}),
+            include: {
+              assignedTo: { select: { firstName: true, lastName: true, email: true } },
+              whatsAppChannel: { select: { label: true, displayPhoneNumber: true } },
+              tags: { select: { tag: true } },
+              _count: { select: { notes: true } },
+            },
+          }),
+        ]);
+        const hasMore = rows.length > q.limit;
+        if (hasMore) rows.pop();
         // Batch-resolve which of these customers are blocked (one query) so
         // the list can show a blocked indicator without an N+1.
         const phones = Array.from(new Set(rows.map((r) => toE164(r.customerPhone))));
@@ -270,7 +282,8 @@ export default async function inboxRoutes(app: FastifyInstance) {
           data: rows.map((r) =>
             serializeThread({ ...r, blocked: blockedSet.has(toE164(r.customerPhone)) }),
           ),
-          nextCursor: null,
+          nextCursor: hasMore ? (rows[rows.length - 1]?.id ?? null) : null,
+          total,
         };
       });
     },

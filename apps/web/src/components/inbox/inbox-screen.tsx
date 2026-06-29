@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -303,9 +303,17 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
     params.set('channel', filterChannel);
   }
 
-  const threadsQ = useQuery({
+  const threadsQ = useInfiniteQuery({
     queryKey: ['inbox-threads', filterQ, filterStatus, filterTag, filterChannel],
-    queryFn: () => api.get<{ data: Thread[] }>(`/api/v1/inbox/threads?${params.toString()}`),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
+      const p = new URLSearchParams(params);
+      if (pageParam) p.set('cursor', pageParam);
+      return api.get<{ data: Thread[]; nextCursor: string | null; total?: number }>(
+        `/api/v1/inbox/threads?${p.toString()}`,
+      );
+    },
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
     // 30 s background poll as a fallback. The SSE hook below invalidates
     // on every server tick so the perceived freshness is sub-2s.
     refetchInterval: 30_000,
@@ -338,12 +346,27 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
   // Caddy's HTTP/2 reverse proxy.
   useInboxSSE();
 
-  const threads = threadsQ.data?.data ?? [];
+  const threads = useMemo(
+    () => threadsQ.data?.pages.flatMap((p) => p.data) ?? [],
+    [threadsQ.data],
+  );
+  // Real total for the current filter (not just how many are loaded).
+  const totalThreads = threadsQ.data?.pages[0]?.total ?? threads.length;
   const active = threads.find((t) => t.id === activeId) ?? null;
 
-  // Auto-select first thread when none is selected and threads load.
+  // Auto-select the first thread ONLY on desktop (the two-pane lg+ layout always
+  // wants a conversation showing). On mobile this must NOT run: the master-detail
+  // view starts on the list, and re-selecting here would instantly undo the
+  // header "back" button (which clears activeId to return to the list).
   useEffect(() => {
-    if (!activeId && threads.length > 0) setActiveId(threads[0]!.id);
+    if (
+      !activeId &&
+      threads.length > 0 &&
+      typeof window !== 'undefined' &&
+      window.matchMedia('(min-width: 1024px)').matches
+    ) {
+      setActiveId(threads[0]!.id);
+    }
   }, [activeId, threads]);
 
   // Phase 7 — keep the URL in sync with filters + the open thread (refresh-safe,
@@ -405,7 +428,10 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
           <Inbox className="size-4 text-brand-600" />
           <span className="text-sm font-semibold text-foreground">Inbox</span>
           <Badge variant="muted" className="gap-1">
-            <MessageCircle className="size-3" /> {threads.length} thread{threads.length === 1 ? '' : 's'}
+            <MessageCircle className="size-3" />{' '}
+            {threads.length < totalThreads
+              ? `${threads.length} of ${totalThreads} threads`
+              : `${totalThreads} thread${totalThreads === 1 ? '' : 's'}`}
           </Badge>
           <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setCannedOpen(true)}>
             <FileText className="size-4" /> Canned replies
@@ -418,7 +444,10 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
           actions={
             <>
               <Badge variant="muted" className="gap-1">
-                <MessageCircle className="size-3" /> {threads.length} thread{threads.length === 1 ? '' : 's'}
+                <MessageCircle className="size-3" />{' '}
+                {threads.length < totalThreads
+                  ? `${threads.length} of ${totalThreads} threads`
+                  : `${totalThreads} thread${totalThreads === 1 ? '' : 's'}`}
               </Badge>
               <Button variant="secondary" size="sm" onClick={() => setCannedOpen(true)}>
                 <FileText className="size-4" /> Canned replies
@@ -508,6 +537,9 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
             onSelect={setActiveId}
             loading={threadsQ.isLoading}
             flaggedByThread={flaggedByThread}
+            hasMore={threadsQ.hasNextPage}
+            loadingMore={threadsQ.isFetchingNextPage}
+            onLoadMore={() => void threadsQ.fetchNextPage()}
           />
         </div>
         <div
@@ -558,6 +590,9 @@ function ThreadList({
   onSelect,
   loading,
   flaggedByThread,
+  hasMore,
+  loadingMore,
+  onLoadMore,
 }: {
   threads: Thread[];
   activeId: string | null;
@@ -567,6 +602,9 @@ function ThreadList({
   // count. Renders a red dot on flagged threads. Empty map when the user
   // isn't an admin (the parent never fetches the summary).
   flaggedByThread: Map<string, number>;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
 }) {
   return (
     <ul className="min-h-0 flex-1 overflow-y-auto" aria-label="Conversations">
@@ -671,6 +709,19 @@ function ThreadList({
           </li>
         ))
       )}
+      {!loading && hasMore ? (
+        <li className="border-t border-border p-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            className="w-full"
+            onClick={onLoadMore}
+            loading={loadingMore}
+          >
+            Load more conversations
+          </Button>
+        </li>
+      ) : null}
     </ul>
   );
 }

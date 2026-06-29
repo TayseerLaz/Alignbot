@@ -114,6 +114,7 @@ export async function recordOutboundTemplate(args: {
           // Stamp button labels + header image so the inbox renders the full
           // template (the serializer reads rawPayload.quickReplies / headerImageUrl).
           rawPayload: {
+            templateName: args.templateName,
             quickReplies: args.quickReplies ?? [],
             ...(args.headerImageUrl ? { headerImageUrl: args.headerImageUrl } : {}),
           } as never,

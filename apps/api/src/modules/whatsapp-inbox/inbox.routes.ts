@@ -54,6 +54,11 @@ const threadDtoSchema = z.object({
   lastMessagePreview: z.string().nullable(),
   inboundCount: z.number().int(),
   outboundCount: z.number().int(),
+  // Inbox filters/marks: a real conversation (customer messaged), an unread
+  // inbound waiting, and whether we've replied since their last message.
+  isChat: z.boolean(),
+  unread: z.boolean(),
+  answered: z.boolean(),
   tags: z.array(z.string()),
   noteCount: z.number().int(),
   // Phase 6 — per-thread reply-mode override. NULL = inherit BotConfig.
@@ -95,9 +100,11 @@ const messageDtoSchema = z.object({
   // Instagram). Shown as non-interactive pills under the bubble so operators
   // see exactly what the customer could tap. Null/[] for messages without any.
   quickReplies: z.array(z.string()).nullable(),
-  // Header image URL for IMAGE-format template messages (broadcast / test-send)
-  // so the inbox bubble shows the picture the customer received.
+  // Header media URL (Wasabi-backed) for media-header template messages so the
+  // inbox bubble shows the picture/video/document the customer received.
   headerImageUrl: z.string().nullable(),
+  // 'image' | 'video' | 'document' — how to render headerImageUrl.
+  headerMediaType: z.string().nullable(),
 });
 
 const noteDtoSchema = z.object({
@@ -179,6 +186,8 @@ function serializeThread(t: {
   lastMessagePreview: string | null;
   inboundCount: number;
   outboundCount: number;
+  lastInboundAt?: Date | null;
+  lastReadAt?: Date | null;
   createdAt: Date;
   assignedTo?: { firstName: string | null; lastName: string | null; email: string } | null;
   tags?: { tag: string }[];
@@ -192,6 +201,13 @@ function serializeThread(t: {
     | 'match_customer'
     | null
     | string;
+  // Read/answered marks derived from the timestamps.
+  const lastInboundMs = t.lastInboundAt ? t.lastInboundAt.getTime() : null;
+  const lastReadMs = t.lastReadAt ? t.lastReadAt.getTime() : null;
+  const isChat = t.inboundCount > 0;
+  const unread = isChat && lastInboundMs != null && (lastReadMs == null || lastInboundMs > lastReadMs);
+  // Answered = we sent something after their last inbound (last message is ours).
+  const answered = isChat && (lastInboundMs == null || t.lastMessageAt.getTime() > lastInboundMs);
   return {
     id: t.id,
     blocked: t.blocked ?? false,
@@ -216,6 +232,9 @@ function serializeThread(t: {
         : null,
     lastMessageAt: t.lastMessageAt.toISOString(),
     lastMessagePreview: t.lastMessagePreview,
+    isChat,
+    unread,
+    answered,
     inboundCount: t.inboundCount,
     outboundCount: t.outboundCount,
     tags: (t.tags ?? []).map((tg) => tg.tag),
@@ -249,6 +268,8 @@ export default async function inboxRoutes(app: FastifyInstance) {
           whatsAppChannelId: uuidSchema.optional(),
           // Cursor (a thread id) for "load more" beyond the first page.
           cursor: uuidSchema.optional(),
+          // Inbox view filter: all | chats (real convos) | unread | read | answered.
+          view: z.enum(['all', 'chats', 'unread', 'read', 'answered']).optional(),
           limit: z.coerce.number().int().min(1).max(200).default(50),
         }),
         response: { 200: listEnvelopeSchema(threadDtoSchema) },
@@ -258,7 +279,31 @@ export default async function inboxRoutes(app: FastifyInstance) {
     async (req) => {
       const q = req.query;
       return app.tenant(req, async (tx) => {
+        // Read/answered view filters compare two columns → Prisma field refs.
+        const f = tx.whatsAppThread.fields;
+        const viewClause =
+          q.view === 'chats'
+            ? { inboundCount: { gt: 0 } }
+            : q.view === 'unread'
+              ? {
+                  inboundCount: { gt: 0 },
+                  lastInboundAt: { not: null },
+                  OR: [{ lastReadAt: null }, { lastReadAt: { lt: f.lastInboundAt } }],
+                }
+              : q.view === 'read'
+                ? {
+                    inboundCount: { gt: 0 },
+                    lastInboundAt: { not: null },
+                    lastReadAt: { gte: f.lastInboundAt },
+                  }
+                : q.view === 'answered'
+                  ? {
+                      inboundCount: { gt: 0 },
+                      OR: [{ lastInboundAt: null }, { lastMessageAt: { gt: f.lastInboundAt } }],
+                    }
+                  : null;
         const where = {
+          ...(viewClause ? { AND: [viewClause] } : {}),
           ...(q.status ? { status: q.status as never } : {}),
           ...(q.assignee ? { assignedToUserId: q.assignee } : {}),
           ...(q.tag ? { tags: { some: { tag: q.tag } } } : {}),
@@ -422,6 +467,12 @@ export default async function inboxRoutes(app: FastifyInstance) {
     },
     async (req) =>
       app.tenant(req, async (tx) => {
+        // Opening a thread (loading the most recent page) marks it read.
+        if (!req.query.before) {
+          await tx.whatsAppThread
+            .updateMany({ where: { id: req.params.id }, data: { lastReadAt: new Date() } })
+            .catch(() => undefined);
+        }
         // Fetch the most RECENT `limit` messages (older than `before` if
         // paging back), then reverse to chronological order for display.
         // Previously this used `orderBy: asc, take: 500`, returning the OLDEST
@@ -555,35 +606,113 @@ export default async function inboxRoutes(app: FastifyInstance) {
           );
         }
 
-        // Legacy fallback: older template rows stored only the template NAME as
-        // the body. Render those from the current template definition (example
-        // values) so the inbox shows the full template, not a bare name. New
-        // sends already persist the full render + buttons + header image.
-        const legacyTplNames = [
+        // Template messages: (1) render legacy name-only bodies from the current
+        // template definition; (2) resolve the header media (IMAGE/VIDEO/DOCUMENT)
+        // into a Wasabi-backed, CSP-safe URL (Meta's header_handle is CSP-blocked
+        // + expires) — cached on the template after the first fetch.
+        const tplNameOf = (mm: {
+          messageType: string | null;
+          body: string | null;
+          rawPayload: unknown;
+        }): string | null => {
+          const r = (mm.rawPayload ?? null) as { templateName?: unknown } | null;
+          if (r && typeof r.templateName === 'string') return r.templateName;
+          return mm.messageType === 'template' &&
+            mm.body &&
+            !mm.body.includes('\n') &&
+            !mm.body.startsWith('📨')
+            ? mm.body
+            : null;
+        };
+        const tplNames = [
           ...new Set(
             messages
-              .filter(
-                (m) =>
-                  m.messageType === 'template' &&
-                  !!m.body &&
-                  !m.body.includes('\n') &&
-                  !m.body.startsWith('📨'),
-              )
-              .map((m) => m.body as string),
+              .filter((m) => m.messageType === 'template')
+              .map((m) => tplNameOf(m))
+              .filter((x): x is string => !!x),
           ),
         ];
         const legacyByName = new Map<
           string,
           { body: string; quickReplies: string[]; headerImageUrl: string | null }
         >();
-        if (legacyTplNames.length > 0) {
+        const headerMediaByName = new Map<string, { url: string; type: string }>();
+        if (tplNames.length > 0) {
+          const { presignGetUrl, putObject, buildStorageKey, isStorageConfigured } = await import(
+            '../../lib/storage.js'
+          );
+          const { safeFetch } = await import('../../lib/safe-fetch.js');
+          const { randomUUID } = await import('node:crypto');
           const tpls = await tx.whatsAppTemplate.findMany({
-            where: { name: { in: legacyTplNames } },
-            select: { name: true, language: true, bodyText: true, components: true },
+            where: { name: { in: tplNames } },
+            select: {
+              id: true,
+              organizationId: true,
+              name: true,
+              language: true,
+              bodyText: true,
+              components: true,
+              headerMediaStorageKey: true,
+              headerMediaType: true,
+            },
           });
           for (const t of tpls) {
             if (!legacyByName.has(t.name)) {
               legacyByName.set(t.name, renderLegacyTemplate(t.components, t.bodyText, t.name, t.language));
+            }
+            if (headerMediaByName.has(t.name)) continue;
+            if (t.headerMediaStorageKey && t.headerMediaType) {
+              try {
+                headerMediaByName.set(t.name, {
+                  url: await presignGetUrl(t.headerMediaStorageKey, 24 * 3600),
+                  type: t.headerMediaType,
+                });
+              } catch {
+                /* sign failure → skip */
+              }
+              continue;
+            }
+            const comps = Array.isArray(t.components)
+              ? (t.components as Record<string, unknown>[])
+              : [];
+            const header = comps.find(
+              (c) => String((c as { type?: string }).type ?? '').toUpperCase() === 'HEADER',
+            ) as { format?: string; example?: { header_handle?: string[] } } | undefined;
+            const fmt = String(header?.format ?? '').toUpperCase();
+            const handle = header?.example?.header_handle?.[0];
+            if (
+              !['IMAGE', 'VIDEO', 'DOCUMENT'].includes(fmt) ||
+              typeof handle !== 'string' ||
+              !isStorageConfigured()
+            ) {
+              continue;
+            }
+            try {
+              const res = await safeFetch(handle);
+              if (!res.ok) continue;
+              const buf = Buffer.from(await res.arrayBuffer());
+              const ct =
+                res.headers.get('content-type') ??
+                (fmt === 'IMAGE' ? 'image/jpeg' : 'application/octet-stream');
+              const type = fmt.toLowerCase();
+              const ext = fmt === 'IMAGE' ? '.jpg' : fmt === 'VIDEO' ? '.mp4' : '.pdf';
+              const storageKey = buildStorageKey({
+                organizationId: t.organizationId,
+                kind: 'template-header',
+                assetId: randomUUID(),
+                filename: `header${ext}`,
+              });
+              await putObject({ storageKey, body: buf, contentType: ct });
+              await tx.whatsAppTemplate.update({
+                where: { id: t.id },
+                data: { headerMediaStorageKey: storageKey, headerMediaType: type },
+              });
+              headerMediaByName.set(t.name, {
+                url: await presignGetUrl(storageKey, 24 * 3600),
+                type,
+              });
+            } catch {
+              /* best-effort: text + buttons still render */
             }
           }
         }
@@ -603,12 +732,21 @@ export default async function inboxRoutes(app: FastifyInstance) {
               raw && Array.isArray(raw.quickReplies)
                 ? raw.quickReplies.filter((x): x is string => typeof x === 'string')
                 : null;
-            // Template header image (broadcast/test-send) so the inbox shows it.
-            const headerImageUrl =
-              raw && typeof raw.headerImageUrl === 'string' ? raw.headerImageUrl : null;
-            // Legacy name-only template rows → rendered from the definition.
+            // Resolve template header media to a Wasabi-backed URL (+ type) for
+            // both new and legacy template messages; never use the CSP-blocked
+            // Meta scontent URL directly.
+            const resolvedName = tplNameOf(m);
+            const media = resolvedName ? headerMediaByName.get(resolvedName) ?? null : null;
+            const headerImageUrl = media ? media.url : null;
+            const headerMediaType = media ? media.type : null;
+            // Legacy name-only template rows → render body/buttons from the definition.
             const legacy =
-              m.messageType === 'template' && m.body ? legacyByName.get(m.body) ?? null : null;
+              m.messageType === 'template' &&
+              m.body &&
+              !m.body.includes('\n') &&
+              !m.body.startsWith('📨')
+                ? legacyByName.get(m.body) ?? null
+                : null;
             const sentByRaw = raw && typeof raw.sentBy === 'string' ? raw.sentBy : null;
             const sentBy: 'bot' | 'operator' | null =
               m.direction === 'outbound'
@@ -648,7 +786,8 @@ export default async function inboxRoutes(app: FastifyInstance) {
                 : quickReplies && quickReplies.length
                   ? quickReplies
                   : null,
-              headerImageUrl: legacy ? legacy.headerImageUrl : headerImageUrl,
+              headerImageUrl,
+              headerMediaType,
             };
           }),
           nextCursor: olderCursor,

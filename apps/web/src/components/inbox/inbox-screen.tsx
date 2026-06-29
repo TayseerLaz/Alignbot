@@ -105,6 +105,9 @@ interface Thread {
   lastMessagePreview: string | null;
   inboundCount: number;
   outboundCount: number;
+  isChat?: boolean;
+  unread?: boolean;
+  answered?: boolean;
   tags: string[];
   noteCount: number;
   // Phase 6 — per-thread bot reply-mode override. null = inherit BotConfig.
@@ -134,8 +137,10 @@ interface Message {
   // Quick-reply button labels the bot offered (Messenger / Instagram). Shown
   // as non-interactive pills under the bubble. Null/absent when none.
   quickReplies?: string[] | null;
-  // Header image for IMAGE-format template messages (broadcast / test-send).
+  // Header media (Wasabi URL) for media-header template messages.
   headerImageUrl?: string | null;
+  // 'image' | 'video' | 'document' — how to render headerImageUrl.
+  headerMediaType?: string | null;
 }
 
 // Phase 8 / 1.3 — shape returned by GET /inbox/messages/:id/provenance.
@@ -266,6 +271,10 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
     (searchParams?.get('status') as ThreadStatus | 'all') ?? 'all',
   );
   const [filterTag, setFilterTag] = useState(searchParams?.get('tag') ?? '');
+  // Read/answered view filter: all | chats | unread | read | answered.
+  const [filterView, setFilterView] = useState<'all' | 'chats' | 'unread' | 'read' | 'answered'>(
+    (searchParams?.get('view') as 'all' | 'chats' | 'unread' | 'read' | 'answered') ?? 'all',
+  );
   // Channel filter. Platform values ('whatsapp'|'messenger'|'instagram') OR a
   // per-number value 'wa:<channelId>' so the operator can pick a single
   // WhatsApp number's inbox. Reconstructed from the URL's channel +
@@ -297,6 +306,7 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
   const params = new URLSearchParams();
   if (filterQ.trim()) params.set('q', filterQ.trim());
   if (filterStatus !== 'all') params.set('status', filterStatus);
+  if (filterView !== 'all') params.set('view', filterView);
   if (filterTag.trim()) params.set('tag', filterTag.trim());
   if (filterChannel.startsWith('wa:')) {
     params.set('channel', 'whatsapp');
@@ -306,7 +316,7 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
   }
 
   const threadsQ = useInfiniteQuery({
-    queryKey: ['inbox-threads', filterQ, filterStatus, filterTag, filterChannel],
+    queryKey: ['inbox-threads', filterQ, filterStatus, filterTag, filterChannel, filterView],
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => {
       const p = new URLSearchParams(params);
@@ -377,6 +387,7 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
     const sp = new URLSearchParams();
     if (filterQ.trim()) sp.set('q', filterQ.trim());
     if (filterStatus !== 'all') sp.set('status', filterStatus);
+    if (filterView !== 'all') sp.set('view', filterView);
     if (filterTag.trim()) sp.set('tag', filterTag.trim());
     if (filterChannel.startsWith('wa:')) {
       sp.set('channel', 'whatsapp');
@@ -387,7 +398,7 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
     if (activeId) sp.set('thread', activeId);
     const qs = sp.toString();
     window.history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname);
-  }, [filterQ, filterStatus, filterTag, filterChannel, activeId]);
+  }, [filterQ, filterStatus, filterView, filterTag, filterChannel, activeId]);
 
   // Phase 7 — arrow-key / j-k thread navigation (operators live here, keyboard-
   // first). Ignored while typing in a field or with a modifier held. Scrolls the
@@ -485,6 +496,30 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
               aria-label="Search conversations"
               className="h-9 text-sm"
             />
+            {/* View filter — All / Chats (real convos) / Unread / Read / Answered. */}
+            <div className="flex flex-wrap items-center gap-1 rounded-md border border-border p-0.5 text-xs">
+              {(
+                [
+                  ['all', 'All'],
+                  ['chats', 'Chats'],
+                  ['unread', 'Unread'],
+                  ['read', 'Read'],
+                  ['answered', 'Answered'],
+                ] as const
+              ).map(([v, label]) => (
+                <button
+                  key={v}
+                  onClick={() => setFilterView(v)}
+                  className={`flex-1 rounded px-2 py-1 ${
+                    filterView === v
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-foreground-muted hover:bg-surface-muted'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <Select value={filterStatus} onValueChange={(v) => setFilterStatus(v as ThreadStatus | 'all')}>
                 <SelectTrigger className="h-9 text-sm">
@@ -660,7 +695,14 @@ function ThreadList({
                 {/* Line 1 — name + time */}
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold text-foreground">
-                    <span className="truncate">
+                    {/* Unread mark — a new customer message we haven't opened. */}
+                    {t.unread ? (
+                      <span
+                        className="inline-flex size-2.5 shrink-0 rounded-full bg-brand-500"
+                        title="Unread — new customer message"
+                      />
+                    ) : null}
+                    <span className={cn('truncate', t.unread && 'font-bold')}>
                       {t.customerName ?? t.customerWhatsappName ?? t.customerPhone}
                     </span>
                     {/* ALIGNED-admin only — red dot for flagged bot replies. */}
@@ -684,6 +726,14 @@ function ThreadList({
                   <Badge variant={STATUS_VARIANT[t.status]} className="text-[11px]">
                     {STATUS_LABEL[t.status]}
                   </Badge>
+                  {/* Reply state — only for real conversations (not broadcast-only). */}
+                  {t.isChat ? (
+                    t.answered ? (
+                      <Badge variant="success" className="text-[11px]">Answered</Badge>
+                    ) : (
+                      <Badge variant="warning" className="text-[11px]">Needs reply</Badge>
+                    )
+                  ) : null}
                   {t.assignedToName ? (
                     <Badge variant="muted" className="gap-1 text-[11px]">
                       <UserCheck className="size-3" /> {t.assignedToName.split(' ')[0]}
@@ -1809,23 +1859,45 @@ function Bubble({
             )}
           </div>
         ) : null}
-        {/* Template header image (broadcast / test-send) — the picture the
-            customer received, above the rendered body text. */}
+        {/* Template header media (broadcast / test-send) — the image / video /
+            document the customer received, above the rendered body text. */}
         {message.headerImageUrl ? (
-          <button
-            type="button"
-            onClick={() => setLightbox(message.headerImageUrl!)}
-            className="mb-1.5 block cursor-zoom-in"
-            title="Click to view"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+          message.headerMediaType === 'video' ? (
+            // eslint-disable-next-line jsx-a11y/media-has-caption
+            <video
+              controls
+              preload="metadata"
               src={message.headerImageUrl}
-              alt="Template header"
-              loading="lazy"
-              className="max-h-64 w-auto max-w-full rounded-lg object-contain"
+              className="mb-1.5 max-h-64 w-auto max-w-full rounded-lg"
             />
-          </button>
+          ) : message.headerMediaType === 'document' ? (
+            <a
+              href={message.headerImageUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                'mb-1.5 inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium',
+                isOut ? 'border-white/30 text-white' : 'border-border text-foreground',
+              )}
+            >
+              <FileText className="size-4" /> View document
+            </a>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setLightbox(message.headerImageUrl!)}
+              className="mb-1.5 block cursor-zoom-in"
+              title="Click to view"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={message.headerImageUrl}
+                alt="Template header"
+                loading="lazy"
+                className="max-h-64 w-auto max-w-full rounded-lg object-contain"
+              />
+            </button>
+          )
         ) : null}
         {bodyIsImagePlaceholder || showAudio ? null : (
           <p className={cn('whitespace-pre-wrap break-words', showImage && 'mt-1.5')}>

@@ -1537,6 +1537,11 @@ model WhatsAppThread {
   lastMessagePreview   String?              @map("last_message_preview")
   inboundCount         Int                  @default(0) @map("inbound_count")
   outboundCount        Int                  @default(0) @map("outbound_count")
+  // Read/answered state for the inbox filters. lastInboundAt = newest customer
+  // message; lastReadAt = when an operator last opened the thread. Unread when
+  // lastInboundAt > lastReadAt; answered when lastMessageAt > lastInboundAt.
+  lastInboundAt        DateTime?            @map("last_inbound_at")
+  lastReadAt           DateTime?            @map("last_read_at")
   // Search blob — concatenation of recent messages, kept up-to-date by the
   // upsert path. pg_trgm GIN index added in the migration.
   searchText           String               @default("") @map("search_text")
@@ -1773,6 +1778,11 @@ model WhatsAppTemplate {
   status          String   @default("draft") // 'draft' | 'pending' | 'approved' | 'rejected'
   rejectionReason String?  @map("rejection_reason")
   metaTemplateId  String?  @map("meta_template_id")
+  // Media-header (IMAGE/VIDEO/DOCUMENT) cached into Wasabi so the inbox can show
+  // it (Meta's header_handle URLs are CSP-blocked + expire). Populated lazily on
+  // first inbox view from the template's components header_handle.
+  headerMediaStorageKey String? @map("header_media_storage_key")
+  headerMediaType       String? @map("header_media_type") // 'image' | 'video' | 'document'
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 

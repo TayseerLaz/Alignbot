@@ -185,6 +185,20 @@ async function transcribeInboundVoice(args: {
 }): Promise<string | null> {
   try {
     const { withRlsBypass } = await import('../../lib/db.js');
+    // Idempotent: this runs from BOTH the universal inbound-audio store and the
+    // bot-reply path. If the message already has a stored audio asset + a
+    // transcript, skip the re-download/transcribe and return the cached text.
+    if (args.wamid) {
+      const done = await withRlsBypass((tx) =>
+        tx.whatsAppMessage.findFirst({
+          where: { organizationId: args.organizationId, metaMessageId: args.wamid! },
+          select: { body: true, mediaAssetId: true },
+        }),
+      );
+      if (done?.mediaAssetId && done.body && done.body.startsWith('🎙')) {
+        return done.body.replace(/^🎙\s*/, '').trim();
+      }
+    }
     // Run both DB lookups in parallel — channel (for media token) +
     // last-bot-language (for transcribe provider).
     const [channel, prevBotMessage] = await Promise.all([
@@ -2806,6 +2820,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                   status: 'open',
                   lastMessageAt: new Date(),
                   lastMessagePreview: preview,
+                  lastInboundAt: new Date(),
                   inboundCount: 1,
                   outboundCount: 0,
                   searchText: bodyText || '',
@@ -2813,6 +2828,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 update: {
                   lastMessageAt: new Date(),
                   lastMessagePreview: preview,
+                  lastInboundAt: new Date(),
                   inboundCount: { increment: 1 },
                   // Reopen if previously resolved.
                   status: 'open',
@@ -2887,6 +2903,20 @@ export default async function whatsappRoutes(app: FastifyInstance) {
             mediaId: p.mediaId,
             mediaMime: p.mediaMime,
             wamid: p.metaId,
+            log: req.log,
+          });
+        }
+        // Inbound voice notes — download + transcode + transcribe + store so the
+        // inbox can PLAY them, regardless of whether the AI bot replies (the bot
+        // path also calls this but it's idempotent). Fixes voice notes staying
+        // as a dead "[audio]" bubble for manual/AI-off tenants.
+        if ((p.type === 'audio' || p.type === 'voice') && p.mediaId && p.from) {
+          void transcribeInboundVoice({
+            organizationId: channel.organizationId,
+            mediaId: p.mediaId,
+            mediaMime: p.mediaMime,
+            wamid: p.metaId,
+            customerPhone: p.from,
             log: req.log,
           });
         }

@@ -511,6 +511,7 @@ async function handleMessengerEvents(
             status: 'open',
             lastMessageAt: new Date(),
             lastMessagePreview: preview,
+            lastInboundAt: new Date(),
             inboundCount: { increment: 1 },
             searchText: `${existing.searchText} ${body}`.slice(0, 16000),
             // Backfill the name once we resolve it.
@@ -528,6 +529,7 @@ async function handleMessengerEvents(
           status: 'open',
           lastMessageAt: new Date(),
           lastMessagePreview: preview,
+          lastInboundAt: new Date(),
           inboundCount: 1,
           searchText: body,
         },

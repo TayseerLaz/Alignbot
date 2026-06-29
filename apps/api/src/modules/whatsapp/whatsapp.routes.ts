@@ -292,12 +292,11 @@ async function transcribeInboundVoice(args: {
       },
       '[whatsapp] Whisper transcript',
     );
-    if (!text) return null;
-
-    // Step 4: persist the transcript AND store the audio file so the inbox can
-    // play the actual voice note (operator listens) with the transcript behind
-    // a "Transcribe" button. Idempotent (updateMany). Storing the audio is
-    // best-effort — a failure still leaves the transcript on the bubble.
+    // Step 4: ALWAYS store the audio file — even when transcription came back
+    // empty (silent clip, unsupported language, provider hiccup) — so the
+    // operator can still LISTEN to the voice note. The transcript, when present,
+    // goes behind the "Transcribe" button. Gating storage on a successful
+    // transcript previously left ~70% of voice notes unplayable.
     if (args.wamid) {
       let audioAssetId: string | null = null;
       try {
@@ -340,7 +339,10 @@ async function transcribeInboundVoice(args: {
             organizationId: args.organizationId,
             metaMessageId: args.wamid!,
           },
-          data: { body: `🎙 ${text}`, ...(audioAssetId ? { mediaAssetId: audioAssetId } : {}) },
+          data: {
+            body: text ? `🎙 ${text}` : '🎙 Voice note',
+            ...(audioAssetId ? { mediaAssetId: audioAssetId } : {}),
+          },
         });
       });
     }
@@ -4752,6 +4754,9 @@ async function maybeReplyAsBot(args: {
 
     let metaMessageId: string | null = null;
     let sendOk = false;
+    // Wasabi asset id for the bot's spoken (TTS) reply, so the inbox can play
+    // back the actual voice the customer heard. Set after a successful voice send.
+    let voiceAssetId: string | null = null;
 
     // When this turn CONFIRMS an order (the LLM emitted a [CART:] marker and a
     // shop form is configured), the platform sends ONE deterministic order
@@ -5052,6 +5057,41 @@ async function maybeReplyAsBot(args: {
                     /* ignore */
                   }
                   sendOk = true;
+                  // Store the spoken reply as MP3 so the operator can play it
+                  // back in the inbox (best-effort; never blocks the reply).
+                  try {
+                    const { isStorageConfigured, buildStorageKey, putObject } = await import(
+                      '../../lib/storage.js'
+                    );
+                    if (isStorageConfigured()) {
+                      const mp3 = await transcodeAudioToMp3(Buffer.from(tts.bytes));
+                      if (mp3) {
+                        const aId = crypto.randomUUID();
+                        const storageKey = buildStorageKey({
+                          organizationId: args.organizationId,
+                          kind: 'outbound-audio',
+                          assetId: aId,
+                          filename: 'reply.mp3',
+                        });
+                        await putObject({ storageKey, body: mp3, contentType: 'audio/mpeg' });
+                        await withRlsBypass((tx) =>
+                          tx.asset.create({
+                            data: {
+                              id: aId,
+                              organizationId: args.organizationId,
+                              kind: 'document',
+                              storageKey,
+                              contentType: 'audio/mpeg',
+                              byteSize: mp3.length,
+                            },
+                          }),
+                        );
+                        voiceAssetId = aId;
+                      }
+                    }
+                  } catch (e) {
+                    args.log.warn({ e }, '[whatsapp] bot voice store failed');
+                  }
                 }
               }
             } catch (err) {
@@ -5271,6 +5311,7 @@ async function maybeReplyAsBot(args: {
             toNumber: m.from,
             messageType: sentAsVoice ? 'audio' : 'text',
             body: reply,
+            ...(sentAsVoice && voiceAssetId ? { mediaAssetId: voiceAssetId } : {}),
             rawPayload: { sentBy: 'bot', tts: sentAsVoice } as never,
           },
           select: { id: true },

@@ -1396,9 +1396,14 @@ export default async function adminRoutes(app: FastifyInstance) {
         const sendsByPhone = new Map<string, number[]>();
         const addSend = (phone: string | null | undefined, at: Date | null | undefined) => {
           if (!phone || !at) return;
-          const arr = sendsByPhone.get(phone);
+          // Normalise to digits only — BroadcastRecipient stores "96170…" while
+          // a thread's customerPhone may be "+96170…"; without this the same
+          // user counts twice (broadcast row + mirrored template message).
+          const key = phone.replace(/\D/g, '');
+          if (!key) return;
+          const arr = sendsByPhone.get(key);
           if (arr) arr.push(at.getTime());
-          else sendsByPhone.set(phone, [at.getTime()]);
+          else sendsByPhone.set(key, [at.getTime()]);
         };
         for (const r of recipientSends) addSend(r.phoneE164, r.sentAt);
         for (const m of templateSends) addSend(m.thread?.customerPhone, m.receivedAt);

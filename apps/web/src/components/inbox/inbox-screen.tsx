@@ -134,6 +134,8 @@ interface Message {
   // Quick-reply button labels the bot offered (Messenger / Instagram). Shown
   // as non-interactive pills under the bubble. Null/absent when none.
   quickReplies?: string[] | null;
+  // Header image for IMAGE-format template messages (broadcast / test-send).
+  headerImageUrl?: string | null;
 }
 
 // Phase 8 / 1.3 — shape returned by GET /inbox/messages/:id/provenance.
@@ -1806,6 +1808,24 @@ function Bubble({
               </p>
             )}
           </div>
+        ) : null}
+        {/* Template header image (broadcast / test-send) — the picture the
+            customer received, above the rendered body text. */}
+        {message.headerImageUrl ? (
+          <button
+            type="button"
+            onClick={() => setLightbox(message.headerImageUrl!)}
+            className="mb-1.5 block cursor-zoom-in"
+            title="Click to view"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={message.headerImageUrl}
+              alt="Template header"
+              loading="lazy"
+              className="max-h-64 w-auto max-w-full rounded-lg object-contain"
+            />
+          </button>
         ) : null}
         {bodyIsImagePlaceholder || showAudio ? null : (
           <p className={cn('whitespace-pre-wrap break-words', showImage && 'mt-1.5')}>

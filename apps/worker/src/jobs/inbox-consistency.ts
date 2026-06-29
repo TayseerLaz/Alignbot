@@ -67,10 +67,18 @@ export async function recordOutboundTemplate(args: {
   // message links to the SAME thread the customer's inbound is on. Null ⇒
   // the org's "no specific number" thread bucket.
   whatsAppChannelId?: string | null;
+  // Full customer-facing render so the inbox bubble shows exactly what the
+  // recipient saw (header + body + footer interpolated), not just the name.
+  renderedBody?: string | null;
+  // Button labels (quick-reply / URL / phone) → rendered as pills under the bubble.
+  quickReplies?: string[];
+  // Header image (IMAGE-format templates) so the inbox shows the picture too.
+  headerImageUrl?: string | null;
 }): Promise<void> {
   const phone = (args.toNumber ?? '').replace(/[^0-9]/g, '');
   if (!phone) return;
-  const preview = `📨 Template · ${args.templateName}`.slice(0, 200);
+  const fullBody = (args.renderedBody && args.renderedBody.trim()) || args.templateName;
+  const preview = (args.renderedBody?.trim() || `📨 Template · ${args.templateName}`).slice(0, 200);
   try {
     await withRlsBypass(async (tx) => {
       const thread = await findOrCreateThread(
@@ -102,7 +110,13 @@ export async function recordOutboundTemplate(args: {
           metaMessageId: args.metaMessageId,
           toNumber: phone,
           messageType: 'template',
-          body: args.templateName,
+          body: fullBody,
+          // Stamp button labels + header image so the inbox renders the full
+          // template (the serializer reads rawPayload.quickReplies / headerImageUrl).
+          rawPayload: {
+            quickReplies: args.quickReplies ?? [],
+            ...(args.headerImageUrl ? { headerImageUrl: args.headerImageUrl } : {}),
+          } as never,
           metaStatus: 'sent',
           metaStatusAt: new Date(),
         },

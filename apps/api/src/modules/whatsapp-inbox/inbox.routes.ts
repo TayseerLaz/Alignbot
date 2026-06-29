@@ -95,6 +95,9 @@ const messageDtoSchema = z.object({
   // Instagram). Shown as non-interactive pills under the bubble so operators
   // see exactly what the customer could tap. Null/[] for messages without any.
   quickReplies: z.array(z.string()).nullable(),
+  // Header image URL for IMAGE-format template messages (broadcast / test-send)
+  // so the inbox bubble shows the picture the customer received.
+  headerImageUrl: z.string().nullable(),
 });
 
 const noteDtoSchema = z.object({
@@ -118,6 +121,45 @@ const cannedResponseDtoSchema = z.object({
 // carry the leading `+`. Normalise so block lookups match either form.
 function toE164(phone: string): string {
   return phone.startsWith('+') ? phone : `+${phone}`;
+}
+
+// Render a legacy template message (older rows stored only the template name)
+// from its current definition. Uses the template's example {{n}} values since
+// the per-recipient values weren't persisted on those rows. Returns the full
+// header+body+footer text, the button labels, and the header image URL.
+function renderLegacyTemplate(
+  components: unknown,
+  bodyText: string,
+  name: string,
+  language: string,
+): { body: string; quickReplies: string[]; headerImageUrl: string | null } {
+  const comps = Array.isArray(components) ? (components as Record<string, unknown>[]) : [];
+  const byType = (want: string) =>
+    comps.find((c) => String((c as { type?: string }).type ?? '').toUpperCase() === want) as
+      | {
+          format?: string;
+          text?: string;
+          buttons?: { text?: string }[];
+          example?: { header_handle?: string[]; body_text?: string[][] };
+        }
+      | undefined;
+  const header = byType('HEADER');
+  const headerFmt = String(header?.format ?? '').toUpperCase();
+  const body = byType('BODY');
+  const ex = body?.example?.body_text?.[0] ?? [];
+  const interp = (t: string) =>
+    t.replace(/{{\s*(\d+)\s*}}/g, (_m, i: string) => ex[Number(i) - 1] ?? `{{${i}}}`);
+  const headerText = header && headerFmt === 'TEXT' && header.text ? String(header.text) : '';
+  const renderedBody = body?.text ? interp(String(body.text)) : bodyText;
+  const footer = byType('FOOTER')?.text ? String(byType('FOOTER')!.text) : '';
+  const quickReplies = (byType('BUTTONS')?.buttons ?? [])
+    .map((b) => String(b.text ?? '').trim())
+    .filter(Boolean);
+  const headerImageUrl =
+    headerFmt === 'IMAGE' ? (header?.example?.header_handle?.[0] ?? null) : null;
+  const tagLine = `📨 Template · ${name}${language && language !== 'en_US' ? ` (${language})` : ''}`;
+  const full = [headerText, renderedBody, footer].filter(Boolean).join('\n\n');
+  return { body: full ? `${tagLine}\n\n${full}` : tagLine, quickReplies, headerImageUrl };
 }
 
 // Helper — pull the joined fields the UI needs for a thread row.
@@ -513,15 +555,60 @@ export default async function inboxRoutes(app: FastifyInstance) {
           );
         }
 
+        // Legacy fallback: older template rows stored only the template NAME as
+        // the body. Render those from the current template definition (example
+        // values) so the inbox shows the full template, not a bare name. New
+        // sends already persist the full render + buttons + header image.
+        const legacyTplNames = [
+          ...new Set(
+            messages
+              .filter(
+                (m) =>
+                  m.messageType === 'template' &&
+                  !!m.body &&
+                  !m.body.includes('\n') &&
+                  !m.body.startsWith('📨'),
+              )
+              .map((m) => m.body as string),
+          ),
+        ];
+        const legacyByName = new Map<
+          string,
+          { body: string; quickReplies: string[]; headerImageUrl: string | null }
+        >();
+        if (legacyTplNames.length > 0) {
+          const tpls = await tx.whatsAppTemplate.findMany({
+            where: { name: { in: legacyTplNames } },
+            select: { name: true, language: true, bodyText: true, components: true },
+          });
+          for (const t of tpls) {
+            if (!legacyByName.has(t.name)) {
+              legacyByName.set(t.name, renderLegacyTemplate(t.components, t.bodyText, t.name, t.language));
+            }
+          }
+        }
+
         return {
           data: messages.map((m) => {
             const raw = (m.rawPayload ?? null) as
-              | { sentBy?: unknown; kind?: unknown; sku?: unknown; quickReplies?: unknown }
+              | {
+                  sentBy?: unknown;
+                  kind?: unknown;
+                  sku?: unknown;
+                  quickReplies?: unknown;
+                  headerImageUrl?: unknown;
+                }
               | null;
             const quickReplies =
               raw && Array.isArray(raw.quickReplies)
                 ? raw.quickReplies.filter((x): x is string => typeof x === 'string')
                 : null;
+            // Template header image (broadcast/test-send) so the inbox shows it.
+            const headerImageUrl =
+              raw && typeof raw.headerImageUrl === 'string' ? raw.headerImageUrl : null;
+            // Legacy name-only template rows → rendered from the definition.
+            const legacy =
+              m.messageType === 'template' && m.body ? legacyByName.get(m.body) ?? null : null;
             const sentByRaw = raw && typeof raw.sentBy === 'string' ? raw.sentBy : null;
             const sentBy: 'bot' | 'operator' | null =
               m.direction === 'outbound'
@@ -549,12 +636,19 @@ export default async function inboxRoutes(app: FastifyInstance) {
               fromNumber: m.fromNumber,
               toNumber: m.toNumber,
               messageType: m.messageType,
-              body: m.body,
+              body: legacy ? legacy.body : m.body,
               receivedAt: m.receivedAt.toISOString(),
               sentBy,
               imageSource,
               mediaUrl: mediaUrlByMsgId.get(m.id) ?? null,
-              quickReplies: quickReplies && quickReplies.length ? quickReplies : null,
+              quickReplies: legacy
+                ? legacy.quickReplies.length
+                  ? legacy.quickReplies
+                  : null
+                : quickReplies && quickReplies.length
+                  ? quickReplies
+                  : null,
+              headerImageUrl: legacy ? legacy.headerImageUrl : headerImageUrl,
             };
           }),
           nextCursor: olderCursor,

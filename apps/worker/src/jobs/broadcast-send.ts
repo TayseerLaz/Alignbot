@@ -198,6 +198,54 @@ interface MetaResponse {
   error?: { code?: number | string; message?: string };
 }
 
+// Render the full customer-facing template for the inbox bubble: header (text)
+// + body + footer with {{n}}/header_text interpolated, the button labels, and
+// the header image URL (IMAGE templates). Mirrors the WhatsApp test-send path so
+// broadcast-sent templates look identical in the inbox.
+function renderTemplatePreview(
+  components: Record<string, unknown>[],
+  variables: Record<string, string>,
+  templateName: string,
+  language: string,
+): { body: string; quickReplies: string[]; headerImageUrl: string | null } {
+  const interpolate = (tpl: string, vals: string[]) =>
+    tpl.replace(/{{\s*(\d+)\s*}}/g, (_m, idx: string) => vals[Number(idx) - 1] ?? `{{${idx}}}`);
+  const byType = (want: string) =>
+    components.find((c) => String((c as { type?: string }).type ?? '').toUpperCase() === want) as
+      | {
+          format?: string;
+          text?: string;
+          buttons?: { text?: string }[];
+          example?: { header_handle?: string[] };
+        }
+      | undefined;
+
+  const bodyParams = Object.keys(variables)
+    .filter((k) => /^\d+$/.test(k))
+    .map(Number)
+    .sort((a, b) => a - b)
+    .map((i) => variables[String(i)] ?? '');
+
+  const header = byType('HEADER');
+  const headerFmt = String(header?.format ?? '').toUpperCase();
+  const headerText =
+    header && headerFmt === 'TEXT' && header.text
+      ? interpolate(String(header.text), variables.header_text ? [variables.header_text] : [])
+      : '';
+  const bodyComp = byType('BODY');
+  const bodyText = bodyComp?.text ? interpolate(String(bodyComp.text), bodyParams) : '';
+  const footerText = byType('FOOTER')?.text ? String(byType('FOOTER')!.text) : '';
+  const quickReplies = (byType('BUTTONS')?.buttons ?? [])
+    .map((b) => String(b.text ?? '').trim())
+    .filter(Boolean);
+  const headerImageUrl =
+    headerFmt === 'IMAGE' ? (header?.example?.header_handle?.[0] ?? null) : null;
+
+  const tagLine = `📨 Template · ${templateName}${language !== 'en_US' ? ` (${language})` : ''}`;
+  const full = [headerText, bodyText, footerText].filter(Boolean).join('\n\n');
+  return { body: full ? `${tagLine}\n\n${full}` : tagLine, quickReplies, headerImageUrl };
+}
+
 async function callMeta(args: {
   token: string;
   phoneNumberId: string;
@@ -531,12 +579,23 @@ export function startBroadcastSendWorker() {
         // Record an outbound WhatsAppMessage row LINKED to the customer's
         // inbox thread so it actually shows in the inbox (was an orphaned,
         // thread-less row that never appeared in any conversation).
+        const rendered = renderTemplatePreview(
+          Array.isArray(template.components)
+            ? (template.components as Record<string, unknown>[])
+            : [],
+          variables,
+          template.name,
+          template.language,
+        );
         await recordOutboundTemplate({
           organizationId,
           toNumber: recipient.phoneE164,
           metaMessageId: out.metaMessageId,
           templateName: template.name,
           whatsAppChannelId: sendChannelId,
+          renderedBody: rendered.body,
+          quickReplies: rendered.quickReplies,
+          headerImageUrl: rendered.headerImageUrl,
         });
         await clearFailureBurst(broadcastId);
         return;

@@ -124,6 +124,51 @@ function sniffMediaContainer(buf: Buffer): string | null {
 // the inbox shows the transcript instead of the "[audio]" placeholder.
 // All errors are swallowed + logged so a transcription failure never
 // blocks the bot's normal flow.
+// WhatsApp voice notes are OGG/Opus, which Safari (macOS + iOS) cannot play —
+// the inbox <audio> play button silently does nothing there. Transcode to MP3
+// (universally playable) on ingest. Uses the bundled ffmpeg-static binary, so no
+// system ffmpeg needed. Returns null on any failure → caller stores the original.
+async function transcodeAudioToMp3(input: Buffer): Promise<Buffer | null> {
+  try {
+    const { default: ffmpegPath } = await import('ffmpeg-static');
+    if (!ffmpegPath) return null;
+    const { spawn } = await import('node:child_process');
+    return await new Promise<Buffer | null>((resolve) => {
+      const ff = spawn(
+        ffmpegPath as unknown as string,
+        ['-i', 'pipe:0', '-vn', '-acodec', 'libmp3lame', '-q:a', '5', '-f', 'mp3', 'pipe:1'],
+        { stdio: ['pipe', 'pipe', 'ignore'] },
+      );
+      const chunks: Buffer[] = [];
+      let settled = false;
+      const done = (v: Buffer | null) => {
+        if (!settled) {
+          settled = true;
+          resolve(v);
+        }
+      };
+      const timer = setTimeout(() => {
+        ff.kill('SIGKILL');
+        done(null);
+      }, 20_000);
+      ff.stdout.on('data', (d: Buffer) => chunks.push(d));
+      ff.on('error', () => {
+        clearTimeout(timer);
+        done(null);
+      });
+      ff.on('close', (code) => {
+        clearTimeout(timer);
+        done(code === 0 && chunks.length > 0 ? Buffer.concat(chunks) : null);
+      });
+      ff.stdin.on('error', () => undefined); // ignore EPIPE if ffmpeg exits early
+      ff.stdin.write(input);
+      ff.stdin.end();
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function transcribeInboundVoice(args: {
   organizationId: string;
   mediaId: string;
@@ -233,14 +278,20 @@ async function transcribeInboundVoice(args: {
       try {
         const { isStorageConfigured, buildStorageKey, putObject } = await import('../../lib/storage.js');
         if (isStorageConfigured() && buf.length > 0 && buf.length <= 25 * 1024 * 1024) {
+          // Transcode OGG/Opus → MP3 so it plays in every browser (Safari can't
+          // decode Opus). Fall back to the original bytes if transcode fails.
+          const mp3 = await transcodeAudioToMp3(buf);
+          const storeBytes = mp3 ?? buf;
+          const storeMime = mp3 ? 'audio/mpeg' : mime;
+          const storeExt = mp3 ? 'mp3' : ext;
           const aId = crypto.randomUUID();
           const storageKey = buildStorageKey({
             organizationId: args.organizationId,
             kind: 'inbound-audio',
             assetId: aId,
-            filename: `voice.${ext}`,
+            filename: `voice.${storeExt}`,
           });
-          await putObject({ storageKey, body: buf, contentType: mime });
+          await putObject({ storageKey, body: storeBytes, contentType: storeMime });
           await withRlsBypass((tx) =>
             tx.asset.create({
               data: {
@@ -248,8 +299,8 @@ async function transcribeInboundVoice(args: {
                 organizationId: args.organizationId,
                 kind: 'document',
                 storageKey,
-                contentType: mime,
-                byteSize: buf.length,
+                contentType: storeMime,
+                byteSize: storeBytes.length,
               },
             }),
           );

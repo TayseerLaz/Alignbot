@@ -437,9 +437,9 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
     >
       {fullscreen ? (
         // Chrome-less mode: a single slim strip instead of the full page
-        // header — just enough to anchor the brand + thread count, keeping
-        // the focus on the conversation. No nav, no menus.
-        <div className="flex shrink-0 items-center gap-2 border-b border-border bg-surface px-4 py-2.5">
+        // header. Hidden on phones — the chat needs every pixel there; desktop
+        // keeps the brand + count strip + canned-replies shortcut.
+        <div className="hidden shrink-0 items-center gap-2 border-b border-border bg-surface px-4 py-2.5 lg:flex">
           <Inbox className="size-4 text-brand-600" />
           <span className="text-sm font-semibold text-foreground">Inbox</span>
           <Badge variant="muted" className="gap-1">
@@ -1253,7 +1253,7 @@ function ThreadHeader({
     .toUpperCase() || '#';
 
   return (
-    <div className="flex flex-col gap-2 border-b border-border bg-surface-muted/40 px-4 py-2.5">
+    <div className="flex flex-col gap-1.5 border-b border-border bg-surface-muted/40 px-3 py-2 sm:gap-2 sm:px-4 sm:py-2.5">
       {/* Row 1 — identity + actions */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -1325,7 +1325,7 @@ function ThreadHeader({
             {(thread.channel ?? 'whatsapp') === 'whatsapp' &&
             (thread.whatsAppChannelLabel || thread.whatsAppChannelPhone) ? (
               <span
-                className="ml-1 inline-flex shrink-0 items-center rounded-full bg-surface-muted px-2 py-0.5 text-[10px] font-medium text-foreground-muted"
+                className="ml-1 hidden shrink-0 items-center rounded-full bg-surface-muted px-2 py-0.5 text-[10px] font-medium text-foreground-muted sm:inline-flex"
                 title="The WhatsApp number this conversation is on — replies are sent from it"
               >
                 via {thread.whatsAppChannelLabel || thread.whatsAppChannelPhone}
@@ -1465,8 +1465,9 @@ function ThreadHeader({
       </div>
 
       {/* Row 2 — phone + WhatsApp nickname + who owns it (quiet reference).
+          Hidden on phones for space — the Info button has the full profile.
           Bot reply mode moved into the ⋯ menu to declutter this row. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-12 text-xs text-foreground-subtle">
+      <div className="hidden flex-wrap items-center gap-x-3 gap-y-0.5 pl-12 text-xs text-foreground-subtle sm:flex">
         <span className="inline-flex items-center gap-1 font-mono">
           <Phone className="size-3" />
           {thread.customerPhone}
@@ -1783,7 +1784,7 @@ function Bubble({
     <div className={cn('flex flex-col', isOut ? 'items-end' : 'items-start')}>
       <div
         className={cn(
-          'max-w-[78%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed shadow-sm',
+          'max-w-[85%] rounded-2xl px-4 py-2.5 text-base leading-relaxed shadow-sm sm:max-w-[78%] sm:text-[15px]',
           isOut ? 'bg-brand-500 text-on-brand' : 'bg-surface-muted text-foreground',
           // Subtle red ring when the scanner flagged hallucinations.
           canAudit && flaggedCount > 0 ? 'ring-2 ring-rose-400/70' : '',
@@ -3083,7 +3084,7 @@ function ReplyBox({
         >
           <StickyNote className="mr-1 inline size-3" /> Internal note
         </button>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="relative ml-auto flex items-center gap-1">
           <input
             ref={fileInputRef}
             type="file"
@@ -3091,20 +3092,6 @@ function ReplyBox({
             className="hidden"
             onChange={stageAttachment}
           />
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={mode === 'note' || attaching || !!pendingAttachment || recording}
-            loading={attaching && !recording}
-            onClick={() => fileInputRef.current?.click()}
-            aria-label="Attach file"
-          >
-            <Paperclip className="size-3.5" /> Attach
-          </Button>
-          {/* Voice recorder. Disabled when an attachment is staged or
-              when MediaRecorder is unsupported. While recording the
-              button turns red and shows the elapsed seconds; a Cancel
-              ✕ appears next to it to discard without sending. */}
           {recording ? (
             <>
               <Button
@@ -3116,60 +3103,103 @@ function ReplyBox({
               >
                 <Mic className="size-3.5" /> Stop · {recordedSec}s
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={cancelRecording}
-                aria-label="Cancel recording"
-              >
+              <Button size="sm" variant="ghost" onClick={cancelRecording} aria-label="Cancel recording">
                 <X className="size-3.5" />
               </Button>
             </>
           ) : (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={mode === 'note' || attaching || !!pendingAttachment || !canRecord}
-              onClick={startRecording}
-              aria-label="Record voice note"
-              title={
-                canRecord
-                  ? 'Record a voice note (sent as a WhatsApp voice message)'
-                  : "This browser doesn't support voice recording — try Chrome/Safari"
-              }
-            >
-              <Mic className="size-3.5" /> Voice
-            </Button>
+            <>
+              {/* Desktop: inline action buttons */}
+              <div className="hidden items-center gap-1 sm:flex">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={mode === 'note' || attaching || !!pendingAttachment}
+                  loading={attaching}
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label="Attach file"
+                >
+                  <Paperclip className="size-3.5" /> Attach
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={mode === 'note' || attaching || !!pendingAttachment || !canRecord}
+                  onClick={startRecording}
+                  aria-label="Record voice note"
+                  title={
+                    canRecord
+                      ? 'Record a voice note (sent as a WhatsApp voice message)'
+                      : "This browser doesn't support voice recording — try Chrome/Safari"
+                  }
+                >
+                  <Mic className="size-3.5" /> Voice
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setShowCanned((v) => !v)}
+                  disabled={mode === 'note'}
+                  aria-haspopup="true"
+                  aria-expanded={showCanned}
+                >
+                  <Clock className="size-3.5" /> Canned <ChevronDown className="size-3" />
+                </Button>
+                {mode === 'reply' ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setTemplateDialogOpen(true)}
+                    aria-haspopup="dialog"
+                    title="Send an approved WhatsApp template"
+                  >
+                    <FileText className="size-3.5" /> Template
+                  </Button>
+                ) : null}
+              </div>
+              {/* Mobile: collapse the actions into a single ⋯ menu for chat space */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="sm:hidden"
+                    aria-label="More composer actions"
+                  >
+                    <MoreHorizontal className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    disabled={mode === 'note' || attaching || !!pendingAttachment}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Paperclip className="size-4" /> Attach file
+                  </DropdownMenuItem>
+                  {canRecord ? (
+                    <DropdownMenuItem
+                      disabled={mode === 'note' || !!pendingAttachment}
+                      onClick={startRecording}
+                    >
+                      <Mic className="size-4" /> Record voice note
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuItem disabled={mode === 'note'} onClick={() => setShowCanned((v) => !v)}>
+                    <Clock className="size-4" /> Canned replies
+                  </DropdownMenuItem>
+                  {mode === 'reply' ? (
+                    <DropdownMenuItem onClick={() => setTemplateDialogOpen(true)}>
+                      <FileText className="size-4" /> Template
+                    </DropdownMenuItem>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
           )}
-          <div className="relative">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setShowCanned((v) => !v)}
-            disabled={mode === 'note'}
-            aria-haspopup="true"
-            aria-expanded={showCanned}
-          >
-            <Clock className="size-3.5" /> Canned <ChevronDown className="size-3" />
-          </Button>
-          {/* Template-send. Always enabled — templates are the ONE thing
-              Meta lets us send outside the 24-hour customer-session
-              window, so the button must be reachable even when the
-              free-form reply Send is disabled. Internal notes mode
-              hides it (templates only go outbound to WhatsApp). */}
-          {mode === 'reply' ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setTemplateDialogOpen(true)}
-              aria-haspopup="dialog"
-              title="Send an approved WhatsApp template"
-            >
-              <FileText className="size-3.5" /> Template
-            </Button>
-          ) : null}
+          {/* Shared canned popover — anchored to the cluster so it works from
+              both the desktop inline button and the mobile ⋯ menu. */}
           {showCanned ? (
-            <div className="absolute right-0 z-10 mt-1 w-64 rounded-md border border-border bg-surface shadow-lg">
+            <div className="absolute right-0 top-full z-10 mt-1 w-64 rounded-md border border-border bg-surface shadow-lg">
               {cannedResponses.length === 0 ? (
                 <p className="px-3 py-2 text-xs text-foreground-muted">
                   No canned responses yet. Manage in Settings.
@@ -3189,7 +3219,6 @@ function ReplyBox({
               )}
             </div>
           ) : null}
-          </div>
         </div>
       </div>
       <div className="p-3">
@@ -3232,21 +3261,19 @@ function ReplyBox({
           onChange={(e) => setBody(e.target.value)}
           aria-label={mode === 'reply' ? 'Reply message' : 'Internal note'}
         />
-        <div className="mt-2 flex items-center justify-between">
-          <p className="text-[11px] text-foreground-muted">
-            {mode === 'reply' ? (
-              pendingAttachment ? (
-                <>Click Send to deliver this attachment with your caption.</>
-              ) : (
-                <>Outside the 24h window? Send a template from the WhatsApp page.</>
-              )
-            ) : (
-              <>Notes are stored on the thread, never sent to Meta.</>
-            )}
+        <div className="mt-2 flex items-center justify-between gap-2">
+          {/* Helper text — hidden on phones for chat space; the "outside 24h"
+              note was dropped (templates live in the ⋯ menu). */}
+          <p className="hidden text-[11px] text-foreground-muted sm:block">
+            {mode === 'reply'
+              ? pendingAttachment
+                ? 'Click Send to deliver this attachment with your caption.'
+                : ''
+              : 'Notes are stored on the thread, never sent to Meta.'}
           </p>
           <Button
             type="button"
-            size="sm"
+            className="ml-auto h-10 px-6 text-sm sm:h-9 sm:px-4"
             loading={
               mode === 'reply'
                 ? pendingAttachment
@@ -3265,11 +3292,11 @@ function ReplyBox({
           >
             {mode === 'reply' ? (
               <>
-                <Send className="size-3.5" /> Send
+                <Send className="size-4" /> Send
               </>
             ) : (
               <>
-                <CheckCircle2 className="size-3.5" /> Add note
+                <CheckCircle2 className="size-4" /> Add note
               </>
             )}
           </Button>

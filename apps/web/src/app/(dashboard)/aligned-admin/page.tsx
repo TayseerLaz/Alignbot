@@ -1117,6 +1117,7 @@ interface AiUsageBucket {
 
 interface AiUsageResponse {
   aiPlan: AiPlan;
+  aiMessages: { used: number; cap: number | null; unlimited: boolean; percentUsed: number };
   today: AiUsageBucket;
   thisWeek: AiUsageBucket;
   thisMonth: AiUsageBucket;
@@ -1192,15 +1193,20 @@ function AiUsageDialog({
       toast.error(err instanceof ApiError ? err.payload.message : 'Plan change failed'),
   });
 
+  const setAiMsgCap = useMutation({
+    mutationFn: (cap: number | null) =>
+      api.put(`/api/v1/aligned-admin/orgs/${org!.id}/ai-message-cap`, { cap }),
+    onSuccess: () => {
+      toast.success('Monthly AI messages updated');
+      queryClient.invalidateQueries({ queryKey: qKey });
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.payload.message : 'Update failed'),
+  });
+
   if (!org) return null;
   const data = usage.data?.data;
   const currentPlan = data?.aiPlan ?? org.aiPlan;
-
-  // Token-budget context: the daily per-org limit lives in
-  // openai.ts (DAILY_TOKEN_LIMIT_PER_ORG = 200_000). We show it
-  // alongside the today bucket so the admin can see "60% of cap used"
-  // at a glance.
-  const DAILY_CAP = 200_000;
 
   return (
     <Dialog open={!!org} onOpenChange={(v) => (!v ? onClose() : null)}>
@@ -1258,9 +1264,26 @@ function AiUsageDialog({
               </div>
             </div>
 
-            {/* Usage buckets */}
+            {/* Monthly AI-message allowance — the enforced, tenant-facing cap.
+                THIS is the number to change per tenant (not the token cost or
+                the billing-plan message quota below). */}
+            <div className="rounded-lg border border-border p-4">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-foreground-subtle">
+                Monthly AI messages (allowance)
+              </p>
+              <AiMsgCapEditor
+                key={`${data.aiMessages.cap}-${data.aiMessages.unlimited}`}
+                used={data.aiMessages.used}
+                cap={data.aiMessages.cap}
+                unlimited={data.aiMessages.unlimited}
+                saving={setAiMsgCap.isPending}
+                onSave={(c) => setAiMsgCap.mutate(c)}
+              />
+            </div>
+
+            {/* Usage buckets (token COST — admin-only) */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <UsageCard label="Today" bucket={data.today} dailyCap={DAILY_CAP} />
+              <UsageCard label="Today" bucket={data.today} />
               <UsageCard label="This week" bucket={data.thisWeek} />
               <UsageCard label="This month" bucket={data.thisMonth} />
             </div>
@@ -1392,6 +1415,59 @@ function AdminQuotaBar({
       <div className="h-1.5 overflow-hidden rounded-full bg-surface-muted">
         <div className={`h-full ${tone}`} style={{ width: `${pct ?? 0}%` }} />
       </div>
+    </div>
+  );
+}
+
+// Per-tenant monthly AI-message allowance editor (admin). Self-seeds from props;
+// remounted via `key` when the server value changes after a save.
+function AiMsgCapEditor({
+  used,
+  cap,
+  unlimited,
+  saving,
+  onSave,
+}: {
+  used: number;
+  cap: number | null;
+  unlimited: boolean;
+  saving: boolean;
+  onSave: (cap: number | null) => void;
+}) {
+  const [val, setVal] = useState(cap != null ? String(cap) : '');
+  const [unl, setUnl] = useState(unlimited);
+  const pct = unlimited || !cap ? 0 : Math.min(100, Math.round((used / cap) * 100));
+  const remaining = unlimited || cap == null ? null : Math.max(0, cap - used);
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 text-xs text-foreground-muted">
+          <input type="checkbox" checked={unl} onChange={(e) => setUnl(e.target.checked)} />
+          Unlimited
+        </label>
+        {!unl && (
+          <input
+            type="number"
+            min={0}
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            className="h-8 w-36 rounded-md border border-border bg-surface px-2 text-sm tabular-nums"
+            placeholder="messages / month"
+          />
+        )}
+        <Button
+          size="sm"
+          loading={saving}
+          onClick={() => onSave(unl ? null : Math.max(0, Math.floor(Number(val) || 0)))}
+        >
+          Save
+        </Button>
+      </div>
+      <p className="text-xs text-foreground-muted">
+        {unlimited
+          ? 'Unlimited — no monthly metering.'
+          : `${used.toLocaleString()} of ${(cap ?? 0).toLocaleString()} used · ${(remaining ?? 0).toLocaleString()} left this month (${pct}%).`}
+      </p>
     </div>
   );
 }

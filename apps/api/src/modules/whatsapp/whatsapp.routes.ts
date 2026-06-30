@@ -3667,7 +3667,12 @@ async function maybeReplyAsBot(args: {
     // has the deterministic running total ready to quote. Loaded before
     // the LLM call; passed in as `cartState`. If no draft exists, the
     // bot-engine silently skips the "running cart" prompt section.
+    // Wrapped so a poisoned / oversized draft cart (e.g. a money value that
+    // overflowed an Int column for a high-denomination currency like LBP)
+    // degrades to "no running cart" for this turn instead of throwing and
+    // bricking EVERY reply on the thread with the "rephrase?" fallback.
     const cartStateForLLM = await withRlsBypass(async (tx) => {
+     try {
       const draft = await tx.cart.findFirst({
         where: {
           organizationId: args.organizationId,
@@ -3728,6 +3733,10 @@ async function maybeReplyAsBot(args: {
         currency,
         capturedFields: Object.keys(capturedFields).length > 0 ? capturedFields : undefined,
       };
+     } catch (err) {
+       args.log.warn({ err }, '[whatsapp] cart-state load failed — replying without the running cart this turn');
+       return null;
+     }
     });
 
     // Returning-customer reminder: if the customer left this order unfinished

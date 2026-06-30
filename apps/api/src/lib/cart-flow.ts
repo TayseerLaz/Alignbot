@@ -160,7 +160,8 @@ export async function loadDraftCartState(
     }
   | null
 > {
-  return withTenant(orgId, async (tx) => {
+  try {
+   return await withTenant(orgId, async (tx) => {
     const draft = await tx.cart.findFirst({
       where: { organizationId: orgId, threadId, status: 'draft' },
       include: { items: true },
@@ -181,7 +182,13 @@ export async function loadDraftCartState(
       currency: draft.currency,
       capturedFields: Object.keys(capturedFields).length > 0 ? capturedFields : undefined,
     };
-  });
+   });
+  } catch (err) {
+    // A poisoned / oversized draft cart must never throw out of the reply path
+    // (that would brick every subsequent message on the thread). Degrade to
+    // "no running cart" for this turn; the Messenger/IG/voice bot keeps replying.
+    return null;
+  }
 }
 
 /** Parse the bot reply's adds and upsert them into the thread's draft cart. */

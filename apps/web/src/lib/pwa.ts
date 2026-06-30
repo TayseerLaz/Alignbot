@@ -36,13 +36,27 @@ function start() {
   });
 }
 
-/** True when the portal is running as the installed app (not a browser tab). */
+/**
+ * True when the portal is running as the installed app (not a browser tab).
+ * Covers EVERY installed display mode — a desktop PWA may run in `minimal-ui` or
+ * `window-controls-overlay` (our manifest's display_override lists minimal-ui),
+ * not just `standalone` — plus iOS (`navigator.standalone`) and Android TWAs.
+ */
 export function isStandaloneDisplay(): boolean {
   if (typeof window === 'undefined') return false;
-  return (
-    window.matchMedia?.('(display-mode: standalone)').matches === true ||
-    (window.navigator as unknown as { standalone?: boolean }).standalone === true
-  );
+  const mql = window.matchMedia;
+  if (mql) {
+    for (const mode of ['standalone', 'minimal-ui', 'fullscreen', 'window-controls-overlay']) {
+      try {
+        if (mql(`(display-mode: ${mode})`).matches) return true;
+      } catch {
+        /* ignore unsupported queries */
+      }
+    }
+  }
+  if ((window.navigator as unknown as { standalone?: boolean }).standalone === true) return true;
+  if (typeof document !== 'undefined' && document.referrer.startsWith('android-app://')) return true;
+  return false;
 }
 
 export function usePwaInstall() {

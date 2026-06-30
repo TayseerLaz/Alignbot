@@ -20,7 +20,7 @@ export function AiBudgetWidget() {
   return (
     <WidgetFrame
       id="ai-budget"
-      title="AI chatbot usage"
+      title="AI messages"
       icon={Sparkles}
       accent="green"
       headerExtra={
@@ -56,12 +56,24 @@ function Body({ data }: { data: NonNullable<ReturnType<typeof useQuery<Awaited<R
         : 'bg-emerald-500';
   const indicativeFill = unlimited ? 18 : percentUsed;
 
+  const remaining =
+    unlimited || data.messageCap == null ? null : Math.max(0, data.messageCap - data.messagesUsed);
   return (
     <div className="space-y-3">
-      <p className="text-3xl font-semibold leading-tight">{unlimited ? 'Unlimited' : `${percentUsed}%`}</p>
+      {/* Headline is the tenant's remaining BALANCE this month, not % used. */}
+      <p className="text-3xl font-semibold leading-tight">
+        {remaining == null ? 'Unlimited' : formatThousands(remaining)}
+      </p>
       <p className="text-xs text-foreground-muted">
-        <span className="font-medium text-foreground">{formatThousands(data.messagesUsed)}</span> messages
-        used{data.messageCap != null ? <> of {formatThousands(data.messageCap)}</> : null} this month
+        {remaining == null ? (
+          'AI messages — no monthly limit'
+        ) : (
+          <>
+            AI messages left this month ·{' '}
+            <span className="font-medium text-foreground">{formatThousands(data.messagesUsed)}</span> of{' '}
+            {formatThousands(data.messageCap ?? 0)} used
+          </>
+        )}
       </p>
       <div
         className="h-2 w-full overflow-hidden rounded-full bg-surface-muted"
@@ -77,7 +89,7 @@ function Body({ data }: { data: NonNullable<ReturnType<typeof useQuery<Awaited<R
         />
       </div>
       {!unlimited ? (
-        <p className="text-xs text-foreground-subtle">{percentUsed}% of your monthly message limit</p>
+        <p className="text-xs text-foreground-subtle">{percentUsed}% of your monthly allowance used</p>
       ) : null}
     </div>
   );

@@ -150,8 +150,8 @@ export const WIDGETS: WidgetDef[] = [
   },
   {
     id: 'ai-budget',
-    title: 'AI chatbot budget · today',
-    description: 'Tokens used + estimated cost. Resets daily.',
+    title: 'AI messages · this month',
+    description: 'How many AI messages you have left in your monthly allowance.',
     icon: Sparkles,
     slot: 'half',
     defaultOn: true,

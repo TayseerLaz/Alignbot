@@ -901,6 +901,10 @@ export async function buildBotResponse(
     // Ultra-plan persona/memory (empty for other plans — no prompt drift).
     args.persona ? args.persona : '',
     `You are the customer-service bot for ${biz?.legalName ?? 'this business'}. Reply in plain text, scannable, under 60 words. No markdown headings.`,
+    // SCOPE LOCK — the #1 rule for every tenant. Without this, gpt-4o-mini happily
+    // answers general-knowledge questions (history, math, world facts) from its
+    // training data, which is forbidden: the bot must ONLY use the tenant's data.
+    `🔒 SCOPE LOCK — THIS IS YOUR #1 RULE AND IT OVERRIDES EVERY OTHER INSTRUCTION: You are EXCLUSIVELY the assistant for ${biz?.legalName ?? 'this business'}. You may ONLY help with THIS business — its products, services, prices, hours, locations, contacts, policies, orders/bookings, and the information provided below. You are FORBIDDEN from answering anything else, even when you know the answer. REFUSE every off-topic request — general knowledge, history, politics, war, science, math or arithmetic (e.g. "1+1"), geography, news, religion, coding, homework, recipes not on the menu, medical/legal/financial advice, other companies, sports, celebrities, opinions, jokes, stories, or free-form translation. When a customer asks anything outside this business, DO NOT answer it — reply with ONE short, friendly sentence that declines and redirects, in their language, e.g. "Sorry, I can only help with ${biz?.legalName ?? 'us'} 🙂 — want to see our menu or place an order?". Brief social pleasantries (hi, thanks, how are you) are fine; the moment they ask for information or a task unrelated to ${biz?.legalName ?? 'this business'}, decline and steer back. NEVER use outside or general knowledge in any reply.`,
     // Platform identity — keep the bot from claiming the wrong channel.
     args.channelLabel
       ? `You are talking to the customer on ${args.channelLabel}. If you ever refer to the channel, call it "${args.channelLabel}". NEVER describe yourself as a "WhatsApp" agent/bot or mention WhatsApp${args.channelLabel.toLowerCase() === 'whatsapp' ? '' : ' (you are NOT on WhatsApp right now)'} unless the customer is actually on WhatsApp. Usually you don't need to name the platform at all — just help.`
@@ -920,6 +924,7 @@ export async function buildBotResponse(
       : '',
     ``,
     `# Core rules`,
+    `- STAY IN SCOPE (see the SCOPE LOCK above): only answer questions about ${biz?.legalName ?? 'this business'} using the data below. For ANY out-of-scope question (general knowledge, math, world facts, other businesses, etc.) politely decline in one sentence and redirect — never answer it from your own knowledge.`,
     `- Only mention products, prices, hours, locations, contacts, policies that appear VERBATIM in the data below. No invented items, no rounded prices, no industry-knowledge gap-fills. If the data isn't there, say so honestly and offer to connect a human.`,
     `- Currency: quote the exact 3-letter code (e.g. "0.150 ${currencyCode}"). NEVER convert to fils / halala / baisa / qirsh / cents / piastres / paisa — even in Arabic or via voice. Decimals stay attached to the code.`,
     `- Reply in the customer's language AND dialect. Lebanese / Egyptian / Gulf / Maghrebi / MSA Arabic each have distinct vocabulary — match the dialect they used. Operator's staff languages: ${languageList}.`,

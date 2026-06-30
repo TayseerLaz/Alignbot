@@ -151,3 +151,81 @@ export async function embedProductAndStore(
   });
   return { embedded: true };
 }
+
+/** Canonical embed text for a service: name + short description. */
+export function serviceEmbedText(s: { name: string; shortDescription: string | null }): string {
+  const parts = [s.name];
+  if (s.shortDescription) parts.push(s.shortDescription);
+  return parts.join(' — ').slice(0, 500);
+}
+
+/** Idempotent embed + persist for one service (mirrors embedProductAndStore). */
+export async function embedServiceAndStore(
+  prisma: {
+    service: {
+      findUnique: (q: {
+        where: { id: string };
+        select: { embeddingHash: true; name: true; shortDescription: true };
+      }) => Promise<{ embeddingHash: string | null; name: string; shortDescription: string | null } | null>;
+      update: (q: {
+        where: { id: string };
+        data: { embedding: number[]; embeddingHash: string };
+      }) => Promise<unknown>;
+    };
+  },
+  serviceId: string,
+): Promise<{ embedded: boolean; reason?: string }> {
+  if (!isEmbeddingAvailable()) return { embedded: false, reason: 'no-key' };
+  const row = await prisma.service.findUnique({
+    where: { id: serviceId },
+    select: { embeddingHash: true, name: true, shortDescription: true },
+  });
+  if (!row) return { embedded: false, reason: 'not-found' };
+  const text = serviceEmbedText(row);
+  const expected = embeddingHash(text);
+  if (row.embeddingHash === expected) return { embedded: false, reason: 'unchanged' };
+  const vector = await embed(text);
+  await prisma.service.update({
+    where: { id: serviceId },
+    data: { embedding: vector, embeddingHash: expected },
+  });
+  return { embedded: true };
+}
+
+/** Canonical embed text for an FAQ: question + answer. */
+export function faqEmbedText(f: { question: string; answer: string }): string {
+  return [f.question, f.answer].filter(Boolean).join(' — ').slice(0, 500);
+}
+
+/** Idempotent embed + persist for one FAQ (mirrors embedProductAndStore). */
+export async function embedFaqAndStore(
+  prisma: {
+    fAQ: {
+      findUnique: (q: {
+        where: { id: string };
+        select: { embeddingHash: true; question: true; answer: true };
+      }) => Promise<{ embeddingHash: string | null; question: string; answer: string } | null>;
+      update: (q: {
+        where: { id: string };
+        data: { embedding: number[]; embeddingHash: string };
+      }) => Promise<unknown>;
+    };
+  },
+  faqId: string,
+): Promise<{ embedded: boolean; reason?: string }> {
+  if (!isEmbeddingAvailable()) return { embedded: false, reason: 'no-key' };
+  const row = await prisma.fAQ.findUnique({
+    where: { id: faqId },
+    select: { embeddingHash: true, question: true, answer: true },
+  });
+  if (!row) return { embedded: false, reason: 'not-found' };
+  const text = faqEmbedText(row);
+  const expected = embeddingHash(text);
+  if (row.embeddingHash === expected) return { embedded: false, reason: 'unchanged' };
+  const vector = await embed(text);
+  await prisma.fAQ.update({
+    where: { id: faqId },
+    data: { embedding: vector, embeddingHash: expected },
+  });
+  return { embedded: true };
+}

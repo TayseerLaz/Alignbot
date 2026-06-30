@@ -22,6 +22,8 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import type { Prisma } from '../../lib/db.js';
+import { prisma as rootPrisma } from '../../lib/db.js';
+import { embedFaqAndStore } from '../../lib/embedding.js';
 import { recordAudit } from '../../lib/audit.js';
 import { conflict, notFound } from '../../lib/errors.js';
 import { invalidateReadCache } from '../../lib/read-cache.js';
@@ -527,6 +529,10 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
         // chatbot read caches don't serve a stale FAQ set in the brief window
         // before the fire-and-forget webhook chain flushes it.
         void invalidateReadCache(orgId);
+        // Embed so the bot's top-K FAQ ranker can find it immediately.
+        void embedFaqAndStore(rootPrisma, f.id).catch((err) =>
+          req.log.warn({ err: err instanceof Error ? err.message : err, faqId: f.id }, '[embed] faq embed-on-create failed'),
+        );
         reply.code(201);
         return {
           data: {
@@ -586,6 +592,13 @@ export default async function businessInfoRoutes(app: FastifyInstance) {
           payload: { id: f.id, action: 'updated' },
         });
         void invalidateReadCache(orgId); // F2 — see faq-create note
+        // Re-embed when the embed text (question / answer) changed; no-ops via
+        // the stored hash otherwise.
+        if (req.body.question !== undefined || req.body.answer !== undefined) {
+          void embedFaqAndStore(rootPrisma, f.id).catch((err) =>
+            req.log.warn({ err: err instanceof Error ? err.message : err, faqId: f.id }, '[embed] faq embed-on-update failed'),
+          );
+        }
         return {
           data: {
             id: f.id,

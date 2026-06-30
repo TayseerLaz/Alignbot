@@ -847,6 +847,9 @@ model Service {
   isAvailable      Boolean   @default(true) @map("is_available")
   bookingRules     Json?     @map("booking_rules") // freeform: { min_notice_hours, max_party_size, ... }
   searchText       String?   @map("search_text")
+  // text-embedding-3-small vector for top-K candidate selection (mirrors Product).
+  embedding        Float[]   @default([]) @map("embedding")
+  embeddingHash    String?   @map("embedding_hash")
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
   deletedAt        DateTime? @map("deleted_at")
@@ -992,6 +995,9 @@ model FAQ {
   sortOrder      Int           @default(0) @map("sort_order")
   isPublished    Boolean       @default(true) @map("is_published")
   searchText     String?       @map("search_text")
+  // text-embedding-3-small vector for top-K FAQ retrieval (mirrors Product).
+  embedding      Float[]       @default([]) @map("embedding")
+  embeddingHash  String?       @map("embedding_hash")
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
 

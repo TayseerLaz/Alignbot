@@ -18,6 +18,8 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import type { Prisma } from '../../lib/db.js';
+import { prisma as rootPrisma } from '../../lib/db.js';
+import { embedServiceAndStore } from '../../lib/embedding.js';
 import { recordAudit } from '../../lib/audit.js';
 import { conflict, notFound } from '../../lib/errors.js';
 import { invalidateReadCache } from '../../lib/read-cache.js';
@@ -168,6 +170,11 @@ export default async function serviceRoutes(app: FastifyInstance) {
           actorUserId: req.auth!.userId,
           summary: `Created "${created.name}"`,
         });
+        // Embed so the bot's top-K service ranker can find it immediately.
+        // Fire-and-forget; the backfill tick is the backstop.
+        void embedServiceAndStore(rootPrisma, created.id).catch((err) =>
+          req.log.warn({ err: err instanceof Error ? err.message : err, serviceId: created.id }, '[embed] service embed-on-create failed'),
+        );
         reply.code(201);
         return { data: await loadService(tx, created.id) };
       });
@@ -258,6 +265,13 @@ export default async function serviceRoutes(app: FastifyInstance) {
             snapshot: refreshed as unknown as Record<string, unknown>,
             actorUserId: req.auth!.userId,
           });
+        }
+        // Re-embed when the embed text (name / short description) changed.
+        // embedServiceAndStore no-ops via the stored hash when unchanged.
+        if (req.body.name !== undefined || req.body.shortDescription !== undefined) {
+          void embedServiceAndStore(rootPrisma, existing.id).catch((err) =>
+            req.log.warn({ err: err instanceof Error ? err.message : err, serviceId: existing.id }, '[embed] service embed-on-update failed'),
+          );
         }
         return { data: await loadService(tx, existing.id) };
       });

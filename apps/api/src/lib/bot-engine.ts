@@ -88,6 +88,7 @@ export interface BotData {
     currency: string | null;
     durationMinutes: number | null;
     shortDescription: string | null;
+    embedding: number[];
   }[];
   biz: {
     legalName: string | null;
@@ -100,7 +101,7 @@ export interface BotData {
     // by gatherBotData; used by the shop/cart flow to format prices.
     currency: string;
   } | null;
-  faqs: { id: string; question: string; answer: string }[];
+  faqs: { id: string; question: string; answer: string; embedding: number[] }[];
   policies: { kind: string; title: string; content: string }[];
   // Phase 14 — Locations + Contact channels. Previously gathered only
   // for the UI; now fed into the system prompt so the bot can quote a
@@ -338,12 +339,15 @@ export async function gatherBotData(
           select: { id: true, asset: { select: { storageKey: true } } },
         },
       },
-      take: 30,
+      // Load the full catalog (bounded) so buildBotResponse can rank the WHOLE
+      // set by embedding and send the most-relevant top-K. The old take:30 hid
+      // most of a large catalog (the bot saw only 30 of, e.g., 477 products).
+      take: 600,
     }),
     tx.service.findMany({
       where: { organizationId: orgId, deletedAt: null, isAvailable: true },
-      select: { id: true, name: true, basePriceMinor: true, currency: true, durationMinutes: true, shortDescription: true },
-      take: 30,
+      select: { id: true, name: true, basePriceMinor: true, currency: true, durationMinutes: true, shortDescription: true, embedding: true },
+      take: 300,
     }),
     tx.businessInfo.findFirst({ where: { organizationId: orgId } }),
     tx.fAQ.findMany({
@@ -353,8 +357,8 @@ export async function gatherBotData(
         // Voice relaxes this to published-only (see opts.includePrivateFaqs).
         ...(opts.includePrivateFaqs ? {} : { visibility: 'public' }),
       },
-      select: { id: true, question: true, answer: true },
-      take: 30,
+      select: { id: true, question: true, answer: true, embedding: true },
+      take: 300,
     }),
     tx.policy.findMany({
       where: { organizationId: orgId, isPublished: true },
@@ -766,6 +770,40 @@ export async function buildBotResponse(
     }
   }
 
+  // Rank services + FAQs by the user-message embedding when there are many, so
+  // the prompt carries only the most-relevant ones (fewer tokens, faster, and
+  // the bot answers from the right entries). Mirrors the product top-K above;
+  // items without an embedding stay visible while the backfill tick catches up,
+  // and any failure falls back to the full lists.
+  let rankedServices = services;
+  let rankedFaqs = faqs;
+  const SERVICE_TOP_K = 15;
+  const FAQ_TOP_K = 12;
+  if (
+    args.userMessage.trim().length > 0 &&
+    (services.length > SERVICE_TOP_K || faqs.length > FAQ_TOP_K)
+  ) {
+    try {
+      const { embed, topKByEmbedding, isEmbeddingAvailable } = await import('./embedding.js');
+      if (isEmbeddingAvailable()) {
+        const qv = await embed(args.userMessage.trim().slice(0, 500));
+        if (services.length > SERVICE_TOP_K) {
+          const ranked = topKByEmbedding(services.filter((s) => s.embedding.length > 0), qv, SERVICE_TOP_K);
+          const unembedded = services.filter((s) => s.embedding.length === 0);
+          rankedServices = [...ranked, ...unembedded].slice(0, SERVICE_TOP_K);
+        }
+        if (faqs.length > FAQ_TOP_K) {
+          const ranked = topKByEmbedding(faqs.filter((f) => f.embedding.length > 0), qv, FAQ_TOP_K);
+          const unembedded = faqs.filter((f) => f.embedding.length === 0);
+          rankedFaqs = [...ranked, ...unembedded].slice(0, FAQ_TOP_K);
+        }
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[bot-engine] service/faq top-K failed, sending full lists', err);
+    }
+  }
+
   const personalityKey = config?.personality ?? config?.detectedTone ?? 'friendly';
   const personalityHint =
     config?.customPersonality?.trim() ||
@@ -1100,13 +1138,13 @@ export async function buildBotResponse(
           })
           .join('\n')}`
       : '(no products listed)',
-    services.length > 0
-      ? `Services:\n${services
+    rankedServices.length > 0
+      ? `Services:\n${rankedServices
           .map((s) => `- ${s.name}${s.basePriceMinor != null ? ` · ${formatMoney(s.basePriceMinor, biz?.currency ?? s.currency)}` : ''}${s.durationMinutes ? ` · ${s.durationMinutes}min` : ''}${s.shortDescription ? ` · ${s.shortDescription.slice(0, 120)}` : ''}`)
           .join('\n')}`
       : '',
-    faqs.length > 0
-      ? `FAQs:\n${faqs.map((f) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n')}`
+    rankedFaqs.length > 0
+      ? `FAQs:\n${rankedFaqs.map((f) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n')}`
       : '',
     policies.length > 0
       ? `Policies:\n${policies.map((p) => `${p.kind} (${p.title}): ${p.content.slice(0, 400)}`).join('\n\n')}`
@@ -1298,8 +1336,8 @@ export async function buildBotResponse(
       userPrompt: args.userMessage,
       historyJson: args.history ?? [],
       candidateProductIds: products.map((p) => p.id),
-      candidateServiceIds: services.map((s) => s.id),
-      candidateFaqIds: faqs.map((f) => f.id),
+      candidateServiceIds: rankedServices.map((s) => s.id),
+      candidateFaqIds: rankedFaqs.map((f) => f.id),
       candidatePolicyKinds: policies.map((p) => p.kind),
       businessInfoFields,
       // Record the model that actually ran. complete() now returns

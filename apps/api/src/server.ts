@@ -406,6 +406,17 @@ async function start() {
       { url: `${env.API_PUBLIC_URL}/docs`, chatbotDocs: `${env.API_PUBLIC_URL}/docs/chatbot` },
       `ALIGNED API listening on :${env.API_PORT}`,
     );
+    // Continuous embedding backstop — keeps products/services/FAQs embedded no
+    // matter how they were added (import / Shopify / direct DB), so the bot's
+    // top-K retrieval always works. Idempotent; steady-state ticks are free.
+    // Wrapped so a tick wiring error can never take down API boot.
+    try {
+      const { startEmbedBackfillTick } = await import('./lib/embed-backfill-tick.js');
+      const embedTick = startEmbedBackfillTick();
+      app.log.info({ name: embedTick.name }, 'embedding backfill tick started');
+    } catch (tickErr) {
+      app.log.error({ err: tickErr }, 'failed to start embedding backfill tick (non-fatal)');
+    }
   } catch (err) {
     app.log.fatal(err);
     process.exit(1);

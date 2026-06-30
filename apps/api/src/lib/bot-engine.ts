@@ -678,37 +678,69 @@ export async function buildBotResponse(
 ): Promise<{ text: string; usedKbCount: number; inputs: BotResponseInputs }> {
   const { config, kb, products: allProducts, services, biz, faqs, policies, locations, contactChannels, bookingForm, shopForm } = args.data;
 
-  // Phase 2 Step 3 — top-K catalog injection. For tiny catalogs (≤ 12)
-  // we send everything; below that threshold the embedding round-trip
-  // costs more than it saves. Above it, we embed the user message and
-  // pick the 10 most-similar products + always-include products that
-  // have no embedding (filler — never silently hide items). The embed
-  // call is short (~50-80 ms) and runs in parallel with the prompt
-  // assembly that comes next. On any failure (rate limit, OpenAI down),
-  // we fall back to the full list — slower but always correct.
-  const TOP_K = 10;
-  const SMALL_CATALOG = 12;
+  // Phase 2 Step 3 — top-K catalog injection. A tenant's catalog IS its menu —
+  // for food/retail tenants the products (with descriptions) are exactly what
+  // the bot should list, suggest, and take orders from. So we send the WHOLE
+  // catalog whenever it's a normal menu size (≤ SMALL_CATALOG): top-K's
+  // embedding round-trip only earns its keep for genuinely large catalogs
+  // (hundreds/thousands of SKUs). Sending all of, say, a 30-item restaurant
+  // menu costs a few hundred tokens and means "send the menu" / "what's
+  // healthy?" can never silently drop items (the bug that made small-menu
+  // tenants like Sandwich Wnos look like they had no menu). Above the
+  // threshold we embed the user message and pick the most-similar products +
+  // always-include products that have no embedding (never silently hide
+  // items). On any failure we fall back to the full list — slower but correct.
+  const TOP_K = 20;
+  const SMALL_CATALOG = 40;
+  // When the customer wants to BROWSE the whole menu (not search one item),
+  // top-K of a vague query ("send the menu", "what do you have", "something
+  // healthy") ranks poorly — so for browse/menu/category intents we send the
+  // full catalog up to a hard cap, even above the threshold. EN + Arabic +
+  // common Arabizi, plus the tenant's own shop intent keywords.
+  const BROWSE_CAP = 60;
+  const msgLower = args.userMessage.trim().toLowerCase();
+  const tenantBrowseWords = (shopForm?.intentKeywords ?? [])
+    .map((k) => k.toLowerCase())
+    .filter(Boolean);
+  const browseIntent =
+    /\b(menu|carte|catalog|catalogue|list|everything|all|options?|recommend|suggest|what (do|have|you)|show me|got)\b/.test(
+      msgLower,
+    ) ||
+    /(قائمة|منيو|الكل|شو في|شو عند|عندك|عندكن|بتقدم|أكل|طعام|صحي|مشروب|حلو|سلطة|وجب)/.test(
+      args.userMessage,
+    ) ||
+    /(3andak|3indak|3indkon|3indkon|menyou|sa7tein|sahtein|healthy|drinks?|desserts?|salad|combo|offers?|specials?)/.test(
+      msgLower,
+    ) ||
+    tenantBrowseWords.some((w) => w.length >= 3 && msgLower.includes(w));
+
   let products = allProducts;
   if (allProducts.length > SMALL_CATALOG && args.userMessage.trim().length > 0) {
-    try {
-      const { embed, topKByEmbedding, isEmbeddingAvailable } = await import('./embedding.js');
-      if (isEmbeddingAvailable()) {
-        const queryVec = await embed(args.userMessage.trim().slice(0, 500));
-        const ranked = topKByEmbedding(
-          allProducts.filter((p) => p.embedding.length > 0),
-          queryVec,
-          TOP_K,
-        );
-        // Plus any products without embeddings — keeps them visible while
-        // the backfill catches up.
-        const unembedded = allProducts.filter((p) => p.embedding.length === 0);
-        products = [...ranked, ...unembedded].slice(0, TOP_K);
+    if (browseIntent) {
+      // Browse the menu — send everything (bounded) so the bot can list/suggest
+      // across the full catalog instead of a top-K slice.
+      products = allProducts.slice(0, BROWSE_CAP);
+    } else {
+      try {
+        const { embed, topKByEmbedding, isEmbeddingAvailable } = await import('./embedding.js');
+        if (isEmbeddingAvailable()) {
+          const queryVec = await embed(args.userMessage.trim().slice(0, 500));
+          const ranked = topKByEmbedding(
+            allProducts.filter((p) => p.embedding.length > 0),
+            queryVec,
+            TOP_K,
+          );
+          // Plus any products without embeddings — keeps them visible while
+          // the backfill catches up.
+          const unembedded = allProducts.filter((p) => p.embedding.length === 0);
+          products = [...ranked, ...unembedded].slice(0, TOP_K);
+        }
+      } catch (err) {
+        // Embedding failed; fall back to the full catalog. Better slow than
+        // empty.
+        // eslint-disable-next-line no-console
+        console.warn('[bot-engine] top-K embedding failed, sending full catalog', err);
       }
-    } catch (err) {
-      // Embedding failed; fall back to the full catalog. Better slow than
-      // empty.
-      // eslint-disable-next-line no-console
-      console.warn('[bot-engine] top-K embedding failed, sending full catalog', err);
     }
   }
 

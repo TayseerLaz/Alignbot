@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertOctagon, AlertTriangle } from 'lucide-react';
 
 import { getAiBudgetToday } from '@/lib/dashboard-api';
+import { useSession } from '@/lib/session';
 
 // Prominent banner at the top of the dashboard when the tenant's MONTHLY
 // AI-message allowance is running out (1 message = 1 bot reply / voice turn).
@@ -12,6 +13,7 @@ import { getAiBudgetToday } from '@/lib/dashboard-api';
 // (allowance used → replies paused). Shares the 'ai-budget' query cache with the
 // widget, so no extra request.
 export function AiBudgetBanner() {
+  const { session } = useSession();
   const q = useQuery({
     queryKey: ['dashboard', 'ai-budget'],
     queryFn: getAiBudgetToday,
@@ -19,6 +21,8 @@ export function AiBudgetBanner() {
     staleTime: 30_000,
   });
   const d = q.data;
+  // Tenants with the AI/bot feature off don't use AI messages — no banner.
+  if (session?.organization?.disabledFeatures?.includes('ai')) return null;
   if (!d || d.unlimited) return null;
   const pct = Math.min(100, Math.max(0, Math.round(d.percentUsed)));
   if (pct < 80) return null; // only show when getting low

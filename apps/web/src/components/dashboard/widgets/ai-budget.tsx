@@ -5,17 +5,22 @@ import { Sparkles } from 'lucide-react';
 
 import { getAiBudgetToday } from '@/lib/dashboard-api';
 import { formatThousands } from '@/lib/format';
+import { useSession } from '@/lib/session';
 import { cn } from '@/lib/utils';
 
 import { WidgetError, WidgetFrame, WidgetSkeleton } from '../widget-frame';
 
 export function AiBudgetWidget() {
+  const { session } = useSession();
   const q = useQuery({
     queryKey: ['dashboard', 'ai-budget'],
     queryFn: getAiBudgetToday,
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
+
+  // Tenants with the AI/bot feature turned off don't use AI messages — hide it.
+  if (session?.organization?.disabledFeatures?.includes('ai')) return null;
 
   return (
     <WidgetFrame

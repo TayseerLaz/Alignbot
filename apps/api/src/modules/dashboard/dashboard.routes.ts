@@ -214,11 +214,12 @@ export default async function dashboardRoutes(app: FastifyInstance) {
         messageCap: ai.cap,
         messagePct: ai.unlimited ? null : ai.percentUsed,
       };
-      // Force unlimited when the JWT says admin — covers the case where the
-      // org's membership-based check missed for any reason.
-      if (req.auth!.isAlignedAdmin && !ai.unlimited) {
-        return { data: { ...base, unlimited: true, percentUsed: 0, messagePct: null } };
-      }
+      // NOTE: do NOT force-unlimited just because the VIEWER is an ALIGNED admin.
+      // Whether an org is metered is a property of the ORG (isOrgUnlimited →
+      // unlimited only if the org has an active admin member, e.g. ALIGNED HQ),
+      // already reflected in `ai.unlimited`. Forcing it on the viewer made every
+      // tenant the admin opened (controlling a tenant) read "Unlimited" even
+      // though their bot is really capped.
       return { data: base };
     },
   );

@@ -271,8 +271,8 @@ export default async function inboxRoutes(app: FastifyInstance) {
           whatsAppChannelId: uuidSchema.optional(),
           // Cursor (a thread id) for "load more" beyond the first page.
           cursor: uuidSchema.optional(),
-          // Inbox view filter: all | chats (real convos) | unread | read | answered.
-          view: z.enum(['all', 'chats', 'unread', 'read', 'answered']).optional(),
+          // Inbox view filter: all | chats (real convos) | unread | unanswered | answered.
+          view: z.enum(['all', 'chats', 'unread', 'unanswered', 'answered']).optional(),
           limit: z.coerce.number().int().min(1).max(200).default(50),
         }),
         response: { 200: listEnvelopeSchema(threadDtoSchema) },
@@ -293,11 +293,13 @@ export default async function inboxRoutes(app: FastifyInstance) {
                   lastInboundAt: { not: null },
                   OR: [{ lastReadAt: null }, { lastReadAt: { lt: f.lastInboundAt } }],
                 }
-              : q.view === 'read'
+              : q.view === 'unanswered'
                 ? {
+                    // No reply sent after the customer's last message (the last
+                    // message in the thread is inbound). The actionable list.
                     inboundCount: { gt: 0 },
                     lastInboundAt: { not: null },
-                    lastReadAt: { gte: f.lastInboundAt },
+                    lastMessageAt: { lte: f.lastInboundAt },
                   }
                 : q.view === 'answered'
                   ? {

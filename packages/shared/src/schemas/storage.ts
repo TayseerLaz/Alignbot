@@ -24,6 +24,18 @@ export const DOCUMENT_MIME_TYPES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'text/csv',
   'text/plain',
+  // Audio — operator voice notes recorded in the browser. MediaRecorder emits
+  // audio/mp4 (Safari), audio/webm (Chrome/Firefox) or audio/ogg (opus-recorder);
+  // the rest cover uploaded clips.
+  'audio/mp4',
+  'audio/mpeg',
+  'audio/ogg',
+  'audio/webm',
+  'audio/aac',
+  'audio/wav',
+  'audio/x-m4a',
+  'audio/3gpp',
+  'audio/amr',
 ] as const;
 export type DocumentMime = (typeof DOCUMENT_MIME_TYPES)[number];
 

@@ -274,9 +274,9 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
   );
   const [filterTag, setFilterTag] = useState(searchParams?.get('tag') ?? '');
   // Read/answered view filter: all | chats | unread | read | answered.
-  const [filterView, setFilterView] = useState<'all' | 'chats' | 'unread' | 'read' | 'answered'>(
-    (searchParams?.get('view') as 'all' | 'chats' | 'unread' | 'read' | 'answered') ?? 'all',
-  );
+  const [filterView, setFilterView] = useState<
+    'all' | 'chats' | 'unread' | 'unanswered' | 'answered'
+  >((searchParams?.get('view') as 'all' | 'chats' | 'unread' | 'unanswered' | 'answered') ?? 'all');
   // Channel filter. Platform values ('whatsapp'|'messenger'|'instagram') OR a
   // per-number value 'wa:<channelId>' so the operator can pick a single
   // WhatsApp number's inbox. Reconstructed from the URL's channel +
@@ -512,7 +512,7 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
                   ['all', 'All'],
                   ['chats', 'Chats'],
                   ['unread', 'Unread'],
-                  ['read', 'Read'],
+                  ['unanswered', 'Unanswered'],
                   ['answered', 'Answered'],
                 ] as const
               ).map(([v, label]) => (
@@ -3292,6 +3292,17 @@ function ReplyBox({
           }
           value={body}
           onChange={(e) => setBody(e.target.value)}
+          onKeyDown={(e) => {
+            // Enter sends; Shift+Enter inserts a newline. Pointer-coarse (touch)
+            // devices keep Enter as a newline so the on-screen keyboard's return
+            // key doesn't fire-and-send mid-typing.
+            const isTouch =
+              typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !isTouch) {
+              e.preventDefault();
+              submit();
+            }
+          }}
           aria-label={mode === 'reply' ? 'Reply message' : 'Internal note'}
         />
       </div>

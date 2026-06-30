@@ -1731,7 +1731,8 @@ function Bubble({
   // 4-tab panel are nonsense for them — clicking would just return a
   // 404 and confuse the operator. The inline image-source attribution
   // below the bubble IS the provenance for image messages.
-  const isImage = (message.messageType ?? '').toLowerCase() === 'image';
+  // Stickers are webp images — render them inline like photos.
+  const isImage = ['image', 'sticker'].includes((message.messageType ?? '').toLowerCase());
   const canAudit = isAlignedAdmin && isBotMessage && !isImage;
   const [open, setOpen] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);

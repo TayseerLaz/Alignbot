@@ -2701,6 +2701,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
             // download + transcribe later. Both `audio` and `voice`
             // shapes can appear depending on whether the customer
             // recorded a voice note or shared an audio file.
+            const sticker = (m as { sticker?: { id?: string; mime_type?: string } }).sticker;
             const mediaId =
               m.type === 'audio'
                 ? m.audio?.id ?? null
@@ -2708,7 +2709,9 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                   ? m.voice?.id ?? null
                   : m.type === 'image'
                     ? m.image?.id ?? null
-                    : null;
+                    : m.type === 'sticker'
+                      ? sticker?.id ?? null
+                      : null;
             const mediaMime =
               m.type === 'audio'
                 ? m.audio?.mime_type ?? null
@@ -2716,7 +2719,9 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                   ? m.voice?.mime_type ?? null
                   : m.type === 'image'
                     ? m.image?.mime_type ?? null
-                    : null;
+                    : m.type === 'sticker'
+                      ? sticker?.mime_type ?? null
+                      : null;
             persisted.push({
               from: m.from ?? '',
               type: m.type ?? 'unknown',
@@ -2925,7 +2930,7 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       // can render the actual image (not just an "[image]" tag). Fire-and-
       // forget and fully independent of the bot reply below.
       for (const p of persisted) {
-        if (p.type === 'image' && p.mediaId) {
+        if ((p.type === 'image' || p.type === 'sticker') && p.mediaId) {
           void storeInboundImage({
             organizationId: channel.organizationId,
             mediaId: p.mediaId,

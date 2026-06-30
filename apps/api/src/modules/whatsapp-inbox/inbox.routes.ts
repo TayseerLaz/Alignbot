@@ -519,7 +519,7 @@ export default async function inboxRoutes(app: FastifyInstance) {
         // fallback), so it just hits the stored-asset path below.
         const imageMsgs = messages.filter((m) => {
           const t = (m.messageType ?? '').toLowerCase();
-          return t === 'image' || t === 'audio' || t === 'voice';
+          return t === 'image' || t === 'audio' || t === 'voice' || t === 'sticker';
         });
         const mediaUrlByMsgId = new Map<string, string>();
         if (imageMsgs.length > 0) {

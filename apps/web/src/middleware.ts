@@ -26,6 +26,12 @@ function buildCsp(nonce: string): string {
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
     // Style sources stay inline-permissive for the framework's CSS-in-JS.
     "style-src 'self' 'unsafe-inline'",
+    // Service worker (/app/sw.js). Without an explicit worker-src, the browser
+    // falls back to script-src — whose 'strict-dynamic' drops 'self' and would
+    // block the same-origin SW from registering. Pin it to 'self' here.
+    "worker-src 'self'",
+    // PWA manifest is same-origin; keep it explicit alongside default-src.
+    "manifest-src 'self'",
     "img-src 'self' data: blob: https://*.wasabisys.com",
     // Wasabi is in connect-src AND in img-src/media-src below: the browser
     // does a presigned PUT (fetch → connect-src) when uploading images +

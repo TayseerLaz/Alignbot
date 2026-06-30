@@ -1,8 +1,9 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
 import { headers } from 'next/headers';
 
 import { Providers } from '@/components/providers';
+import { PwaRegister } from '@/components/pwa-register';
 import '@/styles/globals.css';
 
 // Two-font system (neutral-minimal design language):
@@ -34,6 +35,22 @@ export const metadata: Metadata = {
   },
   description: 'The AI ops layer for your business. WhatsApp catalogs, conversations, and intelligence in one place.',
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'),
+  applicationName: 'Hader AI',
+  // The manifest <link> is added manually in <head> below with the explicit
+  // /app basePath prefix (Next's metadata.manifest path handling vs. basePath
+  // is ambiguous, so we keep it explicit).
+  appleWebApp: {
+    capable: true,
+    title: 'Hader',
+    statusBarStyle: 'black-translucent',
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: '#360516',
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
 };
 
 // Inline script that runs before React hydrates: reads the persisted theme
@@ -64,10 +81,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       suppressHydrationWarning
     >
       <head>
+        {/* PWA manifest — explicit /app basePath prefix (see metadata note). */}
+        <link rel="manifest" href="/app/manifest.webmanifest" />
+        <link rel="apple-touch-icon" href="/app/icons/apple-touch-icon.png" />
+        <meta name="mobile-web-app-capable" content="yes" />
         <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
       </head>
       <body className="min-h-dvh antialiased">
         <Providers>{children}</Providers>
+        <PwaRegister />
       </body>
     </html>
   );

@@ -157,7 +157,7 @@ export async function loadRecentOrders(
       .filter((c) => c.items.length > 0)
       .map((c) => ({
         at: c.createdAt,
-        totalMinor: c.totalMinor ?? 0,
+        totalMinor: Number(c.totalMinor ?? 0),
         currency: c.currency,
         items: c.items.map((i) => ({ name: i.name, quantity: i.quantity, sku: i.sku })),
       }));

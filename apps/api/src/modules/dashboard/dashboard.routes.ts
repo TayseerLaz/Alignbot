@@ -798,7 +798,7 @@ export default async function dashboardRoutes(app: FastifyInstance) {
           if (g._count._all > (dom?._count._all ?? 0)) dom = g;
         }
         const orders7d = byCurrency.reduce((s, g) => s + g._count._all, 0);
-        const revenue7dMinor = dom?._sum.totalMinor ?? 0;
+        const revenue7dMinor = Number(dom?._sum.totalMinor ?? 0);
         const domOrders = dom?._count._all ?? 0;
         const aovMinor = domOrders > 0 ? Math.round(revenue7dMinor / domOrders) : 0;
         return {
@@ -951,7 +951,7 @@ export default async function dashboardRoutes(app: FastifyInstance) {
           .map((g) => ({
             channel: g.channel,
             orders: g._count._all,
-            revenueMinor: g._sum.totalMinor ?? 0,
+            revenueMinor: Number(g._sum.totalMinor ?? 0),
           }))
           .sort((a, b) => b.orders - a.orders);
         return { currency: dom?.currency ?? 'USD', channels };

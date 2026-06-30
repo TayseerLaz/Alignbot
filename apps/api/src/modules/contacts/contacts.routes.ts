@@ -252,7 +252,7 @@ export default async function contactsRoutes(app: FastifyInstance) {
               id: c.id,
               createdAt: c.createdAt.toISOString(),
               status: c.status,
-              totalMinor: c.totalMinor,
+              totalMinor: Number(c.totalMinor),
               currency: c.currency,
               itemsCount: c.itemsCount,
               items: c.items.map((i) => ({ name: i.name, quantity: i.quantity })),

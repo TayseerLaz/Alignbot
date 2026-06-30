@@ -3684,7 +3684,7 @@ async function maybeReplyAsBot(args: {
       if (!draft || draft.items.length === 0) return null;
       const currency = (draft.currency ?? ctx.data.shopForm?.currency ?? 'USD').toUpperCase();
       const subtotalMinor = draft.items.reduce(
-        (s, it) => s + it.unitPriceMinor * it.quantity,
+        (s, it) => s + Number(it.unitPriceMinor) * it.quantity,
         0,
       );
 
@@ -3726,7 +3726,7 @@ async function maybeReplyAsBot(args: {
         items: draft.items.map((it) => ({
           name: it.name,
           quantity: it.quantity,
-          unitPriceMinor: it.unitPriceMinor,
+          unitPriceMinor: Number(it.unitPriceMinor),
           sku: it.sku,
         })),
         subtotalMinor,
@@ -4300,7 +4300,7 @@ async function maybeReplyAsBot(args: {
               where: { cartId: draft.id },
             });
             const subtotalMinor = refreshed.reduce(
-              (s, it) => s + it.lineTotalMinor,
+              (s, it) => s + Number(it.lineTotalMinor),
               0,
             );
             const shopForm = ctx.data.shopForm!;
@@ -4642,7 +4642,7 @@ async function maybeReplyAsBot(args: {
             });
             if (!draft || draft.items.length === 0) return null;
             const subtotalMinor = draft.items.reduce(
-              (s, it) => s + it.unitPriceMinor * it.quantity,
+              (s, it) => s + Number(it.unitPriceMinor) * it.quantity,
               0,
             );
             // Same delivery rule as the cart-promotion block below — keep the
@@ -4694,7 +4694,7 @@ async function maybeReplyAsBot(args: {
         });
         if (!draft || draft.items.length === 0) return null;
         const subtotalMinor = draft.items.reduce(
-          (s, it) => s + it.unitPriceMinor * it.quantity,
+          (s, it) => s + Number(it.unitPriceMinor) * it.quantity,
           0,
         );
         const sf = ctx.data.shopForm;
@@ -5482,7 +5482,7 @@ async function maybeReplyAsBot(args: {
                 sku: it.sku,
                 name: it.name,
                 quantity: it.quantity,
-                unitPriceMinor: it.unitPriceMinor,
+                unitPriceMinor: Number(it.unitPriceMinor),
                 notes: it.notes ?? null,
               });
             }

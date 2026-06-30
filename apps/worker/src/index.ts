@@ -1,4 +1,5 @@
 // Worker entry. Boots all BullMQ workers (import, sync, webhook delivery).
+import './bigint-json.js'; // BigInt JSON shim — load before anything serializes a bigint
 import * as Sentry from '@sentry/node';
 import http from 'node:http';
 import pino from 'pino';

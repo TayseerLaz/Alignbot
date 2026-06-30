@@ -39,8 +39,9 @@ function serializeItem(it: NonNullable<CartItemRow>) {
     name: it.name,
     variantLabel: it.variantLabel,
     quantity: it.quantity,
-    unitPriceMinor: it.unitPriceMinor,
-    lineTotalMinor: it.lineTotalMinor,
+    // BigInt columns -> Number for the DTO (safe: cart values << 2^53).
+    unitPriceMinor: Number(it.unitPriceMinor),
+    lineTotalMinor: Number(it.lineTotalMinor),
     notes: it.notes,
     needsPricing: it.needsPricing ?? false,
     createdAt: it.createdAt.toISOString(),
@@ -60,9 +61,9 @@ function serializeCart(
     customerName: c.customerName,
     fields: (Array.isArray(c.fields) ? c.fields : []) as never,
     items: items.map(serializeItem),
-    subtotalMinor: c.subtotalMinor,
-    deliveryMinor: c.deliveryMinor,
-    totalMinor: c.totalMinor,
+    subtotalMinor: Number(c.subtotalMinor),
+    deliveryMinor: Number(c.deliveryMinor),
+    totalMinor: Number(c.totalMinor),
     currency: c.currency,
     status: c.status as (typeof CART_STATUSES)[number],
     notes: c.notes,
@@ -81,8 +82,13 @@ function serializeCart(
 // Compute cart-level totals from the items + a delivery fee. Subtotals are
 // always recomputed from the items so we never drift; the caller passes the
 // delivery the operator (or shopForm) configured.
-function totals(items: { quantity: number; unitPriceMinor: number }[], deliveryMinor: number) {
-  const subtotalMinor = items.reduce((acc, it) => acc + it.quantity * it.unitPriceMinor, 0);
+function totals(
+  items: { quantity: number; unitPriceMinor: number | bigint }[],
+  deliveryMinor: number,
+) {
+  // Arithmetic stays in JS number (safe up to 2^53 ≫ any real cart). BigInt
+  // columns are normalised on read; callers BigInt() the result on write.
+  const subtotalMinor = items.reduce((acc, it) => acc + it.quantity * Number(it.unitPriceMinor), 0);
   return {
     subtotalMinor,
     deliveryMinor,
@@ -90,6 +96,9 @@ function totals(items: { quantity: number; unitPriceMinor: number }[], deliveryM
     itemsCount: items.reduce((acc, it) => acc + it.quantity, 0),
   };
 }
+
+/** number -> BigInt for the cart's BigInt money columns (defensive round). */
+const toBig = (n: number | bigint): bigint => BigInt(Math.round(Number(n)));
 
 export default async function cartsRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -264,9 +273,9 @@ export default async function cartsRoutes(app: FastifyInstance) {
             customerPhone: req.body.customerPhone,
             customerName: req.body.customerName ?? null,
             fields: req.body.fields as unknown as Prisma.InputJsonValue,
-            subtotalMinor: computed.subtotalMinor,
-            deliveryMinor: computed.deliveryMinor,
-            totalMinor: computed.totalMinor,
+            subtotalMinor: toBig(computed.subtotalMinor),
+            deliveryMinor: toBig(computed.deliveryMinor),
+            totalMinor: toBig(computed.totalMinor),
             itemsCount: computed.itemsCount,
             currency,
             status: req.body.status ?? 'new',
@@ -282,8 +291,8 @@ export default async function cartsRoutes(app: FastifyInstance) {
                   name: it.name,
                   variantLabel: it.variantLabel ?? null,
                   quantity: it.quantity,
-                  unitPriceMinor: it.unitPriceMinor,
-                  lineTotalMinor: it.quantity * it.unitPriceMinor,
+                  unitPriceMinor: toBig(it.unitPriceMinor),
+                  lineTotalMinor: toBig(it.quantity * Number(it.unitPriceMinor)),
                   notes: it.notes ?? null,
                 })),
               },
@@ -310,7 +319,7 @@ export default async function cartsRoutes(app: FastifyInstance) {
         payload: {
           id: result.cart.id,
           customerPhone: result.cart.customerPhone,
-          totalMinor: result.cart.totalMinor,
+          totalMinor: Number(result.cart.totalMinor),
           currency: result.cart.currency,
           itemsCount: result.cart.itemsCount,
         },
@@ -320,7 +329,7 @@ export default async function cartsRoutes(app: FastifyInstance) {
         kind: 'cart_received',
         severity: 'info',
         title: `New cart · ${result.cart.itemsCount} item${result.cart.itemsCount === 1 ? '' : 's'}`,
-        body: `${result.cart.customerName ?? result.cart.customerPhone} · ${result.cart.totalMinor / (result.cart.currency === 'KWD' || result.cart.currency === 'BHD' || result.cart.currency === 'OMR' || result.cart.currency === 'JOD' ? 1000 : 100)} ${result.cart.currency}`,
+        body: `${result.cart.customerName ?? result.cart.customerPhone} · ${Number(result.cart.totalMinor) / (result.cart.currency === 'KWD' || result.cart.currency === 'BHD' || result.cart.currency === 'OMR' || result.cart.currency === 'JOD' ? 1000 : 100)} ${result.cart.currency}`,
         link: `/cart`,
         entityType: 'cart',
         entityId: result.cart.id,
@@ -349,12 +358,13 @@ export default async function cartsRoutes(app: FastifyInstance) {
         const existing = await tx.cart.findUnique({ where: { id: req.params.id } });
         if (!existing) throw notFound('Cart not found.');
 
-        // If the operator overrides the delivery fee, recompute total.
-        let deliveryMinor = existing.deliveryMinor;
-        let totalMinor = existing.totalMinor;
+        // If the operator overrides the delivery fee, recompute total. Work in
+        // JS number; BigInt() at the write.
+        let deliveryMinor = Number(existing.deliveryMinor);
+        let totalMinor = Number(existing.totalMinor);
         if (req.body.deliveryMinor !== undefined) {
           deliveryMinor = req.body.deliveryMinor;
-          totalMinor = existing.subtotalMinor + deliveryMinor;
+          totalMinor = Number(existing.subtotalMinor) + deliveryMinor;
         }
 
         const updated = await tx.cart.update({
@@ -367,8 +377,8 @@ export default async function cartsRoutes(app: FastifyInstance) {
                 : (req.body.fields as unknown as Prisma.InputJsonValue),
             status: req.body.status === undefined ? undefined : req.body.status,
             notes: req.body.notes === undefined ? undefined : req.body.notes,
-            deliveryMinor: req.body.deliveryMinor === undefined ? undefined : deliveryMinor,
-            totalMinor: req.body.deliveryMinor === undefined ? undefined : totalMinor,
+            deliveryMinor: req.body.deliveryMinor === undefined ? undefined : toBig(deliveryMinor),
+            totalMinor: req.body.deliveryMinor === undefined ? undefined : toBig(totalMinor),
           },
         });
         const items = await tx.cartItem.findMany({
@@ -461,8 +471,8 @@ export default async function cartsRoutes(app: FastifyInstance) {
             name: req.body.name,
             variantLabel: req.body.variantLabel ?? null,
             quantity: req.body.quantity,
-            unitPriceMinor: req.body.unitPriceMinor,
-            lineTotalMinor: lineTotal,
+            unitPriceMinor: toBig(req.body.unitPriceMinor),
+            lineTotalMinor: toBig(lineTotal),
             notes: req.body.notes ?? null,
           },
         });
@@ -470,12 +480,12 @@ export default async function cartsRoutes(app: FastifyInstance) {
           where: { cartId: c.id },
           orderBy: { createdAt: 'asc' },
         });
-        const computed = totals(items, c.deliveryMinor);
+        const computed = totals(items, Number(c.deliveryMinor));
         const updated = await tx.cart.update({
           where: { id: c.id },
           data: {
-            subtotalMinor: computed.subtotalMinor,
-            totalMinor: computed.totalMinor,
+            subtotalMinor: toBig(computed.subtotalMinor),
+            totalMinor: toBig(computed.totalMinor),
             itemsCount: computed.itemsCount,
           },
         });
@@ -484,7 +494,7 @@ export default async function cartsRoutes(app: FastifyInstance) {
       void emitWebhookEvent({
         organizationId: orgId,
         eventKind: 'cart_item_added',
-        payload: { id: result.cart.id, totalMinor: result.cart.totalMinor },
+        payload: { id: result.cart.id, totalMinor: Number(result.cart.totalMinor) },
       });
       reply.code(201);
       return { data: serializeCart(result.cart, result.items) };
@@ -512,13 +522,13 @@ export default async function cartsRoutes(app: FastifyInstance) {
         });
         if (!it) throw notFound('Line item not found.');
         const quantity = req.body.quantity ?? it.quantity;
-        const unitPriceMinor = req.body.unitPriceMinor ?? it.unitPriceMinor;
+        const unitPriceMinor = Number(req.body.unitPriceMinor ?? it.unitPriceMinor);
         await tx.cartItem.update({
           where: { id: it.id },
           data: {
             quantity,
-            unitPriceMinor,
-            lineTotalMinor: quantity * unitPriceMinor,
+            unitPriceMinor: toBig(unitPriceMinor),
+            lineTotalMinor: toBig(quantity * unitPriceMinor),
             notes: req.body.notes === undefined ? undefined : req.body.notes,
           },
         });
@@ -528,12 +538,12 @@ export default async function cartsRoutes(app: FastifyInstance) {
           where: { cartId: c.id },
           orderBy: { createdAt: 'asc' },
         });
-        const computed = totals(items, c.deliveryMinor);
+        const computed = totals(items, Number(c.deliveryMinor));
         const updated = await tx.cart.update({
           where: { id: c.id },
           data: {
-            subtotalMinor: computed.subtotalMinor,
-            totalMinor: computed.totalMinor,
+            subtotalMinor: toBig(computed.subtotalMinor),
+            totalMinor: toBig(computed.totalMinor),
             itemsCount: computed.itemsCount,
           },
         });
@@ -569,12 +579,12 @@ export default async function cartsRoutes(app: FastifyInstance) {
           where: { cartId: c.id },
           orderBy: { createdAt: 'asc' },
         });
-        const computed = totals(items, c.deliveryMinor);
+        const computed = totals(items, Number(c.deliveryMinor));
         const updated = await tx.cart.update({
           where: { id: c.id },
           data: {
-            subtotalMinor: computed.subtotalMinor,
-            totalMinor: computed.totalMinor,
+            subtotalMinor: toBig(computed.subtotalMinor),
+            totalMinor: toBig(computed.totalMinor),
             itemsCount: computed.itemsCount,
           },
         });

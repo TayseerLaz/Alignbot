@@ -1656,9 +1656,11 @@ model Cart {
   fields         Json     @default("[]")
   // Cart-level money. All in `currency`. subtotalMinor = sum of
   // CartItem.lineTotalMinor; totalMinor = subtotal + delivery.
-  subtotalMinor  Int      @default(0) @map("subtotal_minor")
-  deliveryMinor  Int      @default(0) @map("delivery_minor")
-  totalMinor     Int      @default(0) @map("total_minor")
+  // BigInt: high-denomination currencies (LBP, IRR) in x100 minor units blow
+  // past 32-bit Int (2.1B) on large carts — e.g. 200 drinks at 120,000 LBP.
+  subtotalMinor  BigInt   @default(0) @map("subtotal_minor")
+  deliveryMinor  BigInt   @default(0) @map("delivery_minor")
+  totalMinor     BigInt   @default(0) @map("total_minor")
   currency       String   @default("USD") @db.Char(3)
   // 'new' | 'confirmed' | 'completed' | 'cancelled'
   status         String   @default("new")
@@ -1709,8 +1711,8 @@ model CartItem {
   name           String
   variantLabel   String?  @map("variant_label")
   quantity       Int      @default(1)
-  unitPriceMinor Int      @map("unit_price_minor")
-  lineTotalMinor Int      @map("line_total_minor")
+  unitPriceMinor BigInt   @map("unit_price_minor")
+  lineTotalMinor BigInt   @map("line_total_minor")
   // True when this line came from a voice order whose spoken name could NOT be
   // matched to the catalog: it's stored at price 0 and the operator must price
   // it before fulfilment. Distinguishes "needs pricing" from a genuinely-free item.

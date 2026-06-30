@@ -655,7 +655,7 @@ export default async function voiceRoutes(app: FastifyInstance) {
           openOrder: open
             ? {
                 itemsSummary: summarize(open.items),
-                totalMinor: open.totalMinor,
+                totalMinor: Number(open.totalMinor),
                 currency: open.currency,
                 status: open.status,
                 createdAt: open.createdAt.toISOString(),
@@ -663,7 +663,7 @@ export default async function voiceRoutes(app: FastifyInstance) {
             : null,
           pastOrders: past.map((c) => ({
             itemsSummary: summarize(c.items),
-            totalMinor: c.totalMinor,
+            totalMinor: Number(c.totalMinor),
             currency: c.currency,
             createdAt: c.createdAt.toISOString(),
           })),

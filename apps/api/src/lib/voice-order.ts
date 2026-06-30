@@ -103,6 +103,9 @@ export type VoiceOrderOutcome =
   | { ok: false; reason: 'missing_required'; missing: string[] }
   | { ok: false; reason: 'below_min'; minOrderMinor: number; subtotalMinor: number; currency: string };
 
+/** number -> BigInt for the cart's BigInt money columns (defensive round). */
+const toBig = (n: number): bigint => BigInt(Math.round(n));
+
 function deliveryFee(
   subtotalMinor: number,
   shopForm: NonNullable<BotData['shopForm']>,
@@ -148,7 +151,7 @@ export async function createVoiceOrder(args: CreateVoiceOrderArgs): Promise<Voic
         result: {
           orderId: existing.id,
           itemsCount: existing.itemsCount,
-          totalMinor: existing.totalMinor,
+          totalMinor: Number(existing.totalMinor),
           currency: existing.currency,
           matched: 0,
           unmatched: [],
@@ -236,8 +239,8 @@ export async function createVoiceOrder(args: CreateVoiceOrderArgs): Promise<Voic
           sku: r.sku ?? null,
           name: r.name,
           quantity: r.quantity,
-          unitPriceMinor: r.unitPriceMinor,
-          lineTotalMinor: r.quantity * r.unitPriceMinor,
+          unitPriceMinor: toBig(r.unitPriceMinor),
+          lineTotalMinor: toBig(r.quantity * r.unitPriceMinor),
           needsPricing: r.needsPricing,
           notes: r.notes ?? null,
         })),
@@ -255,15 +258,15 @@ export async function createVoiceOrder(args: CreateVoiceOrderArgs): Promise<Voic
         value: (args.fields[f.key] ?? '').trim() || existingByKey.get(f.key) || null,
       }));
       const items = await tx.cartItem.findMany({ where: { cartId: open.id } });
-      const sub = items.reduce((s, i) => s + i.lineTotalMinor, 0);
+      const sub = items.reduce((s, i) => s + Number(i.lineTotalMinor), 0);
       const del = deliveryFee(sub, shopForm);
       const updated = await tx.cart.update({
         where: { id: open.id },
         data: {
           fields: mergedFields as never,
-          subtotalMinor: sub,
-          deliveryMinor: del,
-          totalMinor: sub + del,
+          subtotalMinor: toBig(sub),
+          deliveryMinor: toBig(del),
+          totalMinor: toBig(sub + del),
           itemsCount: items.reduce((s, i) => s + i.quantity, 0),
           callUuid: args.callUuid,
           ...(args.customerName ? { customerName: args.customerName } : {}),
@@ -283,7 +286,7 @@ export async function createVoiceOrder(args: CreateVoiceOrderArgs): Promise<Voic
         result: {
           orderId: merged.id,
           itemsCount: merged.itemsCount,
-          totalMinor: merged.totalMinor,
+          totalMinor: Number(merged.totalMinor),
           currency: merged.currency,
           matched,
           unmatched,

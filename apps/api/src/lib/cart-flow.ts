@@ -148,6 +148,9 @@ function deliveryFor(subtotalMinor: number, shopForm: ShopFormLite): number {
 }
 
 /** The active draft cart for a thread, shaped for buildBotResponse.cartState. */
+/** number -> BigInt for the cart's BigInt money columns (defensive round). */
+const toBig = (n: number): bigint => BigInt(Math.round(n));
+
 export async function loadDraftCartState(
   orgId: string,
   threadId: string,
@@ -175,10 +178,10 @@ export async function loadDraftCartState(
       items: draft.items.map((it) => ({
         name: it.name,
         quantity: it.quantity,
-        unitPriceMinor: it.unitPriceMinor,
+        unitPriceMinor: Number(it.unitPriceMinor),
         sku: it.sku,
       })),
-      subtotalMinor: draft.subtotalMinor,
+      subtotalMinor: Number(draft.subtotalMinor),
       currency: draft.currency,
       capturedFields: Object.keys(capturedFields).length > 0 ? capturedFields : undefined,
     };
@@ -234,8 +237,8 @@ export async function syncDraftFromReply(args: {
           where: { id: existing.id },
           data: {
             quantity: p.quantity,
-            unitPriceMinor: p.unitPriceMinor,
-            lineTotalMinor: p.quantity * p.unitPriceMinor,
+            unitPriceMinor: toBig(p.unitPriceMinor),
+            lineTotalMinor: toBig(p.quantity * p.unitPriceMinor),
           },
         });
       } else {
@@ -247,21 +250,21 @@ export async function syncDraftFromReply(args: {
             sku: p.sku,
             name: p.name,
             quantity: p.quantity,
-            unitPriceMinor: p.unitPriceMinor,
-            lineTotalMinor: p.quantity * p.unitPriceMinor,
+            unitPriceMinor: toBig(p.unitPriceMinor),
+            lineTotalMinor: toBig(p.quantity * p.unitPriceMinor),
           },
         });
       }
     }
     const refreshed = await tx.cartItem.findMany({ where: { cartId: draft.id } });
-    const subtotalMinor = refreshed.reduce((s, it) => s + it.lineTotalMinor, 0);
+    const subtotalMinor = refreshed.reduce((s, it) => s + Number(it.lineTotalMinor), 0);
     const deliveryMinor = deliveryFor(subtotalMinor, args.shopForm);
     await tx.cart.update({
       where: { id: draft.id },
       data: {
-        subtotalMinor,
-        deliveryMinor,
-        totalMinor: subtotalMinor + deliveryMinor,
+        subtotalMinor: toBig(subtotalMinor),
+        deliveryMinor: toBig(deliveryMinor),
+        totalMinor: toBig(subtotalMinor + deliveryMinor),
         itemsCount: refreshed.reduce((s, it) => s + it.quantity, 0),
       },
     });
@@ -322,7 +325,7 @@ export async function captureCart(args: {
           sku: it.sku,
           name: it.name,
           quantity: it.quantity,
-          unitPriceMinor: it.unitPriceMinor,
+          unitPriceMinor: Number(it.unitPriceMinor),
           needsPricing: false,
         });
       }
@@ -371,9 +374,9 @@ export async function captureCart(args: {
           status: 'new',
           customerName: args.customerName,
           fields: fieldRows as never,
-          subtotalMinor,
-          deliveryMinor,
-          totalMinor,
+          subtotalMinor: toBig(subtotalMinor),
+          deliveryMinor: toBig(deliveryMinor),
+          totalMinor: toBig(totalMinor),
           itemsCount,
           currency: args.shopForm.currency,
           ...originData,
@@ -391,8 +394,8 @@ export async function captureCart(args: {
             sku: it.sku,
             name: it.name,
             quantity: it.quantity,
-            unitPriceMinor: it.unitPriceMinor,
-            lineTotalMinor: it.quantity * it.unitPriceMinor,
+            unitPriceMinor: toBig(it.unitPriceMinor),
+            lineTotalMinor: toBig(it.quantity * it.unitPriceMinor),
             needsPricing: it.needsPricing,
           })),
         });
@@ -405,9 +408,9 @@ export async function captureCart(args: {
           customerPhone: args.customerId,
           customerName: args.customerName,
           fields: fieldRows as never,
-          subtotalMinor,
-          deliveryMinor,
-          totalMinor,
+          subtotalMinor: toBig(subtotalMinor),
+          deliveryMinor: toBig(deliveryMinor),
+          totalMinor: toBig(totalMinor),
           itemsCount,
           currency: args.shopForm.currency,
           status: 'new',
@@ -420,8 +423,8 @@ export async function captureCart(args: {
                 sku: it.sku,
                 name: it.name,
                 quantity: it.quantity,
-                unitPriceMinor: it.unitPriceMinor,
-                lineTotalMinor: it.quantity * it.unitPriceMinor,
+                unitPriceMinor: toBig(it.unitPriceMinor),
+                lineTotalMinor: toBig(it.quantity * it.unitPriceMinor),
                 needsPricing: it.needsPricing,
               })),
             },

@@ -161,7 +161,7 @@ describe('voice order capture (field fidelity + safety)', () => {
     expect(byKey.delivery_address).toBe('الأشرفية');
     expect(byKey.payment).toBe('cash');
     expect(byKey.anything_else).toBe('extra sauce');
-    expect(cart!.items[0]!.unitPriceMinor).toBe(360000);
+    expect(Number(cart!.items[0]!.unitPriceMinor)).toBe(360000);
     expect(cart!.items[0]!.needsPricing).toBe(false);
   });
 
@@ -208,7 +208,7 @@ describe('voice order capture (field fidelity + safety)', () => {
     await bypass();
     const item = await prisma.cartItem.findFirst({ where: { organizationId: a.orgId } });
     expect(item!.needsPricing).toBe(true);
-    expect(item!.unitPriceMinor).toBe(0);
+    expect(Number(item!.unitPriceMinor)).toBe(0);
   });
 
   it('withheld/anonymous caller gets a per-call placeholder, never an empty phone', async () => {

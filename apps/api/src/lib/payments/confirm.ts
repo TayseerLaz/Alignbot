@@ -93,7 +93,7 @@ export async function markCartPaid(args: MarkCartPaidArgs): Promise<MarkCartPaid
     return {
       status: 'confirmed' as const,
       cartId: cart.id,
-      totalMinor: cart.totalMinor ?? 0,
+      totalMinor: Number(cart.totalMinor ?? 0),
       currency: cart.currency,
     };
   });

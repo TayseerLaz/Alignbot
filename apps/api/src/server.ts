@@ -1,3 +1,4 @@
+import './lib/bigint-json.js'; // BigInt JSON shim — must load before anything serializes a bigint
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';

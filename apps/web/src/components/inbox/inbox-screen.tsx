@@ -827,6 +827,11 @@ function ThreadView({
   // AI affordances in the inbox (the "deploy on /bot" banner + the per-thread
   // AI toggle) — surfacing them would be misleading for a tenant without AI.
   const aiEnabled = !(session?.organization?.disabledFeatures ?? []).includes('ai');
+  // Voice-note transcription toggle — when off, the inbox hides the "Transcribe"
+  // button (the server already skips generating transcripts for this tenant).
+  const transcriptionEnabled = !(session?.organization?.disabledFeatures ?? []).includes(
+    'voice_transcription',
+  );
 
   const messagesQ = useQuery({
     queryKey: ['inbox-thread', thread?.id, 'messages'],
@@ -1137,6 +1142,7 @@ function ThreadView({
                   key={item.msg.id}
                   message={item.msg}
                   isAlignedAdmin={isAlignedAdmin}
+                  transcriptionEnabled={transcriptionEnabled}
                 />
               ) : (
                 <NoteBubble key={item.note.id} note={item.note} />
@@ -1327,17 +1333,6 @@ function ThreadHeader({
                 </span>
               </button>
             )}
-            {/* Multi-number: which WhatsApp number this conversation is on (you
-                reply from it). Shown when the thread is bound to a number. */}
-            {(thread.channel ?? 'whatsapp') === 'whatsapp' &&
-            (thread.whatsAppChannelLabel || thread.whatsAppChannelPhone) ? (
-              <span
-                className="ml-1 hidden shrink-0 items-center rounded-full bg-surface-muted px-2 py-0.5 text-[10px] font-medium text-foreground-muted sm:inline-flex"
-                title="The WhatsApp number this conversation is on — replies are sent from it"
-              >
-                via {thread.whatsAppChannelLabel || thread.whatsAppChannelPhone}
-              </span>
-            ) : null}
             {thread.blocked ? (
               <span
                 className="ml-1 inline-flex shrink-0 items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700"
@@ -1717,9 +1712,11 @@ const imageUrlCache = new Map<string, string>();
 function Bubble({
   message,
   isAlignedAdmin,
+  transcriptionEnabled,
 }: {
   message: Message;
   isAlignedAdmin: boolean;
+  transcriptionEnabled: boolean;
 }) {
   const isOut = message.direction === 'outbound';
   // Phase 8 / 1.3 — ALIGNED-admin only: click any bot bubble to inline
@@ -1780,7 +1777,12 @@ function Bubble({
   const isAudio = mt === 'audio' || mt === 'voice';
   const showAudio = isAudio && !!imgSrc;
   // The transcript is stored as the message body, prefixed with 🎙.
-  const audioTranscript = isAudio ? (message.body ?? '').replace(/^🎙\s*/, '').trim() : '';
+  const rawTranscript = isAudio ? (message.body ?? '').replace(/^🎙\s*/, '').trim() : '';
+  // Only a REAL transcript counts: hide the Transcribe button when the tenant has
+  // voice transcription turned off, or when the body is just the "Voice note"
+  // placeholder (a note that wasn't transcribed). The audio still plays.
+  const audioTranscript =
+    transcriptionEnabled && rawTranscript && rawTranscript !== 'Voice note' ? rawTranscript : '';
   // For image bubbles the body is usually a bland "[image]" / "[image] Name"
   // placeholder — hide it when we render the real picture; keep genuine
   // customer captions.
@@ -1862,11 +1864,7 @@ function Bubble({
                   </p>
                 ) : null}
               </div>
-            ) : (
-              <p className={cn('text-xs', isOut ? 'text-white/70' : 'text-foreground-subtle')}>
-                No transcription available.
-              </p>
-            )}
+            ) : null}
           </div>
         ) : null}
         {/* Template header media (broadcast / test-send) — the image / video /

@@ -189,6 +189,10 @@ export interface AiBudgetToday {
   messagesUsed: number;
   messageCap: number | null;
   messagePct: number | null;
+  // Daily AI-token budget — the cap that actually PAUSES the bot when hit.
+  // Drives the dashboard banner (warn at 80%, red/paused at 100%).
+  percentUsed: number;
+  unlimited: boolean;
 }
 
 interface AiUsageResponse {
@@ -210,6 +214,8 @@ export async function getAiBudgetToday(): Promise<AiBudgetToday> {
     messagesUsed: d.messagesUsed,
     messageCap: d.messageCap,
     messagePct: d.messagePct,
+    percentUsed: d.percentUsed,
+    unlimited: d.unlimited,
   };
 }
 

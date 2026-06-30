@@ -5,6 +5,7 @@ import { useState } from 'react';
 
 import { AddWidgetDialog } from '@/components/dashboard/add-widget-dialog';
 import { AdminPlatformDashboard } from '@/components/dashboard/admin-platform-dashboard';
+import { AiBudgetBanner } from '@/components/dashboard/ai-budget-banner';
 import { EditModeProvider, useEditMode } from '@/components/dashboard/edit-mode-context';
 import { useDashboardLayout } from '@/components/dashboard/use-dashboard-layout';
 import { WIDGETS_BY_ID, type WidgetDef, type WidgetId } from '@/components/dashboard/widget-registry';
@@ -94,6 +95,12 @@ function DashboardShell({ greeting }: { greeting: string }) {
           )
         }
       />
+
+      {/* Daily AI-budget alert — shown above everything when the bot is near or
+          at its daily limit (the cap that pauses automatic replies). */}
+      <div className="mb-6">
+        <AiBudgetBanner />
+      </div>
 
       {visible.length === 0 ? (
         <EmptyDashboard onAddClick={() => setAddOpen(true)} />

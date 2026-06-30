@@ -164,7 +164,10 @@ export function activeChatProvider(): { provider: 'openai' | 'groq'; model: stri
   return { provider, model };
 }
 
-export const DAILY_TOKEN_LIMIT_PER_ORG = 200_000;
+// Per-org daily token cap. Configurable via env; default raised from the old
+// hardcoded 200k now that usage is reconciled to ACTUAL tokens (below) instead
+// of the pessimistic pre-charge, so the cap reflects real consumption.
+export const DAILY_TOKEN_LIMIT_PER_ORG = Number(process.env.AI_DAILY_TOKEN_LIMIT ?? 1_000_000);
 
 // gpt-4o-mini price points (USD per 1M tokens), used to estimate cost.
 // We don't track input/output split per call; assume a 70/30 mix which
@@ -196,6 +199,60 @@ async function consumeDailyTokens(orgId: string, tokens: number): Promise<boolea
   }
   if (await isUnlimitedOrg(orgId)) return true;
   return used <= DAILY_TOKEN_LIMIT_PER_ORG;
+}
+
+// Adjust today's counter by a (possibly negative) delta. Used to reconcile the
+// pessimistic pre-charge down to the actual tokens a completion used — and to
+// refund the full pre-charge when a call is aborted (budget gate / LLM error).
+// Clamps at 0 so a refund can never drive the counter negative.
+async function reconcileDailyTokens(orgId: string, delta: number): Promise<void> {
+  const d = Math.round(delta);
+  if (d === 0) return;
+  const redis = getRedis();
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `aitokens:${orgId}:${day}`;
+  const after = await redis.incrby(key, d);
+  if (after < 0) await redis.set(key, '0', 'KEEPTTL');
+  // Fire-and-forget: warn the tenant at 80% and again when the bot is paused at
+  // 100%, each at most once per day (Redis NX flag).
+  void maybeNotifyBudgetThreshold(orgId, Math.max(0, after)).catch(() => {});
+}
+
+// Emit a dashboard notification when an org crosses 80% / 100% of its daily AI
+// budget — so operators get a heads-up BEFORE replies pause, and a clear alert
+// when they do. Deduped per-day per-threshold; silent for unlimited orgs.
+async function maybeNotifyBudgetThreshold(orgId: string, used: number): Promise<void> {
+  if (await isUnlimitedOrg(orgId)) return;
+  const limit = DAILY_TOKEN_LIMIT_PER_ORG;
+  if (limit <= 0) return;
+  const pct = (used / limit) * 100;
+  const threshold: 80 | 100 | null = pct >= 100 ? 100 : pct >= 80 ? 80 : null;
+  if (!threshold) return;
+  const redis = getRedis();
+  const day = new Date().toISOString().slice(0, 10);
+  const flag = `aitokens:${orgId}:${day}:notified${threshold}`;
+  const claimed = await redis.set(flag, '1', 'EX', 60 * 60 * 26, 'NX');
+  if (claimed !== 'OK') return; // already notified for this threshold today
+  const { createNotification } = await import('./notifications.js');
+  if (threshold === 100) {
+    await createNotification({
+      organizationId: orgId,
+      kind: 'quota_warning',
+      severity: 'error',
+      title: 'AI replies paused — daily limit reached',
+      body: "Your bot has used 100% of today's AI allowance, so automatic replies are paused. Reply manually from the Inbox; the bot resumes tomorrow, or contact ALIGNED to raise your limit.",
+      link: '/dashboard',
+    });
+  } else {
+    await createNotification({
+      organizationId: orgId,
+      kind: 'quota_warning',
+      severity: 'warning',
+      title: 'AI usage at 80% of today’s limit',
+      body: "Your bot has used 80% of today's AI allowance. If it reaches 100%, automatic replies will pause until tomorrow.",
+      link: '/dashboard',
+    });
+  }
 }
 
 // Read-only helper for the dashboard widget. Returns today's running
@@ -239,8 +296,12 @@ export async function complete(args: CompleteArgs): Promise<{ text: string; inpu
   const estIn = Math.ceil(args.systemPrompt.length / 4)
     + args.messages.reduce((s, m) => s + Math.ceil(m.content.length / 4), 0);
   const estOut = args.maxTokens ?? 1024;
-  const ok = await consumeDailyTokens(args.organizationId, estIn + estOut);
+  const prePaid = estIn + estOut;
+  const ok = await consumeDailyTokens(args.organizationId, prePaid);
   if (!ok) {
+    // We incremented the counter in the gate check but are NOT making the call —
+    // refund the pre-charge so a blocked attempt doesn't permanently burn budget.
+    await reconcileDailyTokens(args.organizationId, -prePaid);
     const err = new Error('Daily AI token budget exceeded for this organization.');
     (err as Error & { code?: string }).code = 'TOKEN_BUDGET_EXCEEDED';
     throw err;
@@ -248,16 +309,34 @@ export async function complete(args: CompleteArgs): Promise<{ text: string; inpu
 
   const plan = await loadOrgPlan(args.organizationId);
 
-  switch (plan) {
-    case 'ultra':
-      return completeUltra(args);
-    case 'max':
-      return completeMax(args);
-    case 'middle':
-      return completeMiddle(args);
-    case 'basic':
-    default:
-      return completeBasic(args);
+  try {
+    let result: { text: string; inputTokens: number; outputTokens: number; model: string };
+    switch (plan) {
+      case 'ultra':
+        result = await completeUltra(args);
+        break;
+      case 'max':
+        result = await completeMax(args);
+        break;
+      case 'middle':
+        result = await completeMiddle(args);
+        break;
+      case 'basic':
+      default:
+        result = await completeBasic(args);
+        break;
+    }
+    // Reconcile the pessimistic pre-charge down to actual usage (almost always a
+    // refund: we pre-charge 1024 output tokens but most replies are far shorter).
+    await reconcileDailyTokens(
+      args.organizationId,
+      result.inputTokens + result.outputTokens - prePaid,
+    );
+    return result;
+  } catch (err) {
+    // The call failed (network / provider error) — refund the full pre-charge.
+    await reconcileDailyTokens(args.organizationId, -prePaid);
+    throw err;
   }
 }
 

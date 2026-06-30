@@ -3826,6 +3826,7 @@ async function maybeReplyAsBot(args: {
     }
 
     // OpenAI call — outside the tx. Safe to be slow.
+    let botError: unknown = null;
     const result = await buildBotResponse({
       organizationId: args.organizationId,
       userMessage: m.bodyText!,
@@ -3843,6 +3844,7 @@ async function maybeReplyAsBot(args: {
       channelLabel: 'WhatsApp',
       openSlots,
     }).catch((err) => {
+      botError = err;
       args.log.warn({ err }, '[whatsapp] bot-engine failed');
       return null;
     });
@@ -3867,6 +3869,16 @@ async function maybeReplyAsBot(args: {
         },
         '[whatsapp] bot reply: LLM returned no text — applying empty-reply fallback',
       );
+      // Out of daily AI budget — do NOT tell the customer the bot is confused
+      // ("rephrase?"). Leave the message unanswered so an operator picks it up;
+      // the dashboard banner + notification already flag the org is capped.
+      if ((botError as { code?: string } | null)?.code === 'TOKEN_BUDGET_EXCEEDED') {
+        args.log.warn(
+          { orgId: args.organizationId, threadId: ctx.threadId },
+          '[whatsapp] daily AI token budget exceeded — skipping bot reply (left for human)',
+        );
+        continue;
+      }
       if (isNoisyInbound(m.bodyText)) continue;
       rawReply = emptyReplyFallback(m.bodyText);
     }

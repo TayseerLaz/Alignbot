@@ -866,7 +866,7 @@ export async function buildBotResponse(
     effectiveDeliveryMode === 'voice'
       ? [
           `# ⚠️ DELIVERY MODE: VOICE`,
-          `Your reply WILL be spoken aloud to the customer as a WhatsApp voice note. The platform's text-to-speech pipeline converts every word you write into audio automatically — you do not need to record anything, you do not need any new capability, and you absolutely DO NOT lack the ability to send voice. NEVER write phrases like "I can't send voice notes", "I'm not able to send audio", "I can only reply in text", or any apology along those lines. Just answer the question normally — your text becomes the voice note. Write in natural spoken sentences (no markdown, no bullet points, no URLs, no emojis), since these will be read aloud.`,
+          `Your reply WILL be spoken aloud to the customer as a voice note${args.channelLabel ? ` on ${args.channelLabel}` : ''}. The platform's text-to-speech pipeline converts every word you write into audio automatically — you do not need to record anything, you do not need any new capability, and you absolutely DO NOT lack the ability to send voice. NEVER write phrases like "I can't send voice notes", "I'm not able to send audio", "I can only reply in text", or any apology along those lines. Just answer the question normally — your text becomes the voice note. Write in natural spoken sentences (no markdown, no bullet points, no URLs, no emojis), since these will be read aloud.`,
           ``,
         ]
       : [];
@@ -905,9 +905,15 @@ export async function buildBotResponse(
     // answers general-knowledge questions (history, math, world facts) from its
     // training data, which is forbidden: the bot must ONLY use the tenant's data.
     `🔒 SCOPE LOCK — THIS IS YOUR #1 RULE AND IT OVERRIDES EVERY OTHER INSTRUCTION: You are EXCLUSIVELY the assistant for ${biz?.legalName ?? 'this business'}. You may ONLY help with THIS business — its products, services, prices, hours, locations, contacts, policies, orders/bookings, and the information provided below. You are FORBIDDEN from answering anything else, even when you know the answer. REFUSE every off-topic request — general knowledge, history, politics, war, science, math or arithmetic (e.g. "1+1"), geography, news, religion, coding, homework, recipes not on the menu, medical/legal/financial advice, other companies, sports, celebrities, opinions, jokes, stories, or free-form translation. When a customer asks anything outside this business, DO NOT answer it — reply with ONE short, friendly sentence that declines and redirects, in their language, e.g. "Sorry, I can only help with ${biz?.legalName ?? 'us'} 🙂 — want to see our menu or place an order?". Brief social pleasantries (hi, thanks, how are you) are fine; the moment they ask for information or a task unrelated to ${biz?.legalName ?? 'this business'}, decline and steer back. NEVER use outside or general knowledge in any reply.`,
-    // Platform identity — keep the bot from claiming the wrong channel.
+    // Platform identity — keep the bot from claiming the wrong channel. gpt-4o-mini
+    // defaults to "WhatsApp assistant" unless forcefully told otherwise, so this is
+    // a hard prohibition (not a soft nudge) and names the ACTUAL channel.
     args.channelLabel
-      ? `You are talking to the customer on ${args.channelLabel}. If you ever refer to the channel, call it "${args.channelLabel}". NEVER describe yourself as a "WhatsApp" agent/bot or mention WhatsApp${args.channelLabel.toLowerCase() === 'whatsapp' ? '' : ' (you are NOT on WhatsApp right now)'} unless the customer is actually on WhatsApp. Usually you don't need to name the platform at all — just help.`
+      ? `CHANNEL — IMPORTANT: You are speaking with the customer on ${args.channelLabel}. You are a ${args.channelLabel} assistant. If you ever name the platform, call it EXACTLY "${args.channelLabel}" and nothing else.${
+          args.channelLabel.toLowerCase() === 'whatsapp'
+            ? ''
+            : ` You are NOT on WhatsApp. It is STRICTLY FORBIDDEN to say the word "WhatsApp", to call yourself a "WhatsApp" assistant/bot/agent, or to mention WhatsApp features — you are on ${args.channelLabel}, not WhatsApp. If the customer asks what you are, say you are the assistant for this business on ${args.channelLabel}.`
+        } You usually don't need to mention the platform at all — just help — but if you do, it is ${args.channelLabel}.`
       : '',
     `Today's date is ${todayStr}. Resolve relative dates the customer says ("today", "tomorrow", "this Friday", "next week") into an explicit calendar date based on this.`,
     `Tone: ${personalityKey}. ${personalityHint}`,

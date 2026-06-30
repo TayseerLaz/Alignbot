@@ -66,6 +66,9 @@ export default function NewTenantPage() {
   const [adminEmail, setEmail] = useState('');
   const [adminPassword, setPwd] = useState('');
   const [sendWelcomeEmail, setSendEmail] = useState(true);
+  // Monthly AI-message allowance (1 message = 1 bot reply / voice turn). Blank =
+  // Unlimited. Defaults to 2000.
+  const [aiMsgCap, setAiMsgCap] = useState('2000');
   // Features start enabled; toggling a checkbox OFF adds its key here. Opt-in
   // features (e.g. Shopify) start DISABLED so new tenants don't get them by default.
   const [disabledFeatures, setDisabledFeatures] = useState<string[]>([
@@ -86,6 +89,8 @@ export default function NewTenantPage() {
         adminPassword: adminPassword.trim() || undefined,
         sendWelcomeEmail,
         disabledFeatures,
+        monthlyAiMessageCap:
+          aiMsgCap.trim() === '' ? null : Math.max(0, Math.floor(Number(aiMsgCap) || 0)),
       }),
     onSuccess: (res) => {
       setCreated(res.data);
@@ -253,6 +258,21 @@ export default function NewTenantPage() {
               <p className="text-[11px] text-foreground-subtle">
                 If blank, we generate a strong 16-character temporary password. The customer is
                 emailed it and prompted to change on first login.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="aiMsgCap">Monthly AI messages</Label>
+              <Input
+                id="aiMsgCap"
+                type="number"
+                min={0}
+                value={aiMsgCap}
+                onChange={(e) => setAiMsgCap(e.target.value)}
+                placeholder="2000"
+              />
+              <p className="text-[11px] text-foreground-subtle">
+                Allowance per month (1 message = one bot reply or voice turn). When used up, the
+                bot pauses until the 1st. Leave blank for Unlimited. Default 2000.
               </p>
             </div>
             <div className="lg:col-span-2">

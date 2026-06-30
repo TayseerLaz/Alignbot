@@ -56,6 +56,9 @@ export const adminCreateTenantBodySchema = z.object({
     .array(z.enum(ORG_FEATURE_KEYS as [string, ...string[]]))
     .max(20)
     .default([]),
+  // Monthly AI-message allowance for the new tenant (1 message = 1 bot reply /
+  // voice turn). Omit = column default (2000); null = Unlimited.
+  monthlyAiMessageCap: z.number().int().min(0).max(10_000_000).nullable().optional(),
 });
 export type AdminCreateTenantBody = z.infer<typeof adminCreateTenantBodySchema>;
 

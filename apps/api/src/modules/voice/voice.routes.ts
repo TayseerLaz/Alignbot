@@ -38,8 +38,17 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
+import { canSendAiMessage, recordAiMessages } from '../../lib/ai-messages.js';
 import { formatMoney, gatherBotData } from '../../lib/bot-engine.js';
 import { computeOpenSlots } from '../../lib/booking-slots.js';
+
+// When a tenant is out of its monthly AI-message allowance, the voicebot is
+// handed this brief "unavailable" persona so callers are declined politely
+// instead of running (and going further over the cap). Works with the existing
+// voicebot — it just speaks whatever instructions it receives.
+const VOICE_PAUSED_GREETING = "Sorry, our automated line isn't available right now.";
+const VOICE_PAUSED_INSTRUCTIONS =
+  'The automated assistant is temporarily unavailable. In the caller\'s language, briefly apologize that you cannot take the call right now and ask them to try again later or contact the business directly, then end the call. Keep it under 20 words. Do not answer any other questions or take any orders.';
 import { withRlsBypass, withTenant } from '../../lib/db.js';
 import type { Tx } from '../../lib/db.js';
 import { badRequest, conflict, forbidden, notFound } from '../../lib/errors.js';
@@ -233,6 +242,14 @@ export default async function voiceRoutes(app: FastifyInstance) {
       const orgId = req.apiKey!.organizationId;
       const { value, cache } = await loadVoiceConfig(orgId, req.log);
       reply.header('x-cache', cache);
+      // Monthly AI-message allowance — when exhausted, decline new calls with a
+      // brief "unavailable" persona instead of running the full bot.
+      if (!(await canSendAiMessage(orgId))) {
+        reply.header('x-ai-paused', '1');
+        return {
+          data: { ...value.data, instructions: VOICE_PAUSED_INSTRUCTIONS, greeting: VOICE_PAUSED_GREETING },
+        };
+      }
       return value;
     },
   );
@@ -397,7 +414,7 @@ export default async function voiceRoutes(app: FastifyInstance) {
         const call = await ensureCall(tx, orgId, callUuid);
         // Ended calls are immutable history: only the FIRST end event lands;
         // replays (or a hostile key re-posting months later) are no-ops.
-        await tx.voiceCall.updateMany({
+        const upd = await tx.voiceCall.updateMany({
           where: { id: call.id, endedAt: null },
           data: {
             outcome: b.outcome,
@@ -405,6 +422,14 @@ export default async function voiceRoutes(app: FastifyInstance) {
             endedAt: b.endedAt ? new Date(b.endedAt) : new Date(),
           },
         });
+        // Count the call's bot turns against the monthly AI-message allowance —
+        // ONLY on the first end event (upd.count===1) so replays don't double-count.
+        let assistantTurns = 0;
+        if (upd.count === 1) {
+          assistantTurns = await tx.voiceCallTurn.count({
+            where: { voiceCallId: call.id, role: 'assistant' },
+          });
+        }
         // Compliance (C2): if the caller SAID a lone "stop"/"unsubscribe" during
         // the call, flip the contact's optedOutAt so follow-up bills/broadcasts
         // stay silent. Parity with the WhatsApp/Messenger STOP handling.
@@ -428,9 +453,10 @@ export default async function voiceRoutes(app: FastifyInstance) {
             });
           }
         }
-        return call;
+        return { call, assistantTurns };
       });
-      return { data: { id: row.id } };
+      if (row.assistantTurns > 0) void recordAiMessages(orgId, row.assistantTurns);
+      return { data: { id: row.call.id } };
     },
   );
 

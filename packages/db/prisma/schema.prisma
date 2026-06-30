@@ -368,6 +368,12 @@ model Organization {
   // `max` = Anthropic Claude Sonnet; `ultra` = Haiku-assisted Sonnet with
   // per-contact persona memory). Editable from /aligned-admin.
   aiPlan    AiPlan    @default(basic) @map("ai_plan")
+  // ALIGNED-admin-set monthly AI-message allowance for this tenant. One AI
+  // message = one bot reply (chat) or one bot turn (voice). When the month's
+  // count reaches this cap, the bot pauses (leaves chats for a human) until the
+  // 1st. Tenants see ONLY messages (never tokens). null = UNLIMITED (admin
+  // opt-out of metering); the column default seeds new/existing tenants at 2000.
+  monthlyAiMessageCap Int? @default(2000) @map("monthly_ai_message_cap")
   // ALIGNED-admin per-tenant access control. Feature keys listed here are
   // DISABLED for this org: their portal pages are hidden + route-guarded, and
   // 'ai' additionally turns off the bot's auto-reply (manual inbox only — a

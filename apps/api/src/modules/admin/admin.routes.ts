@@ -260,6 +260,10 @@ export default async function adminRoutes(app: FastifyInstance) {
             disabledFeatures: Array.from(
               new Set([...(body.disabledFeatures ?? []), ...ORG_FEATURE_DEFAULT_DISABLED]),
             ),
+            // undefined => column default (2000); explicit null => Unlimited.
+            ...(body.monthlyAiMessageCap !== undefined
+              ? { monthlyAiMessageCap: body.monthlyAiMessageCap }
+              : {}),
           },
         });
         const admin = await tx.user.create({
@@ -2434,6 +2438,14 @@ export default async function adminRoutes(app: FastifyInstance) {
           200: itemEnvelopeSchema(
             z.object({
               aiPlan: z.enum(['basic', 'middle', 'max', 'ultra']),
+              // Monthly AI-MESSAGE allowance — the enforced, tenant-facing cap
+              // (1 message = 1 bot reply / voice turn). null cap = unlimited.
+              aiMessages: z.object({
+                used: z.number().int(),
+                cap: z.number().int().nullable(),
+                unlimited: z.boolean(),
+                percentUsed: z.number().int(),
+              }),
               today: z.object({
                 tokens: z.number().int(),
                 inputTokens: z.number().int(),
@@ -2602,10 +2614,13 @@ export default async function adminRoutes(app: FastifyInstance) {
       });
 
       const { planCode, quotas } = await withRlsBypass((tx) => getOrgQuotas(tx as never, orgId));
+      const { readAiMessageUsage } = await import('../../lib/ai-messages.js');
+      const aiMessages = await readAiMessageUsage(orgId);
 
       return {
         data: {
           aiPlan: (org as { aiPlan?: 'basic' | 'middle' | 'max' | 'ultra' }).aiPlan ?? 'basic',
+          aiMessages,
           today: round(today),
           thisWeek: round(thisWeek),
           thisMonth: round(thisMonth),
@@ -2676,6 +2691,53 @@ export default async function adminRoutes(app: FastifyInstance) {
         });
       }
       return { data: { id: updated.id, aiPlan: updated.aiPlan } };
+    },
+  );
+
+  // ---------- PUT /aligned-admin/orgs/:id/ai-message-cap ----------------
+  // ALIGNED-admin sets a tenant's MONTHLY AI-MESSAGE allowance (1 message = 1
+  // bot reply / voice turn). cap = null -> Unlimited (no metering).
+  r.put(
+    '/aligned-admin/orgs/:id/ai-message-cap',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: "Set a tenant's monthly AI-message allowance (null = unlimited).",
+        params: z.object({ id: uuidSchema }),
+        body: z.object({ cap: z.number().int().min(0).max(10_000_000).nullable() }),
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({ id: uuidSchema, monthlyAiMessageCap: z.number().int().nullable() }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const orgId = req.params.id;
+      const cap = req.body.cap;
+      const updated = await withRlsBypass(async (tx) => {
+        const existing = await tx.organization.findUnique({
+          where: { id: orgId },
+          select: { id: true },
+        });
+        if (!existing) return null;
+        return tx.organization.update({
+          where: { id: orgId },
+          data: { monthlyAiMessageCap: cap },
+          select: { id: true, monthlyAiMessageCap: true },
+        });
+      });
+      if (!updated) throw notFound('Organization not found');
+      await recordAudit({
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        action: 'ai_plan_changed',
+        entityType: 'organization',
+        entityId: orgId,
+        metadata: { monthlyAiMessageCap: cap },
+      });
+      return { data: { id: updated.id, monthlyAiMessageCap: updated.monthlyAiMessageCap } };
     },
   );
 

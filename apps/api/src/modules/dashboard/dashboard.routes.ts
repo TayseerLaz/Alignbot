@@ -198,21 +198,26 @@ export default async function dashboardRoutes(app: FastifyInstance) {
     async (req) => {
       const orgId = req.auth!.organizationId;
       const { readDailyTokenUsage } = await import('../../lib/openai.js');
-      const { getOrgQuotas } = await import('../../lib/billing.js');
-      const data = await readDailyTokenUsage(orgId);
-      // Monthly message quota — the only usage metric tenants see (with %).
-      const { quotas } = await app.tenant(req, (tx) => getOrgQuotas(tx as never, orgId));
-      const msg = quotas.find((q) => q.key === 'monthly_messages');
+      const { readAiMessageUsage } = await import('../../lib/ai-messages.js');
+      // Tenant-facing usage is the MONTHLY AI-MESSAGE allowance (1 message = 1
+      // bot reply / voice turn). Tokens/cost stay admin-only — kept in the
+      // response shape but never rendered by the tenant widget/banner.
+      const tokenData = await readDailyTokenUsage(orgId);
+      const ai = await readAiMessageUsage(orgId);
       const base = {
-        ...data,
-        messagesUsed: msg?.used ?? 0,
-        messageCap: msg?.cap ?? null,
-        messagePct: msg?.pct ?? null,
+        used: tokenData.used,
+        limit: tokenData.limit,
+        estCostUsd: tokenData.estCostUsd,
+        unlimited: ai.unlimited,
+        percentUsed: ai.percentUsed,
+        messagesUsed: ai.used,
+        messageCap: ai.cap,
+        messagePct: ai.unlimited ? null : ai.percentUsed,
       };
-      // Force unlimited when the JWT says admin — covers the case where
-      // the org's membership-based check missed for any reason.
-      if (req.auth!.isAlignedAdmin && !data.unlimited) {
-        return { data: { ...base, unlimited: true, percentUsed: 0 } };
+      // Force unlimited when the JWT says admin — covers the case where the
+      // org's membership-based check missed for any reason.
+      if (req.auth!.isAlignedAdmin && !ai.unlimited) {
+        return { data: { ...base, unlimited: true, percentUsed: 0, messagePct: null } };
       }
       return { data: base };
     },

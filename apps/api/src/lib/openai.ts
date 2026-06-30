@@ -197,8 +197,13 @@ async function consumeDailyTokens(orgId: string, tokens: number): Promise<boolea
   if (used === tokens) {
     await redis.expire(key, 60 * 60 * 26);
   }
-  if (await isUnlimitedOrg(orgId)) return true;
-  return used <= DAILY_TOKEN_LIMIT_PER_ORG;
+  // Tracking only — the enforced cap is now the per-tenant MONTHLY AI-MESSAGE
+  // allowance (lib/ai-messages.ts), NOT this daily token counter. We keep
+  // counting tokens purely for the ALIGNED-admin cost view (tokens/USD per
+  // day/month), so this never gates a reply. (Avoids the old failure mode where
+  // a low daily token cap silently bricked the bot.)
+  void orgId;
+  return true;
 }
 
 // Adjust today's counter by a (possibly negative) delta. Used to reconcile the
@@ -213,46 +218,6 @@ async function reconcileDailyTokens(orgId: string, delta: number): Promise<void>
   const key = `aitokens:${orgId}:${day}`;
   const after = await redis.incrby(key, d);
   if (after < 0) await redis.set(key, '0', 'KEEPTTL');
-  // Fire-and-forget: warn the tenant at 80% and again when the bot is paused at
-  // 100%, each at most once per day (Redis NX flag).
-  void maybeNotifyBudgetThreshold(orgId, Math.max(0, after)).catch(() => {});
-}
-
-// Emit a dashboard notification when an org crosses 80% / 100% of its daily AI
-// budget — so operators get a heads-up BEFORE replies pause, and a clear alert
-// when they do. Deduped per-day per-threshold; silent for unlimited orgs.
-async function maybeNotifyBudgetThreshold(orgId: string, used: number): Promise<void> {
-  if (await isUnlimitedOrg(orgId)) return;
-  const limit = DAILY_TOKEN_LIMIT_PER_ORG;
-  if (limit <= 0) return;
-  const pct = (used / limit) * 100;
-  const threshold: 80 | 100 | null = pct >= 100 ? 100 : pct >= 80 ? 80 : null;
-  if (!threshold) return;
-  const redis = getRedis();
-  const day = new Date().toISOString().slice(0, 10);
-  const flag = `aitokens:${orgId}:${day}:notified${threshold}`;
-  const claimed = await redis.set(flag, '1', 'EX', 60 * 60 * 26, 'NX');
-  if (claimed !== 'OK') return; // already notified for this threshold today
-  const { createNotification } = await import('./notifications.js');
-  if (threshold === 100) {
-    await createNotification({
-      organizationId: orgId,
-      kind: 'quota_warning',
-      severity: 'error',
-      title: 'AI replies paused — daily limit reached',
-      body: "Your bot has used 100% of today's AI allowance, so automatic replies are paused. Reply manually from the Inbox; the bot resumes tomorrow, or contact ALIGNED to raise your limit.",
-      link: '/dashboard',
-    });
-  } else {
-    await createNotification({
-      organizationId: orgId,
-      kind: 'quota_warning',
-      severity: 'warning',
-      title: 'AI usage at 80% of today’s limit',
-      body: "Your bot has used 80% of today's AI allowance. If it reaches 100%, automatic replies will pause until tomorrow.",
-      link: '/dashboard',
-    });
-  }
 }
 
 // Read-only helper for the dashboard widget. Returns today's running

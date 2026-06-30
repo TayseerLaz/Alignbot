@@ -23,6 +23,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
+import { canSendAiMessage, recordAiMessages } from '../../lib/ai-messages.js';
 import { recordAudit, recordCredentialAudit } from '../../lib/audit.js';
 import { withRlsBypass, type Tx } from '../../lib/db.js';
 import { badRequest, notFound } from '../../lib/errors.js';
@@ -738,6 +739,13 @@ async function maybeReplyOnMessenger(
     openSlots = (await computeOpenSlots(orgId, bookingAvail, new Date(), 6)).map((s) => s.label);
   }
 
+  // Monthly AI-message allowance — once the tenant is out of allowance for the
+  // month, pause the bot (leave the chat for a human) instead of replying.
+  if (!(await canSendAiMessage(orgId))) {
+    log.warn({ orgId }, '[messenger] monthly AI message allowance reached — skipping bot reply (left for human)');
+    return;
+  }
+
   let rawText: string;
   try {
     const result = await buildBotResponse({
@@ -755,6 +763,8 @@ async function maybeReplyOnMessenger(
     log.warn({ err }, '[messenger] buildBotResponse failed');
     return;
   }
+  // Count one AI message against the monthly allowance for this bot reply.
+  void recordAiMessages(orgId, 1);
 
   // Human handoff — supersedes everything. Trips on the [HANDOFF] marker OR an
   // explicit "talk to a human / agent / support" request (covers the tappable

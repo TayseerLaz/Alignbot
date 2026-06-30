@@ -67,6 +67,7 @@ interface OrgDetails {
 
 interface AiUsage {
   aiPlan: AiPlan;
+  aiMessages: { used: number; cap: number | null; unlimited: boolean; percentUsed: number };
   today: { tokens: number; usd: number; replies: number };
   thisMonth: { tokens: number; usd: number; replies: number };
 }
@@ -161,6 +162,19 @@ export default function OrgDetailPage() {
       invalidate();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Plan change failed'),
+  });
+
+  const setAiMessageCap = useMutation({
+    mutationFn: (cap: number | null) =>
+      api.put<{ data: { monthlyAiMessageCap: number | null } }>(
+        `/api/v1/aligned-admin/orgs/${id}/ai-message-cap`,
+        { cap },
+      ),
+    onSuccess: () => {
+      toast.success('Monthly AI messages updated');
+      queryClient.invalidateQueries({ queryKey: ['admin-org-usage', id] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Update failed'),
   });
 
   const control = useMutation({
@@ -341,7 +355,25 @@ export default function OrgDetailPage() {
                 </SelectContent>
               </Select>
             </Row>
-            <div className="grid grid-cols-2 gap-2 pt-1">
+            <div className="space-y-1.5 border-t border-border pt-3">
+              <p className="text-xs font-medium text-foreground">Monthly AI messages (allowance)</p>
+              {usage?.aiMessages ? (
+                <AiMessageCapEditor
+                  key={`${usage.aiMessages.cap}-${usage.aiMessages.unlimited}`}
+                  used={usage.aiMessages.used}
+                  cap={usage.aiMessages.cap}
+                  unlimited={usage.aiMessages.unlimited}
+                  saving={setAiMessageCap.isPending}
+                  onSave={(c) => setAiMessageCap.mutate(c)}
+                />
+              ) : (
+                <span className="text-xs text-foreground-muted">—</span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2 border-t border-border pt-3">
+              <p className="col-span-2 -mb-1 text-[10px] uppercase tracking-wider text-foreground-subtle">
+                Cost (admin-only)
+              </p>
               <Metric label="Tokens today" value={usage?.today.tokens} mono />
               <Metric label="USD today" value={usage ? `$${usage.today.usd.toFixed(2)}` : undefined} mono />
               <Metric label="Tokens / month" value={usage?.thisMonth.tokens} mono />
@@ -633,6 +665,58 @@ function Metric({ label, value, mono }: { label: string; value?: number | string
       <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">{label}</p>
       <p className={mono ? 'mt-0.5 font-mono tabular-nums text-sm' : 'mt-0.5 text-sm font-semibold'}>
         {value ?? '—'}
+      </p>
+    </div>
+  );
+}
+
+// Per-tenant monthly AI-message allowance editor (admin). Self-seeds from props;
+// remounted via `key` when the server value changes after a save.
+function AiMessageCapEditor({
+  used,
+  cap,
+  unlimited,
+  saving,
+  onSave,
+}: {
+  used: number;
+  cap: number | null;
+  unlimited: boolean;
+  saving: boolean;
+  onSave: (cap: number | null) => void;
+}) {
+  const [val, setVal] = useState(cap != null ? String(cap) : '');
+  const [unl, setUnl] = useState(unlimited);
+  const pct = unlimited || !cap ? 0 : Math.min(100, Math.round((used / cap) * 100));
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 text-xs text-foreground-muted">
+          <input type="checkbox" checked={unl} onChange={(e) => setUnl(e.target.checked)} />
+          Unlimited
+        </label>
+        {!unl && (
+          <input
+            type="number"
+            min={0}
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            className="h-8 w-32 rounded-md border border-border bg-surface px-2 text-sm tabular-nums"
+            placeholder="messages / mo"
+          />
+        )}
+        <Button
+          size="sm"
+          loading={saving}
+          onClick={() => onSave(unl ? null : Math.max(0, Math.floor(Number(val) || 0)))}
+        >
+          Save
+        </Button>
+      </div>
+      <p className="text-xs text-foreground-muted">
+        {unlimited
+          ? 'Unlimited — no metering this month.'
+          : `${used.toLocaleString()} / ${(cap ?? 0).toLocaleString()} used this month (${pct}%).`}
       </p>
     </div>
   );

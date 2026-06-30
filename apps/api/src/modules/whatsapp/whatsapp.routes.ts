@@ -39,6 +39,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
+import { canSendAiMessage, recordAiMessages } from '../../lib/ai-messages.js';
 import { recordAudit, recordCredentialAudit } from '../../lib/audit.js';
 import { attributeBroadcastResponse } from '../../lib/broadcast-response.js';
 import { generateOpaqueToken } from '../../lib/crypto.js';
@@ -3825,6 +3826,16 @@ async function maybeReplyAsBot(args: {
       );
     }
 
+    // Monthly AI-message allowance — once the tenant is out of allowance for
+    // the month, pause the bot (leave the chat for a human) instead of replying.
+    if (!(await canSendAiMessage(args.organizationId))) {
+      args.log.warn(
+        { orgId: args.organizationId, threadId: ctx.threadId },
+        '[whatsapp] monthly AI message allowance reached — skipping bot reply (left for human)',
+      );
+      continue;
+    }
+
     // OpenAI call — outside the tx. Safe to be slow.
     let botError: unknown = null;
     const result = await buildBotResponse({
@@ -3850,6 +3861,8 @@ async function maybeReplyAsBot(args: {
     });
     stopwatch.lap('llm');
     let rawReply = result?.text ?? null;
+    // Count one AI message against the monthly allowance for a real bot reply.
+    if (rawReply) void recordAiMessages(args.organizationId, 1);
     const channel = ctx.channel;
     if (!rawReply) {
       // Don't go silent on the customer. We already fired the typing

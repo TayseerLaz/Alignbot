@@ -189,6 +189,20 @@ export default async function dashboardRoutes(app: FastifyInstance) {
               messagesUsed: z.number().int().nonnegative(),
               messageCap: z.number().int().nonnegative().nullable(),
               messagePct: z.number().int().min(0).max(100).nullable(),
+              // Every enforced limit the tenant can hit (the things that "stop"
+              // when full): plan messages/broadcasts/imports + product/service/
+              // member/api-key/webhook caps. Lets the dashboard show ALL limits
+              // and warn before any of them is reached.
+              quotas: z.array(
+                z.object({
+                  key: z.string(),
+                  label: z.string(),
+                  monthly: z.boolean(),
+                  used: z.number().int().nonnegative(),
+                  cap: z.number().int().nullable(),
+                  pct: z.number().int().min(0).max(100).nullable(),
+                }),
+              ),
             }),
           ),
         },
@@ -202,8 +216,12 @@ export default async function dashboardRoutes(app: FastifyInstance) {
       // Tenant-facing usage is the MONTHLY AI-MESSAGE allowance (1 message = 1
       // bot reply / voice turn). Tokens/cost stay admin-only — kept in the
       // response shape but never rendered by the tenant widget/banner.
+      const { getOrgQuotas } = await import('../../lib/billing.js');
       const tokenData = await readDailyTokenUsage(orgId);
       const ai = await readAiMessageUsage(orgId);
+      // Every enforced limit the tenant can hit (plan messages/broadcasts/
+      // imports + catalog/member/key caps) so the dashboard shows them all.
+      const { quotas } = await app.tenant(req, (tx) => getOrgQuotas(tx as never, orgId));
       const base = {
         used: tokenData.used,
         limit: tokenData.limit,
@@ -213,6 +231,14 @@ export default async function dashboardRoutes(app: FastifyInstance) {
         messagesUsed: ai.used,
         messageCap: ai.cap,
         messagePct: ai.unlimited ? null : ai.percentUsed,
+        quotas: quotas.map((q) => ({
+          key: q.key,
+          label: q.label,
+          monthly: q.monthly,
+          used: q.used,
+          cap: q.cap,
+          pct: q.pct,
+        })),
       };
       // NOTE: do NOT force-unlimited just because the VIEWER is an ALIGNED admin.
       // Whether an org is metered is a property of the ORG (isOrgUnlimited →

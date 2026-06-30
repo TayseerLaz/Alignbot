@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Activity, BarChart3, Clock, MessageCircle, TrendingUp, Users } from 'lucide-react';
 import { useState } from 'react';
 
+import { UsageLimitsWidget } from '@/components/dashboard/widgets/usage-limits';
 import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -79,6 +80,13 @@ export default function AnalyticsPage() {
           </Select>
         }
       />
+
+      {/* Usage & limits — every cap the tenant can hit (AI messages + plan
+          quotas), color-coded, so they see what's near/at a limit and why
+          something may have stopped. */}
+      <div className="mb-5 max-w-xl">
+        <UsageLimitsWidget />
+      </div>
 
       {!a ? (
         <div className="space-y-3">

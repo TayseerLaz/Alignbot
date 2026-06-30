@@ -182,6 +182,15 @@ export async function getOutreachCampaigns(): Promise<OutreachData> {
 // new route here. The response shape needs a small adapter so the widget
 // stays decoupled from the legacy field names.
 
+export interface UsageQuota {
+  key: string;
+  label: string;
+  monthly: boolean;
+  used: number;
+  cap: number | null; // null = unlimited
+  pct: number | null;
+}
+
 export interface AiBudgetToday {
   plan: 'Unlimited' | 'Capped';
   // Tenant-facing: messages used + cap + percentage only. Tokens/cost are
@@ -189,10 +198,13 @@ export interface AiBudgetToday {
   messagesUsed: number;
   messageCap: number | null;
   messagePct: number | null;
-  // Daily AI-token budget — the cap that actually PAUSES the bot when hit.
+  // Monthly AI-message allowance — the cap that PAUSES the bot when hit.
   // Drives the dashboard banner (warn at 80%, red/paused at 100%).
   percentUsed: number;
   unlimited: boolean;
+  // Every other enforced limit the tenant can hit (plan messages/broadcasts/
+  // imports + catalog/member/key caps) — surfaced in the "Usage & limits" widget.
+  quotas: UsageQuota[];
 }
 
 interface AiUsageResponse {
@@ -204,6 +216,7 @@ interface AiUsageResponse {
   messagesUsed: number;
   messageCap: number | null;
   messagePct: number | null;
+  quotas: UsageQuota[];
 }
 
 export async function getAiBudgetToday(): Promise<AiBudgetToday> {
@@ -216,6 +229,7 @@ export async function getAiBudgetToday(): Promise<AiBudgetToday> {
     messagePct: d.messagePct,
     percentUsed: d.percentUsed,
     unlimited: d.unlimited,
+    quotas: d.quotas ?? [],
   };
 }
 

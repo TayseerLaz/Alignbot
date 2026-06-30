@@ -13,6 +13,7 @@ import {
   Activity,
   Bot,
   Filter,
+  Gauge,
   Inbox,
   LayoutGrid,
   ListChecks,
@@ -42,6 +43,7 @@ import { OutreachCampaignsWidget } from './widgets/outreach-campaigns';
 import { RecentActivityWidget } from './widgets/recent-activity';
 import { ReplyQualityWidget } from './widgets/reply-quality';
 import { SalesRevenueWidget } from './widgets/sales-revenue';
+import { UsageLimitsWidget } from './widgets/usage-limits';
 import { VoiceCallsWidget } from './widgets/voice-calls';
 
 export type WidgetId =
@@ -59,7 +61,8 @@ export type WidgetId =
   | 'audience'
   | 'reply-quality'
   | 'voice-calls'
-  | 'orders-by-channel';
+  | 'orders-by-channel'
+  | 'usage-limits';
 
 /**
  * Where the widget lives on the page. The dashboard places `full`
@@ -156,6 +159,15 @@ export const WIDGETS: WidgetDef[] = [
     slot: 'half',
     defaultOn: true,
     Component: AiBudgetWidget,
+  },
+  {
+    id: 'usage-limits',
+    title: 'Usage & limits',
+    description: 'Every limit you can hit — AI messages, plan messages, broadcasts, imports, products. Warns before anything stops.',
+    icon: Gauge,
+    slot: 'half',
+    defaultOn: true,
+    Component: UsageLimitsWidget,
   },
   {
     id: 'connections',

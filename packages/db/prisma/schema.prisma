@@ -2432,6 +2432,11 @@ model Broadcast {
   scheduledFor        DateTime?             @map("scheduled_for")
   startedAt           DateTime?             @map("started_at")
   completedAt         DateTime?             @map("completed_at")
+  // Batched/throttled send: release recipients in waves of `batchSize` every
+  // `batchIntervalMinutes`. 0 = no batching (send all at once, rate-limited).
+  // The fanout worker stamps each recipient's send job with a computed delay.
+  batchSize            Int                  @default(0) @map("batch_size")
+  batchIntervalMinutes Int                 @default(0) @map("batch_interval_minutes")
   // Phase 5.3 — send window in the channel's timezone (or per-contact if set).
   // Hours stored as 0-23. Send worker requeues recipients outside the window.
   sendWindowStartHour Int?                  @map("send_window_start_hour")

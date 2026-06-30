@@ -75,6 +75,8 @@ interface BroadcastRow {
   sendWindowStartHour: number | null;
   sendWindowEndHour: number | null;
   sendWindowTimezone: string | null;
+  batchSize: number;
+  batchIntervalMinutes: number;
   abWinnerStrategy: string | null;
   abWinnerVariant: BroadcastVariant | null;
   abWinnerDecidedAt: Date | null;
@@ -124,6 +126,8 @@ function toDto(row: BroadcastRow) {
     sendWindowStartHour: row.sendWindowStartHour,
     sendWindowEndHour: row.sendWindowEndHour,
     sendWindowTimezone: row.sendWindowTimezone,
+    batchSize: row.batchSize ?? 0,
+    batchIntervalMinutes: row.batchIntervalMinutes ?? 0,
     abWinnerStrategy: row.abWinnerStrategy,
     abWinnerVariant: row.abWinnerVariant,
     abWinnerDecidedAt: row.abWinnerDecidedAt?.toISOString() ?? null,
@@ -326,6 +330,8 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
             variantBVariables: body.variantBVariables
               ? (body.variantBVariables as never)
               : undefined,
+            batchSize: body.batchSize ?? 0,
+            batchIntervalMinutes: body.batchIntervalMinutes ?? 0,
             sendWindowStartHour: body.sendWindowStartHour ?? null,
             sendWindowEndHour: body.sendWindowEndHour ?? null,
             sendWindowTimezone: body.sendWindowTimezone ?? null,

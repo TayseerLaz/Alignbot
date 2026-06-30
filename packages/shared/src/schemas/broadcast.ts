@@ -206,6 +206,10 @@ export const broadcastDtoSchema = z.object({
   sendWindowStartHour: z.number().int().nullable(),
   sendWindowEndHour: z.number().int().nullable(),
   sendWindowTimezone: z.string().nullable(),
+  // Batched/throttled send: waves of batchSize every batchIntervalMinutes.
+  // 0 = no batching (send all at once).
+  batchSize: z.number().int().nonnegative().default(0),
+  batchIntervalMinutes: z.number().int().nonnegative().default(0),
   abWinnerStrategy: z.string().nullable(),
   abWinnerVariant: z.enum(['A', 'B']).nullable(),
   abWinnerDecidedAt: z.string().datetime().nullable(),
@@ -250,6 +254,10 @@ export const createBroadcastBodySchema = z.object({
   sendWindowStartHour: z.number().int().min(0).max(23).optional().nullable(),
   sendWindowEndHour: z.number().int().min(0).max(23).optional().nullable(),
   sendWindowTimezone: z.string().trim().max(60).optional().nullable(),
+  // Batched/throttled send: release `batchSize` recipients, then wait
+  // `batchIntervalMinutes` before the next wave. Both 0 = send all at once.
+  batchSize: z.number().int().min(0).max(100000).optional().default(0),
+  batchIntervalMinutes: z.number().int().min(0).max(1440).optional().default(0),
   abWinnerStrategy: z.enum(['read_rate', 'response_rate', 'manual']).optional().nullable(),
 });
 export type CreateBroadcastBody = z.infer<typeof createBroadcastBodySchema>;

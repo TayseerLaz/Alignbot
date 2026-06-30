@@ -14,7 +14,7 @@ import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -48,7 +48,7 @@ interface Channel {
 
 type AudienceKind = 'contacts' | 'csv' | 'tags' | 'manual';
 
-const STEPS = ['Basics', 'Audience', 'Personalization', 'Review'] as const;
+const STEPS = ['Basics', 'Audience', 'Personalization', 'Schedule', 'Review'] as const;
 
 // Extract {{1}}, {{2}}, ... from a template body. Returns sorted unique indices.
 function extractTemplateParams(body: string): number[] {
@@ -123,9 +123,14 @@ export default function NewBroadcastPage() {
   const [variantAVariables, setVariantAVariables] = useState<VariableMapping>({});
   const [variantBVariables, setVariantBVariables] = useState<VariableMapping>({});
 
-  // Step 4
+  // Step 4 — Schedule & batching
   const [scheduleLater, setScheduleLater] = useState(false);
   const [scheduleAt, setScheduleAt] = useState('');
+  // Batched/throttled send: release `batchSize` recipients every
+  // `batchIntervalMinutes` instead of all at once.
+  const [batchEnabled, setBatchEnabled] = useState(false);
+  const [batchSize, setBatchSize] = useState(300);
+  const [batchIntervalMinutes, setBatchIntervalMinutes] = useState(30);
   // Compliance: by default unsubscribed contacts are skipped. Operator can
   // explicitly choose to send to them anyway.
   const [includeOptedOut, setIncludeOptedOut] = useState(false);
@@ -248,6 +253,8 @@ export default function NewBroadcastPage() {
         variantBTemplateId: abTest ? variantBTemplateId ?? undefined : undefined,
         variantAVariables,
         variantBVariables: abTest ? variantBVariables : undefined,
+        batchSize: batchEnabled ? batchSize : 0,
+        batchIntervalMinutes: batchEnabled ? batchIntervalMinutes : 0,
       };
       const created = await api.post<{ data: { id: string } }>('/api/v1/broadcasts', body);
       const sendBody = scheduleLater && scheduleAt
@@ -280,6 +287,11 @@ export default function NewBroadcastPage() {
         (!abTest || fieldsB.every((f) => variantBVariables[f.key]))
       );
     }
+    if (step === 3) {
+      if (scheduleLater && !scheduleAt) return false;
+      if (batchEnabled && (batchSize < 1 || batchIntervalMinutes < 1)) return false;
+      return true;
+    }
     return true;
   }, [
     step,
@@ -298,7 +310,22 @@ export default function NewBroadcastPage() {
     fieldsB,
     variantAVariables,
     variantBVariables,
+    scheduleLater,
+    scheduleAt,
+    batchEnabled,
+    batchSize,
+    batchIntervalMinutes,
   ]);
+
+  // Best-effort recipient count for the batch preview. Manual + a fixed
+  // contact selection are known up front; CSV / tags / "select all" resolve at
+  // fanout time, so we show a generic preview for those.
+  const knownRecipientCount: number | null =
+    audienceKind === 'manual'
+      ? manualPhonesRaw.split(/[\n,;]/).filter((p) => p.trim()).length
+      : audienceKind === 'contacts' && !selectAllContacts
+        ? selectedContacts.size
+        : null;
 
   return (
     <>
@@ -729,7 +756,96 @@ export default function NewBroadcastPage() {
         </Card>
       ) : null}
 
+      {/* ----- Schedule & batching (new step, after Personalization) ----- */}
       {step === 3 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Schedule &amp; batching</CardTitle>
+            <CardDescription>
+              Choose when to start, and whether to drip the send out in timed waves instead of all
+              at once.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {/* Start time */}
+            <div>
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-brand-600"
+                  checked={scheduleLater}
+                  onChange={(e) => setScheduleLater(e.target.checked)}
+                />
+                <span className="text-sm font-medium">Schedule the start for later</span>
+              </label>
+              {scheduleLater ? (
+                <Input
+                  type="datetime-local"
+                  value={scheduleAt}
+                  onChange={(e) => setScheduleAt(e.target.value)}
+                  className="mt-2 max-w-xs"
+                />
+              ) : (
+                <p className="mt-1 text-xs text-foreground-muted">
+                  The first batch starts sending immediately.
+                </p>
+              )}
+            </div>
+
+            {/* Batching / throttle */}
+            <div className="border-t border-border pt-4">
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-brand-600"
+                  checked={batchEnabled}
+                  onChange={(e) => setBatchEnabled(e.target.checked)}
+                />
+                <span className="text-sm font-medium">Send in batches (throttle)</span>
+              </label>
+              <p className="mt-1 text-xs text-foreground-muted">
+                Release a fixed number of recipients per wave, spaced by an interval — e.g. 300
+                every 30 minutes — instead of everyone at once.
+              </p>
+              {batchEnabled ? (
+                <>
+                  <div className="mt-3 grid grid-cols-2 gap-3 sm:max-w-md">
+                    <div className="space-y-1">
+                      <Label htmlFor="batchSize">Recipients per batch</Label>
+                      <Input
+                        id="batchSize"
+                        type="number"
+                        min={1}
+                        value={batchSize}
+                        onChange={(e) => setBatchSize(Math.max(1, Number(e.target.value) || 0))}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="batchInterval">Minutes between batches</Label>
+                      <Input
+                        id="batchInterval"
+                        type="number"
+                        min={1}
+                        value={batchIntervalMinutes}
+                        onChange={(e) =>
+                          setBatchIntervalMinutes(Math.max(1, Number(e.target.value) || 0))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <BatchPreview
+                    count={knownRecipientCount}
+                    batchSize={batchSize}
+                    intervalMinutes={batchIntervalMinutes}
+                  />
+                </>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {step === 4 ? (
         <Card>
           <CardHeader>
             <CardTitle>Review &amp; send</CardTitle>
@@ -751,26 +867,18 @@ export default function NewBroadcastPage() {
             {audienceKind === 'csv' && csvFilename ? (
               <SummaryRow label="CSV" value={csvFilename} />
             ) : null}
-
-            <div className="border-t border-border pt-4">
-              <div className="flex items-center gap-2">
-                <input
-                  id="schedule"
-                  type="checkbox"
-                  checked={scheduleLater}
-                  onChange={(e) => setScheduleLater(e.target.checked)}
-                />
-                <Label htmlFor="schedule" className="cursor-pointer">Schedule for later</Label>
-              </div>
-              {scheduleLater ? (
-                <Input
-                  type="datetime-local"
-                  value={scheduleAt}
-                  onChange={(e) => setScheduleAt(e.target.value)}
-                  className="mt-2 max-w-xs"
-                />
-              ) : null}
-            </div>
+            <SummaryRow
+              label="Start"
+              value={scheduleLater && scheduleAt ? new Date(scheduleAt).toLocaleString() : 'Now'}
+            />
+            <SummaryRow
+              label="Batching"
+              value={
+                batchEnabled
+                  ? `${batchSize} every ${batchIntervalMinutes} min`
+                  : 'Off — send all at once'
+              }
+            />
 
             {/* Duplicate-number warning — same person under multiple formats. */}
             {dupCount > 0 ? (
@@ -1015,6 +1123,65 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
     <div className="flex justify-between border-b border-border py-2 text-sm">
       <span className="text-foreground-muted">{label}</span>
       <span className="font-medium">{value}</span>
+    </div>
+  );
+}
+
+// Live preview of the batched send: number of waves, last-wave size, total span.
+function BatchPreview({
+  count,
+  batchSize,
+  intervalMinutes,
+}: {
+  count: number | null;
+  batchSize: number;
+  intervalMinutes: number;
+}) {
+  if (batchSize < 1 || intervalMinutes < 1) return null;
+  const fmtSpan = (mins: number) => {
+    if (mins <= 0) return 'instantly';
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return [h ? `${h}h` : '', m ? `${m}m` : ''].filter(Boolean).join(' ') || '0m';
+  };
+
+  if (count == null) {
+    return (
+      <div className="mt-3 rounded-lg border border-brand-200 bg-brand-50/50 px-3 py-2.5 text-xs text-brand-800 dark:border-brand-400/30 dark:bg-brand-400/10 dark:text-brand-200">
+        Sends <strong>{batchSize}</strong> recipients, then waits{' '}
+        <strong>{intervalMinutes} min</strong> before the next wave, until everyone has been sent.
+        (Exact wave count depends on your final audience size.)
+      </div>
+    );
+  }
+
+  if (count === 0) {
+    return (
+      <p className="mt-3 text-xs text-foreground-subtle">No recipients selected yet.</p>
+    );
+  }
+
+  const waves = Math.ceil(count / batchSize);
+  const lastWave = count - (waves - 1) * batchSize;
+  const spanMinutes = (waves - 1) * intervalMinutes;
+  const sizes: number[] = Array.from({ length: waves }, (_, i) =>
+    i === waves - 1 ? lastWave : batchSize,
+  );
+  const shown = sizes.slice(0, 6).join(', ') + (sizes.length > 6 ? ', …' : '');
+
+  return (
+    <div className="mt-3 rounded-lg border border-brand-200 bg-brand-50/50 px-3 py-2.5 text-xs text-brand-800 dark:border-brand-400/30 dark:bg-brand-400/10 dark:text-brand-200">
+      <strong>{count.toLocaleString()}</strong> recipients →{' '}
+      <strong>{waves}</strong> wave{waves === 1 ? '' : 's'} of {shown}, one every{' '}
+      <strong>{intervalMinutes} min</strong>
+      {waves > 1 ? (
+        <>
+          {' '}
+          — finishes ~<strong>{fmtSpan(spanMinutes)}</strong> after the start.
+        </>
+      ) : (
+        ' — all in one wave.'
+      )}
     </div>
   );
 }

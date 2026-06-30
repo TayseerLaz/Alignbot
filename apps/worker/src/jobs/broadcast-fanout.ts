@@ -376,7 +376,21 @@ export function startBroadcastFanoutWorker() {
       log(`assigned sending number(s): ${sendChannelIds.length}`);
 
       // Enqueue per-recipient send jobs in batches.
+      //
+      // Batched/throttled send: when batchSize > 0 AND batchIntervalMinutes > 0,
+      // recipients are released in waves — the first `batchSize` fire now, the
+      // next wave is delayed by one interval, and so on. We stamp each send job
+      // with a BullMQ `delay = waveNumber * interval`, computed from the
+      // recipient's global position. 0 = no batching (everything fires at once,
+      // still paced by the per-number rate limit + send window). The wave delay
+      // is RELATIVE to the fanout running, which (for a scheduled broadcast)
+      // already runs at scheduledFor — so the first wave lands at the start time.
       const sendQ = getSendQueue();
+      const batchSize =
+        broadcast.batchSize && broadcast.batchSize > 0 && broadcast.batchIntervalMinutes > 0
+          ? broadcast.batchSize
+          : 0;
+      const batchIntervalMs = (broadcast.batchIntervalMinutes ?? 0) * 60_000;
       const PAGE = 500;
       let cursor: string | undefined;
       let queued = 0;
@@ -389,17 +403,24 @@ export function startBroadcastFanoutWorker() {
           select: { id: true },
         });
         if (batch.length === 0) break;
+        const pageStart = queued; // global index of the first recipient on this page
         await sendQ.addBulk(
-          batch.map((r) => ({
-            name: 'send',
-            data: { organizationId, broadcastId, recipientId: r.id },
-            opts: {
-              attempts: 5,
-              backoff: { type: 'exponential', delay: 5000 },
-              removeOnComplete: { age: 24 * 60 * 60 },
-              removeOnFail: { age: 7 * 24 * 60 * 60 },
-            },
-          })),
+          batch.map((r, idx) => {
+            const globalIndex = pageStart + idx;
+            const wave = batchSize > 0 ? Math.floor(globalIndex / batchSize) : 0;
+            const delay = wave * batchIntervalMs;
+            return {
+              name: 'send',
+              data: { organizationId, broadcastId, recipientId: r.id },
+              opts: {
+                ...(delay > 0 ? { delay } : {}),
+                attempts: 5,
+                backoff: { type: 'exponential', delay: 5000 },
+                removeOnComplete: { age: 24 * 60 * 60 },
+                removeOnFail: { age: 7 * 24 * 60 * 60 },
+              },
+            };
+          }),
         );
         await prisma.broadcastRecipient.updateMany({
           where: { id: { in: batch.map((r) => r.id) } },

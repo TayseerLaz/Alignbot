@@ -46,6 +46,20 @@ jobs:
       - name: Generate app icon + splash (Hader brand)
         run: npx capacitor-assets generate --android
 
+      - name: Apply native customizations (pull-to-refresh + offline)
+        run: |
+          set -e
+          # Overwrite the generated MainActivity with ours (pull-to-refresh +
+          # auto offline screen).
+          cp native/MainActivity.java android/app/src/main/java/ai/hader/app/MainActivity.java
+          # Add the SwipeRefreshLayout dependency (used by MainActivity) to the
+          # app module's dependencies block if it isn't already there.
+          if ! grep -q "swiperefreshlayout" android/app/build.gradle; then
+            sed -i '0,/dependencies {/s//dependencies {\n    implementation "androidx.swiperefreshlayout:swiperefreshlayout:1.1.0"/' android/app/build.gradle
+          fi
+          echo "----- MainActivity -----"; head -5 android/app/src/main/java/ai/hader/app/MainActivity.java
+          echo "----- dep added -----"; grep swiperefreshlayout android/app/build.gradle || true
+
       - name: Build debug APK
         working-directory: apps/mobile/capacitor-app/android
         run: ./gradlew assembleDebug --no-daemon --stacktrace

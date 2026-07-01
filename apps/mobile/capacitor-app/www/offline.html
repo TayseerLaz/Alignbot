@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>No connection · Hader</title>
+    <style>
+      :root { --bg:#360516; --fg:#faf9f5; --muted:rgba(250,249,245,.65); --btn:#faf9f5; --btnfg:#360516; }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        background: radial-gradient(120% 120% at 50% 0%, #4a0a1e 0%, #360516 60%, #2a0410 100%);
+        color: var(--fg); font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        display: flex; align-items: center; justify-content: center; padding: 28px;
+        -webkit-user-select: none; user-select: none;
+      }
+      .card { width: 100%; max-width: 360px; text-align: center; }
+      .icon { width: 88px; height: 88px; margin: 0 auto 26px; display: flex; align-items: center; justify-content: center;
+        border-radius: 26px; background: rgba(250,249,245,.08); border: 1px solid rgba(250,249,245,.12); }
+      svg { width: 44px; height: 44px; stroke: var(--fg); }
+      h1 { font-size: 22px; font-weight: 700; margin: 0 0 10px; letter-spacing: -0.01em; }
+      p { font-size: 15px; line-height: 1.55; color: var(--muted); margin: 0 0 30px; }
+      button { appearance: none; border: 0; cursor: pointer; background: var(--btn); color: var(--btnfg);
+        font: 600 16px/1 -apple-system, "Segoe UI", Roboto, sans-serif; padding: 15px 26px; border-radius: 14px;
+        width: 100%; transition: transform .08s ease, opacity .15s ease; }
+      button:active { transform: scale(0.98); }
+      .status { margin-top: 20px; font-size: 13px; color: var(--muted); min-height: 18px; }
+      .spin { display: inline-block; width: 13px; height: 13px; margin-right: 6px; vertical-align: -2px;
+        border: 2px solid rgba(250,249,245,.3); border-top-color: var(--fg); border-radius: 50%;
+        animation: s .8s linear infinite; }
+      @keyframes s { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 1l22 22" /><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55" />
+          <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39" /><path d="M10.71 5.05A16 16 0 0 1 22.58 9" />
+          <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88" /><path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+          <line x1="12" y1="20" x2="12.01" y2="20" />
+        </svg>
+      </div>
+      <h1>No internet connection</h1>
+      <p>Hader can't reach the network right now. Check your Wi-Fi or mobile data — we'll reconnect automatically.</p>
+      <button onclick="go()">Try again</button>
+      <div class="status" id="status"></div>
+    </div>
+    <script>
+      var HOME = 'https://hader.ai/';
+      function go() {
+        var s = document.getElementById('status');
+        s.innerHTML = '<span class="spin"></span>Reconnecting…';
+        location.href = HOME;
+      }
+      // Auto-recover the instant connectivity returns.
+      window.addEventListener('online', go);
+      // Belt-and-braces: poll connectivity every few seconds in case the
+      // 'online' event doesn't fire on this device/WebView.
+      setInterval(function () { if (navigator.onLine) go(); }, 4000);
+    </script>
+  </body>
+</html>

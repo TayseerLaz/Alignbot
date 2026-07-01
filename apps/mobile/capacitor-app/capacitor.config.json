@@ -3,8 +3,9 @@
   "appName": "Hader",
   "webDir": "www",
   "server": {
-    "url": "https://hader.ai/app",
+    "url": "https://hader.ai/",
     "androidScheme": "https",
+    "errorPath": "offline.html",
     "allowNavigation": ["hader.ai", "*.hader.ai"]
   },
   "android": {

@@ -43,6 +43,9 @@ jobs:
       - name: Sync web assets + config into Android
         run: npx cap sync android
 
+      - name: Generate app icon + splash (Hader brand)
+        run: npx capacitor-assets generate --android
+
       - name: Build debug APK
         working-directory: apps/mobile/capacitor-app/android
         run: ./gradlew assembleDebug --no-daemon --stacktrace

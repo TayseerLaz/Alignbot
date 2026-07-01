@@ -3,17 +3,20 @@
 import { formatMicrosUsd, MICROS_PER_USD, ORG_FEATURES } from '@aligned/shared';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  Activity,
   ArrowRightToLine,
   ChevronDown,
   ChevronRight,
   Cpu,
   Download,
+  Info,
   Lock,
   MessageCircle,
   Pause,
   Play,
   ShieldCheck,
   Trash2,
+  Users,
   Wallet,
 } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
@@ -27,6 +30,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { api, ApiError, setAccessToken } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 import { useSession } from '@/lib/session';
@@ -140,6 +145,28 @@ const WALLET_KIND_LABEL: Record<WalletLedgerKind, string> = {
   adjust: 'Adjustment',
   release: 'Refund',
   hold: 'Hold',
+};
+
+// Lean grouping for the Features tab so the toggle grid reads as tidy sections
+// (Channels / Catalog / Comms / Advanced) instead of a wall of switches. Any
+// feature key not mapped here falls into "Advanced".
+type FeatureGroup = 'Channels' | 'Catalog' | 'Comms' | 'Advanced';
+const FEATURE_GROUPS: FeatureGroup[] = ['Channels', 'Catalog', 'Comms', 'Advanced'];
+const FEATURE_GROUP: Record<string, FeatureGroup> = {
+  messenger: 'Channels',
+  instagram: 'Channels',
+  phone: 'Channels',
+  inbox: 'Channels',
+  catalog: 'Catalog',
+  shopify: 'Catalog',
+  orders: 'Catalog',
+  bookings: 'Catalog',
+  broadcasts: 'Comms',
+  contacts: 'Comms',
+  ai: 'Comms',
+  voice_transcription: 'Comms',
+  analytics: 'Advanced',
+  exports: 'Advanced',
 };
 
 export default function OrgDetailPage() {
@@ -356,12 +383,21 @@ export default function OrgDetailPage() {
 
   const name = d?.name ?? org?.name ?? 'Organisation';
 
+  const [activeTab, setActiveTab] = useState('overview');
+
   return (
     <>
       <PageHeader
         breadcrumbs={[{ label: 'Tenants', href: '/aligned-admin' }, { label: name }]}
         title={name}
-        description={org ? <span className="font-mono text-xs">{org.slug}</span> : undefined}
+        description={
+          <span className="flex flex-wrap items-center gap-2">
+            {org ? <span className="font-mono text-xs">{org.slug}</span> : null}
+            <Badge variant={status === 'active' ? 'success' : status === 'suspended' ? 'warning' : 'muted'}>
+              {status}
+            </Badge>
+          </span>
+        }
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -414,382 +450,460 @@ export default function OrgDetailPage() {
             </Button>
           </div>
         }
-      />
+      >
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="flex-wrap">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="billing">Billing</TabsTrigger>
+            <TabsTrigger value="features">Features</TabsTrigger>
+            <TabsTrigger value="members">Members</TabsTrigger>
+            <TabsTrigger value="activity">Activity</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </PageHeader>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Overview */}
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ShieldCheck className="size-4 text-brand-500" /> Overview
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <Row label="Status">
-              <Badge variant={status === 'active' ? 'success' : status === 'suspended' ? 'warning' : 'muted'}>
-                {status}
-              </Badge>
-            </Row>
-            <Row label="Created">
-              {d ? formatRelative(d.createdAt) : <Skeleton className="h-4 w-20" />}
-            </Row>
-            <Row label="Last activity">
-              {org?.lastActivityAt ? formatRelative(org.lastActivityAt) : '—'}
-            </Row>
-            <div className="grid grid-cols-1 min-[400px]:grid-cols-3 gap-2 pt-2">
-              <Metric label="Products" value={d?.counts.products} />
-              <Metric label="Services" value={d?.counts.services} />
-              <Metric label="FAQs" value={d?.counts.faqs} />
-              <Metric label="Members" value={d?.members.length ?? org?.memberCount} />
-              <Metric label="API keys" value={d?.counts.apiKeys} />
-              <Metric label="Webhooks" value={d?.counts.webhooks} />
-            </div>
-          </CardContent>
-        </Card>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        {/* ── Overview ─────────────────────────────────────────────── */}
+        <TabsContent value="overview" className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 min-[520px]:grid-cols-3 lg:grid-cols-6">
+            <Metric label="Products" value={d?.counts.products} />
+            <Metric label="Services" value={d?.counts.services} />
+            <Metric label="FAQs" value={d?.counts.faqs} />
+            <Metric label="Members" value={d?.members.length ?? org?.memberCount} />
+            <Metric label="API keys" value={d?.counts.apiKeys} />
+            <Metric label="Webhooks" value={d?.counts.webhooks} />
+          </div>
 
-        {/* AI plan + usage */}
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Cpu className="size-4 text-brand-500" /> AI plan &amp; usage
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <Row label="Plan">
-              <Select value={currentPlan} onValueChange={(v) => setPlan.mutate(v as AiPlan)}>
-                <SelectTrigger className="h-8 w-32"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {AI_PLANS.map((p) => (
-                    <SelectItem key={p} value={p}>{AI_PLAN_LABEL[p]}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Row>
-            <div className="space-y-1.5 border-t border-border pt-3">
-              <p className="text-xs font-medium text-foreground">Monthly AI messages (allowance)</p>
-              {usage?.aiMessages ? (
-                <AiMessageCapEditor
-                  key={`${usage.aiMessages.cap}-${usage.aiMessages.unlimited}`}
-                  used={usage.aiMessages.used}
-                  cap={usage.aiMessages.cap}
-                  unlimited={usage.aiMessages.unlimited}
-                  saving={setAiMessageCap.isPending}
-                  onSave={(c) => setAiMessageCap.mutate(c)}
-                />
-              ) : (
-                <span className="text-xs text-foreground-muted">—</span>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-2 border-t border-border pt-3">
-              <p className="col-span-2 -mb-1 text-[10px] uppercase tracking-wider text-foreground-subtle">
-                Cost (admin-only)
-              </p>
-              <Metric label="Tokens today" value={usage?.today.tokens} mono />
-              <Metric label="USD today" value={usage ? `$${usage.today.usd.toFixed(2)}` : undefined} mono />
-              <Metric label="Tokens / month" value={usage?.thisMonth.tokens} mono />
-              <Metric label="USD / month" value={usage ? `$${usage.thisMonth.usd.toFixed(2)}` : undefined} mono />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* WhatsApp wallet & metered billing */}
-        <Card className="lg:col-span-3">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Wallet className="size-4 text-brand-500" /> WhatsApp wallet &amp; billing
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm">
-            {walletQ.isLoading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-8 w-40" />
-                <Skeleton className="h-4 w-full" />
-              </div>
-            ) : !wallet ? (
-              <p className="text-foreground-muted">No wallet for this organisation.</p>
-            ) : (
-              <WalletBilling
-                wallet={wallet}
-                orgId={id}
-                onSetMetering={(enabled) => setMetering.mutate(enabled)}
-                meteringSaving={setMetering.isPending}
-                onSetPrice={(usd) => setPrice.mutate(usd)}
-                priceSaving={setPrice.isPending}
-                onTopUp={(body) => topUp.mutate(body)}
-                topUpSaving={topUp.isPending}
-                onAdjust={(body) => adjust.mutate(body)}
-                adjustSaving={adjust.isPending}
-                onSetThreshold={(usd) => setThreshold.mutate(usd)}
-                thresholdSaving={setThreshold.isPending}
-              />
-            )}
-          </CardContent>
-        </Card>
-
-        {/* WhatsApp */}
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <MessageCircle className="size-4 text-brand-500" /> WhatsApp
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm">
-            {detailsQ.isLoading ? (
-              <Skeleton className="h-4 w-40" />
-            ) : d?.whatsappChannel ? (
-              <div className="space-y-2">
-                <Row label="Number">
-                  <span className="font-mono">{d.whatsappChannel.displayPhoneNumber ?? '—'}</span>
-                </Row>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {/* Meta strip */}
+            <Card className="md:col-span-2">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <ShieldCheck className="size-4 text-brand-500" /> Summary
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
                 <Row label="Status">
-                  <Badge variant={d.whatsappChannel.isActive ? 'success' : 'muted'}>
-                    {d.whatsappChannel.isActive ? 'active' : 'inactive'}
+                  <Badge variant={status === 'active' ? 'success' : status === 'suspended' ? 'warning' : 'muted'}>
+                    {status}
                   </Badge>
                 </Row>
-              </div>
-            ) : (
-              <p className="text-foreground-muted">No WhatsApp channel connected.</p>
-            )}
-          </CardContent>
-        </Card>
+                <Row label="Created">
+                  {d ? formatRelative(d.createdAt) : <Skeleton className="h-4 w-20" />}
+                </Row>
+                <Row label="Last activity">
+                  {org?.lastActivityAt ? formatRelative(org.lastActivityAt) : '—'}
+                </Row>
+              </CardContent>
+            </Card>
 
-        {/* Access & features */}
-        <Card className="lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <Lock className="size-4 text-brand-500" /> Access &amp; features
-            </CardTitle>
-            <Button
-              size="sm"
-              loading={saveAccess.isPending}
-              disabled={isOwnOrg}
-              onClick={() => saveAccess.mutate()}
-            >
-              Save access
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {isOwnOrg ? (
-              <p className="text-sm text-foreground-muted">
-                This is your own admin account — its access is locked.
-              </p>
-            ) : (
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {ORG_FEATURES.map((f) => {
-                  const enabled = !disabled.includes(f.key);
-                  return (
-                    <label
-                      key={f.key}
-                      className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 size-4"
-                        checked={enabled}
-                        onChange={(e) =>
-                          setDisabled((prev) =>
-                            e.target.checked ? prev.filter((k) => k !== f.key) : [...new Set([...prev, f.key])],
-                          )
-                        }
-                      />
-                      <span className="min-w-0">
-                        <span className="font-medium">{f.label}</span>
-                        <span className="mt-0.5 block text-xs text-foreground-muted">{f.description}</span>
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+            {/* WhatsApp one-liner */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <MessageCircle className="size-4 text-brand-500" /> WhatsApp
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm">
+                {detailsQ.isLoading ? (
+                  <Skeleton className="h-4 w-40" />
+                ) : d?.whatsappChannel ? (
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono">{d.whatsappChannel.displayPhoneNumber ?? '—'}</span>
+                    <Badge variant={d.whatsappChannel.isActive ? 'success' : 'muted'}>
+                      {d.whatsappChannel.isActive ? 'active' : 'inactive'}
+                    </Badge>
+                  </div>
+                ) : (
+                  <p className="text-foreground-muted">No channel connected.</p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
 
-        {/* Data export (ALIGNED-admin — always available) */}
-        <Card className="lg:col-span-1">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <Download className="size-4 text-brand-500" /> Data export
-            </CardTitle>
-            <Button
-              size="sm"
-              loading={triggerExport.isPending}
-              disabled={exportInflight}
-              onClick={() => triggerExport.mutate()}
-            >
-              {exportInflight ? 'Exporting…' : 'Export data'}
-            </Button>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <p className="text-xs text-foreground-muted">
-              Full data bundle (catalog, conversations, bot config, audit log) as a .zip of CSVs.
-              Available even if the tenant&apos;s own export feature is off.
-            </p>
-            {exportsQ.isLoading ? (
-              <Skeleton className="h-8 w-full" />
-            ) : exports.length === 0 ? (
-              <p className="text-foreground-muted">No exports yet.</p>
-            ) : (
-              <ul className="divide-y divide-border">
-                {exports.map((e) => (
-                  <li key={e.id} className="flex items-center justify-between gap-2 py-2">
-                    <span className="min-w-0">
-                      <span className="block">{formatRelative(e.createdAt)}</span>
-                      <span className="text-xs text-foreground-muted">
-                        {e.status}
-                        {e.fileSizeBytes != null
-                          ? ` · ${(e.fileSizeBytes / (1024 * 1024)).toFixed(2)} MB`
-                          : ''}
-                        {e.errorMessage ? ` · ${e.errorMessage}` : ''}
-                      </span>
-                    </span>
-                    {e.status === 'succeeded' ? (
-                      <Button size="sm" variant="secondary" onClick={() => downloadExport(e.id)}>
-                        <Download className="size-3.5" /> Download
-                      </Button>
-                    ) : (
-                      <Badge
-                        variant={e.status === 'failed' ? 'muted' : 'warning'}
-                      >
-                        {e.status}
-                      </Badge>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+        {/* ── Billing ──────────────────────────────────────────────── */}
+        <TabsContent value="billing">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {/* AI plan + usage */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Cpu className="size-4 text-brand-500" /> AI plan &amp; usage
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                <Row label="Plan">
+                  <Select value={currentPlan} onValueChange={(v) => setPlan.mutate(v as AiPlan)}>
+                    <SelectTrigger className="h-8 w-32"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {AI_PLANS.map((p) => (
+                        <SelectItem key={p} value={p}>{AI_PLAN_LABEL[p]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Row>
+                <div className="space-y-1.5 border-t border-border pt-3">
+                  <p className="text-xs font-medium text-foreground">Monthly AI messages (allowance)</p>
+                  {usage?.aiMessages ? (
+                    <AiMessageCapEditor
+                      key={`${usage.aiMessages.cap}-${usage.aiMessages.unlimited}`}
+                      used={usage.aiMessages.used}
+                      cap={usage.aiMessages.cap}
+                      unlimited={usage.aiMessages.unlimited}
+                      saving={setAiMessageCap.isPending}
+                      onSave={(c) => setAiMessageCap.mutate(c)}
+                    />
+                  ) : (
+                    <span className="text-xs text-foreground-muted">—</span>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2 border-t border-border pt-3">
+                  <p className="col-span-2 -mb-1 text-[10px] uppercase tracking-wider text-foreground-subtle">
+                    Cost (admin-only)
+                  </p>
+                  <Metric label="Tokens today" value={usage?.today.tokens} mono />
+                  <Metric label="USD today" value={usage ? `$${usage.today.usd.toFixed(2)}` : undefined} mono />
+                  <Metric label="Tokens / month" value={usage?.thisMonth.tokens} mono />
+                  <Metric label="USD / month" value={usage ? `$${usage.thisMonth.usd.toFixed(2)}` : undefined} mono />
+                </div>
+              </CardContent>
+            </Card>
 
-        {/* Members */}
-        <Card className="lg:col-span-3">
-          <CardHeader>
-            <CardTitle>Members</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            {detailsQ.isLoading ? (
-              <div className="space-y-2 p-4">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <Skeleton key={i} className="h-9 w-full" />
-                ))}
-              </div>
-            ) : (d?.members.length ?? 0) === 0 ? (
-              <p className="px-6 py-6 text-center text-sm text-foreground-muted">No members.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="border-b border-border bg-surface-muted/60 text-[11px] uppercase tracking-wide text-foreground-subtle">
-                    <tr>
-                      <th className="px-4 py-2">Email</th>
-                      <th className="px-4 py-2">Role</th>
-                      <th className="hidden px-4 py-2 sm:table-cell">2FA</th>
-                      <th className="hidden px-4 py-2 md:table-cell">Last login</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {d?.members.map((m) => (
-                      <tr key={m.userId}>
-                        <td className="px-4 py-2">
-                          <span className="font-medium">{[m.firstName, m.lastName].filter(Boolean).join(' ') || '—'}</span>
-                          <span className="ml-2 text-foreground-subtle">{m.email}</span>
-                          {!m.emailVerified ? <Badge variant="warning" className="ml-2">unverified</Badge> : null}
-                          {!m.isActive ? <Badge variant="muted" className="ml-2">inactive</Badge> : null}
-                        </td>
-                        <td className="px-4 py-2"><Badge variant="muted">{m.role}</Badge></td>
-                        <td className="hidden px-4 py-2 sm:table-cell">{m.totpEnabled ? 'On' : '—'}</td>
-                        <td className="hidden px-4 py-2 text-foreground-muted md:table-cell">
-                          {m.lastLoginAt ? formatRelative(m.lastLoginAt) : 'never'}
-                        </td>
+            {/* WhatsApp wallet & metered billing */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Wallet className="size-4 text-brand-500" /> WhatsApp wallet &amp; billing
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4 text-sm">
+                {walletQ.isLoading ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-8 w-40" />
+                    <Skeleton className="h-4 w-full" />
+                  </div>
+                ) : !wallet ? (
+                  <p className="text-foreground-muted">No wallet for this organisation.</p>
+                ) : (
+                  <WalletBilling
+                    wallet={wallet}
+                    orgId={id}
+                    onSetMetering={(enabled) => setMetering.mutate(enabled)}
+                    meteringSaving={setMetering.isPending}
+                    onSetPrice={(usd) => setPrice.mutate(usd)}
+                    priceSaving={setPrice.isPending}
+                    onTopUp={(body) => topUp.mutate(body)}
+                    topUpSaving={topUp.isPending}
+                    onAdjust={(body) => adjust.mutate(body)}
+                    adjustSaving={adjust.isPending}
+                    onSetThreshold={(usd) => setThreshold.mutate(usd)}
+                    thresholdSaving={setThreshold.isPending}
+                  />
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ── Features ─────────────────────────────────────────────── */}
+        <TabsContent value="features">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Lock className="size-4 text-brand-500" /> Access &amp; features
+              </CardTitle>
+              <Button
+                size="sm"
+                loading={saveAccess.isPending}
+                disabled={isOwnOrg}
+                onClick={() => saveAccess.mutate()}
+              >
+                Save access
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {isOwnOrg ? (
+                <p className="text-sm text-foreground-muted">
+                  This is your own admin account — its access is locked.
+                </p>
+              ) : (
+                <div className="space-y-5">
+                  {FEATURE_GROUPS.map((group) => {
+                    const items = ORG_FEATURES.filter(
+                      (f) => (FEATURE_GROUP[f.key] ?? 'Advanced') === group,
+                    );
+                    if (items.length === 0) return null;
+                    return (
+                      <div key={group} className="space-y-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle">
+                          {group}
+                        </p>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          {items.map((f) => {
+                            const enabled = !disabled.includes(f.key);
+                            return (
+                              <div
+                                key={f.key}
+                                className="flex items-center gap-3 rounded-lg border border-border bg-surface-muted/30 px-3 py-2.5 text-sm"
+                              >
+                                <Switch
+                                  checked={enabled}
+                                  onCheckedChange={(next) =>
+                                    setDisabled((prev) =>
+                                      next
+                                        ? prev.filter((k) => k !== f.key)
+                                        : [...new Set([...prev, f.key])],
+                                    )
+                                  }
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="flex items-center gap-1 font-medium">
+                                    <span className="truncate">{f.label}</span>
+                                    <span title={f.description} className="inline-flex shrink-0 cursor-help">
+                                      <Info className="size-3.5 text-foreground-subtle" />
+                                    </span>
+                                  </span>
+                                  <span className="mt-0.5 block truncate text-xs text-foreground-muted">
+                                    {f.description}
+                                  </span>
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Members ──────────────────────────────────────────────── */}
+        <TabsContent value="members" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Users className="size-4 text-brand-500" /> Members
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {detailsQ.isLoading ? (
+                <div className="space-y-2 p-4">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <Skeleton key={i} className="h-9 w-full" />
+                  ))}
+                </div>
+              ) : (d?.members.length ?? 0) === 0 ? (
+                <p className="px-6 py-6 text-center text-sm text-foreground-muted">No members.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="border-b border-border bg-surface-muted/60 text-[11px] uppercase tracking-wide text-foreground-subtle">
+                      <tr>
+                        <th className="px-4 py-2">Email</th>
+                        <th className="px-4 py-2">Role</th>
+                        <th className="hidden px-4 py-2 sm:table-cell">2FA</th>
+                        <th className="hidden px-4 py-2 md:table-cell">Last login</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {d?.members.map((m) => (
+                        <tr key={m.userId}>
+                          <td className="px-4 py-2">
+                            <span className="font-medium">{[m.firstName, m.lastName].filter(Boolean).join(' ') || '—'}</span>
+                            <span className="ml-2 text-foreground-subtle">{m.email}</span>
+                            {!m.emailVerified ? <Badge variant="warning" className="ml-2">unverified</Badge> : null}
+                            {!m.isActive ? <Badge variant="muted" className="ml-2">inactive</Badge> : null}
+                          </td>
+                          <td className="px-4 py-2"><Badge variant="muted">{m.role}</Badge></td>
+                          <td className="hidden px-4 py-2 sm:table-cell">{m.totpEnabled ? 'On' : '—'}</td>
+                          <td className="hidden px-4 py-2 text-foreground-muted md:table-cell">
+                            {m.lastLoginAt ? formatRelative(m.lastLoginAt) : 'never'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-        {/* Broadcasts — messages sent + recipients per campaign for this tenant */}
-        <Card className="lg:col-span-3">
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span>Broadcasts</span>
-              {broadcasts ? (
-                <span className="text-xs font-normal text-foreground-muted">
-                  {broadcasts.totals.broadcasts} campaigns · {broadcasts.totals.sent.toLocaleString()} sent ·{' '}
-                  {broadcasts.totals.recipients.toLocaleString()} recipients
+          {/* WhatsApp channel detail */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <MessageCircle className="size-4 text-brand-500" /> WhatsApp channel
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm">
+              {detailsQ.isLoading ? (
+                <Skeleton className="h-4 w-40" />
+              ) : d?.whatsappChannel ? (
+                <div className="space-y-2">
+                  <Row label="Number">
+                    <span className="font-mono">{d.whatsappChannel.displayPhoneNumber ?? '—'}</span>
+                  </Row>
+                  <Row label="Status">
+                    <Badge variant={d.whatsappChannel.isActive ? 'success' : 'muted'}>
+                      {d.whatsappChannel.isActive ? 'active' : 'inactive'}
+                    </Badge>
+                  </Row>
+                </div>
+              ) : (
+                <p className="text-foreground-muted">No WhatsApp channel connected.</p>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Activity ─────────────────────────────────────────────── */}
+        <TabsContent value="activity" className="space-y-4">
+          {/* Broadcasts */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2">
+                  <MessageCircle className="size-4 text-brand-500" /> Broadcasts
                 </span>
-              ) : null}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            {!broadcasts || broadcasts.broadcasts.length === 0 ? (
-              <p className="px-6 py-6 text-center text-sm text-foreground-muted">
-                No broadcasts sent yet.
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="border-b border-border bg-surface-muted text-xs uppercase tracking-wide text-foreground-subtle">
-                    <tr>
-                      <th className="px-4 py-2">Campaign</th>
-                      <th className="hidden px-4 py-2 sm:table-cell">Status</th>
-                      <th className="hidden px-4 py-2 text-right md:table-cell">Recipients</th>
-                      <th className="px-4 py-2 text-right">Sent</th>
-                      <th className="hidden px-4 py-2 text-right lg:table-cell">Delivered</th>
-                      <th className="hidden px-4 py-2 text-right lg:table-cell">Read</th>
-                      <th className="hidden px-4 py-2 md:table-cell">Created</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {broadcasts.broadcasts.map((b) => (
-                      <tr key={b.id} className="border-b border-border last:border-0">
-                        <td className="px-4 py-2 font-medium text-foreground">{b.name}</td>
-                        <td className="hidden px-4 py-2 text-foreground-muted sm:table-cell">{b.status}</td>
-                        <td className="hidden px-4 py-2 text-right tabular-nums md:table-cell">{b.totalRecipients.toLocaleString()}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">{b.sentCount.toLocaleString()}</td>
-                        <td className="hidden px-4 py-2 text-right tabular-nums lg:table-cell">{b.deliveredCount.toLocaleString()}</td>
-                        <td className="hidden px-4 py-2 text-right tabular-nums lg:table-cell">{b.readCount.toLocaleString()}</td>
-                        <td className="hidden px-4 py-2 text-foreground-muted md:table-cell">
-                          {new Date(b.createdAt).toLocaleDateString()}
-                        </td>
+                {broadcasts ? (
+                  <span className="text-xs font-normal text-foreground-muted">
+                    {broadcasts.totals.broadcasts} campaigns · {broadcasts.totals.sent.toLocaleString()} sent ·{' '}
+                    {broadcasts.totals.recipients.toLocaleString()} recipients
+                  </span>
+                ) : null}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {!broadcasts || broadcasts.broadcasts.length === 0 ? (
+                <p className="px-6 py-6 text-center text-sm text-foreground-muted">
+                  No broadcasts sent yet.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="border-b border-border bg-surface-muted text-xs uppercase tracking-wide text-foreground-subtle">
+                      <tr>
+                        <th className="px-4 py-2">Campaign</th>
+                        <th className="hidden px-4 py-2 sm:table-cell">Status</th>
+                        <th className="hidden px-4 py-2 text-right md:table-cell">Recipients</th>
+                        <th className="px-4 py-2 text-right">Sent</th>
+                        <th className="hidden px-4 py-2 text-right lg:table-cell">Delivered</th>
+                        <th className="hidden px-4 py-2 text-right lg:table-cell">Read</th>
+                        <th className="hidden px-4 py-2 md:table-cell">Created</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                    </thead>
+                    <tbody>
+                      {broadcasts.broadcasts.map((b) => (
+                        <tr key={b.id} className="border-b border-border last:border-0">
+                          <td className="px-4 py-2 font-medium text-foreground">{b.name}</td>
+                          <td className="hidden px-4 py-2 text-foreground-muted sm:table-cell">{b.status}</td>
+                          <td className="hidden px-4 py-2 text-right tabular-nums md:table-cell">{b.totalRecipients.toLocaleString()}</td>
+                          <td className="px-4 py-2 text-right tabular-nums">{b.sentCount.toLocaleString()}</td>
+                          <td className="hidden px-4 py-2 text-right tabular-nums lg:table-cell">{b.deliveredCount.toLocaleString()}</td>
+                          <td className="hidden px-4 py-2 text-right tabular-nums lg:table-cell">{b.readCount.toLocaleString()}</td>
+                          <td className="hidden px-4 py-2 text-foreground-muted md:table-cell">
+                            {new Date(b.createdAt).toLocaleDateString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-        {/* Recent activity */}
-        <Card className="lg:col-span-3">
-          <CardHeader>
-            <CardTitle>Recent activity</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            {detailsQ.isLoading ? (
-              <div className="space-y-2 p-4">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <Skeleton key={i} className="h-7 w-full" />
-                ))}
-              </div>
-            ) : (d?.recentAuditLog.length ?? 0) === 0 ? (
-              <p className="px-6 py-6 text-center text-sm text-foreground-muted">No recent activity.</p>
-            ) : (
-              <ul className="divide-y divide-border">
-                {d?.recentAuditLog.map((a, i) => (
-                  <li key={i} className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
-                    <span className="font-mono text-xs">{a.action}</span>
-                    <span className="text-foreground-subtle">
-                      {a.actorEmail ?? 'system'} · {formatRelative(a.createdAt)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            {/* Recent activity */}
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Activity className="size-4 text-brand-500" /> Recent activity
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {detailsQ.isLoading ? (
+                  <div className="space-y-2 p-4">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <Skeleton key={i} className="h-7 w-full" />
+                    ))}
+                  </div>
+                ) : (d?.recentAuditLog.length ?? 0) === 0 ? (
+                  <p className="px-6 py-6 text-center text-sm text-foreground-muted">No recent activity.</p>
+                ) : (
+                  <ul className="divide-y divide-border">
+                    {d?.recentAuditLog.map((a, i) => (
+                      <li key={i} className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
+                        <span className="font-mono text-xs">{a.action}</span>
+                        <span className="text-foreground-subtle">
+                          {a.actorEmail ?? 'system'} · {formatRelative(a.createdAt)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Data export (ALIGNED-admin — always available) */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Download className="size-4 text-brand-500" /> Data export
+                </CardTitle>
+                <Button
+                  size="sm"
+                  loading={triggerExport.isPending}
+                  disabled={exportInflight}
+                  onClick={() => triggerExport.mutate()}
+                >
+                  {exportInflight ? 'Exporting…' : 'Export data'}
+                </Button>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <p className="text-xs text-foreground-muted">
+                  Full data bundle as a .zip of CSVs. Available even when the tenant&apos;s own export is off.
+                </p>
+                {exportsQ.isLoading ? (
+                  <Skeleton className="h-8 w-full" />
+                ) : exports.length === 0 ? (
+                  <p className="text-foreground-muted">No exports yet.</p>
+                ) : (
+                  <ul className="divide-y divide-border">
+                    {exports.map((e) => (
+                      <li key={e.id} className="flex items-center justify-between gap-2 py-2">
+                        <span className="min-w-0">
+                          <span className="block">{formatRelative(e.createdAt)}</span>
+                          <span className="text-xs text-foreground-muted">
+                            {e.status}
+                            {e.fileSizeBytes != null
+                              ? ` · ${(e.fileSizeBytes / (1024 * 1024)).toFixed(2)} MB`
+                              : ''}
+                            {e.errorMessage ? ` · ${e.errorMessage}` : ''}
+                          </span>
+                        </span>
+                        {e.status === 'succeeded' ? (
+                          <Button size="sm" variant="secondary" onClick={() => downloadExport(e.id)}>
+                            <Download className="size-3.5" /> Download
+                          </Button>
+                        ) : (
+                          <Badge variant={e.status === 'failed' ? 'muted' : 'warning'}>
+                            {e.status}
+                          </Badge>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+      </Tabs>
     </>
   );
 }

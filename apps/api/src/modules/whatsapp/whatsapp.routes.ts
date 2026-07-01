@@ -46,7 +46,8 @@ import { generateOpaqueToken } from '../../lib/crypto.js';
 import { withRlsBypass, withTenant, type Tx } from '../../lib/db.js';
 import { env } from '../../lib/env.js';
 import { upsertWaThread } from '../../lib/wa-thread.js';
-import { badRequest, notFound } from '../../lib/errors.js';
+import { badRequest, notFound, paymentRequired } from '../../lib/errors.js';
+import * as wallet from '../../lib/wallet.js';
 import { getRedis } from '../../lib/redis.js';
 
 // Outbound token-bucket rate limiter — 80 messages per second by default
@@ -1200,6 +1201,16 @@ export default async function whatsappRoutes(app: FastifyInstance) {
       }
       const to = req.body.to.replace(/[^\d+]/g, '').replace(/^\+/, '');
 
+      // Metered billing (docs/wallet-billing-plan.md): a test send is a real
+      // WhatsApp message, so gate + charge it too. Reject if the metered
+      // tenant can't afford one; charge on success below.
+      const billingWallet = await wallet.getWallet(orgId);
+      if (billingWallet?.meteringEnabled && billingWallet.availableMicros < billingWallet.pricePerMessageMicros) {
+        throw paymentRequired(
+          `Insufficient WhatsApp balance to send a test. Top up your wallet (balance $${(billingWallet.availableMicros / 1_000_000).toFixed(2)}).`,
+        );
+      }
+
       // Template name + language come from the request body (or fall back
       // to the well-known Meta sandbox 'hello_world / en_US'). Most accounts
       // don't actually have hello_world in their library, so we let callers
@@ -1468,6 +1479,17 @@ export default async function whatsappRoutes(app: FastifyInstance) {
           },
         });
       }).catch((err) => req.log.error({ err }, '[whatsapp] test-send persist failed'));
+
+      // Charge the delivered test message against the metered wallet.
+      if (billingWallet?.meteringEnabled) {
+        await wallet
+          .chargeAtSend({
+            orgId,
+            unitPriceMicros: billingWallet.pricePerMessageMicros,
+            metaCostMicros: billingWallet.metaCostMicros,
+          })
+          .catch((err) => req.log.error({ err }, '[whatsapp] test-send billing failed'));
+      }
 
       return { data: { ok: true, metaMessageId, errorMessage: null } };
     },

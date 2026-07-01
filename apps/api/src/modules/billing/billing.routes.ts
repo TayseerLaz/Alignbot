@@ -12,7 +12,14 @@
 // backfill. After expiry, the worker's daily roll-up downgrades to "free"
 // status (read-only soft cap). When a user upgrades to a paid plan via
 // Stripe Checkout, the webhook flips status → "active" and links the IDs.
-import { ApiErrorCode, itemEnvelopeSchema, listEnvelopeSchema, successSchema, uuidSchema } from '@aligned/shared';
+import {
+  ApiErrorCode,
+  DEFAULT_PRICE_MICROS,
+  itemEnvelopeSchema,
+  listEnvelopeSchema,
+  successSchema,
+  uuidSchema,
+} from '@aligned/shared';
 import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -21,7 +28,8 @@ import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
 import { currentYearMonth, getStripe, isOrgUnlimited, isStripeConfigured, resolveOrgPlan } from '../../lib/billing.js';
-import { withRlsBypass } from '../../lib/db.js';
+import { prisma, withRlsBypass } from '../../lib/db.js';
+import * as wallet from '../../lib/wallet.js';
 import { env } from '../../lib/env.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 
@@ -214,6 +222,113 @@ export default async function billingRoutes(app: FastifyInstance) {
           },
         };
       });
+    },
+  );
+
+  // ======================================================================
+  // Tenant wallet & WhatsApp balance (self-service view of metered billing)
+  // ======================================================================
+
+  const tenantWalletDto = z.object({
+    metered: z.boolean(),
+    availableMicros: z.number(),
+    heldMicros: z.number(),
+    pricePerMessageMicros: z.number(),
+    messagesRemaining: z.number(),
+    lowBalanceThresholdMicros: z.number(),
+    lifetimeSpentMicros: z.number(),
+    lifetimeMessages: z.number(),
+    lifetimeToppedUpMicros: z.number(),
+  });
+
+  // ---------- GET /billing/overview ------------------------------------
+  // The tenant's own wallet: balance, per-message price, how many messages
+  // that buys, and the low-balance line. Never exposes our Meta cost/margin.
+  r.get(
+    '/billing/overview',
+    {
+      schema: {
+        tags: ['billing'],
+        summary: 'Current org WhatsApp balance + per-message price + messages remaining.',
+        response: { 200: itemEnvelopeSchema(tenantWalletDto) },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const w = await wallet.getWallet(orgId);
+      const price = w?.pricePerMessageMicros ?? DEFAULT_PRICE_MICROS;
+      const available = w?.availableMicros ?? 0;
+      return {
+        data: {
+          metered: w?.meteringEnabled ?? false,
+          availableMicros: available,
+          heldMicros: w?.heldMicros ?? 0,
+          pricePerMessageMicros: price,
+          messagesRemaining: price > 0 ? Math.floor(available / price) : 0,
+          lowBalanceThresholdMicros: w?.lowBalanceThresholdMicros ?? 0,
+          lifetimeSpentMicros: w?.lifetimeSpentMicros ?? 0,
+          lifetimeMessages: w?.lifetimeMessages ?? 0,
+          lifetimeToppedUpMicros: w?.lifetimeToppedUpMicros ?? 0,
+        },
+      };
+    },
+  );
+
+  // ---------- GET /billing/ledger --------------------------------------
+  // The tenant's own wallet history. Charges (settle) show as negative,
+  // top-ups/releases positive. Holds are hidden — they're transient
+  // reservations, not real spend, and would only confuse a tenant.
+  r.get(
+    '/billing/ledger',
+    {
+      schema: {
+        tags: ['billing'],
+        summary: "This org's wallet history (top-ups, charges, refunds).",
+        querystring: z.object({
+          cursor: z.string().uuid().optional(),
+          limit: z.coerce.number().int().min(1).max(100).default(50),
+        }),
+        response: {
+          200: z.object({
+            data: z.array(
+              z.object({
+                id: uuidSchema,
+                kind: z.string(),
+                amountMicros: z.number(),
+                availableAfterMicros: z.number(),
+                note: z.string().nullable(),
+                createdAt: z.string(),
+              }),
+            ),
+            nextCursor: z.string().nullable(),
+          }),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const { cursor, limit } = req.query;
+      const rows = await prisma.walletLedger.findMany({
+        where: { organizationId: orgId, kind: { not: 'hold' } },
+        orderBy: { createdAt: 'desc' },
+        take: limit + 1,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
+      const hasMore = rows.length > limit;
+      const page = hasMore ? rows.slice(0, limit) : rows;
+      return {
+        data: page.map((x) => ({
+          id: x.id,
+          kind: x.kind,
+          amountMicros: Number(x.amountMicros),
+          availableAfterMicros: Number(x.availableAfter),
+          note: x.note,
+          createdAt: x.createdAt.toISOString(),
+        })),
+        nextCursor: hasMore ? page[page.length - 1]!.id : null,
+      };
     },
   );
 

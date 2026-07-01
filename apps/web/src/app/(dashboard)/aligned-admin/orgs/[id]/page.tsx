@@ -1,9 +1,11 @@
 'use client';
 
-import { ORG_FEATURES } from '@aligned/shared';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { formatMicrosUsd, MICROS_PER_USD, ORG_FEATURES } from '@aligned/shared';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRightToLine,
+  ChevronDown,
+  ChevronRight,
   Cpu,
   Download,
   Lock,
@@ -12,6 +14,7 @@ import {
   Play,
   ShieldCheck,
   Trash2,
+  Wallet,
 } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -95,6 +98,49 @@ interface ExportRow {
   finishedAt: string | null;
   createdAt: string;
 }
+
+interface WalletDto {
+  organizationId: string;
+  meteringEnabled: boolean;
+  availableMicros: number;
+  heldMicros: number;
+  pricePerMessageMicros: number;
+  metaCostMicros: number;
+  lowBalanceThresholdMicros: number;
+  lifetimeToppedUpMicros: number;
+  lifetimeSpentMicros: number;
+  lifetimeMessages: number;
+  marginPerMessageMicros: number;
+  marginPct: number;
+  lifetimeMarginMicros: number;
+}
+
+type WalletLedgerKind = 'topup' | 'adjust' | 'settle' | 'release' | 'hold';
+
+interface WalletLedgerRow {
+  id: string;
+  kind: WalletLedgerKind;
+  amountMicros: number;
+  availableAfterMicros: number;
+  heldAfterMicros: number;
+  broadcastId: string | null;
+  note: string | null;
+  actorName: string | null;
+  createdAt: string;
+}
+
+interface WalletLedgerPage {
+  data: WalletLedgerRow[];
+  nextCursor: string | null;
+}
+
+const WALLET_KIND_LABEL: Record<WalletLedgerKind, string> = {
+  topup: 'Top-up',
+  settle: 'Message charge',
+  adjust: 'Adjustment',
+  release: 'Refund',
+  hold: 'Hold',
+};
 
 export default function OrgDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -231,6 +277,70 @@ export default function OrgDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['admin-org-exports', id] });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Could not start export'),
+  });
+
+  // ---- WhatsApp wallet & metered billing (ALIGNED-admin only) ----
+  const walletQ = useQuery({
+    queryKey: ['admin-org-wallet', id],
+    queryFn: () => api.get<{ data: WalletDto }>(`/api/v1/aligned-admin/orgs/${id}/wallet`),
+    refetchInterval: 30_000,
+  });
+  const wallet = walletQ.data?.data;
+  const invalidateWallet = () =>
+    queryClient.invalidateQueries({ queryKey: ['admin-org-wallet', id] });
+
+  const setMetering = useMutation({
+    mutationFn: (enabled: boolean) =>
+      api.put<{ data: WalletDto }>(`/api/v1/aligned-admin/orgs/${id}/wallet/metering`, { enabled }),
+    onSuccess: (res) => {
+      toast.success(res.data.meteringEnabled ? 'Metering enabled' : 'Metering disabled');
+      invalidateWallet();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Update failed'),
+  });
+
+  const setPrice = useMutation({
+    mutationFn: (priceUsd: number) =>
+      api.put<{ data: WalletDto }>(`/api/v1/aligned-admin/orgs/${id}/wallet/price`, { priceUsd }),
+    onSuccess: () => {
+      toast.success('Per-message price updated');
+      invalidateWallet();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Update failed'),
+  });
+
+  const topUp = useMutation({
+    mutationFn: (body: { amountUsd: number; note?: string }) =>
+      api.post<{ data: WalletDto }>(`/api/v1/aligned-admin/orgs/${id}/wallet/topup`, body),
+    onSuccess: () => {
+      toast.success('Balance topped up');
+      invalidateWallet();
+      queryClient.invalidateQueries({ queryKey: ['admin-org-wallet-ledger', id] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Top-up failed'),
+  });
+
+  const adjust = useMutation({
+    mutationFn: (body: { amountUsd: number; note?: string }) =>
+      api.post<{ data: WalletDto }>(`/api/v1/aligned-admin/orgs/${id}/wallet/adjust`, body),
+    onSuccess: () => {
+      toast.success('Balance adjusted');
+      invalidateWallet();
+      queryClient.invalidateQueries({ queryKey: ['admin-org-wallet-ledger', id] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Adjustment failed'),
+  });
+
+  const setThreshold = useMutation({
+    mutationFn: (lowBalanceUsd: number) =>
+      api.put<{ data: WalletDto }>(`/api/v1/aligned-admin/orgs/${id}/wallet/threshold`, {
+        lowBalanceUsd,
+      }),
+    onSuccess: () => {
+      toast.success('Low-balance threshold updated');
+      invalidateWallet();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Update failed'),
   });
 
   const downloadExport = async (exportId: string) => {
@@ -379,6 +489,40 @@ export default function OrgDetailPage() {
               <Metric label="Tokens / month" value={usage?.thisMonth.tokens} mono />
               <Metric label="USD / month" value={usage ? `$${usage.thisMonth.usd.toFixed(2)}` : undefined} mono />
             </div>
+          </CardContent>
+        </Card>
+
+        {/* WhatsApp wallet & metered billing */}
+        <Card className="lg:col-span-3">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Wallet className="size-4 text-brand-500" /> WhatsApp wallet &amp; billing
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            {walletQ.isLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-8 w-40" />
+                <Skeleton className="h-4 w-full" />
+              </div>
+            ) : !wallet ? (
+              <p className="text-foreground-muted">No wallet for this organisation.</p>
+            ) : (
+              <WalletBilling
+                wallet={wallet}
+                orgId={id}
+                onSetMetering={(enabled) => setMetering.mutate(enabled)}
+                meteringSaving={setMetering.isPending}
+                onSetPrice={(usd) => setPrice.mutate(usd)}
+                priceSaving={setPrice.isPending}
+                onTopUp={(body) => topUp.mutate(body)}
+                topUpSaving={topUp.isPending}
+                onAdjust={(body) => adjust.mutate(body)}
+                adjustSaving={adjust.isPending}
+                onSetThreshold={(usd) => setThreshold.mutate(usd)}
+                thresholdSaving={setThreshold.isPending}
+              />
+            )}
           </CardContent>
         </Card>
 
@@ -718,6 +862,345 @@ function AiMessageCapEditor({
           ? 'Unlimited — no metering this month.'
           : `${used.toLocaleString()} / ${(cap ?? 0).toLocaleString()} used this month (${pct}%).`}
       </p>
+    </div>
+  );
+}
+
+// Full admin wallet control: balance, metering toggle, per-message price +
+// margin, top-up, adjust, low-balance threshold, lifetime figures, and a
+// collapsible ledger. Amounts are entered in dollars; the API converts.
+function WalletBilling({
+  wallet,
+  orgId,
+  onSetMetering,
+  meteringSaving,
+  onSetPrice,
+  priceSaving,
+  onTopUp,
+  topUpSaving,
+  onAdjust,
+  adjustSaving,
+  onSetThreshold,
+  thresholdSaving,
+}: {
+  wallet: WalletDto;
+  orgId: string;
+  onSetMetering: (enabled: boolean) => void;
+  meteringSaving: boolean;
+  onSetPrice: (priceUsd: number) => void;
+  priceSaving: boolean;
+  onTopUp: (body: { amountUsd: number; note?: string }) => void;
+  topUpSaving: boolean;
+  onAdjust: (body: { amountUsd: number; note?: string }) => void;
+  adjustSaving: boolean;
+  onSetThreshold: (lowBalanceUsd: number) => void;
+  thresholdSaving: boolean;
+}) {
+  const [priceStr, setPriceStr] = useState(
+    (wallet.pricePerMessageMicros / MICROS_PER_USD).toString(),
+  );
+  const [topUpStr, setTopUpStr] = useState('');
+  const [topUpNote, setTopUpNote] = useState('');
+  const [adjustStr, setAdjustStr] = useState('');
+  const [adjustNote, setAdjustNote] = useState('');
+  const [thresholdStr, setThresholdStr] = useState(
+    (wallet.lowBalanceThresholdMicros / MICROS_PER_USD).toString(),
+  );
+
+  return (
+    <div className="space-y-5">
+      {/* Balance + metering */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">Balance</p>
+          <p className="mt-0.5 text-3xl font-semibold tabular-nums">
+            ${formatMicrosUsd(wallet.availableMicros)}
+          </p>
+          {wallet.heldMicros > 0 ? (
+            <p className="mt-0.5 text-xs text-foreground-muted">
+              ${formatMicrosUsd(wallet.heldMicros)} held (in-flight sends)
+            </p>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant={wallet.meteringEnabled ? 'success' : 'muted'}>
+            Metering {wallet.meteringEnabled ? 'ON' : 'OFF'}
+          </Badge>
+          <Button
+            size="sm"
+            variant="secondary"
+            loading={meteringSaving}
+            onClick={() => onSetMetering(!wallet.meteringEnabled)}
+          >
+            {wallet.meteringEnabled ? 'Turn off' : 'Turn on'}
+          </Button>
+        </div>
+      </div>
+
+      {/* Price + margin */}
+      <div className="space-y-2 border-t border-border pt-4">
+        <p className="text-xs font-medium text-foreground">Per-message price</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1">
+            <span className="text-sm text-foreground-muted">$</span>
+            <input
+              type="number"
+              min={0.0375}
+              step={0.0001}
+              value={priceStr}
+              onChange={(e) => setPriceStr(e.target.value)}
+              className="h-8 w-28 rounded-md border border-border bg-surface px-2 text-sm tabular-nums"
+            />
+          </div>
+          <Button
+            size="sm"
+            loading={priceSaving}
+            onClick={() => {
+              const v = Number(priceStr);
+              if (!Number.isFinite(v) || v < 0.0375) {
+                toast.error('Price must be at least $0.0375');
+                return;
+              }
+              onSetPrice(v);
+            }}
+          >
+            Save price
+          </Button>
+        </div>
+        <p className="text-xs text-foreground-muted">
+          Meta cost ${formatMicrosUsd(wallet.metaCostMicros)}, your price $
+          {formatMicrosUsd(wallet.pricePerMessageMicros)} → margin $
+          {formatMicrosUsd(wallet.marginPerMessageMicros)} ({wallet.marginPct.toFixed(1)}%)
+        </p>
+      </div>
+
+      {/* Top-up + adjust */}
+      <div className="grid grid-cols-1 gap-4 border-t border-border pt-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-foreground">Top up</p>
+          <div className="flex items-center gap-1">
+            <span className="text-sm text-foreground-muted">$</span>
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              value={topUpStr}
+              onChange={(e) => setTopUpStr(e.target.value)}
+              placeholder="0.00"
+              className="h-8 w-28 rounded-md border border-border bg-surface px-2 text-sm tabular-nums"
+            />
+          </div>
+          <input
+            type="text"
+            value={topUpNote}
+            onChange={(e) => setTopUpNote(e.target.value)}
+            placeholder="Note (optional)"
+            className="h-8 w-full rounded-md border border-border bg-surface px-2 text-sm"
+          />
+          <Button
+            size="sm"
+            loading={topUpSaving}
+            onClick={() => {
+              const v = Number(topUpStr);
+              if (!Number.isFinite(v) || v <= 0) {
+                toast.error('Enter an amount greater than $0');
+                return;
+              }
+              onTopUp({ amountUsd: v, note: topUpNote.trim() || undefined });
+              setTopUpStr('');
+              setTopUpNote('');
+            }}
+          >
+            Add balance
+          </Button>
+        </div>
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-foreground">Manual adjustment</p>
+          <div className="flex items-center gap-1">
+            <span className="text-sm text-foreground-muted">$</span>
+            <input
+              type="number"
+              step={0.01}
+              value={adjustStr}
+              onChange={(e) => setAdjustStr(e.target.value)}
+              placeholder="e.g. -5.00"
+              className="h-8 w-28 rounded-md border border-border bg-surface px-2 text-sm tabular-nums"
+            />
+          </div>
+          <input
+            type="text"
+            value={adjustNote}
+            onChange={(e) => setAdjustNote(e.target.value)}
+            placeholder="Reason (optional)"
+            className="h-8 w-full rounded-md border border-border bg-surface px-2 text-sm"
+          />
+          <Button
+            size="sm"
+            variant="secondary"
+            loading={adjustSaving}
+            onClick={() => {
+              const v = Number(adjustStr);
+              if (!Number.isFinite(v) || v === 0) {
+                toast.error('Enter a non-zero amount (negative to debit)');
+                return;
+              }
+              onAdjust({ amountUsd: v, note: adjustNote.trim() || undefined });
+              setAdjustStr('');
+              setAdjustNote('');
+            }}
+          >
+            Apply adjustment
+          </Button>
+        </div>
+      </div>
+
+      {/* Threshold */}
+      <div className="space-y-2 border-t border-border pt-4">
+        <p className="text-xs font-medium text-foreground">Low-balance alert threshold</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1">
+            <span className="text-sm text-foreground-muted">$</span>
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              value={thresholdStr}
+              onChange={(e) => setThresholdStr(e.target.value)}
+              className="h-8 w-28 rounded-md border border-border bg-surface px-2 text-sm tabular-nums"
+            />
+          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            loading={thresholdSaving}
+            onClick={() => {
+              const v = Number(thresholdStr);
+              if (!Number.isFinite(v) || v < 0) {
+                toast.error('Threshold must be $0 or more');
+                return;
+              }
+              onSetThreshold(v);
+            }}
+          >
+            Save threshold
+          </Button>
+        </div>
+        <p className="text-xs text-foreground-muted">
+          The tenant sees a &ldquo;running low&rdquo; warning when the balance drops to this amount.
+        </p>
+      </div>
+
+      {/* Lifetime */}
+      <div className="grid grid-cols-2 gap-2 border-t border-border pt-4 min-[520px]:grid-cols-4">
+        <Metric label="Messages" value={wallet.lifetimeMessages.toLocaleString()} mono />
+        <Metric label="Spent" value={`$${formatMicrosUsd(wallet.lifetimeSpentMicros)}`} mono />
+        <Metric label="Topped up" value={`$${formatMicrosUsd(wallet.lifetimeToppedUpMicros)}`} mono />
+        <Metric label="Our margin" value={`$${formatMicrosUsd(wallet.lifetimeMarginMicros)}`} mono />
+      </div>
+
+      {/* Ledger */}
+      <WalletLedger orgId={orgId} />
+    </div>
+  );
+}
+
+// Collapsible admin wallet ledger with cursor pagination.
+function WalletLedger({ orgId }: { orgId: string }) {
+  const [open, setOpen] = useState(false);
+  const ledgerQ = useInfiniteQuery({
+    queryKey: ['admin-org-wallet-ledger', orgId],
+    queryFn: ({ pageParam }: { pageParam: string | null }) =>
+      api.get<WalletLedgerPage>(
+        `/api/v1/aligned-admin/orgs/${orgId}/wallet/ledger?limit=50${
+          pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ''
+        }`,
+      ),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+    enabled: open,
+  });
+  const rows = ledgerQ.data?.pages.flatMap((p) => p.data) ?? [];
+
+  return (
+    <div className="border-t border-border pt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-brand-600"
+      >
+        {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+        Ledger
+      </button>
+      {open ? (
+        <div className="mt-3">
+          {ledgerQ.isLoading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-8 w-full" />
+              ))}
+            </div>
+          ) : rows.length === 0 ? (
+            <p className="py-4 text-center text-sm text-foreground-muted">No wallet activity yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-border bg-surface-muted/60 text-[11px] uppercase tracking-wide text-foreground-subtle">
+                  <tr>
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Type</th>
+                    <th className="px-3 py-2 text-right">Amount</th>
+                    <th className="hidden px-3 py-2 text-right sm:table-cell">Available</th>
+                    <th className="hidden px-3 py-2 md:table-cell">Actor</th>
+                    <th className="hidden px-3 py-2 lg:table-cell">Note</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {rows.map((r) => {
+                    const positive = r.amountMicros >= 0;
+                    return (
+                      <tr key={r.id}>
+                        <td className="whitespace-nowrap px-3 py-2 text-foreground-muted">
+                          {formatRelative(r.createdAt)}
+                        </td>
+                        <td className="px-3 py-2">{WALLET_KIND_LABEL[r.kind] ?? r.kind}</td>
+                        <td
+                          className={
+                            'px-3 py-2 text-right font-medium tabular-nums ' +
+                            (positive ? 'text-emerald-700' : 'text-red-700')
+                          }
+                        >
+                          {positive ? '+' : '−'}${formatMicrosUsd(Math.abs(r.amountMicros))}
+                        </td>
+                        <td className="hidden px-3 py-2 text-right tabular-nums text-foreground-muted sm:table-cell">
+                          ${formatMicrosUsd(r.availableAfterMicros)}
+                        </td>
+                        <td className="hidden px-3 py-2 text-foreground-muted md:table-cell">
+                          {r.actorName ?? 'system'}
+                        </td>
+                        <td className="hidden px-3 py-2 text-foreground-muted lg:table-cell">
+                          {r.note ?? '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {ledgerQ.hasNextPage ? (
+            <div className="mt-3 flex justify-center">
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={ledgerQ.isFetchingNextPage}
+                onClick={() => ledgerQ.fetchNextPage()}
+              >
+                Load older
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

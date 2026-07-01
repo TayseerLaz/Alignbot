@@ -8,6 +8,8 @@ import {
   adminUpdateLeadBodySchema,
   adminUpdateOrgBodySchema,
   ApiErrorCode,
+  DEFAULT_META_COST_MICROS,
+  DEFAULT_PRICE_MICROS,
   ORG_FEATURE_KEYS,
   ORG_FEATURE_DEFAULT_DISABLED,
   itemEnvelopeSchema,
@@ -16,6 +18,11 @@ import {
   organizationSchema,
   successSchema,
   uuidSchema,
+  usdToMicros,
+  walletAdjustBodySchema,
+  walletSetPriceBodySchema,
+  walletThresholdBodySchema,
+  walletTopUpBodySchema,
 } from '@aligned/shared';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -25,7 +32,8 @@ import { runAdminCopilot, isCopilotConfigured } from '../../lib/admin-copilot.js
 import { recordAudit } from '../../lib/audit.js';
 import { REFRESH_COOKIE_NAME, refreshCookieOptions } from '../../lib/cookies.js';
 import { generateTempPassword, hashPassword } from '../../lib/crypto.js';
-import { withRlsBypass } from '../../lib/db.js';
+import { prisma, withRlsBypass } from '../../lib/db.js';
+import * as wallet from '../../lib/wallet.js';
 import { sendEmail, tenantProvisionedTemplate } from '../../lib/email.js';
 import { env } from '../../lib/env.js';
 import { badRequest, conflict, notFound } from '../../lib/errors.js';
@@ -2738,6 +2746,298 @@ export default async function adminRoutes(app: FastifyInstance) {
         metadata: { monthlyAiMessageCap: cap },
       });
       return { data: { id: updated.id, monthlyAiMessageCap: updated.monthlyAiMessageCap } };
+    },
+  );
+
+  // ======================================================================
+  // Tenant wallet & metered WhatsApp billing (docs/wallet-billing-plan.md)
+  // ======================================================================
+
+  const walletDtoSchema = z.object({
+    organizationId: uuidSchema,
+    meteringEnabled: z.boolean(),
+    availableMicros: z.number(),
+    heldMicros: z.number(),
+    pricePerMessageMicros: z.number(),
+    metaCostMicros: z.number(),
+    lowBalanceThresholdMicros: z.number(),
+    lifetimeToppedUpMicros: z.number(),
+    lifetimeSpentMicros: z.number(),
+    lifetimeMessages: z.number(),
+    marginPerMessageMicros: z.number(),
+    marginPct: z.number(),
+    lifetimeMarginMicros: z.number(),
+  });
+
+  function walletDto(orgId: string, w: wallet.Wallet | null) {
+    const price = w?.pricePerMessageMicros ?? DEFAULT_PRICE_MICROS;
+    const metaCost = w?.metaCostMicros ?? DEFAULT_META_COST_MICROS;
+    const margin = price - metaCost;
+    const spent = w?.lifetimeSpentMicros ?? 0;
+    const msgs = w?.lifetimeMessages ?? 0;
+    return {
+      organizationId: orgId,
+      meteringEnabled: w?.meteringEnabled ?? false,
+      availableMicros: w?.availableMicros ?? 0,
+      heldMicros: w?.heldMicros ?? 0,
+      pricePerMessageMicros: price,
+      metaCostMicros: metaCost,
+      lowBalanceThresholdMicros: w?.lowBalanceThresholdMicros ?? 0,
+      lifetimeToppedUpMicros: w?.lifetimeToppedUpMicros ?? 0,
+      lifetimeSpentMicros: spent,
+      lifetimeMessages: msgs,
+      marginPerMessageMicros: margin,
+      marginPct: price > 0 ? Math.round((margin / price) * 1000) / 10 : 0,
+      // Our gross margin so far = messages billed × (price − Meta cost).
+      lifetimeMarginMicros: msgs * margin,
+    };
+  }
+
+  // ---------- GET /aligned-admin/orgs/:id/wallet ------------------------
+  r.get(
+    '/aligned-admin/orgs/:id/wallet',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: "A tenant's wallet: balance, price, margin, metering switch.",
+        params: z.object({ id: uuidSchema }),
+        response: { 200: itemEnvelopeSchema(walletDtoSchema) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const org = await withRlsBypass((tx) =>
+        tx.organization.findUnique({ where: { id: req.params.id }, select: { id: true } }),
+      );
+      if (!org) throw notFound('Organization not found');
+      const w = await wallet.getWallet(req.params.id);
+      return { data: walletDto(req.params.id, w) };
+    },
+  );
+
+  // ---------- PUT /aligned-admin/orgs/:id/wallet/price ------------------
+  r.put(
+    '/aligned-admin/orgs/:id/wallet/price',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: "Set a tenant's per-message price (USD, floor $0.0375).",
+        params: z.object({ id: uuidSchema }),
+        body: walletSetPriceBodySchema,
+        response: { 200: itemEnvelopeSchema(walletDtoSchema) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const orgId = req.params.id;
+      const org = await withRlsBypass((tx) =>
+        tx.organization.findUnique({ where: { id: orgId }, select: { id: true } }),
+      );
+      if (!org) throw notFound('Organization not found');
+      const w = await wallet.setPrice(orgId, usdToMicros(req.body.priceUsd));
+      await recordAudit({
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        action: 'wallet_price_changed',
+        entityType: 'tenant_wallet',
+        entityId: orgId,
+        metadata: { pricePerMessageMicros: w.pricePerMessageMicros },
+      });
+      return { data: walletDto(orgId, w) };
+    },
+  );
+
+  // ---------- POST /aligned-admin/orgs/:id/wallet/topup ----------------
+  r.post(
+    '/aligned-admin/orgs/:id/wallet/topup',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Credit a tenant wallet (USD). Auto-enables metering.',
+        params: z.object({ id: uuidSchema }),
+        body: walletTopUpBodySchema,
+        response: { 200: itemEnvelopeSchema(walletDtoSchema) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const orgId = req.params.id;
+      const org = await withRlsBypass((tx) =>
+        tx.organization.findUnique({ where: { id: orgId }, select: { id: true } }),
+      );
+      if (!org) throw notFound('Organization not found');
+      const micros = usdToMicros(req.body.amountUsd);
+      const w = await wallet.topUp(orgId, micros, req.auth!.userId, req.body.note);
+      await wallet.rearmLowBalance(orgId);
+      await recordAudit({
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        action: 'wallet_topped_up',
+        entityType: 'tenant_wallet',
+        entityId: orgId,
+        metadata: { amountMicros: micros, note: req.body.note ?? null },
+      });
+      return { data: walletDto(orgId, w) };
+    },
+  );
+
+  // ---------- POST /aligned-admin/orgs/:id/wallet/adjust ---------------
+  r.post(
+    '/aligned-admin/orgs/:id/wallet/adjust',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Manual ± balance adjustment (USD, signed). Clamps at 0.',
+        params: z.object({ id: uuidSchema }),
+        body: walletAdjustBodySchema,
+        response: { 200: itemEnvelopeSchema(walletDtoSchema) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const orgId = req.params.id;
+      const org = await withRlsBypass((tx) =>
+        tx.organization.findUnique({ where: { id: orgId }, select: { id: true } }),
+      );
+      if (!org) throw notFound('Organization not found');
+      const micros = usdToMicros(req.body.amountUsd);
+      const w = await wallet.adjust(orgId, micros, req.auth!.userId, req.body.note);
+      await recordAudit({
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        action: 'wallet_adjusted',
+        entityType: 'tenant_wallet',
+        entityId: orgId,
+        metadata: { amountMicros: micros, note: req.body.note ?? null },
+      });
+      return { data: walletDto(orgId, w) };
+    },
+  );
+
+  // ---------- PUT /aligned-admin/orgs/:id/wallet/metering --------------
+  r.put(
+    '/aligned-admin/orgs/:id/wallet/metering',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Turn the send gate on/off without moving money.',
+        params: z.object({ id: uuidSchema }),
+        body: z.object({ enabled: z.boolean() }),
+        response: { 200: itemEnvelopeSchema(walletDtoSchema) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const orgId = req.params.id;
+      const org = await withRlsBypass((tx) =>
+        tx.organization.findUnique({ where: { id: orgId }, select: { id: true } }),
+      );
+      if (!org) throw notFound('Organization not found');
+      const w = await wallet.setMetering(orgId, req.body.enabled);
+      await recordAudit({
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        action: 'wallet_metering_toggled',
+        entityType: 'tenant_wallet',
+        entityId: orgId,
+        metadata: { meteringEnabled: req.body.enabled },
+      });
+      return { data: walletDto(orgId, w) };
+    },
+  );
+
+  // ---------- PUT /aligned-admin/orgs/:id/wallet/threshold -------------
+  r.put(
+    '/aligned-admin/orgs/:id/wallet/threshold',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Set the low-balance alert threshold (USD).',
+        params: z.object({ id: uuidSchema }),
+        body: walletThresholdBodySchema,
+        response: { 200: itemEnvelopeSchema(walletDtoSchema) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const orgId = req.params.id;
+      const org = await withRlsBypass((tx) =>
+        tx.organization.findUnique({ where: { id: orgId }, select: { id: true } }),
+      );
+      if (!org) throw notFound('Organization not found');
+      const w = await wallet.setLowBalanceThreshold(orgId, usdToMicros(req.body.lowBalanceUsd));
+      return { data: walletDto(orgId, w) };
+    },
+  );
+
+  // ---------- GET /aligned-admin/orgs/:id/wallet/ledger ----------------
+  r.get(
+    '/aligned-admin/orgs/:id/wallet/ledger',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: "A tenant's wallet ledger (top-ups, holds, settles, releases).",
+        params: z.object({ id: uuidSchema }),
+        querystring: z.object({
+          cursor: z.string().uuid().optional(),
+          limit: z.coerce.number().int().min(1).max(100).default(50),
+        }),
+        response: {
+          200: z.object({
+            data: z.array(
+              z.object({
+                id: uuidSchema,
+                kind: z.string(),
+                amountMicros: z.number(),
+                availableAfterMicros: z.number(),
+                heldAfterMicros: z.number(),
+                broadcastId: z.string().nullable(),
+                note: z.string().nullable(),
+                actorName: z.string().nullable(),
+                createdAt: z.string(),
+              }),
+            ),
+            nextCursor: z.string().nullable(),
+          }),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const orgId = req.params.id;
+      const { cursor, limit } = req.query;
+      const rows = await prisma.walletLedger.findMany({
+        where: { organizationId: orgId },
+        orderBy: { createdAt: 'desc' },
+        take: limit + 1,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
+      const hasMore = rows.length > limit;
+      const page = hasMore ? rows.slice(0, limit) : rows;
+      const actorIds = [...new Set(page.map((x) => x.actorUserId).filter(Boolean))] as string[];
+      const actors = actorIds.length
+        ? await prisma.user.findMany({
+            where: { id: { in: actorIds } },
+            select: { id: true, firstName: true, lastName: true, email: true },
+          })
+        : [];
+      const actorName = new Map(
+        actors.map((a) => [a.id, `${a.firstName ?? ''} ${a.lastName ?? ''}`.trim() || a.email]),
+      );
+      return {
+        data: page.map((x) => ({
+          id: x.id,
+          kind: x.kind,
+          amountMicros: Number(x.amountMicros),
+          availableAfterMicros: Number(x.availableAfter),
+          heldAfterMicros: Number(x.heldAfter),
+          broadcastId: x.broadcastId,
+          note: x.note,
+          actorName: x.actorUserId ? (actorName.get(x.actorUserId) ?? null) : null,
+          createdAt: x.createdAt.toISOString(),
+        })),
+        nextCursor: hasMore ? page[page.length - 1]!.id : null,
+      };
     },
   );
 

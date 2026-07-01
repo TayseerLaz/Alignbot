@@ -26,7 +26,10 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { formatMicrosUsd } from '@aligned/shared';
+
 import { api, ApiError, getAccessToken } from '@/lib/api';
+import { getWalletOverview } from '@/lib/dashboard-api';
 
 interface Template {
   id: string;
@@ -175,6 +178,15 @@ export default function NewBroadcastPage() {
     queryFn: () => api.get<{ data: { groupCount: number } }>('/api/v1/contacts/duplicates'),
   });
   const dupCount = dupQuery.data?.data.groupCount ?? 0;
+
+  // Prepaid-wallet cost preview (metered tenants only). Shared cache with the
+  // /billing page + dashboard widgets.
+  const walletQuery = useQuery({
+    queryKey: ['billing', 'overview'],
+    queryFn: getWalletOverview,
+    staleTime: 30_000,
+  });
+  const wallet = walletQuery.data;
 
   // Contacts picker — first 100 matching the search box (for "select some").
   const contactsPickerQuery = useQuery({
@@ -880,6 +892,17 @@ export default function NewBroadcastPage() {
               }
             />
 
+            {/* Prepaid-wallet cost preview (metered tenants only). Does not
+                block sending — the API enforces affordability at fanout. */}
+            {wallet && wallet.metered ? (
+              <BroadcastCostLine
+                count={knownRecipientCount}
+                pricePerMessageMicros={wallet.pricePerMessageMicros}
+                availableMicros={wallet.availableMicros}
+                messagesRemaining={wallet.messagesRemaining}
+              />
+            ) : null}
+
             {/* Duplicate-number warning — same person under multiple formats. */}
             {dupCount > 0 ? (
               <div className="border-t border-border pt-4">
@@ -1123,6 +1146,56 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
     <div className="flex justify-between border-b border-border py-2 text-sm">
       <span className="text-foreground-muted">{label}</span>
       <span className="font-medium">{value}</span>
+    </div>
+  );
+}
+
+// Estimated prepaid cost of the broadcast for a metered tenant. When the
+// audience size is known (manual / picked contacts) we show an exact estimate
+// and warn if the balance won't cover everyone. For deferred audiences
+// (CSV / tags / select-all) we show the price + balance as guidance only.
+function BroadcastCostLine({
+  count,
+  pricePerMessageMicros,
+  availableMicros,
+  messagesRemaining,
+}: {
+  count: number | null;
+  pricePerMessageMicros: number;
+  availableMicros: number;
+  messagesRemaining: number;
+}) {
+  const priceStr = formatMicrosUsd(pricePerMessageMicros);
+  const availStr = formatMicrosUsd(availableMicros);
+
+  if (count == null) {
+    return (
+      <div className="border-t border-border pt-4">
+        <div className="rounded-md border border-brand-200 bg-brand-50/60 p-3 text-sm text-brand-900 dark:border-brand-400/30 dark:bg-brand-400/10 dark:text-brand-200">
+          Each message costs <strong>${priceStr}</strong>. Balance:{' '}
+          <strong>${availStr}</strong> (~{messagesRemaining.toLocaleString()} messages). Final cost
+          depends on your resolved audience size.
+        </div>
+      </div>
+    );
+  }
+
+  const estimateMicros = count * pricePerMessageMicros;
+  const covered = estimateMicros <= availableMicros;
+
+  return (
+    <div className="border-t border-border pt-4 space-y-2">
+      <div className="rounded-md border border-brand-200 bg-brand-50/60 p-3 text-sm text-brand-900 dark:border-brand-400/30 dark:bg-brand-400/10 dark:text-brand-200">
+        Estimated cost: <strong>${formatMicrosUsd(estimateMicros)}</strong> (
+        {count.toLocaleString()} × ${priceStr}). Balance: <strong>${availStr}</strong> (~
+        {messagesRemaining.toLocaleString()} messages).
+      </div>
+      {!covered ? (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          Balance covers ~<strong>{messagesRemaining.toLocaleString()}</strong> of{' '}
+          {count.toLocaleString()} — the rest will be skipped until you top up.
+        </div>
+      ) : null}
     </div>
   );
 }

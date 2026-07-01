@@ -1,0 +1,286 @@
+'use client';
+
+import { formatMicrosUsd } from '@aligned/shared';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { AlertOctagon, AlertTriangle, Wallet } from 'lucide-react';
+
+import { PageHeader } from '@/components/shell/page-header';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import { api, ApiError } from '@/lib/api';
+import { getWalletOverview, type WalletOverview } from '@/lib/dashboard-api';
+import { cn } from '@/lib/utils';
+
+type LedgerKind = 'topup' | 'adjust' | 'settle' | 'release' | 'hold';
+
+interface LedgerEntry {
+  id: string;
+  kind: LedgerKind;
+  amountMicros: number;
+  availableAfterMicros: number;
+  note: string | null;
+  createdAt: string;
+}
+
+interface LedgerPage {
+  data: LedgerEntry[];
+  nextCursor: string | null;
+}
+
+const KIND_LABEL: Record<LedgerKind, string> = {
+  topup: 'Top-up',
+  settle: 'Message charge',
+  adjust: 'Adjustment',
+  release: 'Refund',
+  hold: 'Hold',
+};
+
+function humanizeKind(kind: LedgerKind): string {
+  return KIND_LABEL[kind] ?? kind;
+}
+
+export default function BillingPage() {
+  const overviewQ = useQuery({
+    queryKey: ['billing', 'overview'],
+    queryFn: getWalletOverview,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
+  const ledgerQ = useInfiniteQuery({
+    queryKey: ['billing', 'ledger'],
+    queryFn: ({ pageParam }: { pageParam: string | null }) =>
+      api.get<LedgerPage>(
+        `/api/v1/billing/ledger?limit=50${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ''}`,
+      ),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+  });
+
+  const ledgerRows = ledgerQ.data?.pages.flatMap((p) => p.data) ?? [];
+
+  return (
+    <>
+      <PageHeader
+        title="Billing & balance"
+        description="Your prepaid WhatsApp balance and account activity."
+      />
+
+      <div className="space-y-6">
+        {overviewQ.isLoading ? (
+          <Card>
+            <CardContent className="space-y-3 p-6">
+              <Skeleton className="h-10 w-48" />
+              <Skeleton className="h-4 w-64" />
+            </CardContent>
+          </Card>
+        ) : overviewQ.isError ? (
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-start gap-2 text-sm text-red-700">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <div>
+                  <p className="font-medium">Couldn&rsquo;t load your balance.</p>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="mt-1 h-7 px-2 text-xs text-red-700 hover:bg-red-100"
+                    onClick={() => overviewQ.refetch()}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ) : overviewQ.data ? (
+          <BalanceCard data={overviewQ.data} />
+        ) : null}
+
+        {/* Ledger */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Activity</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {ledgerQ.isLoading ? (
+              <div className="space-y-2 p-4">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <Skeleton key={i} className="h-9 w-full" />
+                ))}
+              </div>
+            ) : ledgerRows.length === 0 ? (
+              <p className="px-6 py-10 text-center text-sm text-foreground-muted">
+                No activity yet.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-border bg-surface-muted/60 text-[11px] uppercase tracking-wide text-foreground-subtle">
+                    <tr>
+                      <th className="px-4 py-2">Date</th>
+                      <th className="px-4 py-2">Type</th>
+                      <th className="px-4 py-2 text-right">Amount</th>
+                      <th className="hidden px-4 py-2 text-right sm:table-cell">Balance after</th>
+                      <th className="hidden px-4 py-2 md:table-cell">Note</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {ledgerRows.map((r) => {
+                      const positive = r.amountMicros >= 0;
+                      return (
+                        <tr key={r.id}>
+                          <td className="whitespace-nowrap px-4 py-2 text-foreground-muted">
+                            {new Date(r.createdAt).toLocaleDateString()}{' '}
+                            <span className="text-xs text-foreground-subtle">
+                              {new Date(r.createdAt).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2">{humanizeKind(r.kind)}</td>
+                          <td
+                            className={cn(
+                              'px-4 py-2 text-right font-medium tabular-nums',
+                              positive ? 'text-emerald-700' : 'text-red-700',
+                            )}
+                          >
+                            {positive ? '+' : '−'}${formatMicrosUsd(Math.abs(r.amountMicros))}
+                          </td>
+                          <td className="hidden px-4 py-2 text-right tabular-nums text-foreground-muted sm:table-cell">
+                            ${formatMicrosUsd(r.availableAfterMicros)}
+                          </td>
+                          <td className="hidden px-4 py-2 text-foreground-muted md:table-cell">
+                            {r.note ?? '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {ledgerQ.hasNextPage ? (
+              <div className="flex justify-center border-t border-border p-3">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  loading={ledgerQ.isFetchingNextPage}
+                  onClick={() => ledgerQ.fetchNextPage()}
+                >
+                  Load older
+                </Button>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      </div>
+    </>
+  );
+}
+
+function BalanceCard({ data }: { data: WalletOverview }) {
+  const {
+    metered,
+    availableMicros,
+    messagesRemaining,
+    pricePerMessageMicros,
+    lowBalanceThresholdMicros,
+    lifetimeMessages,
+    lifetimeSpentMicros,
+    lifetimeToppedUpMicros,
+  } = data;
+
+  // Tone: paused (0 messages) → red; running low → amber; else neutral.
+  const paused = metered && messagesRemaining === 0;
+  const low =
+    metered &&
+    !paused &&
+    ((lowBalanceThresholdMicros > 0 && availableMicros <= lowBalanceThresholdMicros) ||
+      messagesRemaining < 50);
+
+  const tone = paused ? 'red' : low ? 'amber' : 'neutral';
+
+  return (
+    <Card
+      className={cn(
+        tone === 'red'
+          ? 'border-red-300'
+          : tone === 'amber'
+            ? 'border-amber-300'
+            : 'border-border',
+      )}
+    >
+      <CardContent className="space-y-5 p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground-muted">
+              <Wallet className="size-4 text-brand-500" /> Available balance
+            </div>
+            <p className="mt-1 text-4xl font-semibold leading-tight tabular-nums">
+              ${formatMicrosUsd(availableMicros)}
+            </p>
+            {metered ? (
+              <p className="mt-1 text-sm text-foreground-muted">
+                ≈{' '}
+                <span className="font-medium text-foreground">
+                  {messagesRemaining.toLocaleString()}
+                </span>{' '}
+                WhatsApp message{messagesRemaining === 1 ? '' : 's'} left · at $
+                {formatMicrosUsd(pricePerMessageMicros)} per message
+              </p>
+            ) : (
+              <p className="mt-1 max-w-lg text-sm text-foreground-muted">
+                Pay-as-you-go WhatsApp billing isn&rsquo;t enabled for your workspace — your
+                broadcasts send without a per-message charge.
+                <span className="mt-1 block text-xs text-foreground-subtle">
+                  For reference, the per-message price is ${formatMicrosUsd(pricePerMessageMicros)}.
+                </span>
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Status line */}
+        {paused ? (
+          <div className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2.5 text-sm text-red-800">
+            <AlertOctagon className="mt-0.5 size-4 shrink-0" />
+            <span className="font-medium">Sending paused — top up to resume.</span>
+          </div>
+        ) : low ? (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <span className="font-medium">Running low — consider topping up soon.</span>
+          </div>
+        ) : metered ? (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">
+            Balance healthy — your bot and broadcasts are sending normally.
+          </div>
+        ) : null}
+
+        {/* Lifetime stats */}
+        <div className="grid grid-cols-1 gap-2 border-t border-border pt-4 sm:grid-cols-3">
+          <Stat label="Messages sent (lifetime)" value={lifetimeMessages.toLocaleString()} />
+          <Stat label="Spent (lifetime)" value={`$${formatMicrosUsd(lifetimeSpentMicros)}`} />
+          <Stat label="Topped up (lifetime)" value={`$${formatMicrosUsd(lifetimeToppedUpMicros)}`} />
+        </div>
+
+        {/* How top-ups work */}
+        <p className="text-xs text-foreground-subtle">
+          Top-ups are added by the ALIGNED team. Contact your account manager to add balance.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border bg-surface-muted/40 p-3">
+      <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">{label}</p>
+      <p className="mt-0.5 text-lg font-semibold tabular-nums">{value}</p>
+    </div>
+  );
+}

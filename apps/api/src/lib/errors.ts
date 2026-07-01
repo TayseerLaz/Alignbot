@@ -25,6 +25,9 @@ export const forbidden = (
 
 export const notFound = (message = 'Not found.') => new HttpError(404, ApiErrorCode.NOT_FOUND, message);
 
+export const paymentRequired = (message = 'Insufficient balance.', details?: unknown) =>
+  new HttpError(402, ApiErrorCode.INSUFFICIENT_BALANCE, message, details);
+
 export const conflict = (message = 'Conflict.', details?: unknown) =>
   new HttpError(409, ApiErrorCode.CONFLICT, message, details);
 

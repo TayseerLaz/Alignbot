@@ -1,7 +1,13 @@
 # Tenant Wallet & Metered WhatsApp Billing — Implementation Plan
 
-> Status: APPROVED DESIGN — ready to implement. Last updated: 2026-06-25.
+> Status: APPROVED DESIGN — ready to implement. Last updated: 2026-07-01.
 > Owner decisions captured from the 2026-06-25 planning session.
+>
+> **Update 2026-07-01:** (1) default per-message price is now **$0.08**, HQ-changeable per tenant
+> (§1.2, §4.1); (2) added a dedicated tenant-facing **"Billing & Overview"** page spec — plan, wallet,
+> monthly cost, spent vs. remaining, ≈ messages remaining, AI messages remaining, and every other plan
+> limit (§16); (3) rollout now **backfills all already-onboarded tenants** (lexy, ziid, …) to the
+> $0.08 default and **refreshes the cost figure they already see** to the new price (§14.8, §10).
 
 ## 0. Goal (one sentence)
 Give each tenant a **prepaid wallet** (topped up manually by ALIGNED HQ) and charge an
@@ -12,8 +18,10 @@ full visibility for both the tenant and HQ.
 ## 1. Locked decisions
 1. **Wallet carries over** month to month (no reset). Top-ups are manual HQ actions reflecting an
    offline payment. Balance **never goes negative**.
-2. **Price per message is per-tenant, admin-set, floor $0.0375** (= the Meta reference cost; can't be
-   lower). Margin = price − Meta cost.
+2. **Price per message is per-tenant, admin-set, default $0.08, floor $0.0375** (= the Meta reference
+   cost; can't be lower). Margin = price − Meta cost. Every metered tenant — new or backfilled — starts
+   at **$0.08** until HQ changes it; HQ can raise or lower it (never below the floor) per tenant at any
+   time, and the tenant's displayed cost + "messages remaining" recompute from the new price.
 3. **Billable = business-initiated templates only**: broadcasts, sequences/drips, manual + test
    template sends. **AI bot replies are NOT charged** to this wallet (separate AI budget; those are
    free 24h-window service messages).
@@ -65,7 +73,7 @@ model TenantWallet {
   organizationId            String   @unique @map("organization_id") @db.Uuid
   availableMicros           BigInt   @default(0) @map("available_micros")
   heldMicros                BigInt   @default(0) @map("held_micros")
-  pricePerMessageMicros     BigInt   @map("price_per_message_micros")        // ≥ metaCostMicros
+  pricePerMessageMicros     BigInt   @default(80000) @map("price_per_message_micros")  // default $0.08; ≥ metaCostMicros
   lowBalanceThresholdMicros BigInt   @default(0) @map("low_balance_threshold_micros")
   // Snapshot of the Meta reference cost when the price was set (for margin).
   metaCostMicros            BigInt   @default(37500) @map("meta_cost_micros")
@@ -300,6 +308,13 @@ admin margin numbers vs hand calc; low-balance notification fires once.
 5. Sequences + scheduled charge-at-send.
 6. Reaper + nightly invariant check.
 7. Expand to more tenants by setting their price + balance.
+8. **Backfill already-onboarded tenants to the $0.08 default.** For every existing tenant (lexy, ziid,
+   aseer-time, full-volume, sandwich-wnos, le-gabarit, the-booty-republic, …): create a `TenantWallet`
+   row with `pricePerMessageMicros = 80000` ($0.08) and balance $0, and **refresh any cost figure they
+   already see** (the admin `broadcastCostUsd` / tenant spend numbers) to the new $0.08-based math.
+   Metering stays inert (no send gate) until HQ tops up a balance — so nothing breaks — but the price and
+   the tenant's **"≈ messages remaining"** show immediately. HQ then tops up each tenant per their real
+   payment. Migration can seed these rows in one pass (idempotent on `organization_id`).
 
 ## 15. Open risks / future
 - **Per-country / per-category Meta pricing** — today one flat reference cost; real Meta rates vary
@@ -309,3 +324,77 @@ admin margin numbers vs hand calc; low-balance notification fires once.
 - **Refund policy** beyond auto-release (e.g. Meta-side delivery failures discovered later via status
   webhooks → post-hoc credit).
 - **Tax/VAT** on top-ups if invoicing is added later.
+
+## 16. Tenant "Billing & Overview" page (self-service)
+
+A dedicated tenant-facing page — **Billing & overview** (sidebar entry + route `/billing`) — that gives
+every tenant one honest, at-a-glance view of their plan, wallet, spend, and everything they have left.
+**Tenant-only figures** — Meta cost and margin are never shown here (HQ-only, §10). It reuses the
+already-shipped pieces: the wallet engine (`wallet.ts`), the per-tenant **monthly AI-message allowance**
+(`Organization.monthlyAiMessageCap` + Redis `aimsgs:{org}:{YYYY-MM}`), and the **Usage & limits** quota
+list (`getOrgQuotas`).
+
+### 16.1 What the page shows
+
+**A. Plan & price (summary strip)**
+- **Plan** name / tier (the tenant's subscription + AI plan label).
+- **Price per message** — the tenant's current per-message price (default **$0.08**), read-only for the
+  tenant (only HQ can change it, §1.2).
+- **Monthly cost** — what they're spending this month = **Spent this month** (below); if a fixed monthly
+  subscription fee exists it's shown alongside the metered spend.
+
+**B. Wallet (the top-up balance)**
+- **Balance available** — spendable now, in USD (from `availableMicros`).
+- **On hold** — reserved by in-flight broadcasts (`heldMicros`), shown if > 0.
+- **Topped up (lifetime)** — Σ top-ups (what HQ has loaded for them).
+
+**C. Spent vs. remaining (explicit, per the ask)**
+- **Spent this month** and **Spent (lifetime)** — Σ ledger debits (settles + charge-at-send). The
+  tenant always sees *how much they've spent*.
+- **Balance remaining** — restated prominently next to spent, so "spent vs. remaining" is one glance.
+
+**D. "How much your wallet can still send" (approx. messages remaining)**
+- **≈ messages remaining = floor(availableMicros / pricePerMessageMicros)** — e.g. *"With your $37.60
+  balance you can send about 470 more WhatsApp messages."* Recomputes live from balance ÷ price, so when
+  HQ changes the price it updates immediately.
+- If a monthly message/broadcast cap is also set, show the **effective** remaining =
+  `min(cap-remaining, floor(available / price))` and label which limit binds first.
+
+**E. Messages sent**
+- **This month** and **lifetime** billable message counts (broadcasts + sequences + manual/test template
+  sends), from the wallet counters / ledger.
+
+**F. AI messages remaining (separate allowance — reuse the shipped feature)**
+- **AI messages left this month = `monthlyAiMessageCap − used`** with the same green → amber (80%) → red
+  (100%, paused) states already built. Clearly labelled **separate from the wallet**: AI bot replies are
+  metered by the monthly AI-message allowance and are **not** charged to the wallet (§1.3).
+
+**G. Everything else from their plan (reuse Usage & limits)**
+- The full **quota list** already surfaced by the Usage & limits widget — monthly messages, broadcasts,
+  imports, and product / service / member / API-key / webhook caps — each as `used / cap / %` with the
+  green→amber→red status, so **all remaining plan capacity** lives on this one page.
+
+**H. Activity (ledger)**
+- A compact table of the tenant's own wallet movements: top-ups and charges (date, kind, amount, balance
+  after, and what it was for — e.g. *"Broadcast 'Eid sale' · 940 msgs"*). Tenant view hides Meta cost /
+  margin.
+
+**I. Low-balance state**
+- The low-balance banner (§9) pins to the top of this page (and the dashboard) when `available` is near 0.
+
+### 16.2 Data source (new tenant endpoints, viewer role)
+- `GET /billing/overview` →
+  `{ plan{name, aiPlanLabel}, wallet{availableMicros, heldMicros, pricePerMessageMicros, messagesRemaining},
+     spent{monthMicros, lifetimeMicros}, toppedUpLifetimeMicros, messagesSent{month, lifetime},
+     aiMessages{used, cap, remaining, percentUsed, unlimited}, quotas[] }`.
+  Composes `wallet.ts` + `readAiMessageUsage(orgId)` + `getOrgQuotas(tx, orgId)`. `messagesRemaining` and
+  `messagesSent`/`spent` come from the wallet; **never returns Meta cost or margin**.
+- `GET /billing/ledger?cursor=&limit=` → the tenant's own `wallet_ledger` rows (RLS-scoped), paginated.
+- Unmetered tenants (no wallet row) → the wallet/price/spent blocks show a friendly "not on metered
+  billing" empty state; the AI-messages + plan-quota blocks still render (those always apply).
+
+### 16.3 Web
+- New page `apps/web/src/app/(dashboard)/billing/page.tsx` + a **Billing** sidebar entry (gated so it's
+  hidden if the `billing`/`exports` feature is disabled for the tenant, consistent with the feature-toggle
+  system). The dashboard keeps its compact wallet + AI-messages + Usage&limits widgets; this page is the
+  full breakdown. Money formatted via the shared micros↔USD helper (2 dp), messages as whole numbers.

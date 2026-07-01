@@ -233,6 +233,29 @@ export async function getAiBudgetToday(): Promise<AiBudgetToday> {
   };
 }
 
+// ---------- 6b. WhatsApp wallet balance ------------------------------------
+// Tenant-facing prepaid balance + messages remaining. Reuses the same
+// /billing/overview endpoint the /billing page + banner read, so all three
+// share one query cache. `metered` false = pay-as-you-go billing isn't on for
+// this workspace (widget + banner hide themselves).
+
+export interface WalletOverview {
+  metered: boolean;
+  availableMicros: number;
+  heldMicros: number;
+  pricePerMessageMicros: number;
+  messagesRemaining: number;
+  lowBalanceThresholdMicros: number;
+  lifetimeSpentMicros: number;
+  lifetimeMessages: number;
+  lifetimeToppedUpMicros: number;
+}
+
+export async function getWalletOverview(): Promise<WalletOverview> {
+  const res = await api.get<{ data: WalletOverview }>('/api/v1/billing/overview');
+  return res.data;
+}
+
 // ---------- 7. Connections & sync ------------------------------------------
 
 export type WebhookHealth = 'healthy' | 'degraded' | 'failing';

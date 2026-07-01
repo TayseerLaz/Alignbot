@@ -211,4 +211,54 @@ describe('tenant isolation', () => {
     const visibleToA = await probeRls('api_connectors', bConnectorId, a.orgId);
     expect(visibleToA).toBe(0);
   });
+
+  // Tenant wallet & metered billing. A tenant's balance and ledger are money —
+  // cross-tenant visibility here would be a billing leak. Prove the RLS on both
+  // new tables directly, and that /billing/overview only ever shows own balance.
+  it('Postgres RLS hides org B tenant_wallets + wallet_ledger rows from org A', async () => {
+    const a = await seedOrgAndLogin(getApp(), 'rls-wallet-a');
+    const b = await seedOrgAndLogin(getApp(), 'rls-wallet-b');
+
+    await prisma.$executeRawUnsafe(`SET app.bypass_rls = 'on'`);
+    const bWallet = await prisma.tenantWallet.create({ data: { organizationId: b.orgId } });
+    const bLedger = await prisma.walletLedger.create({
+      data: { organizationId: b.orgId, kind: 'topup', amountMicros: 1000n, availableAfter: 1000n, heldAfter: 0n },
+    });
+
+    // Control: rows are visible with bypass / own-org context.
+    expect(await probeRls('tenant_wallets', bWallet.id, b.orgId)).toBe(1);
+    expect(await probeRls('wallet_ledger', bLedger.id, b.orgId)).toBe(1);
+
+    // Isolation: invisible bound to org A.
+    expect(await probeRls('tenant_wallets', bWallet.id, a.orgId)).toBe(0);
+    expect(await probeRls('wallet_ledger', bLedger.id, a.orgId)).toBe(0);
+  });
+
+  it('/billing/overview and /billing/ledger only ever return the caller org', async () => {
+    const app = getApp();
+    const a = await seedOrgAndLogin(app, 'bill-iso-a');
+    const b = await seedOrgAndLogin(app, 'bill-iso-b');
+
+    await prisma.$executeRawUnsafe(`SET app.bypass_rls = 'on'`);
+    // Fund org B only, via a distinctive amount.
+    await prisma.tenantWallet.create({
+      data: { organizationId: b.orgId, availableMicros: 12_345_678n, meteringEnabled: true, pricePerMessageMicros: 80_000n },
+    });
+
+    const ovA = await app.inject({
+      method: 'GET',
+      url: '/api/v1/billing/overview',
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect(ovA.statusCode).toBe(200);
+    // Org A has no wallet → unmetered, zero balance — never org B's $12.34.
+    expect((ovA.json() as { data: { availableMicros: number } }).data.availableMicros).toBe(0);
+
+    const ovB = await app.inject({
+      method: 'GET',
+      url: '/api/v1/billing/overview',
+      headers: { authorization: `Bearer ${b.accessToken}` },
+    });
+    expect((ovB.json() as { data: { availableMicros: number } }).data.availableMicros).toBe(12_345_678);
+  });
 });

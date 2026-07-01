@@ -162,6 +162,11 @@ enum AuditAction {
   phone_integration_created
   phone_integration_updated
   phone_integration_deleted
+  // Tenant wallet & metered WhatsApp billing
+  wallet_topped_up
+  wallet_adjusted
+  wallet_price_changed
+  wallet_metering_toggled
 }
 
 enum RevisionEntityType {
@@ -437,6 +442,9 @@ model Organization {
   broadcasts            Broadcast[]
   broadcastRecipients   BroadcastRecipient[]
   broadcastEvents       BroadcastEvent[]
+  // Wallet & metered billing (opt-in; wallet absent = unmetered)
+  tenantWallet          TenantWallet?
+  walletLedger          WalletLedger[]
   // Phase 5.4 — Sequences (drip)
   sequences             Sequence[]
   sequenceSteps         SequenceStep[]
@@ -2471,6 +2479,13 @@ model Broadcast {
   // How many recipients replied within the attribution window after this
   // campaign reached them (set on inbound; see lib/broadcast-response.ts).
   respondedCount      Int                   @default(0) @map("responded_count")
+  // Wallet billing snapshot (§4.3). Set at accept-time for metered tenants; NULL
+  // for unmetered. Held at accept, settled per successful send, released at term.
+  billingUnitPriceMicros BigInt?            @map("billing_unit_price_micros")
+  billingMetaCostMicros  BigInt?            @map("billing_meta_cost_micros")
+  billingHeldMicros      BigInt             @default(0) @map("billing_held_micros")
+  billingSettledMicros   BigInt             @default(0) @map("billing_settled_micros")
+  billingReleased        Boolean            @default(false) @map("billing_released")
   // The user who clicked Send. May be NULL if the user is later deleted.
   createdByUserId     String?               @map("created_by_user_id") @db.Uuid
   createdAt           DateTime              @default(now()) @map("created_at")
@@ -2513,6 +2528,9 @@ model BroadcastRecipient {
   // send — the per-campaign "responded" signal.
   respondedAt      DateTime?        @map("responded_at")
   attemptCount     Int              @default(0) @map("attempt_count")
+  // Wallet settle idempotency (§4.4): set when this send is charged so a retried
+  // send job never double-charges.
+  billedAt         DateTime?        @map("billed_at")
   createdAt        DateTime         @default(now()) @map("created_at")
 
   organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -2526,6 +2544,67 @@ model BroadcastRecipient {
   // Reply attribution looks up recent sends to a phone.
   @@index([organizationId, phoneE164, sentAt])
   @@map("broadcast_recipients")
+}
+
+// ---------- Tenant wallet & metered WhatsApp billing (see docs/wallet-billing-plan.md) ----------
+
+enum WalletLedgerKind {
+  topup
+  adjust
+  hold
+  settle
+  release
+}
+
+// One prepaid wallet per org. Its ABSENCE means the tenant is unmetered (opt-in):
+// no balance gate, behaves exactly as before. All money in integer micro-USD
+// (1 USD = 1_000_000 µ$). Total tenant money = availableMicros + heldMicros.
+model TenantWallet {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId            String   @unique @map("organization_id") @db.Uuid
+  availableMicros           BigInt   @default(0) @map("available_micros")
+  heldMicros                BigInt   @default(0) @map("held_micros")
+  // Default $0.08 (80_000 µ$). HQ-set per tenant; never below metaCostMicros.
+  pricePerMessageMicros     BigInt   @default(80000) @map("price_per_message_micros")
+  // Enforcement switch. A wallet can exist (price set, visible to the tenant)
+  // while metering is OFF — sends aren't gated. This lets us backfill every
+  // existing tenant to the $0.08 price without blocking anyone. Auto-flips ON on
+  // the first top-up; HQ can also toggle it. isMetered() == this flag.
+  meteringEnabled           Boolean  @default(false) @map("metering_enabled")
+  lowBalanceThresholdMicros BigInt   @default(0) @map("low_balance_threshold_micros")
+  // Snapshot of the Meta reference cost when the price was set (for margin). $0.0375.
+  metaCostMicros            BigInt   @default(37500) @map("meta_cost_micros")
+  // Denormalized lifetime counters (cheap dashboards; ledger is source of truth).
+  lifetimeToppedUpMicros    BigInt   @default(0) @map("lifetime_topped_up_micros")
+  lifetimeSpentMicros       BigInt   @default(0) @map("lifetime_spent_micros")
+  lifetimeMessages          Int      @default(0) @map("lifetime_messages")
+  createdAt                 DateTime @default(now()) @map("created_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  @@map("tenant_wallets")
+}
+
+// Immutable audit trail of every wallet movement. Signed amountMicros: +credit / -debit.
+model WalletLedger {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String           @map("organization_id") @db.Uuid
+  kind            WalletLedgerKind
+  amountMicros    BigInt           @map("amount_micros")
+  availableAfter  BigInt           @map("available_after_micros")
+  heldAfter       BigInt           @map("held_after_micros")
+  broadcastId     String?          @map("broadcast_id") @db.Uuid
+  recipientId     String?          @map("recipient_id") @db.Uuid
+  unitPriceMicros BigInt?          @map("unit_price_micros")
+  metaCostMicros  BigInt?          @map("meta_cost_micros")
+  note            String?
+  actorUserId     String?          @map("actor_user_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, kind, createdAt])
+  @@map("wallet_ledger")
 }
 
 // Coarse-grained timeline of campaign events for the detail page.

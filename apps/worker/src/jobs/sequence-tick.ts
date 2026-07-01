@@ -11,6 +11,7 @@
 import { prisma } from './db.js';
 import { recordOutboundTemplate } from './inbox-consistency.js';
 import { getConnection } from '../lib/redis.js';
+import { canAfford, chargeAtSend, resolveMeteredPrice } from '../lib/wallet.js';
 
 const TICK_INTERVAL_MS = Number(process.env.SEQUENCE_TICK_INTERVAL_MS ?? 30_000);
 const TICK_LOCK_TTL_S = Math.ceil(TICK_INTERVAL_MS / 1000) + 5;
@@ -170,6 +171,14 @@ async function processOneEnrollment(enrollmentId: string): Promise<void> {
     },
   );
 
+  // Metered billing (docs/wallet-billing-plan.md): a sequence step is a real
+  // WhatsApp send. If the metered tenant can't afford it, skip this tick and
+  // leave the enrollment due so it resumes automatically once they top up.
+  const metered = await resolveMeteredPrice(e.organizationId);
+  if (metered && !(await canAfford(e.organizationId, metered.priceMicros))) {
+    return;
+  }
+
   const out = await callMeta({
     token: channel.accessToken,
     phoneNumberId: channel.phoneNumberId,
@@ -194,6 +203,15 @@ async function processOneEnrollment(enrollmentId: string): Promise<void> {
     metaMessageId: out.metaMessageId,
     templateName: template.name,
   });
+
+  // Charge the delivered sequence message against the metered wallet.
+  if (metered) {
+    await chargeAtSend({
+      orgId: e.organizationId,
+      unitPriceMicros: metered.priceMicros,
+      metaCostMicros: metered.metaCostMicros,
+    });
+  }
 
   const nextIdx = e.nextStepIndex + 1;
   const nextStep = e.sequence.steps[nextIdx];

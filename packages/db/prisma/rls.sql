@@ -275,3 +275,5 @@ CREATE POLICY user_membership_or_bypass ON users
   WITH CHECK (rls_bypassed());  -- writes go through bypass (auth/admin paths)
 
 -- ---------- end -------------------------------------------------------------
+SELECT _aligned_apply_tenant_rls('tenant_wallets');
+SELECT _aligned_apply_tenant_rls('wallet_ledger');

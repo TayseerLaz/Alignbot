@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { AddWidgetDialog } from '@/components/dashboard/add-widget-dialog';
 import { AdminPlatformDashboard } from '@/components/dashboard/admin-platform-dashboard';
 import { AiBudgetBanner } from '@/components/dashboard/ai-budget-banner';
+import { WalletBalanceBanner } from '@/components/dashboard/wallet-balance-banner';
 import { EditModeProvider, useEditMode } from '@/components/dashboard/edit-mode-context';
 import { useDashboardLayout } from '@/components/dashboard/use-dashboard-layout';
 import { WIDGETS_BY_ID, type WidgetDef, type WidgetId } from '@/components/dashboard/widget-registry';
@@ -97,9 +98,11 @@ function DashboardShell({ greeting }: { greeting: string }) {
       />
 
       {/* Daily AI-budget alert — shown above everything when the bot is near or
-          at its daily limit (the cap that pauses automatic replies). */}
-      <div className="mb-6">
+          at its daily limit (the cap that pauses automatic replies). Paired with
+          the prepaid WhatsApp balance alert (empty/low balance pauses sending). */}
+      <div className="mb-6 space-y-3">
         <AiBudgetBanner />
+        <WalletBalanceBanner />
       </div>
 
       {visible.length === 0 ? (

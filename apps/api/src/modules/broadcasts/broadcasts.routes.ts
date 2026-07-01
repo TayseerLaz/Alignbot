@@ -31,8 +31,10 @@ import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
 import { bumpUsage, capCheck } from '../../lib/billing.js';
+import { withRlsBypass } from '../../lib/db.js';
 import { env } from '../../lib/env.js';
-import { badRequest, conflict, notFound } from '../../lib/errors.js';
+import { badRequest, conflict, notFound, paymentRequired } from '../../lib/errors.js';
+import * as wallet from '../../lib/wallet.js';
 
 // Same CORS workaround used by the inbox SSE — raw.writeHead bypasses
 // @fastify/cors so we have to echo the allow-origin header manually.
@@ -643,6 +645,38 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
         // bumpUsage outside the tenant transaction.
         return { broadcast: updated, fromDraft: existing.status === 'draft' };
       });
+
+      // Metered billing (docs/wallet-billing-plan.md). A metered tenant must be
+      // able to afford at least one message before we launch. Reject upfront
+      // with a clear balance message (rolling the broadcast back to draft so
+      // they can retry after topping up), and snapshot the accepted per-message
+      // price onto the broadcast so the worker charges deterministically even
+      // if HQ later changes the price. Unmetered tenants pass straight through.
+      const billingWallet = await wallet.getWallet(orgId);
+      if (billingWallet?.meteringEnabled) {
+        const price = billingWallet.pricePerMessageMicros;
+        if (billingWallet.availableMicros < price) {
+          await withRlsBypass((tx) =>
+            tx.broadcast.update({
+              where: { id },
+              data: { status: 'draft', startedAt: null, scheduledFor: null },
+            }),
+          );
+          throw paymentRequired(
+            `Insufficient WhatsApp balance. You have $${(billingWallet.availableMicros / 1_000_000).toFixed(2)} and each message costs $${(price / 1_000_000).toFixed(4)}. Top up your wallet to send this broadcast.`,
+          );
+        }
+        await withRlsBypass((tx) =>
+          tx.broadcast.update({
+            where: { id },
+            data: {
+              billingUnitPriceMicros: BigInt(price),
+              billingMetaCostMicros: BigInt(billingWallet.metaCostMicros),
+              billingSettledMicros: 0n,
+            },
+          }),
+        );
+      }
 
       // Enqueue fanout. For scheduled, BullMQ delay handles the wait.
       // Re-send semantics: if a job already exists for this broadcast

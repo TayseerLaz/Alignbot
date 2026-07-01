@@ -25,6 +25,7 @@ import {
   ShoppingBag,
   Sparkles,
   Users,
+  Wallet,
   type LucideIcon,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
@@ -45,6 +46,7 @@ import { ReplyQualityWidget } from './widgets/reply-quality';
 import { SalesRevenueWidget } from './widgets/sales-revenue';
 import { UsageLimitsWidget } from './widgets/usage-limits';
 import { VoiceCallsWidget } from './widgets/voice-calls';
+import { WalletBalanceWidget } from './widgets/wallet-balance';
 
 export type WidgetId =
   | 'kpi-strip'
@@ -62,7 +64,8 @@ export type WidgetId =
   | 'reply-quality'
   | 'voice-calls'
   | 'orders-by-channel'
-  | 'usage-limits';
+  | 'usage-limits'
+  | 'wallet-balance';
 
 /**
  * Where the widget lives on the page. The dashboard places `full`
@@ -159,6 +162,15 @@ export const WIDGETS: WidgetDef[] = [
     slot: 'half',
     defaultOn: true,
     Component: AiBudgetWidget,
+  },
+  {
+    id: 'wallet-balance',
+    title: 'WhatsApp balance',
+    description: 'Prepaid balance and messages remaining.',
+    icon: Wallet,
+    slot: 'half',
+    defaultOn: true,
+    Component: WalletBalanceWidget,
   },
   {
     id: 'usage-limits',

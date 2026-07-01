@@ -13,6 +13,7 @@ import { DelayedError, Worker } from 'bullmq';
 import { emitWebhookEvent } from '../lib/emit-webhook.js';
 import { getConnection } from '../lib/redis.js';
 import { safeFetch } from '../lib/safe-fetch.js';
+import { canAfford, chargeAtSend, notifyBalanceCapped } from '../lib/wallet.js';
 import { getObjectStream } from '../lib/storage.js';
 
 import { prisma } from './db.js';
@@ -490,6 +491,27 @@ export function startBroadcastSendWorker() {
         return;
       }
 
+      // Metered billing (docs/wallet-billing-plan.md). A broadcast carries a
+      // per-message price snapshot iff the tenant was metered at accept time.
+      // Charge-at-send per recipient: if the balance can't cover this message,
+      // skip it (cap-to-balance — never overspend) and notify the tenant once.
+      const meteredPriceMicros = broadcast.billingUnitPriceMicros;
+      if (meteredPriceMicros != null) {
+        const affordable = await canAfford(organizationId, Number(meteredPriceMicros));
+        if (!affordable) {
+          await prisma.broadcastRecipient.update({
+            where: { id: recipientId },
+            data: {
+              status: 'skipped',
+              metaErrorCode: 'insufficient_balance',
+              metaErrorMessage: 'WhatsApp balance exhausted — top up to send the rest.',
+            },
+          });
+          await notifyBalanceCapped(organizationId, broadcastId);
+          return;
+        }
+      }
+
       // Token bucket (per number — Meta limits throughput per phone_number_id).
       // Consumed only once we know the send will actually go out (after the
       // opt-out / send-window gates), so skips/delays don't waste tokens. If
@@ -576,6 +598,19 @@ export function startBroadcastSendWorker() {
           where: { id: broadcastId },
           data: { sentCount: { increment: 1 } },
         });
+        // Metered billing: charge this delivered message. Idempotent per
+        // recipient (billed_at). We charge AFTER a confirmed send so failed
+        // sends are never billed; the pre-send `canAfford` gate keeps this
+        // from ever pushing the balance negative.
+        if (meteredPriceMicros != null) {
+          await chargeAtSend({
+            orgId: organizationId,
+            unitPriceMicros: Number(meteredPriceMicros),
+            metaCostMicros: broadcast.billingMetaCostMicros != null ? Number(broadcast.billingMetaCostMicros) : undefined,
+            broadcastId,
+            recipientId,
+          });
+        }
         // Record an outbound WhatsAppMessage row LINKED to the customer's
         // inbox thread so it actually shows in the inbox (was an orphaned,
         // thread-less row that never appeared in any conversation).

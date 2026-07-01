@@ -27,5 +27,6 @@ export * from './schemas/leads.js';
 export * from './schemas/voice.js';
 export * from './schemas/phone-integration.js';
 export * from './schemas/shopify.js';
+export * from './schemas/wallet.js';
 export * from './types/api-error.js';
 export * from './util-url-guard.js';

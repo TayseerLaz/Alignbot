@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 
+import { decryptSecret } from '@aligned/db';
 import { describe, expect, it } from 'vitest';
 
 import { seedOrgAndLogin } from './helpers.js';
@@ -31,6 +32,10 @@ describe('inbound webhook signature', () => {
     await prisma.$executeRawUnsafe(`SET app.bypass_rls = 'on'`);
     const connector = await prisma.apiConnector.findUnique({ where: { id: connectorId } });
     expect(connector?.webhookSecret).toBeTruthy();
+    // webhookSecret is AES-256-GCM encrypted at rest (F-01); the inbound verifier
+    // decrypts it before the HMAC compare, so sign with the PLAINTEXT secret.
+    // (decryptSecret is a no-op passthrough when SECRET_ENCRYPTION_KEY is unset.)
+    const plainSecret = decryptSecret(connector!.webhookSecret!);
 
     const ts = Math.floor(Date.now() / 1000);
     const body = JSON.stringify({ ping: true });
@@ -53,7 +58,7 @@ describe('inbound webhook signature', () => {
       method: 'POST',
       url: `/api/v1/webhooks/inbound/${connectorId}`,
       headers: {
-        'x-aligned-signature': sign(connector!.webhookSecret!, body, ts),
+        'x-aligned-signature': sign(plainSecret!, body, ts),
         'x-aligned-timestamp': String(ts),
         'content-type': 'application/json',
       },

@@ -114,7 +114,7 @@ const groups: NavGroup[] = [
       // for regular tenants but move into the ALIGNED HQ group for admins.
       { href: '/aligned-admin', label: 'Tenants', icon: ShieldCheck, adminOnly: true },
       { href: '/members', label: 'Members', icon: Users, hideForAdmin: true },
-      { href: '/billing', label: 'Billing', icon: Wallet, hideForAdmin: true },
+      { href: '/billing', label: 'Billing', icon: Wallet, hideForAdminHome: true },
       // ALIGNED admins in HQ get the cross-tenant activity log (all tenants);
       // regular tenants + admins controlling a tenant get the org-scoped one.
       { href: '/audit-log', label: 'Activity log', icon: Activity, adminHomeHref: '/aligned-admin/audit' },

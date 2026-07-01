@@ -2,14 +2,15 @@
 
 import { formatMicrosUsd } from '@aligned/shared';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { AlertOctagon, AlertTriangle, Wallet } from 'lucide-react';
+import { AlertOctagon, AlertTriangle, Gauge, Wallet } from 'lucide-react';
 
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { api, ApiError } from '@/lib/api';
-import { getWalletOverview, type WalletOverview } from '@/lib/dashboard-api';
+import { api } from '@/lib/api';
+import { getAiBudgetToday, getWalletOverview, type AiBudgetToday, type WalletOverview } from '@/lib/dashboard-api';
+import { formatThousands } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 type LedgerKind = 'topup' | 'adjust' | 'settle' | 'release' | 'hold';
@@ -48,6 +49,23 @@ export default function BillingPage() {
     staleTime: 30_000,
   });
 
+  // Plan + AI-message allowance + all plan quotas (same source the dashboard
+  // "Usage & limits" widget reads — shared cache key). Lets the tenant see
+  // their plan and how much of every enforced limit they've used.
+  const aiUsageQ = useQuery({
+    queryKey: ['dashboard', 'ai-budget'],
+    queryFn: getAiBudgetToday,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const subQ = useQuery({
+    queryKey: ['billing', 'subscription'],
+    queryFn: () =>
+      api.get<{ data: { planName: string; status: string } }>('/api/v1/billing/subscription'),
+    staleTime: 60_000,
+  });
+  const planName = subQ.data?.data.planName ?? null;
+
   const ledgerQ = useInfiniteQuery({
     queryKey: ['billing', 'ledger'],
     queryFn: ({ pageParam }: { pageParam: string | null }) =>
@@ -63,8 +81,8 @@ export default function BillingPage() {
   return (
     <>
       <PageHeader
-        title="Billing & balance"
-        description="Your prepaid WhatsApp balance and account activity."
+        title="Billing & usage"
+        description="Your plan, usage limits, and prepaid WhatsApp balance."
       />
 
       <div className="space-y-6">
@@ -96,6 +114,19 @@ export default function BillingPage() {
           </Card>
         ) : overviewQ.data ? (
           <BalanceCard data={overviewQ.data} />
+        ) : null}
+
+        {/* Plan & usage */}
+        {aiUsageQ.isLoading ? (
+          <Card>
+            <CardContent className="space-y-3 p-6">
+              <Skeleton className="h-6 w-40" />
+              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-3 w-full" />
+            </CardContent>
+          </Card>
+        ) : aiUsageQ.data ? (
+          <PlanUsageCard ai={aiUsageQ.data} planName={planName} />
         ) : null}
 
         {/* Ledger */}
@@ -281,6 +312,105 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div className="rounded-md border border-border bg-surface-muted/40 p-3">
       <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">{label}</p>
       <p className="mt-0.5 text-lg font-semibold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+function PlanUsageCard({ ai, planName }: { ai: AiBudgetToday; planName: string | null }) {
+  // AI bot replies first (the cap that pauses the bot), then every plan quota.
+  const rows: { label: string; used: number; cap: number | null; pct: number | null }[] = [];
+  if (!ai.unlimited) {
+    rows.push({
+      label: 'AI bot replies (this month)',
+      used: ai.messagesUsed,
+      cap: ai.messageCap,
+      pct: ai.percentUsed,
+    });
+  }
+  for (const q of ai.quotas) rows.push({ label: q.label, used: q.used, cap: q.cap, pct: q.pct });
+
+  const aiRemaining =
+    ai.unlimited || ai.messageCap == null ? null : Math.max(0, ai.messageCap - ai.messagesUsed);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Gauge className="size-4 text-brand-500" /> Your plan &amp; usage
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-border bg-surface-muted/40 p-4">
+            <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">Current plan</p>
+            <p className="mt-0.5 text-xl font-semibold">{planName ?? '—'}</p>
+          </div>
+          <div className="rounded-lg border border-border bg-surface-muted/40 p-4">
+            <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">
+              AI bot replies left this month
+            </p>
+            <p className="mt-0.5 text-xl font-semibold tabular-nums">
+              {aiRemaining == null ? 'Unlimited' : formatThousands(aiRemaining)}
+              {aiRemaining != null && ai.messageCap != null ? (
+                <span className="ml-1 text-sm font-normal text-foreground-muted">
+                  of {formatThousands(ai.messageCap)}
+                </span>
+              ) : null}
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {rows.map((r) => (
+            <QuotaBar key={r.label} {...r} />
+          ))}
+        </div>
+
+        <p className="text-xs text-foreground-subtle">
+          These are your plan limits. When a bar reaches 100% that activity pauses until the next
+          month or a plan upgrade — contact ALIGNED to change your plan.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function QuotaBar({
+  label,
+  used,
+  cap,
+  pct,
+}: {
+  label: string;
+  used: number;
+  cap: number | null;
+  pct: number | null;
+}) {
+  const unlimited = cap == null;
+  const p = unlimited ? 0 : Math.min(100, Math.max(0, pct ?? 0));
+  const color = unlimited
+    ? 'bg-emerald-500'
+    : p >= 100
+      ? 'bg-red-500'
+      : p >= 80
+        ? 'bg-amber-500'
+        : 'bg-brand-500';
+  return (
+    <div>
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-foreground-muted">{label}</span>
+        <span className="tabular-nums text-foreground-subtle">
+          {unlimited
+            ? 'Unlimited'
+            : `${formatThousands(used)} / ${formatThousands(cap)}${pct != null ? ` · ${p}%` : ''}`}
+        </span>
+      </div>
+      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-surface-muted">
+        <div
+          className={cn('h-full transition-all', color)}
+          style={{ width: `${unlimited ? 8 : p}%`, opacity: unlimited ? 0.5 : 1 }}
+        />
+      </div>
     </div>
   );
 }

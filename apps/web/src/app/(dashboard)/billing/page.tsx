@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
 import { getAiBudgetToday, getWalletOverview, type AiBudgetToday, type WalletOverview } from '@/lib/dashboard-api';
 import { formatThousands } from '@/lib/format';
+import { useSession } from '@/lib/session';
 import { cn } from '@/lib/utils';
 
 type LedgerKind = 'topup' | 'adjust' | 'settle' | 'release' | 'hold';
@@ -42,6 +43,11 @@ function humanizeKind(kind: LedgerKind): string {
 }
 
 export default function BillingPage() {
+  const { session } = useSession();
+  // Tenants without the AI/bot feature (e.g. Lexy) don't have an AI-message
+  // allowance — hide every AI part of the page for them.
+  const hasAi = !session?.organization?.disabledFeatures?.includes('ai');
+
   const overviewQ = useQuery({
     queryKey: ['billing', 'overview'],
     queryFn: getWalletOverview,
@@ -126,7 +132,7 @@ export default function BillingPage() {
             </CardContent>
           </Card>
         ) : aiUsageQ.data ? (
-          <PlanUsageCard ai={aiUsageQ.data} planName={planName} />
+          <PlanUsageCard ai={aiUsageQ.data} planName={planName} hasAi={hasAi} />
         ) : null}
 
         {/* Ledger */}
@@ -316,10 +322,19 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function PlanUsageCard({ ai, planName }: { ai: AiBudgetToday; planName: string | null }) {
-  // AI bot replies first (the cap that pauses the bot), then every plan quota.
+function PlanUsageCard({
+  ai,
+  planName,
+  hasAi,
+}: {
+  ai: AiBudgetToday;
+  planName: string | null;
+  hasAi: boolean;
+}) {
+  // AI bot replies first (the cap that pauses the bot) — only for tenants that
+  // actually have the AI feature — then every plan quota.
   const rows: { label: string; used: number; cap: number | null; pct: number | null }[] = [];
-  if (!ai.unlimited) {
+  if (hasAi && !ai.unlimited) {
     rows.push({
       label: 'AI bot replies (this month)',
       used: ai.messagesUsed,
@@ -340,24 +355,26 @@ function PlanUsageCard({ ai, planName }: { ai: AiBudgetToday; planName: string |
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className={cn('grid grid-cols-1 gap-3', hasAi && 'sm:grid-cols-2')}>
           <div className="rounded-lg border border-border bg-surface-muted/40 p-4">
             <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">Current plan</p>
             <p className="mt-0.5 text-xl font-semibold">{planName ?? '—'}</p>
           </div>
-          <div className="rounded-lg border border-border bg-surface-muted/40 p-4">
-            <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">
-              AI bot replies left this month
-            </p>
-            <p className="mt-0.5 text-xl font-semibold tabular-nums">
-              {aiRemaining == null ? 'Unlimited' : formatThousands(aiRemaining)}
-              {aiRemaining != null && ai.messageCap != null ? (
-                <span className="ml-1 text-sm font-normal text-foreground-muted">
-                  of {formatThousands(ai.messageCap)}
-                </span>
-              ) : null}
-            </p>
-          </div>
+          {hasAi ? (
+            <div className="rounded-lg border border-border bg-surface-muted/40 p-4">
+              <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">
+                AI bot replies left this month
+              </p>
+              <p className="mt-0.5 text-xl font-semibold tabular-nums">
+                {aiRemaining == null ? 'Unlimited' : formatThousands(aiRemaining)}
+                {aiRemaining != null && ai.messageCap != null ? (
+                  <span className="ml-1 text-sm font-normal text-foreground-muted">
+                    of {formatThousands(ai.messageCap)}
+                  </span>
+                ) : null}
+              </p>
+            </div>
+          ) : null}
         </div>
 
         <div className="space-y-3">

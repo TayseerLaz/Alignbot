@@ -9,7 +9,6 @@ import { Kbd } from '@/components/ui/kbd';
 import { CommandPaletteProvider, useCommandPalette } from './command-palette';
 import { ControllingBanner } from './controlling-banner';
 import { Sidebar } from './sidebar';
-import { PwaInstallButton } from './pwa-install-button';
 import { TopBar } from './top-bar';
 
 // The ⌘K trigger — a search-box affordance so the command palette is
@@ -75,7 +74,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Menu className="size-5" />
             </Button>
             <CommandTrigger />
-            <PwaInstallButton />
             <TopBar />
           </header>
           {/* Impersonation banner — visible on every page while an ALIGNED admin

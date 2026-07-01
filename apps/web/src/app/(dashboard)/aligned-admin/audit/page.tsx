@@ -110,6 +110,19 @@ export default function AdminAuditPage() {
   });
   const orgs = (orgsQ.data?.data ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
 
+  // When a tenant is chosen, load its members so the actor filter can pick a
+  // specific user of that tenant. No tenant → the actor filter stays "all".
+  const membersQ = useQuery({
+    enabled: !!organizationId,
+    queryKey: ['admin-org-members-audit', organizationId],
+    queryFn: () =>
+      api.get<{
+        data: { members: { userId: string; email: string; firstName: string | null; lastName: string | null }[] };
+      }>(`/api/v1/aligned-admin/orgs/${organizationId}`),
+    staleTime: 60_000,
+  });
+  const members = organizationId ? (membersQ.data?.data.members ?? []) : [];
+
   const clearFilters = () => {
     setEntityType('');
     setActorEmail('');
@@ -161,6 +174,7 @@ export default function AdminAuditPage() {
                 value={organizationId || '__all__'}
                 onValueChange={(v) => {
                   setCursor(null);
+                  setActorEmail(''); // the user list changes with the tenant — reset the actor
                   setOrganizationId(v === '__all__' ? '' : v);
                 }}
               >
@@ -178,15 +192,30 @@ export default function AdminAuditPage() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="actorEmail">Actor email contains</Label>
-              <Input
-                id="actorEmail"
-                value={actorEmail}
-                onChange={(e) => {
+              <Label htmlFor="actor">User / actor</Label>
+              <Select
+                value={actorEmail || '__all__'}
+                onValueChange={(v) => {
                   setCursor(null);
-                  setActorEmail(e.target.value);
+                  setActorEmail(v === '__all__' ? '' : v);
                 }}
-              />
+                disabled={!organizationId}
+              >
+                <SelectTrigger id="actor">
+                  <SelectValue placeholder={organizationId ? 'All users' : 'All actors'} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">{organizationId ? 'All users' : 'All actors'}</SelectItem>
+                  {members.map((m) => (
+                    <SelectItem key={m.userId} value={m.email}>
+                      {`${m.firstName ?? ''} ${m.lastName ?? ''}`.trim() || m.email}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!organizationId ? (
+                <p className="text-[11px] text-foreground-subtle">Pick a tenant to filter by a specific user.</p>
+              ) : null}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="from">From</Label>

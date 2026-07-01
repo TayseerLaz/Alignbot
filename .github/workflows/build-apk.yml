@@ -1,0 +1,59 @@
+name: Build Android APK
+
+# Builds the Hader Android app (Capacitor native shell around https://hader.ai/app)
+# on a GitHub runner — which already has the Android SDK + JDK — and uploads the
+# installable .apk as a downloadable artifact. No SSH, no server access, no local
+# Android tooling needed: trigger it from the Actions tab and download the result.
+#
+# Unlike a TWA, a Capacitor app runs the site in its OWN native WebView, so it
+# has NO Chrome address bar and needs NO assetlinks verification file.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile/capacitor-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Capacitor
+        run: npm install
+
+      - name: Generate the Android project
+        run: npx cap add android
+
+      - name: Sync web assets + config into Android
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: apps/mobile/capacitor-app/android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk hader-app.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hader-android-apk
+          path: apps/mobile/capacitor-app/hader-app.apk
+          if-no-files-found: error
+          retention-days: 30

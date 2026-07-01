@@ -1,0 +1,13 @@
+{
+  "appId": "ai.hader.app",
+  "appName": "Hader",
+  "webDir": "www",
+  "server": {
+    "url": "https://hader.ai/app",
+    "androidScheme": "https",
+    "allowNavigation": ["hader.ai", "*.hader.ai"]
+  },
+  "android": {
+    "backgroundColor": "#360516"
+  }
+}

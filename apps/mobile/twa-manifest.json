@@ -1,0 +1,54 @@
+{
+  "packageId": "ai.hader.app",
+  "host": "hader.ai",
+  "name": "Hader AI",
+  "launcherName": "Hader",
+  "display": "standalone",
+  "orientation": "default",
+  "themeColor": "#360516",
+  "themeColorDark": "#360516",
+  "navigationColor": "#360516",
+  "navigationColorDark": "#360516",
+  "navigationDividerColor": "#360516",
+  "navigationDividerColorDark": "#360516",
+  "backgroundColor": "#faf9f5",
+  "enableNotifications": true,
+  "startUrl": "/app/dashboard",
+  "iconUrl": "https://hader.ai/app/icons/icon-512.png",
+  "maskableIconUrl": "https://hader.ai/app/icons/maskable-512.png",
+  "monochromeIconUrl": "https://hader.ai/app/icons/maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "hader"
+  },
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [
+    {
+      "name": "Inbox",
+      "shortName": "Inbox",
+      "url": "/app/inbox",
+      "chosenIconUrl": "https://hader.ai/app/icons/icon-192.png"
+    },
+    {
+      "name": "Dashboard",
+      "shortName": "Dashboard",
+      "url": "/app/dashboard",
+      "chosenIconUrl": "https://hader.ai/app/icons/icon-192.png"
+    }
+  ],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://hader.ai/app/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {},
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://hader.ai/",
+  "minSdkVersion": 21,
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "appVersion": "1.0.0"
+}

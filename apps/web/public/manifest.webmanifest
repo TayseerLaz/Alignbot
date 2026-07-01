@@ -4,7 +4,7 @@
   "description": "The AI ops layer for your business. WhatsApp catalogs, conversations, and intelligence in one place.",
   "id": "/app/",
   "start_url": "/app/dashboard",
-  "scope": "/app/",
+  "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait-primary",

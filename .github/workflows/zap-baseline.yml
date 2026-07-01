@@ -13,13 +13,16 @@
 name: ZAP Baseline Security Scan
 
 on:
-  schedule:
-    # Mon 03:00 Asia/Dubai = Sun 23:00 UTC
-    - cron: "0 23 * * 0"
+  # Weekly cron DISABLED: there's no staging target (STAGING_URL) configured, so
+  # the scheduled scan failed red every Sunday for no signal. Run it manually
+  # (pass a `target` below) when you want a scan, or re-add the schedule once a
+  # staging URL secret exists.
+  #   schedule:
+  #     - cron: "0 23 * * 0"   # Sun 23:00 UTC (Mon 03:00 Asia/Dubai)
   workflow_dispatch:
     inputs:
       target:
-        description: "Override target URL (defaults to STAGING_URL secret)"
+        description: "Target URL to scan (e.g. https://hader.ai). Defaults to STAGING_URL secret."
         required: false
 
 jobs:

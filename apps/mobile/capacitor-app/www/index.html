@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Hader</title>
+    <style>
+      html, body { height: 100%; margin: 0; background: #360516; color: #faf9f5;
+        font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+      .wrap { height: 100%; display: flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 20px; }
+      .dot { width: 44px; height: 44px; border-radius: 50%;
+        border: 4px solid rgba(250,249,245,0.25); border-top-color: #faf9f5;
+        animation: spin 0.9s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      h1 { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+      p { font-size: 14px; opacity: 0.7; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <!-- Shown only briefly at launch (and if the network is unreachable).
+         Capacitor's server.url loads https://hader.ai/app over the top. -->
+    <div class="wrap">
+      <div class="dot"></div>
+      <h1>Hader</h1>
+      <p>Loading…</p>
+    </div>
+    <script>
+      // If the live app fails to take over (offline), offer a retry.
+      setTimeout(function () {
+        var p = document.querySelector('p');
+        if (p) p.textContent = 'Check your connection…';
+      }, 8000);
+    </script>
+  </body>
+</html>

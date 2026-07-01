@@ -4,22 +4,22 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.os.Build;
 import android.os.Bundle;
-import android.view.ViewGroup;
 import android.webkit.WebView;
-
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import com.getcapacitor.BridgeActivity;
 
 /**
- * Custom MainActivity (copied over the Capacitor-generated one during CI) that
- * adds two native behaviours the remote-loaded web app can't provide itself:
+ * Custom MainActivity (copied over the Capacitor-generated one during CI).
  *
- *   1. Pull-to-refresh — wraps the WebView in a SwipeRefreshLayout; a swipe down
- *      at the top of the page reloads it.
- *   2. Auto offline screen — a connectivity listener swaps to the bundled
- *      offline page the moment the network drops, and reloads the site when it
- *      comes back (works even while the app is already open).
+ * Adds an automatic offline screen: a ConnectivityManager callback swaps to the
+ * bundled offline page the instant the network drops (works while the app is
+ * open, not just at launch) and reloads the site when it comes back.
+ *
+ * NOTE: native pull-to-refresh (SwipeRefreshLayout) was intentionally removed.
+ * The web app scrolls an inner container rather than the document, so the native
+ * layout can't detect the real scroll position and would hijack scroll gestures
+ * as refreshes. If pull-to-refresh is wanted, it must be implemented inside the
+ * web app against its own scroll container.
  */
 public class MainActivity extends BridgeActivity {
 
@@ -35,34 +35,6 @@ public class MainActivity extends BridgeActivity {
         final WebView webView = this.getBridge().getWebView();
         if (webView == null) return;
 
-        // ---- 1. Pull-to-refresh ------------------------------------------------
-        try {
-            ViewGroup parent = (ViewGroup) webView.getParent();
-            if (parent != null) {
-                int index = parent.indexOfChild(webView);
-                ViewGroup.LayoutParams lp = webView.getLayoutParams();
-                parent.removeView(webView);
-
-                final SwipeRefreshLayout swipe = new SwipeRefreshLayout(this);
-                swipe.setColorSchemeColors(0xFF360516);
-                swipe.addView(webView, new ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT));
-                parent.addView(swipe, index, lp);
-
-                swipe.setOnRefreshListener(() -> {
-                    webView.reload();
-                    swipe.postDelayed(() -> swipe.setRefreshing(false), 1200);
-                });
-                // Only allow the pull gesture when the page is scrolled to the top.
-                swipe.setOnChildScrollUpCallback((p, child) -> webView.getScrollY() > 0);
-            }
-        } catch (Exception ignored) {
-            // If wrapping fails on some device, fall back to no pull-to-refresh
-            // rather than crashing the app.
-        }
-
-        // ---- 2. Automatic offline screen --------------------------------------
         try {
             ConnectivityManager cm =
                     (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);

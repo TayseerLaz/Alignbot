@@ -1095,9 +1095,8 @@ function WalletBilling({
           <div className="flex items-center gap-1">
             <span className="text-sm text-foreground-muted">$</span>
             <input
-              type="number"
-              min={0}
-              step={0.01}
+              type="text"
+              inputMode="decimal"
               value={topUpStr}
               onChange={(e) => setTopUpStr(e.target.value)}
               placeholder="0.00"
@@ -1133,8 +1132,8 @@ function WalletBilling({
           <div className="flex items-center gap-1">
             <span className="text-sm text-foreground-muted">$</span>
             <input
-              type="number"
-              step={0.01}
+              type="text"
+              inputMode="decimal"
               value={adjustStr}
               onChange={(e) => setAdjustStr(e.target.value)}
               placeholder="e.g. -5.00"

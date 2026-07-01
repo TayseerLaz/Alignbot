@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/kbd';
 
+import { BottomNav } from './bottom-nav';
 import { CommandPaletteProvider, useCommandPalette } from './command-palette';
 import { ControllingBanner } from './controlling-banner';
 import { Sidebar } from './sidebar';
@@ -64,7 +65,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 lg:px-4">
+          <header
+            className="flex min-h-14 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 pt-[env(safe-area-inset-top)] lg:px-4"
+          >
             <Button
               variant="ghost"
               size="icon"
@@ -84,11 +87,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {/* overscroll-none stops the rubber-band/scroll-chaining at the top and
               bottom of the content — the page stops exactly at its ends. */}
           <main className="flex-1 overflow-y-auto overscroll-none">
-            <div className="container-page space-y-5 py-6 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
+            {/* Extra bottom padding on mobile clears the fixed bottom tab bar
+                (+ the iOS home indicator); desktop keeps the normal spacing. */}
+            <div className="container-page space-y-5 pt-6 pb-[calc(5rem+env(safe-area-inset-bottom))] motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300 lg:pb-6">
               {children}
             </div>
           </main>
         </div>
+
+        {/* Native-style bottom tabs on mobile; "More" opens the full drawer. */}
+        <BottomNav onMore={() => setMobileOpen(true)} />
       </div>
     </CommandPaletteProvider>
   );

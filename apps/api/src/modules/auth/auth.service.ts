@@ -358,10 +358,15 @@ export async function issueSession(args: {
 // token replayed from an attacker's machine carries a different UA and is
 // treated as theft (revoke + audit) even inside the window. Every grace
 // re-issue is now audited so replays are observable.
-// NOTE (UX tradeoff): a same-device refresh fired >30s after rotation (deeply
-// slept tab) will now be revoked. The device-binding is the primary security
-// control; widen this constant only if woken-device logouts resurface.
-const REUSE_GRACE_WINDOW_MS = 30_000;
+// NOTE (UX tradeoff): a same-device refresh fired >window after rotation (deeply
+// slept tab, or a refetch storm on a live page like the broadcast detail view
+// with SSE + several pollers) gets revoked → surprise logout. The device-binding
+// (UA match) is the primary security control — a stolen token replayed from
+// another machine is denied grace regardless of this window — so widening the
+// TIME window trades almost no security for far fewer false logouts.
+// 2026-07-01: 30s → 120s after an admin was logged out deleting a broadcast on
+// the live (SSE-polling) detail page while controlling a tenant.
+const REUSE_GRACE_WINDOW_MS = 120_000;
 
 export async function refreshSession(refreshToken: string, meta: RequestMeta) {
   const tokenHash = hashToken(refreshToken);

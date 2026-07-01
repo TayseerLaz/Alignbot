@@ -101,6 +101,15 @@ export default function AdminAuditPage() {
       ),
   });
 
+  // Tenants for the "filter by tenant" dropdown (name → id).
+  const orgsQ = useQuery({
+    queryKey: ['admin-orgs-audit-filter'],
+    queryFn: () =>
+      api.get<{ data: { id: string; name: string; slug: string }[] }>('/api/v1/aligned-admin/orgs'),
+    staleTime: 5 * 60_000,
+  });
+  const orgs = (orgsQ.data?.data ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
+
   const clearFilters = () => {
     setEntityType('');
     setActorEmail('');
@@ -147,16 +156,26 @@ export default function AdminAuditPage() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="orgId">Tenant ID</Label>
-              <Input
-                id="orgId"
-                value={organizationId}
-                placeholder="uuid"
-                onChange={(e) => {
+              <Label htmlFor="orgId">Tenant</Label>
+              <Select
+                value={organizationId || '__all__'}
+                onValueChange={(v) => {
                   setCursor(null);
-                  setOrganizationId(e.target.value.trim());
+                  setOrganizationId(v === '__all__' ? '' : v);
                 }}
-              />
+              >
+                <SelectTrigger id="orgId">
+                  <SelectValue placeholder="All tenants" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All tenants</SelectItem>
+                  {orgs.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="actorEmail">Actor email contains</Label>

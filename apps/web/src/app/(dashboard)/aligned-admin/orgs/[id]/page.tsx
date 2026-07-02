@@ -1112,6 +1112,10 @@ function WalletBilling({
             loading={topUpSaving}
             onClick={() => {
               const v = Number(topUpStr);
+              if (Number.isFinite(v) && v < 0) {
+                toast.error('To deduct, use "Manual adjustment" with a negative amount (e.g. -500).');
+                return;
+              }
               if (!Number.isFinite(v) || v <= 0) {
                 toast.error('Enter an amount greater than $0');
                 return;
@@ -1123,6 +1127,7 @@ function WalletBilling({
           >
             Add balance
           </Button>
+          <p className="text-[11px] text-foreground-subtle">Adds funds (a payment). Positive only.</p>
         </div>
         <div className="space-y-2">
           <p className="text-xs font-medium text-foreground">Manual adjustment</p>
@@ -1161,6 +1166,9 @@ function WalletBilling({
           >
             Apply adjustment
           </Button>
+          <p className="text-[11px] text-foreground-subtle">
+            Correction — negative to deduct (e.g. -500), positive to add.
+          </p>
         </div>
       </div>
 

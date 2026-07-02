@@ -27,6 +27,14 @@ import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -400,6 +408,50 @@ export default function OrgDetailPage() {
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="secondary">
+                  <Download className="size-4" /> Export data
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-72">
+                <DropdownMenuItem
+                  disabled={exportInflight || triggerExport.isPending}
+                  onSelect={(ev) => {
+                    ev.preventDefault();
+                    triggerExport.mutate();
+                  }}
+                >
+                  <Download className="size-4" />
+                  {exportInflight ? 'Export in progress…' : 'Start new export'}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Recent exports</DropdownMenuLabel>
+                {exportsQ.isLoading ? (
+                  <div className="px-2 py-1.5 text-xs text-foreground-muted">Loading…</div>
+                ) : exports.length === 0 ? (
+                  <div className="px-2 py-1.5 text-xs text-foreground-muted">No exports yet.</div>
+                ) : (
+                  exports.slice(0, 8).map((e) => (
+                    <DropdownMenuItem
+                      key={e.id}
+                      disabled={e.status !== 'succeeded'}
+                      onSelect={(ev) => {
+                        ev.preventDefault();
+                        if (e.status === 'succeeded') downloadExport(e.id);
+                      }}
+                    >
+                      <span className="flex w-full items-center justify-between gap-3">
+                        <span className="truncate">{formatRelative(e.createdAt)}</span>
+                        <span className="shrink-0 text-xs text-foreground-muted">
+                          {e.status === 'succeeded' ? 'Download' : e.status}
+                        </span>
+                      </span>
+                    </DropdownMenuItem>
+                  ))
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               variant="secondary"
               loading={control.isPending}
@@ -817,9 +869,8 @@ export default function OrgDetailPage() {
             </CardContent>
           </Card>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            {/* Recent activity */}
-            <Card className="lg:col-span-2">
+          {/* Recent activity */}
+          <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-sm">
                   <Activity className="size-4 text-brand-500" /> Recent activity
@@ -847,61 +898,7 @@ export default function OrgDetailPage() {
                   </ul>
                 )}
               </CardContent>
-            </Card>
-
-            {/* Data export (ALIGNED-admin — always available) */}
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <Download className="size-4 text-brand-500" /> Data export
-                </CardTitle>
-                <Button
-                  size="sm"
-                  loading={triggerExport.isPending}
-                  disabled={exportInflight}
-                  onClick={() => triggerExport.mutate()}
-                >
-                  {exportInflight ? 'Exporting…' : 'Export data'}
-                </Button>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <p className="text-xs text-foreground-muted">
-                  Full data bundle as a .zip of CSVs. Available even when the tenant&apos;s own export is off.
-                </p>
-                {exportsQ.isLoading ? (
-                  <Skeleton className="h-8 w-full" />
-                ) : exports.length === 0 ? (
-                  <p className="text-foreground-muted">No exports yet.</p>
-                ) : (
-                  <ul className="divide-y divide-border">
-                    {exports.map((e) => (
-                      <li key={e.id} className="flex items-center justify-between gap-2 py-2">
-                        <span className="min-w-0">
-                          <span className="block">{formatRelative(e.createdAt)}</span>
-                          <span className="text-xs text-foreground-muted">
-                            {e.status}
-                            {e.fileSizeBytes != null
-                              ? ` · ${(e.fileSizeBytes / (1024 * 1024)).toFixed(2)} MB`
-                              : ''}
-                            {e.errorMessage ? ` · ${e.errorMessage}` : ''}
-                          </span>
-                        </span>
-                        {e.status === 'succeeded' ? (
-                          <Button size="sm" variant="secondary" onClick={() => downloadExport(e.id)}>
-                            <Download className="size-3.5" /> Download
-                          </Button>
-                        ) : (
-                          <Badge variant={e.status === 'failed' ? 'muted' : 'warning'}>
-                            {e.status}
-                          </Badge>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+          </Card>
         </TabsContent>
       </Tabs>
     </>

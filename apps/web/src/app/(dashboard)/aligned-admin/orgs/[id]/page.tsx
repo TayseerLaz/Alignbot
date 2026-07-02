@@ -10,8 +10,11 @@ import {
   Cpu,
   Download,
   Info,
+  KeyRound,
   Lock,
+  Mail,
   MessageCircle,
+  MoreHorizontal,
   Pause,
   Play,
   ShieldCheck,
@@ -36,6 +39,15 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
@@ -240,6 +252,32 @@ export default function OrgDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['admin-org-details', id] });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Could not invite member'),
+  });
+
+  // Per-member management: change email + reset password.
+  const [emailDialog, setEmailDialog] = useState<{ userId: string; email: string } | null>(null);
+  const [emailDraft, setEmailDraft] = useState('');
+  const [resetResult, setResetResult] = useState<{ email: string; password: string } | null>(null);
+  const changeEmail = useMutation({
+    mutationFn: (v: { userId: string; email: string }) =>
+      api.patch(`/api/v1/aligned-admin/orgs/${id}/members/${v.userId}/email`, { email: v.email }),
+    onSuccess: () => {
+      toast.success('Email changed');
+      setEmailDialog(null);
+      queryClient.invalidateQueries({ queryKey: ['admin-org-details', id] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Could not change email'),
+  });
+  const resetPassword = useMutation({
+    mutationFn: (userId: string) =>
+      api.post<{ data: { userId: string; password: string } }>(
+        `/api/v1/aligned-admin/orgs/${id}/members/${userId}/reset-password`,
+      ),
+    onSuccess: (res, userId) => {
+      const m = d?.members.find((x) => x.userId === userId);
+      setResetResult({ email: m?.email ?? '', password: res.data.password });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Could not reset password'),
   });
 
   const remove = useMutation({
@@ -825,6 +863,7 @@ export default function OrgDetailPage() {
                         <th className="px-4 py-2">Role</th>
                         <th className="hidden px-4 py-2 sm:table-cell">2FA</th>
                         <th className="hidden px-4 py-2 md:table-cell">Last login</th>
+                        <th className="px-4 py-2 text-right">Manage</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
@@ -840,6 +879,39 @@ export default function OrgDetailPage() {
                           <td className="hidden px-4 py-2 sm:table-cell">{m.totpEnabled ? 'On' : '—'}</td>
                           <td className="hidden px-4 py-2 text-foreground-muted md:table-cell">
                             {m.lastLoginAt ? formatRelative(m.lastLoginAt) : 'never'}
+                          </td>
+                          <td className="px-4 py-2 text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button size="icon" variant="ghost" aria-label={`Manage ${m.email}`}>
+                                  <MoreHorizontal className="size-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  onSelect={() => {
+                                    setEmailDraft(m.email);
+                                    setEmailDialog({ userId: m.userId, email: m.email });
+                                  }}
+                                >
+                                  <Mail className="size-4" /> Change email
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={async () => {
+                                    if (
+                                      await confirmDialog({
+                                        title: `Reset ${m.email}'s password?`,
+                                        body: 'Generates a new temporary password and signs them out of every session.',
+                                        confirmLabel: 'Reset password',
+                                      })
+                                    )
+                                      resetPassword.mutate(m.userId);
+                                  }}
+                                >
+                                  <KeyRound className="size-4" /> Reset password
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </td>
                         </tr>
                       ))}
@@ -967,6 +1039,68 @@ export default function OrgDetailPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Change-email dialog */}
+      <Dialog open={!!emailDialog} onOpenChange={(v) => !v && setEmailDialog(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Change member email</DialogTitle>
+            <DialogDescription>
+              Updates the login email and signs the member out of every session. The new address
+              stays verified.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            type="email"
+            value={emailDraft}
+            onChange={(e) => setEmailDraft(e.target.value)}
+            placeholder="new@email.com"
+          />
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setEmailDialog(null)}>
+              Cancel
+            </Button>
+            <Button
+              loading={changeEmail.isPending}
+              onClick={() => {
+                const email = emailDraft.trim().toLowerCase();
+                if (!email) return;
+                if (emailDialog) changeEmail.mutate({ userId: emailDialog.userId, email });
+              }}
+            >
+              Save email
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset-password result dialog (shown once) */}
+      <Dialog open={!!resetResult} onOpenChange={(v) => !v && setResetResult(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New temporary password</DialogTitle>
+            <DialogDescription>
+              Share this with {resetResult?.email || 'the member'} — it won&rsquo;t be shown again.
+              They can change it later in Settings.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="select-all rounded-md border border-border bg-surface-muted p-3 text-center font-mono text-sm">
+            {resetResult?.password}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                void navigator.clipboard?.writeText(resetResult?.password ?? '');
+                toast.success('Copied');
+              }}
+            >
+              Copy
+            </Button>
+            <Button onClick={() => setResetResult(null)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

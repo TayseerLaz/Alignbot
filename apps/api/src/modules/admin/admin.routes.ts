@@ -3070,6 +3070,95 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- PATCH /aligned-admin/orgs/:id/members/:userId/email ------
+  // Change a member's login email. Enforces global uniqueness; keeps it
+  // verified (admin-managed) and revokes active sessions so the change takes.
+  r.patch(
+    '/aligned-admin/orgs/:id/members/:userId/email',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: "Change a tenant member's email.",
+        params: z.object({ id: uuidSchema, userId: uuidSchema }),
+        body: z.object({ email: z.string().trim().toLowerCase().email() }),
+        response: { 200: itemEnvelopeSchema(z.object({ userId: uuidSchema, email: z.string() })) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const { id: orgId, userId } = req.params;
+      const email = req.body.email;
+      const result = await withRlsBypass(async (tx) => {
+        const membership = await tx.membership.findUnique({
+          where: { organizationId_userId: { organizationId: orgId, userId } },
+        });
+        if (!membership) return { error: 'not_member' as const };
+        const clash = await tx.user.findFirst({ where: { email, id: { not: userId } }, select: { id: true } });
+        if (clash) return { error: 'email_taken' as const };
+        const user = await tx.user.update({
+          where: { id: userId },
+          data: { email, emailVerifiedAt: new Date() },
+          select: { id: true, email: true },
+        });
+        await tx.session.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
+        return { user };
+      });
+      if (result.error === 'not_member') throw notFound('User is not a member of this organization.');
+      if (result.error === 'email_taken') throw conflict('That email is already in use.');
+      await recordAudit({
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        action: 'user_updated',
+        entityType: 'user',
+        entityId: userId,
+        metadata: { changed: 'email', email },
+      });
+      return { data: { userId: result.user!.id, email: result.user!.email } };
+    },
+  );
+
+  // ---------- POST /aligned-admin/orgs/:id/members/:userId/reset-password
+  // Set a fresh temporary password, revoke sessions, return it ONCE for the
+  // admin to hand over. (The tenant can change it from Settings afterward.)
+  r.post(
+    '/aligned-admin/orgs/:id/members/:userId/reset-password',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: "Reset a tenant member's password to a new temporary one.",
+        params: z.object({ id: uuidSchema, userId: uuidSchema }),
+        response: {
+          200: itemEnvelopeSchema(z.object({ userId: uuidSchema, password: z.string() })),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const { id: orgId, userId } = req.params;
+      const password = generateTempPassword();
+      const passwordHash = await hashPassword(password);
+      const ok = await withRlsBypass(async (tx) => {
+        const membership = await tx.membership.findUnique({
+          where: { organizationId_userId: { organizationId: orgId, userId } },
+        });
+        if (!membership) return false;
+        await tx.user.update({ where: { id: userId }, data: { passwordHash } });
+        await tx.session.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
+        return true;
+      });
+      if (!ok) throw notFound('User is not a member of this organization.');
+      await recordAudit({
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        action: 'password_changed',
+        entityType: 'user',
+        entityId: userId,
+        metadata: { by: 'aligned_admin' },
+      });
+      return { data: { userId, password } };
+    },
+  );
+
   // ---------- GET /aligned-admin/orgs/:id/wallet/ledger ----------------
   r.get(
     '/aligned-admin/orgs/:id/wallet/ledger',

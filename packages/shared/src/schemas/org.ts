@@ -56,9 +56,19 @@ export const adminCreateTenantBodySchema = z.object({
     .array(z.enum(ORG_FEATURE_KEYS as [string, ...string[]]))
     .max(20)
     .default([]),
+  // AI model tier: basic (Groq Llama 3.3 — cheap/fast), middle (GPT-4o —
+  // premium quality), max/ultra (Claude — best reasoning + persona memory).
+  // Drives reply quality AND our cost. Defaults to 'basic'.
+  aiPlan: z.enum(['basic', 'middle', 'max', 'ultra']).optional(),
   // Monthly AI-message allowance for the new tenant (1 message = 1 bot reply /
   // voice turn). Omit = column default (2000); null = Unlimited.
   monthlyAiMessageCap: z.number().int().min(0).max(10_000_000).nullable().optional(),
+  // WhatsApp wallet (metered billing). Metering OFF by default so broadcasts
+  // aren't gated. A per-message price ($0.08 default) + optional starting
+  // balance can be set here; a top-up auto-enables metering.
+  walletMeteringEnabled: z.boolean().default(false),
+  walletPricePerMessageUsd: z.number().min(0.0375).max(100).optional(),
+  walletInitialTopUpUsd: z.number().min(0).max(1_000_000).optional(),
 });
 export type AdminCreateTenantBody = z.infer<typeof adminCreateTenantBodySchema>;
 

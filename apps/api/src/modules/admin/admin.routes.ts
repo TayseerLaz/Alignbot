@@ -266,6 +266,7 @@ export default async function adminRoutes(app: FastifyInstance) {
             slug,
             name: body.organizationName,
             status: 'active',
+            aiPlan: body.aiPlan ?? 'basic',
             disabledFeatures: Array.from(
               new Set([...(body.disabledFeatures ?? []), ...ORG_FEATURE_DEFAULT_DISABLED]),
             ),
@@ -326,6 +327,28 @@ export default async function adminRoutes(app: FastifyInstance) {
 
         return { organization, admin, generatedPassword: body.adminPassword ? null : password };
       });
+
+      // WhatsApp wallet — set up after the tx (the wallet engine uses the owner
+      // connection). Price first, then an optional starting balance (a top-up
+      // auto-enables metering); otherwise honour the explicit metering flag.
+      try {
+        const orgId = result.organization.id;
+        if (body.walletPricePerMessageUsd != null) {
+          await wallet.setPrice(orgId, usdToMicros(body.walletPricePerMessageUsd));
+        }
+        if (body.walletInitialTopUpUsd && body.walletInitialTopUpUsd > 0) {
+          await wallet.topUp(
+            orgId,
+            usdToMicros(body.walletInitialTopUpUsd),
+            req.auth!.userId,
+            'Initial balance on provisioning',
+          );
+        } else if (body.walletMeteringEnabled) {
+          await wallet.setMetering(orgId, true);
+        }
+      } catch (err) {
+        req.log.error({ err }, '[admin] wallet provisioning failed (non-fatal)');
+      }
 
       // Email — outside the tx. Failure logs but doesn't roll back the
       // provision; operator can resend or reset password from the UI.

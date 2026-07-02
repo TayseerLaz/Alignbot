@@ -181,7 +181,9 @@ export const WIDGETS: WidgetDef[] = [
     description: 'Prepaid balance and messages remaining.',
     icon: Wallet,
     slot: 'half',
-    defaultOn: true,
+    // Off by default — the always-on wallet card pinned to the top of the
+    // dashboard shows this already. Still available to add as a grid widget.
+    defaultOn: false,
     Component: WalletBalanceWidget,
   },
   {

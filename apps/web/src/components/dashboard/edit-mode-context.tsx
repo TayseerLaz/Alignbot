@@ -17,6 +17,24 @@ interface EditModeContextValue {
 
 const EditModeContext = createContext<EditModeContextValue | null>(null);
 
+// Inert context for widgets reused OUTSIDE a dashboard board (e.g. the Usage &
+// limits widget on the Analytics page). They render normally, just without the
+// edit/KEEP affordances — never editing, layout mutations are no-ops.
+const INERT_EDIT_MODE: EditModeContextValue = {
+  editing: false,
+  setEditing: () => {},
+  layout: {
+    visible: [],
+    hidden: [],
+    has: () => false,
+    add: () => {},
+    remove: () => {},
+    reset: () => {},
+    onboardingDismissed: true,
+    dismissOnboarding: () => {},
+  },
+};
+
 export function EditModeProvider({
   layout,
   children,
@@ -30,12 +48,7 @@ export function EditModeProvider({
 }
 
 export function useEditMode(): EditModeContextValue {
-  const ctx = useContext(EditModeContext);
-  if (!ctx) {
-    // Misconfiguration — every dashboard widget must render inside
-    // EditModeProvider. Throwing produces a clearer signal than the
-    // silent "badges never appear" the operator would otherwise see.
-    throw new Error('useEditMode must be used within an EditModeProvider');
-  }
-  return ctx;
+  // No provider = widget reused outside a dashboard board. Return an inert,
+  // non-editing context so it still renders (rather than crashing the page).
+  return useContext(EditModeContext) ?? INERT_EDIT_MODE;
 }

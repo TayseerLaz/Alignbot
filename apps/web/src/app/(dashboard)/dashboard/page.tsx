@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { AddWidgetDialog } from '@/components/dashboard/add-widget-dialog';
 import { AdminPlatformDashboard } from '@/components/dashboard/admin-platform-dashboard';
 import { AiBudgetBanner } from '@/components/dashboard/ai-budget-banner';
+import { DashboardWalletCard } from '@/components/dashboard/dashboard-wallet-card';
 import { WalletBalanceBanner } from '@/components/dashboard/wallet-balance-banner';
 import { EditModeProvider, useEditMode } from '@/components/dashboard/edit-mode-context';
 import { useDashboardLayout } from '@/components/dashboard/use-dashboard-layout';
@@ -110,6 +111,11 @@ function DashboardShell({ greeting }: { greeting: string }) {
       <div className="mb-6 space-y-3">
         <AiBudgetBanner />
         <WalletBalanceBanner />
+      </div>
+
+      {/* Wallet balance — pinned to the top for every tenant. */}
+      <div className="mb-6">
+        <DashboardWalletCard />
       </div>
 
       {visible.length === 0 ? (

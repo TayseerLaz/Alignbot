@@ -53,6 +53,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError, setAccessToken } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 import { useSession } from '@/lib/session';
@@ -60,6 +61,13 @@ import { useSession } from '@/lib/session';
 type AiPlan = 'basic' | 'middle' | 'max' | 'ultra';
 const AI_PLANS: AiPlan[] = ['basic', 'middle', 'max', 'ultra'];
 const AI_PLAN_LABEL: Record<AiPlan, string> = { basic: 'Basic', middle: 'Middle', max: 'Max', ultra: 'Ultra' };
+// Which LLM each plan routes to (mirrors lib/openai.ts). Shown in the AI tab.
+const AI_PLAN_MODEL: Record<AiPlan, string> = {
+  basic: 'Groq · Llama 3.3 70B',
+  middle: 'OpenAI · GPT-4o',
+  max: 'Anthropic · Claude Sonnet',
+  ultra: 'Claude Sonnet + per-contact memory',
+};
 
 interface OrgRow {
   id: string;
@@ -463,10 +471,54 @@ export default function OrgDetailPage() {
   const [activeTab, setActiveTab] = useState(() => {
     if (typeof window === 'undefined') return 'overview';
     const tab = new URLSearchParams(window.location.search).get('tab');
-    return tab && ['overview', 'billing', 'features', 'members', 'activity'].includes(tab)
+    return tab && ['overview', 'billing', 'ai', 'features', 'members', 'activity'].includes(tab)
       ? tab
       : 'overview';
   });
+
+  // ── AI section: the tenant's live compiled system prompt + the admin-only
+  // addendum. The compiled prompt is fetched only when the AI tab is open (it
+  // gathers the tenant's whole bot dataset). It's assembled by the REAL bot
+  // engine (compileOnly, no LLM), so any code change to the prompt shows here.
+  const aiPromptQ = useQuery({
+    queryKey: ['admin-ai-prompt', id],
+    queryFn: () =>
+      api.get<{
+        data: {
+          compiledPrompt: string;
+          adminSystemPromptAppend: string | null;
+          promptChars: number;
+          productCount: number;
+          serviceCount: number;
+          faqCount: number;
+          hasBotConfig: boolean;
+          deployed: boolean;
+        };
+      }>(`/api/v1/aligned-admin/orgs/${id}/ai-compiled-prompt`),
+    enabled: activeTab === 'ai',
+  });
+  const aiPrompt = aiPromptQ.data?.data;
+  const [appendDraft, setAppendDraft] = useState('');
+  const [appendInit, setAppendInit] = useState(false);
+  useEffect(() => {
+    if (aiPrompt && !appendInit) {
+      setAppendDraft(aiPrompt.adminSystemPromptAppend ?? '');
+      setAppendInit(true);
+    }
+  }, [aiPrompt, appendInit]);
+  const savePrompt = useMutation({
+    mutationFn: (value: string) =>
+      api.put(`/api/v1/aligned-admin/orgs/${id}/ai-prompt-append`, {
+        adminSystemPromptAppend: value.trim() ? value : null,
+      }),
+    onSuccess: () => {
+      toast.success('Saved — this modification now affects the bot');
+      // Refetch the compiled prompt so the preview visibly includes the change.
+      queryClient.invalidateQueries({ queryKey: ['admin-ai-prompt', id] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Save failed'),
+  });
+  const appendDirty = appendInit && appendDraft.trim() !== (aiPrompt?.adminSystemPromptAppend ?? '').trim();
 
   return (
     <>
@@ -582,6 +634,7 @@ export default function OrgDetailPage() {
           <TabsList className="flex-wrap">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="billing">Billing</TabsTrigger>
+            <TabsTrigger value="ai">AI</TabsTrigger>
             <TabsTrigger value="features">Features</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
@@ -793,6 +846,162 @@ export default function OrgDetailPage() {
             <h3 className="mb-3 text-sm font-medium text-foreground">Cost &amp; usage</h3>
             <TenantCostOverview orgId={id} />
           </div>
+        </TabsContent>
+
+        {/* ── AI ───────────────────────────────────────────────────── */}
+        <TabsContent value="ai" className="space-y-4">
+          {org?.disabledFeatures?.includes('ai') ? (
+            <Card>
+              <CardContent className="py-6 text-sm text-foreground-muted">
+                AI is disabled for this tenant (manual inbox only). Enable the “ai” feature in
+                the Features tab to configure the bot.
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              {/* Plan & model overview (edit plan/limits in Billing). */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <Cpu className="size-4 text-brand-500" /> AI plan &amp; model
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <Row label="Plan">
+                    <Badge variant="muted">{AI_PLAN_LABEL[currentPlan as AiPlan]}</Badge>
+                  </Row>
+                  <Row label="Model">
+                    <span className="font-mono text-xs">
+                      {AI_PLAN_MODEL[currentPlan as AiPlan] ?? currentPlan}
+                    </span>
+                  </Row>
+                  <Row label="Monthly AI messages">
+                    {usage?.aiMessages ? (
+                      usage.aiMessages.unlimited ? (
+                        <span>{usage.aiMessages.used.toLocaleString()} used · Unlimited</span>
+                      ) : (
+                        <span>
+                          {usage.aiMessages.used.toLocaleString()} /{' '}
+                          {usage.aiMessages.cap?.toLocaleString() ?? '—'}
+                        </span>
+                      )
+                    ) : (
+                      '—'
+                    )}
+                  </Row>
+                  <Row label="Bot deployed">
+                    <Badge variant={aiPrompt?.deployed ? 'success' : 'muted'}>
+                      {aiPrompt?.deployed ? 'live' : 'not deployed'}
+                    </Badge>
+                  </Row>
+                  <p className="text-xs text-foreground-subtle">
+                    Change the plan &amp; monthly allowance in the{' '}
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('billing')}
+                      className="underline hover:text-foreground"
+                    >
+                      Billing
+                    </button>{' '}
+                    tab.
+                  </p>
+                </CardContent>
+              </Card>
+
+              {/* Admin-only prompt modification — injected into the live prompt. */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <Cpu className="size-4 text-brand-500" /> Bot prompt modification
+                    <Badge variant="warning" className="ml-1">admin-only</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <p className="text-xs text-foreground-muted">
+                    Custom instructions injected VERBATIM into this tenant’s bot system prompt on
+                    every reply (chat + voice), right after the core rules. The tenant can’t see or
+                    edit this. It can’t override the safety scope-lock. Save to apply immediately.
+                  </p>
+                  <Textarea
+                    value={appendDraft}
+                    onChange={(e) => setAppendDraft(e.target.value)}
+                    rows={6}
+                    maxLength={8000}
+                    placeholder="e.g. Always mention free delivery over $25. Keep a formal tone. Never promise same-day delivery."
+                    className="font-mono text-xs"
+                  />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-foreground-subtle">
+                      {appendDraft.length.toLocaleString()} / 8,000
+                    </span>
+                    <div className="flex gap-2">
+                      {appendDirty ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setAppendDraft(aiPrompt?.adminSystemPromptAppend ?? '')}
+                        >
+                          Reset
+                        </Button>
+                      ) : null}
+                      <Button
+                        size="sm"
+                        onClick={() => savePrompt.mutate(appendDraft)}
+                        loading={savePrompt.isPending}
+                        disabled={!appendDirty}
+                      >
+                        Save modification
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Live compiled system prompt — the exact string the bot sends. */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center justify-between gap-2 text-sm">
+                    <span className="flex items-center gap-2">
+                      <MessageCircle className="size-4 text-brand-500" /> Live system prompt
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => aiPromptQ.refetch()}
+                      loading={aiPromptQ.isFetching}
+                    >
+                      Refresh
+                    </Button>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <p className="text-xs text-foreground-muted">
+                    The exact prompt the bot sends the model — assembled by the live engine (no LLM
+                    call). Reflects every code-level rule, this tenant’s data, and your modification
+                    above. Previewed for the WhatsApp channel.
+                  </p>
+                  {aiPromptQ.isLoading ? (
+                    <Skeleton className="h-64 w-full" />
+                  ) : aiPromptQ.isError ? (
+                    <p className="text-xs text-danger">Couldn’t compile the prompt.</p>
+                  ) : aiPrompt ? (
+                    <>
+                      <div className="flex flex-wrap gap-3 text-[11px] text-foreground-subtle">
+                        <span>{aiPrompt.promptChars.toLocaleString()} chars</span>
+                        <span>{aiPrompt.productCount} products</span>
+                        <span>{aiPrompt.serviceCount} services</span>
+                        <span>{aiPrompt.faqCount} FAQs</span>
+                        {!aiPrompt.hasBotConfig ? <span>· no bot config yet</span> : null}
+                      </div>
+                      <pre className="max-h-[28rem] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-muted p-3 font-mono text-[11px] leading-relaxed text-foreground">
+                        {aiPrompt.compiledPrompt}
+                      </pre>
+                    </>
+                  ) : null}
+                </CardContent>
+              </Card>
+            </>
+          )}
         </TabsContent>
 
         {/* ── Features ─────────────────────────────────────────────── */}

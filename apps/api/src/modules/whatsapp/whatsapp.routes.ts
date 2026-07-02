@@ -2622,6 +2622,15 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 updates.status = 'failed';
                 updates.failedAt = ts;
                 counterDelta.failedCount = 1;
+                // Persist Meta's reason so the recipient row shows WHY it failed
+                // (previously only logged → every delivery-failure was blank).
+                // Most common: the number isn't a WhatsApp user / undeliverable.
+                const err0 = s.errors?.[0];
+                if (err0) {
+                  updates.metaErrorCode = err0.code != null ? String(err0.code) : null;
+                  updates.metaErrorMessage =
+                    err0.error_data?.details || err0.message || err0.title || 'Delivery failed';
+                }
               }
               if (Object.keys(updates).length > 0) {
                 await tx.broadcastRecipient.update({

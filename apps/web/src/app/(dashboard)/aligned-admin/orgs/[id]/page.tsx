@@ -952,6 +952,31 @@ export default function OrgDetailPage() {
 
         {/* ── Activity ─────────────────────────────────────────────── */}
         <TabsContent value="activity" className="space-y-4">
+          {/* WhatsApp spending — how much this tenant has spent and on how
+              many billed messages (per-message charges live in the wallet
+              ledger on the Billing tab). */}
+          {wallet ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Wallet className="size-4 text-brand-500" /> WhatsApp spending
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <Metric label="Spent" value={`$${formatMicrosUsd(wallet.lifetimeSpentMicros)}`} />
+                  <Metric label="Messages billed" value={wallet.lifetimeMessages} />
+                  <Metric label="Balance" value={`$${formatMicrosUsd(wallet.availableMicros)}`} />
+                  <Metric label="Topped up" value={`$${formatMicrosUsd(wallet.lifetimeToppedUpMicros)}`} />
+                </div>
+                <p className="mt-3 text-xs text-foreground-subtle">
+                  Each WhatsApp message sent deducts ${formatMicrosUsd(wallet.pricePerMessageMicros)} and is
+                  itemised in the wallet ledger (Billing tab).
+                </p>
+              </CardContent>
+            </Card>
+          ) : null}
+
           {/* Broadcasts */}
           <Card>
             <CardHeader>

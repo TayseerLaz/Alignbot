@@ -8,6 +8,7 @@ import {
   adminUpdateLeadBodySchema,
   adminUpdateOrgBodySchema,
   ApiErrorCode,
+  createInvitationBodySchema,
   DEFAULT_META_COST_MICROS,
   DEFAULT_PRICE_MICROS,
   ORG_FEATURE_KEYS,
@@ -45,7 +46,7 @@ import {
 } from '../../lib/queues.js';
 import { getRedis } from '../../lib/redis.js';
 import { presignGetUrl } from '../../lib/storage.js';
-import { issueSession } from '../auth/auth.service.js';
+import { createInvitation, issueSession } from '../auth/auth.service.js';
 
 // Derives a URL-safe slug from a human org name. Strips diacritics,
 // non-ASCII letters, collapses whitespace + punctuation into hyphens,
@@ -2767,6 +2768,9 @@ export default async function adminRoutes(app: FastifyInstance) {
     marginPerMessageMicros: z.number(),
     marginPct: z.number(),
     lifetimeMarginMicros: z.number(),
+    alertThresholds: z.array(z.number()),
+    pctUsed: z.number(),
+    alertLevel: z.enum(['ok', 'alert', 'empty']),
   });
 
   function walletDto(orgId: string, w: wallet.Wallet | null) {
@@ -2775,6 +2779,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     const margin = price - metaCost;
     const spent = w?.lifetimeSpentMicros ?? 0;
     const msgs = w?.lifetimeMessages ?? 0;
+    const alert = wallet.walletAlertState(w);
     return {
       organizationId: orgId,
       meteringEnabled: w?.meteringEnabled ?? false,
@@ -2790,6 +2795,9 @@ export default async function adminRoutes(app: FastifyInstance) {
       marginPct: price > 0 ? Math.round((margin / price) * 1000) / 10 : 0,
       // Our gross margin so far = messages billed × (price − Meta cost).
       lifetimeMarginMicros: msgs * margin,
+      alertThresholds: w?.alertThresholds ?? [80, 100],
+      pctUsed: alert.pctUsed,
+      alertLevel: alert.level,
     };
   }
 
@@ -2967,6 +2975,75 @@ export default async function adminRoutes(app: FastifyInstance) {
       if (!org) throw notFound('Organization not found');
       const w = await wallet.setLowBalanceThreshold(orgId, usdToMicros(req.body.lowBalanceUsd));
       return { data: walletDto(orgId, w) };
+    },
+  );
+
+  // ---------- PUT /aligned-admin/orgs/:id/wallet/alert-thresholds ------
+  // Which balance-depletion %s (of 50/75/80/90/100) alert this tenant.
+  r.put(
+    '/aligned-admin/orgs/:id/wallet/alert-thresholds',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Set the balance-depletion % alert thresholds (50/75/80/90/100).',
+        params: z.object({ id: uuidSchema }),
+        body: z.object({ thresholds: z.array(z.number().int().min(1).max(100)).max(5) }),
+        response: { 200: itemEnvelopeSchema(walletDtoSchema) },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const orgId = req.params.id;
+      const org = await withRlsBypass((tx) =>
+        tx.organization.findUnique({ where: { id: orgId }, select: { id: true } }),
+      );
+      if (!org) throw notFound('Organization not found');
+      const w = await wallet.setAlertThresholds(orgId, req.body.thresholds);
+      return { data: walletDto(orgId, w) };
+    },
+  );
+
+  // ---------- POST /aligned-admin/orgs/:id/members --------------------
+  // ALIGNED admin invites a teammate into a specific tenant (email + role).
+  // Reuses the standard invitation flow (sends the invite email + audits).
+  r.post(
+    '/aligned-admin/orgs/:id/members',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Invite a member into a tenant (email + role).',
+        params: z.object({ id: uuidSchema }),
+        body: createInvitationBodySchema,
+        response: {
+          201: itemEnvelopeSchema(
+            z.object({
+              id: uuidSchema,
+              email: z.string(),
+              role: z.string(),
+              status: z.string(),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req, reply) => {
+      const orgId = req.params.id;
+      const org = await withRlsBypass((tx) =>
+        tx.organization.findUnique({ where: { id: orgId }, select: { id: true } }),
+      );
+      if (!org) throw notFound('Organization not found');
+      const invite = await createInvitation({
+        organizationId: orgId,
+        email: req.body.email,
+        role: req.body.role,
+        invitedById: req.auth!.userId,
+        meta: { ip: req.ip, userAgent: req.headers['user-agent'] ?? null },
+      });
+      reply.code(201);
+      return {
+        data: { id: invite.id, email: invite.email, role: invite.role, status: invite.status },
+      };
     },
   );
 

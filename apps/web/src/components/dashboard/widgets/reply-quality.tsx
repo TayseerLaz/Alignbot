@@ -5,16 +5,21 @@ import { ShieldCheck } from 'lucide-react';
 
 import { getReplyQuality } from '@/lib/dashboard-api';
 import { formatThousands } from '@/lib/format';
+import { useSession } from '@/lib/session';
 
 import { WidgetEmpty, WidgetError, WidgetFrame, WidgetSkeleton } from '../widget-frame';
 
 export function ReplyQualityWidget() {
+  const { session } = useSession();
   const q = useQuery({
     queryKey: ['dashboard', 'reply-quality'],
     queryFn: getReplyQuality,
     refetchInterval: 120_000,
     staleTime: 60_000,
   });
+
+  // Reply quality is an AI-bot metric — hide it when the AI feature is off.
+  if (session?.organization?.disabledFeatures?.includes('ai')) return null;
 
   return (
     <WidgetFrame

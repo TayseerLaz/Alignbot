@@ -239,6 +239,12 @@ export default async function billingRoutes(app: FastifyInstance) {
     lifetimeSpentMicros: z.number(),
     lifetimeMessages: z.number(),
     lifetimeToppedUpMicros: z.number(),
+    // Balance-depletion alert (drives the red banner on dashboard + this page).
+    alert: z.object({
+      pctUsed: z.number(),
+      level: z.enum(['ok', 'alert', 'empty']),
+      message: z.string().nullable(),
+    }),
   });
 
   // ---------- GET /billing/overview ------------------------------------
@@ -259,6 +265,7 @@ export default async function billingRoutes(app: FastifyInstance) {
       const w = await wallet.getWallet(orgId);
       const price = w?.pricePerMessageMicros ?? DEFAULT_PRICE_MICROS;
       const available = w?.availableMicros ?? 0;
+      const alert = wallet.walletAlertState(w);
       return {
         data: {
           metered: w?.meteringEnabled ?? false,
@@ -270,6 +277,7 @@ export default async function billingRoutes(app: FastifyInstance) {
           lifetimeSpentMicros: w?.lifetimeSpentMicros ?? 0,
           lifetimeMessages: w?.lifetimeMessages ?? 0,
           lifetimeToppedUpMicros: w?.lifetimeToppedUpMicros ?? 0,
+          alert: { pctUsed: alert.pctUsed, level: alert.level, message: alert.message },
         },
       };
     },

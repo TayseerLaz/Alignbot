@@ -126,6 +126,9 @@ interface WalletDto {
   marginPerMessageMicros: number;
   marginPct: number;
   lifetimeMarginMicros: number;
+  alertThresholds: number[];
+  pctUsed: number;
+  alertLevel: 'ok' | 'alert' | 'empty';
 }
 
 type WalletLedgerKind = 'topup' | 'adjust' | 'settle' | 'release' | 'hold';
@@ -223,6 +226,20 @@ export default function OrgDetailPage() {
       invalidate();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Update failed'),
+  });
+
+  // Invite a member into this tenant (email + role) from the admin panel.
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<'admin' | 'editor' | 'viewer'>('editor');
+  const inviteMember = useMutation({
+    mutationFn: (body: { email: string; role: string }) =>
+      api.post(`/api/v1/aligned-admin/orgs/${id}/members`, body),
+    onSuccess: () => {
+      toast.success('Invitation sent');
+      setInviteEmail('');
+      queryClient.invalidateQueries({ queryKey: ['admin-org-details', id] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Could not invite member'),
   });
 
   const remove = useMutation({
@@ -373,6 +390,18 @@ export default function OrgDetailPage() {
       }),
     onSuccess: () => {
       toast.success('Low-balance threshold updated');
+      invalidateWallet();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Update failed'),
+  });
+
+  const setAlertThresholds = useMutation({
+    mutationFn: (thresholds: number[]) =>
+      api.put<{ data: WalletDto }>(`/api/v1/aligned-admin/orgs/${id}/wallet/alert-thresholds`, {
+        thresholds,
+      }),
+    onSuccess: () => {
+      toast.success('Balance alerts updated');
       invalidateWallet();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Update failed'),
@@ -578,6 +607,7 @@ export default function OrgDetailPage() {
         <TabsContent value="billing">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {/* AI plan + usage */}
+            {org?.disabledFeatures?.includes('ai') ? null : (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-sm">
@@ -621,6 +651,7 @@ export default function OrgDetailPage() {
                 </div>
               </CardContent>
             </Card>
+            )}
 
             {/* WhatsApp wallet & metered billing */}
             <Card>
@@ -651,6 +682,8 @@ export default function OrgDetailPage() {
                     adjustSaving={adjust.isPending}
                     onSetThreshold={(usd) => setThreshold.mutate(usd)}
                     thresholdSaving={setThreshold.isPending}
+                    onSaveAlertThresholds={(thresholds) => setAlertThresholds.mutate(thresholds)}
+                    alertThresholdsSaving={setAlertThresholds.isPending}
                   />
                 )}
               </CardContent>
@@ -736,10 +769,43 @@ export default function OrgDetailPage() {
         {/* ── Members ──────────────────────────────────────────────── */}
         <TabsContent value="members" className="space-y-4">
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <CardTitle className="flex items-center gap-2 text-sm">
                 <Users className="size-4 text-brand-500" /> Members
               </CardTitle>
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const email = inviteEmail.trim();
+                  if (!email) {
+                    toast.error('Enter an email to invite');
+                    return;
+                  }
+                  inviteMember.mutate({ email, role: inviteRole });
+                }}
+              >
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="teammate@email.com"
+                  className="h-8 w-52 rounded-md border border-border bg-surface px-2 text-sm"
+                />
+                <Select value={inviteRole} onValueChange={(v) => setInviteRole(v as 'admin' | 'editor' | 'viewer')}>
+                  <SelectTrigger className="h-8 w-28">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Admin</SelectItem>
+                    <SelectItem value="editor">Editor</SelectItem>
+                    <SelectItem value="viewer">Viewer</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button type="submit" size="sm" loading={inviteMember.isPending}>
+                  Invite
+                </Button>
+              </form>
             </CardHeader>
             <CardContent className="p-0">
               {detailsQ.isLoading ? (
@@ -993,6 +1059,8 @@ function WalletBilling({
   adjustSaving,
   onSetThreshold,
   thresholdSaving,
+  onSaveAlertThresholds,
+  alertThresholdsSaving,
 }: {
   wallet: WalletDto;
   orgId: string;
@@ -1006,6 +1074,8 @@ function WalletBilling({
   adjustSaving: boolean;
   onSetThreshold: (lowBalanceUsd: number) => void;
   thresholdSaving: boolean;
+  onSaveAlertThresholds: (thresholds: number[]) => void;
+  alertThresholdsSaving: boolean;
 }) {
   const [priceStr, setPriceStr] = useState(
     (wallet.pricePerMessageMicros / MICROS_PER_USD).toString(),
@@ -1017,6 +1087,17 @@ function WalletBilling({
   const [thresholdStr, setThresholdStr] = useState(
     (wallet.lowBalanceThresholdMicros / MICROS_PER_USD).toString(),
   );
+
+  // Balance-alert %s: local selection seeded from the wallet, saved on demand.
+  const savedAlerts = wallet.alertThresholds ?? [];
+  const [alerts, setAlerts] = useState<number[]>(savedAlerts);
+  useEffect(() => {
+    setAlerts(wallet.alertThresholds ?? []);
+    // Re-seed when the saved value changes after a save/refetch.
+  }, [wallet.alertThresholds]);
+  const alertsDirty =
+    alerts.length !== savedAlerts.length ||
+    [...alerts].sort((a, b) => a - b).join(',') !== [...savedAlerts].sort((a, b) => a - b).join(',');
 
   return (
     <div className="space-y-5">
@@ -1205,6 +1286,45 @@ function WalletBilling({
         </div>
         <p className="text-xs text-foreground-muted">
           The tenant sees a &ldquo;running low&rdquo; warning when the balance drops to this amount.
+        </p>
+      </div>
+
+      {/* Balance alerts */}
+      <div className="space-y-2 border-t border-border pt-4">
+        <p className="text-xs font-medium text-foreground">Balance alerts</p>
+        <div className="flex flex-wrap items-center gap-2">
+          {[50, 75, 80, 90, 100].map((v) => {
+            const on = alerts.includes(v);
+            return (
+              <Button
+                key={v}
+                type="button"
+                size="sm"
+                variant={on ? 'primary' : 'secondary'}
+                onClick={() =>
+                  setAlerts((prev) =>
+                    prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v],
+                  )
+                }
+              >
+                {v}%
+              </Button>
+            );
+          })}
+          <Button
+            size="sm"
+            loading={alertThresholdsSaving}
+            disabled={!alertsDirty}
+            onClick={() => onSaveAlertThresholds([...alerts].sort((a, b) => a - b))}
+          >
+            Save
+          </Button>
+        </div>
+        <p className="text-xs text-foreground-muted">
+          Notify the tenant + you when the balance is this % used (100% = empty).
+        </p>
+        <p className="text-xs text-foreground-muted">
+          {wallet.pctUsed}% of balance used
         </p>
       </div>
 

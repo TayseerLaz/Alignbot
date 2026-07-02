@@ -26,6 +26,8 @@ export interface Wallet {
   lifetimeToppedUpMicros: number;
   lifetimeSpentMicros: number;
   lifetimeMessages: number;
+  alertThresholds: number[];
+  alertBaselineMicros: number;
 }
 
 type WalletRow = {
@@ -39,6 +41,8 @@ type WalletRow = {
   lifetimeToppedUpMicros: bigint;
   lifetimeSpentMicros: bigint;
   lifetimeMessages: number;
+  alertThresholds: number[];
+  alertBaselineMicros: bigint;
 };
 
 function mapWallet(w: WalletRow): Wallet {
@@ -53,7 +57,62 @@ function mapWallet(w: WalletRow): Wallet {
     lifetimeToppedUpMicros: N(w.lifetimeToppedUpMicros),
     lifetimeSpentMicros: N(w.lifetimeSpentMicros),
     lifetimeMessages: w.lifetimeMessages,
+    alertThresholds: w.alertThresholds ?? [],
+    alertBaselineMicros: N(w.alertBaselineMicros),
   };
+}
+
+export const ALLOWED_ALERT_THRESHOLDS = [50, 75, 80, 90, 100] as const;
+
+export interface WalletAlertState {
+  /** 0–100. % of the last top-up consumed. 0 when there's no baseline. */
+  pctUsed: number;
+  /** The highest configured threshold the balance has crossed, or null. */
+  crossedThreshold: number | null;
+  level: 'ok' | 'alert' | 'empty';
+  message: string | null;
+}
+
+/** Pure computation of the balance-alert state for a wallet (or null wallet). */
+export function walletAlertState(w: Wallet | null): WalletAlertState {
+  if (!w || !w.meteringEnabled) return { pctUsed: 0, crossedThreshold: null, level: 'ok', message: null };
+  const baseline = w.alertBaselineMicros;
+  const pctUsed =
+    baseline > 0 ? Math.min(100, Math.max(0, Math.round(((baseline - w.availableMicros) / baseline) * 100))) : 0;
+  const crossed = [...w.alertThresholds].filter((t) => pctUsed >= t).sort((a, b) => b - a)[0] ?? null;
+  const empty = w.availableMicros < w.pricePerMessageMicros;
+  const msgsLeft = w.pricePerMessageMicros > 0 ? Math.floor(w.availableMicros / w.pricePerMessageMicros) : 0;
+  const dollars = (w.availableMicros / 1_000_000).toFixed(2);
+  if (empty && (crossed != null || pctUsed >= 100)) {
+    return {
+      pctUsed: 100,
+      crossedThreshold: 100,
+      level: 'empty',
+      message: `WhatsApp balance empty — sending is paused. Top up to resume.`,
+    };
+  }
+  if (crossed != null) {
+    return {
+      pctUsed,
+      crossedThreshold: crossed,
+      level: 'alert',
+      message: `WhatsApp balance alert: you've used ${pctUsed}% of your balance — about ${msgsLeft} messages ($${dollars}) left. Top up soon.`,
+    };
+  }
+  return { pctUsed, crossedThreshold: null, level: 'ok', message: null };
+}
+
+/** Set which balance-depletion % thresholds alert this tenant. */
+export async function setAlertThresholds(orgId: string, thresholds: number[]): Promise<Wallet> {
+  const clean = [...new Set(thresholds)]
+    .filter((t) => (ALLOWED_ALERT_THRESHOLDS as readonly number[]).includes(t))
+    .sort((a, b) => a - b);
+  await ensureWallet(orgId);
+  const w = await prisma.tenantWallet.update({
+    where: { organizationId: orgId },
+    data: { alertThresholds: clean },
+  });
+  return mapWallet(w as unknown as WalletRow);
 }
 
 /** The org's wallet, or null when it has none (fully unmetered — behaves as before). */
@@ -125,6 +184,8 @@ export async function topUp(
          SET available_micros = available_micros + ${amt}::bigint,
              lifetime_topped_up_micros = lifetime_topped_up_micros + ${amt}::bigint,
              metering_enabled = true,
+             -- Reset the "full tank" baseline so %-used alerts re-arm for the new cycle.
+             alert_baseline_micros = available_micros + ${amt}::bigint,
              updated_at = now()
        WHERE organization_id = ${orgId}::uuid
        RETURNING available_micros, held_micros`;
@@ -449,7 +510,9 @@ export async function maybeLowBalanceNotice(orgId: string): Promise<void> {
 export async function rearmLowBalance(orgId: string): Promise<void> {
   try {
     const { getRedis } = await import('./redis.js');
-    await getRedis().del(`walletlow:${orgId}`);
+    // Clear the low-balance flag AND the fired %-threshold set so both re-arm
+    // for the fresh top-up cycle.
+    await getRedis().del(`walletlow:${orgId}`, `walletalert:${orgId}`);
   } catch {
     /* best-effort */
   }

@@ -418,6 +418,15 @@ async function start() {
     } catch (tickErr) {
       app.log.error({ err: tickErr }, 'failed to start embedding backfill tick (non-fatal)');
     }
+    // Wallet balance-depletion alert tick — notifies tenant + admins when a
+    // metered wallet crosses its configured %-used thresholds. Non-fatal.
+    try {
+      const { startWalletAlertTick } = await import('./lib/wallet-alert-tick.js');
+      const walletTick = startWalletAlertTick();
+      app.log.info({ name: walletTick.name }, 'wallet alert tick started');
+    } catch (tickErr) {
+      app.log.error({ err: tickErr }, 'failed to start wallet alert tick (non-fatal)');
+    }
   } catch (err) {
     app.log.fatal(err);
     process.exit(1);

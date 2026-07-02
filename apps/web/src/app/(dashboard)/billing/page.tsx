@@ -92,6 +92,23 @@ export default function BillingPage() {
       />
 
       <div className="space-y-6">
+        {overviewQ.data &&
+        overviewQ.data.alert.level !== 'ok' &&
+        overviewQ.data.alert.message ? (
+          <div
+            role="alert"
+            className={cn(
+              'flex items-start gap-3 rounded-lg border-2 px-4 py-3',
+              overviewQ.data.alert.level === 'empty'
+                ? 'animate-pulse border-red-500 bg-red-100 text-red-900'
+                : 'border-red-400 bg-red-50 text-red-800',
+            )}
+          >
+            <AlertOctagon className="mt-0.5 size-5 shrink-0" />
+            <p className="text-sm font-semibold">{overviewQ.data.alert.message}</p>
+          </div>
+        ) : null}
+
         {overviewQ.isLoading ? (
           <Card>
             <CardContent className="space-y-3 p-6">

@@ -6,10 +6,12 @@ import Link from 'next/link';
 
 import { getBotPerformanceToday } from '@/lib/dashboard-api';
 import { formatThousands } from '@/lib/format';
+import { useSession } from '@/lib/session';
 
 import { WidgetEmpty, WidgetError, WidgetFrame, WidgetSkeleton } from '../widget-frame';
 
 export function BotPerformanceWidget() {
+  const { session } = useSession();
   const q = useQuery({
     queryKey: ['dashboard', 'bot-performance'],
     queryFn: getBotPerformanceToday,
@@ -18,6 +20,9 @@ export function BotPerformanceWidget() {
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
+
+  // Tenants with the AI/bot feature turned off have no bot performance to show.
+  if (session?.organization?.disabledFeatures?.includes('ai')) return null;
 
   return (
     <WidgetFrame

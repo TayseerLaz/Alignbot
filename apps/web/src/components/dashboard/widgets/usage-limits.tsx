@@ -5,6 +5,7 @@ import { Gauge } from 'lucide-react';
 
 import { getAiBudgetToday, type AiBudgetToday } from '@/lib/dashboard-api';
 import { formatThousands } from '@/lib/format';
+import { useSession } from '@/lib/session';
 import { cn } from '@/lib/utils';
 
 import { WidgetError, WidgetFrame, WidgetSkeleton } from '../widget-frame';
@@ -15,12 +16,17 @@ import { WidgetError, WidgetFrame, WidgetSkeleton } from '../widget-frame';
 // close to a limit (amber ≥80%) or already reached (red 100%), and understands
 // WHY something stopped. Pairs with the bell notifications fired before each cap.
 export function UsageLimitsWidget() {
+  const { session } = useSession();
   const q = useQuery({
     queryKey: ['dashboard', 'ai-budget'],
     queryFn: getAiBudgetToday,
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
+
+  // The widget still shows plan quotas when AI is off — only the AI-messages
+  // row is skipped.
+  const hasAi = !session?.organization?.disabledFeatures?.includes('ai');
 
   return (
     <WidgetFrame id="usage-limits" title="Usage & limits" icon={Gauge} accent="blue">
@@ -29,7 +35,7 @@ export function UsageLimitsWidget() {
       ) : q.isError ? (
         <WidgetError onRetry={() => q.refetch()} />
       ) : !q.data ? null : (
-        <Body data={q.data} />
+        <Body data={q.data} hasAi={hasAi} />
       )}
     </WidgetFrame>
   );
@@ -42,10 +48,11 @@ interface Row {
   pct: number | null;
 }
 
-function Body({ data }: { data: AiBudgetToday }) {
+function Body({ data, hasAi }: { data: AiBudgetToday; hasAi: boolean }) {
   const rows: Row[] = [];
-  // AI messages first — it's the cap that actually pauses the bot.
-  if (!data.unlimited) {
+  // AI messages first — it's the cap that actually pauses the bot. Skipped for
+  // tenants without the AI feature.
+  if (hasAi && !data.unlimited) {
     rows.push({
       label: 'AI messages (bot replies)',
       used: data.messagesUsed,

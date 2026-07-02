@@ -249,6 +249,7 @@ export interface WalletOverview {
   lifetimeSpentMicros: number;
   lifetimeMessages: number;
   lifetimeToppedUpMicros: number;
+  alert: { pctUsed: number; level: 'ok' | 'alert' | 'empty'; message: string | null };
 }
 
 export async function getWalletOverview(): Promise<WalletOverview> {

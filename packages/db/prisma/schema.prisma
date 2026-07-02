@@ -2572,6 +2572,13 @@ model TenantWallet {
   // the first top-up; HQ can also toggle it. isMetered() == this flag.
   meteringEnabled           Boolean  @default(false) @map("metering_enabled")
   lowBalanceThresholdMicros BigInt   @default(0) @map("low_balance_threshold_micros")
+  // Balance-depletion alert thresholds (% of the last top-up used). HQ picks any
+  // of 50/75/80/90/100 per tenant; when the balance crosses one, the tenant gets
+  // a notification + a red banner on their dashboard/billing. 100 = empty/paused.
+  alertThresholds           Int[]    @default([80, 100]) @map("alert_thresholds")
+  // The "full tank" reference — the available balance right after the most recent
+  // top-up. %used = (baseline − available) / baseline. Reset on each top-up.
+  alertBaselineMicros       BigInt   @default(0) @map("alert_baseline_micros")
   // Snapshot of the Meta reference cost when the price was set (for margin). $0.0375.
   metaCostMicros            BigInt   @default(37500) @map("meta_cost_micros")
   // Denormalized lifetime counters (cheap dashboards; ledger is source of truth).

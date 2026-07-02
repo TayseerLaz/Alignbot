@@ -12,6 +12,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
+import { useSession } from '@/lib/session';
+
 import { useEditMode } from './edit-mode-context';
 import { WIDGETS_BY_ID, type WidgetId } from './widget-registry';
 
@@ -28,7 +30,13 @@ export function AddWidgetDialog({
   onOpenChange: (v: boolean) => void;
 }) {
   const { layout } = useEditMode();
-  const hidden = layout.hidden;
+  const { session } = useSession();
+  const disabledFeatures = session?.organization?.disabledFeatures ?? [];
+  // Don't offer widgets for features this tenant doesn't have.
+  const hidden = layout.hidden.filter((id) => {
+    const def = WIDGETS_BY_ID[id as WidgetId];
+    return !def?.feature || !disabledFeatures.includes(def.feature);
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

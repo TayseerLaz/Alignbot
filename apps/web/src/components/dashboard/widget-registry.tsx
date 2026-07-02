@@ -84,6 +84,12 @@ export interface WidgetDef {
   slot: WidgetSlot;
   /** True = visible by default for a fresh user / cleared layout. */
   defaultOn: boolean;
+  /**
+   * Org-feature key this widget depends on. When the tenant has that feature
+   * disabled, the dashboard hides the widget entirely (and it won't appear in
+   * the Add-widget dialog). Omit for feature-neutral widgets.
+   */
+  feature?: string;
   Component: ComponentType;
 }
 
@@ -116,6 +122,7 @@ export const WIDGETS: WidgetDef[] = [
     icon: Inbox,
     slot: 'half',
     defaultOn: true,
+    feature: 'inbox',
     Component: InboxSnapshotWidget,
   },
   {
@@ -125,6 +132,7 @@ export const WIDGETS: WidgetDef[] = [
     icon: Bot,
     slot: 'half',
     defaultOn: true,
+    feature: 'ai',
     Component: BotPerformanceWidget,
   },
   {
@@ -134,6 +142,7 @@ export const WIDGETS: WidgetDef[] = [
     icon: ShoppingBag,
     slot: 'half',
     defaultOn: true,
+    feature: 'orders',
     Component: SalesRevenueWidget,
   },
   {
@@ -143,6 +152,7 @@ export const WIDGETS: WidgetDef[] = [
     icon: Filter,
     slot: 'half',
     defaultOn: true,
+    feature: 'orders',
     Component: ConversionFunnelWidget,
   },
   {
@@ -152,6 +162,7 @@ export const WIDGETS: WidgetDef[] = [
     icon: Send,
     slot: 'half',
     defaultOn: true,
+    feature: 'broadcasts',
     Component: OutreachCampaignsWidget,
   },
   {
@@ -161,6 +172,7 @@ export const WIDGETS: WidgetDef[] = [
     icon: Sparkles,
     slot: 'half',
     defaultOn: true,
+    feature: 'ai',
     Component: AiBudgetWidget,
   },
   {
@@ -217,6 +229,7 @@ export const WIDGETS: WidgetDef[] = [
     icon: Users,
     slot: 'half',
     defaultOn: false,
+    feature: 'contacts',
     Component: AudienceComplianceWidget,
   },
   {
@@ -226,6 +239,7 @@ export const WIDGETS: WidgetDef[] = [
     icon: ShieldCheck,
     slot: 'half',
     defaultOn: false,
+    feature: 'ai',
     Component: ReplyQualityWidget,
   },
   {
@@ -235,6 +249,7 @@ export const WIDGETS: WidgetDef[] = [
     icon: PhoneCall,
     slot: 'half',
     defaultOn: false,
+    feature: 'phone',
     Component: VoiceCallsWidget,
   },
   {
@@ -244,6 +259,7 @@ export const WIDGETS: WidgetDef[] = [
     icon: ShoppingBag,
     slot: 'half',
     defaultOn: false,
+    feature: 'orders',
     Component: OrdersByChannelWidget,
   },
 ];

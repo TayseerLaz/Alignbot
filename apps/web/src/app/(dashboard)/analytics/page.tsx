@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
+import { useSession } from '@/lib/session';
 import { cn } from '@/lib/utils';
 
 type Window = '24h' | '7d' | '30d';
@@ -28,6 +29,10 @@ interface Analytics {
 }
 
 export default function AnalyticsPage() {
+  const { session } = useSession();
+  const disabledFeatures = session?.organization?.disabledFeatures ?? [];
+  const hasCatalog = !disabledFeatures.includes('catalog');
+  const hasBroadcasts = !disabledFeatures.includes('broadcasts');
   const [win, setWin] = useState<Window>('7d');
   const q = useQuery({
     queryKey: ['analytics', win],
@@ -188,7 +193,9 @@ export default function AnalyticsPage() {
 
           {/* Full-message clustering + product/service mentions — three
               cards stacked in a responsive grid so each gets enough
-              horizontal space for long content. */}
+              horizontal space for long content. Hidden when the tenant has no
+              catalog feature (no products/services to mention). */}
+          {hasCatalog ? (
           <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader>
@@ -247,8 +254,11 @@ export default function AnalyticsPage() {
               </CardContent>
             </Card>
           </div>
+          ) : null}
 
-          {/* Broadcasts — messages sent + recipients per campaign. */}
+          {/* Broadcasts — messages sent + recipients per campaign. Hidden when
+              the tenant has no broadcasts feature. */}
+          {hasBroadcasts ? (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
@@ -299,6 +309,7 @@ export default function AnalyticsPage() {
               )}
             </CardContent>
           </Card>
+          ) : null}
         </>
       )}
     </>

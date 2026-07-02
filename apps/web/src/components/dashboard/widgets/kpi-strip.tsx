@@ -15,6 +15,8 @@ import {
 import Link from 'next/link';
 import { useState } from 'react';
 
+import { isHrefDisabled } from '@aligned/shared';
+
 import { Card, CardContent } from '@/components/ui/card';
 import {
   DropdownMenu,
@@ -32,6 +34,7 @@ import {
   type ServiceMissingField,
 } from '@/lib/dashboard-api';
 import { formatThousands } from '@/lib/format';
+import { useSession } from '@/lib/session';
 import { cn } from '@/lib/utils';
 
 import { useEditMode } from '../edit-mode-context';
@@ -54,6 +57,8 @@ const KPI_ICON: Record<string, LucideIcon> = {
 
 export function KpiStripWidget() {
   const { editing, layout } = useEditMode();
+  const { session } = useSession();
+  const disabledFeatures = session?.organization?.disabledFeatures ?? [];
   const q = useQuery({
     queryKey: KPI_QUERY_KEY,
     queryFn: getKpiStrip,
@@ -76,7 +81,12 @@ export function KpiStripWidget() {
       </div>
     );
   }
-  const tiles = q.data?.tiles ?? [];
+  // Drop tiles whose page the tenant doesn't have (e.g. Products/Services when
+  // the catalog feature is off). If nothing's left, hide the whole strip.
+  const tiles = (q.data?.tiles ?? []).filter(
+    (t) => !t.href || !isHrefDisabled(t.href, disabledFeatures),
+  );
+  if (tiles.length === 0) return null;
 
   return (
     <div className="relative">

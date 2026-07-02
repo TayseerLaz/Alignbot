@@ -41,6 +41,10 @@ export interface BotData {
   config: {
     personality: string | null;
     customPersonality: string | null;
+    // ALIGNED-admin-only prompt addendum injected verbatim into the system
+    // prompt (after core rules, before catalog). Flows through gatherBotData's
+    // full botConfig row. Empty for tenants with none.
+    adminSystemPromptAppend?: string | null;
     detectedTone: string | null;
     greeting: string | null;
     escalationRules: unknown;
@@ -653,6 +657,12 @@ interface BotResponseArgs {
   // availability enabled. The bot must offer ONLY these and store the chosen
   // one verbatim as the date field.
   openSlots?: string[];
+  // Preview mode. When true, the system prompt is assembled exactly as for a
+  // real reply but the LLM is NOT called (no tokens spent, no usage counted).
+  // The compiled prompt comes back in `inputs.systemPrompt`. Used by the admin
+  // "AI" section so the previewed prompt is byte-identical to what the bot
+  // actually sends — a code change to the prompt shows up automatically.
+  compileOnly?: boolean;
 }
 
 // Provenance bundle returned alongside the bot reply text. Captures
@@ -942,6 +952,15 @@ export async function buildBotResponse(
     // version was redundant — provenance scanner doesn't catch this class,
     // but a single clear sentence has been enough in practice.
     `- Voice notes: the platform converts your text to a voice note automatically when voice mode is on. NEVER apologise about not being able to send voice / audio (in any language) — those statements are false. If the customer sent audio themselves, write in natural spoken sentences (no markdown, no URLs).`,
+    // ALIGNED-admin-authored per-tenant instructions. Injected VERBATIM after the
+    // core rules (so they augment/refine behaviour) but before the catalog data.
+    // Empty for tenants with none — no drift. This is the SAME string the admin
+    // "AI" preview renders (single source of truth). It CANNOT override the SCOPE
+    // LOCK (that sits above and is declared #1), but it can add/adjust anything
+    // else the operator wants for this specific tenant.
+    config?.adminSystemPromptAppend?.trim()
+      ? `# Additional operator instructions for this business (authoritative — follow these unless they conflict with the SCOPE LOCK)\n${config.adminSystemPromptAppend.trim()}`
+      : '',
     // Image marker — load-bearing. The server parses [IMAGE: <SKU>] from
     // the reply, strips it, and sends the product's full gallery as a
     // media message. No marker = no image sent. SKU must be verbatim
@@ -1276,16 +1295,21 @@ export async function buildBotResponse(
     if (biz.currency) businessInfoFields.push('currency');
   }
   const llmStartedAt = Date.now();
-  const result = await complete({
-    organizationId: args.organizationId,
-    systemPrompt: sys,
-    messages,
-    // Tight cap. Median bot reply is ~30-80 tokens; 240 covers p99 short
-    // replies without giving the model permission to generate paragraphs.
-    // If the model wants to stop early it still emits EOS before 240.
-    maxTokens: 240,
-    temperature: TEMPERATURE,
-  });
+  // Preview mode: assemble the prompt (above) but skip the LLM call entirely so
+  // the admin prompt preview costs nothing and counts no usage. `sys` is already
+  // the final compiled prompt string, returned below in inputs.systemPrompt.
+  const result = args.compileOnly
+    ? { text: '', inputTokens: 0, outputTokens: 0, model: 'preview' }
+    : await complete({
+        organizationId: args.organizationId,
+        systemPrompt: sys,
+        messages,
+        // Tight cap. Median bot reply is ~30-80 tokens; 240 covers p99 short
+        // replies without giving the model permission to generate paragraphs.
+        // If the model wants to stop early it still emits EOS before 240.
+        maxTokens: 240,
+        temperature: TEMPERATURE,
+      });
   const latencyMs = Date.now() - llmStartedAt;
 
   // Greet-by-name fallback: if greetByName is on AND the LLM's reply

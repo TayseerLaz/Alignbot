@@ -3796,12 +3796,23 @@ async function maybeReplyAsBot(args: {
     // are swallowed so the reply path is never blocked.
     let personaBlock: string | null = null;
     let isUltraPlan = false;
+    let contactMemoryEnabled = true;
     let pinnedSkus: string[] = [];
     let intentPromise: Promise<{ intent: string; confidence: number; reason: string } | null> | null =
       null;
     try {
       const { getOrgAiPlan } = await import('../../lib/openai.js');
       isUltraPlan = (await getOrgAiPlan(args.organizationId)) === 'ultra';
+      // Per-tenant "AI contact memory" feature gate. When OFF we neither
+      // generate nor inject the per-contact persona. Real order history is NOT
+      // AI-generated memory, so it still loads (re-order / "what did I order").
+      const orgFeat = await withRlsBypass((tx) =>
+        tx.organization.findUnique({
+          where: { id: args.organizationId },
+          select: { disabledFeatures: true },
+        }),
+      );
+      contactMemoryEnabled = !(orgFeat?.disabledFeatures ?? []).includes('contact_memory');
       const {
         loadPersonaBlock,
         renderPersonaForPrompt,
@@ -3809,15 +3820,14 @@ async function maybeReplyAsBot(args: {
         renderOrdersForPrompt,
         pinnedSkusFromOrders,
       } = await import('../../lib/contact-memory.js');
-      // Persona (distilled memory) + real recent orders, loaded in parallel
-      // and combined so the bot can answer "what did I order before?",
-      // re-order, and skip re-asking known details (name, etc.).
       const [pb, orders] = await Promise.all([
-        loadPersonaBlock(args.organizationId, m.from),
+        contactMemoryEnabled
+          ? loadPersonaBlock(args.organizationId, m.from)
+          : Promise.resolve(null),
         loadRecentOrders(args.organizationId, m.from),
       ]);
       personaBlock =
-        [renderPersonaForPrompt(pb), renderOrdersForPrompt(orders)]
+        [contactMemoryEnabled ? renderPersonaForPrompt(pb) : '', renderOrdersForPrompt(orders)]
           .filter(Boolean)
           .join('\n\n') || null;
       // Pin recent-order products so "yes add these" can re-add them even when
@@ -3977,7 +3987,7 @@ async function maybeReplyAsBot(args: {
     // per-contact throttle (so it doesn't re-summarize on every single
     // message), and can never delay or fail the reply the customer is waiting
     // on.
-    if (rawReply) {
+    if (rawReply && contactMemoryEnabled) {
       const replyForMemory = rawReply;
       void import('../../lib/contact-memory.js').then(({ updateContactMemory }) =>
         updateContactMemory({

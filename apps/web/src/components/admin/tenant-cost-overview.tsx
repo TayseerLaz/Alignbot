@@ -216,6 +216,35 @@ export function TenantCostOverview({ orgId }: { orgId: string }) {
             </CardContent>
           </Card>
 
+          {/* AI contact memory cost — only when the feature is ON. The per-
+              contact persona summarisation runs on Haiku, so its cost is the
+              Haiku portion of the AI spend above. */}
+          {!o.org.disabledFeatures.includes('contact_memory') ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Cpu className="size-4" /> AI contact memory
+                  <Badge variant="success" className="text-[11px]">On</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1.5 text-sm">
+                <Row
+                  label="Est. cost this period"
+                  value={usd(
+                    o.ai.byModel
+                      .filter((m) => /haiku/i.test(m.model))
+                      .reduce((s, m) => s + m.usd, 0),
+                  )}
+                />
+                <p className="text-xs text-foreground-subtle">
+                  The bot distils each contact into a short profile on Claude Haiku — that&apos;s
+                  the Haiku line in &ldquo;AI usage by model&rdquo; above. Turn this off on the
+                  Features tab to stop the cost.
+                </p>
+              </CardContent>
+            </Card>
+          ) : null}
+
           {/* Voice transcription + WhatsApp + counts */}
           <div className="grid gap-4 lg:grid-cols-3">
             <Card>

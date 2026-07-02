@@ -2773,6 +2773,132 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- GET /aligned-admin/orgs/:id/ai-compiled-prompt ------------
+  // Compile the tenant's ACTUAL bot system prompt — the same string the bot
+  // sends to the LLM — WITHOUT calling the model (compileOnly). Because it runs
+  // the real assembler in bot-engine.ts, any code change to the prompt (rules,
+  // scope-lock, catalog packing) shows up here automatically, for every tenant.
+  // Also returns the current admin-only addendum + a few size stats.
+  r.get(
+    '/aligned-admin/orgs/:id/ai-compiled-prompt',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: "Compile the tenant's live bot system prompt (no LLM call) + the admin addendum.",
+        params: z.object({ id: uuidSchema }),
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              compiledPrompt: z.string(),
+              adminSystemPromptAppend: z.string().nullable(),
+              promptChars: z.number().int(),
+              productCount: z.number().int(),
+              serviceCount: z.number().int(),
+              faqCount: z.number().int(),
+              hasBotConfig: z.boolean(),
+              deployed: z.boolean(),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const orgId = req.params.id;
+      const { gatherBotData, buildBotResponse } = await import('../../lib/bot-engine.js');
+      const result = await withRlsBypass(async (tx) => {
+        const org = await tx.organization.findUnique({ where: { id: orgId }, select: { id: true } });
+        if (!org) return null;
+        // gatherBotData filters every query by organizationId explicitly, so it
+        // returns the right tenant's data even under the RLS-bypass tx.
+        const data = await gatherBotData(tx as never, orgId);
+        const built = await buildBotResponse({
+          organizationId: orgId,
+          userMessage: '(prompt preview — no customer message)',
+          data,
+          // Preview the WhatsApp variant (primary channel) for a canonical view.
+          channelLabel: 'WhatsApp',
+          compileOnly: true,
+        });
+        return {
+          compiledPrompt: built.inputs.systemPrompt,
+          adminSystemPromptAppend: data.config?.adminSystemPromptAppend ?? null,
+          productCount: data.products.length,
+          serviceCount: data.services.length,
+          faqCount: data.faqs.length,
+          hasBotConfig: !!data.config,
+          deployed: false as boolean,
+        };
+      });
+      if (!result) throw notFound('Organization not found');
+      // deployedAt is on BotConfig — a quick separate read keeps gatherBotData's
+      // shape untouched.
+      const cfg = await withRlsBypass((tx) =>
+        tx.botConfig.findUnique({ where: { organizationId: orgId }, select: { deployedAt: true } }),
+      );
+      return {
+        data: {
+          ...result,
+          deployed: !!cfg?.deployedAt,
+          promptChars: result.compiledPrompt.length,
+        },
+      };
+    },
+  );
+
+  // ---------- PUT /aligned-admin/orgs/:id/ai-prompt-append --------------
+  // Set the ALIGNED-admin-only prompt addendum for this tenant. It is injected
+  // VERBATIM into the bot's system prompt (after core rules, before catalog) on
+  // every reply — chat + voice. Empty/whitespace clears it. Tenants can neither
+  // see nor edit this (it's not in the /bot routes' DTO or body schema).
+  r.put(
+    '/aligned-admin/orgs/:id/ai-prompt-append',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: "Set the ALIGNED-admin-only bot system-prompt addendum for a tenant.",
+        params: z.object({ id: uuidSchema }),
+        body: z.object({ adminSystemPromptAppend: z.string().max(8000).nullable() }),
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({ id: uuidSchema, adminSystemPromptAppend: z.string().nullable() }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const orgId = req.params.id;
+      const raw = req.body.adminSystemPromptAppend;
+      const value = raw && raw.trim() ? raw.trim() : null;
+      const updated = await withRlsBypass(async (tx) => {
+        const org = await tx.organization.findUnique({ where: { id: orgId }, select: { id: true } });
+        if (!org) return null;
+        // BotConfig is 1:1 with org — upsert so a tenant that never opened /bot
+        // still gets the addendum (the bot materialises the rest of config).
+        const row = await tx.botConfig.upsert({
+          where: { organizationId: orgId },
+          create: { organizationId: orgId, adminSystemPromptAppend: value },
+          update: { adminSystemPromptAppend: value },
+          select: { organizationId: true, adminSystemPromptAppend: true },
+        });
+        return row;
+      });
+      if (!updated) throw notFound('Organization not found');
+      await recordAudit({
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        action: 'bot_prompt_updated',
+        entityType: 'bot_config',
+        entityId: orgId,
+        metadata: { set: value !== null, chars: value?.length ?? 0 },
+      });
+      return {
+        data: { id: updated.organizationId, adminSystemPromptAppend: updated.adminSystemPromptAppend },
+      };
+    },
+  );
+
   // ======================================================================
   // Tenant wallet & metered WhatsApp billing (docs/wallet-billing-plan.md)
   // ======================================================================

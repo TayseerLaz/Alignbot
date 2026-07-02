@@ -158,6 +158,8 @@ enum AuditAction {
   cart_deleted
   // AI plan tier (basic / middle / max) changed by an ALIGNED admin.
   ai_plan_changed
+  // ALIGNED admin edited the tenant's admin-only bot system-prompt addendum.
+  bot_prompt_updated
   // Phone integrations (voice gateway)
   phone_integration_created
   phone_integration_updated
@@ -1842,6 +1844,12 @@ model BotConfig {
   // Personality preset name + free-form override.
   personality             String? // 'formal' | 'casual' | 'friendly' | 'clinical' | custom
   customPersonality       String?   @map("custom_personality")
+  // ALIGNED-admin-only prompt addendum. Free-form instructions injected VERBATIM
+  // into the bot's system prompt (after the core rules, before the catalog) for
+  // this tenant. NOT exposed or editable via the tenant-facing /bot routes —
+  // only set from the ALIGNED admin org-detail "AI" section. Same string shown
+  // in the admin compiled-prompt preview (single source of truth).
+  adminSystemPromptAppend String?   @map("admin_system_prompt_append")
   // Detected by the LLM during analysis. Used to seed the personality picker.
   detectedTone            String?   @map("detected_tone")
   // The greeting text the bot opens with.

@@ -104,6 +104,14 @@ export const ORG_FEATURES = [
     // No page to hide — this gates the inbound transcription path only.
     hrefs: [],
   },
+  {
+    key: 'contact_memory',
+    label: 'AI contact memory',
+    description:
+      "The bot builds a short profile ('user info') of each contact from their conversations and uses it to personalise replies. Turn OFF to stop generating and using per-contact AI memory (saves AI cost). ON by default.",
+    // No page to hide — this gates the per-contact persona generation + use.
+    hrefs: [],
+  },
 ] as const;
 
 export type OrgFeatureKey = (typeof ORG_FEATURES)[number]['key'];

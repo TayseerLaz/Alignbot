@@ -418,7 +418,7 @@ export default function AlignedAdminPage() {
                               </Link>
                             </DropdownMenuItem>
                             <DropdownMenuItem asChild>
-                              <Link href={`/aligned-admin/orgs/${o.id}/billing`}>
+                              <Link href={`/aligned-admin/orgs/${o.id}?tab=billing`}>
                                 <Wallet className="size-4" /> Billing &amp; overview
                               </Link>
                             </DropdownMenuItem>

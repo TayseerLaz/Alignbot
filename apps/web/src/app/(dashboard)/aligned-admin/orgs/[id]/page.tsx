@@ -26,6 +26,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
+import { TenantCostOverview } from '@/components/admin/tenant-cost-overview';
 import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -458,7 +459,14 @@ export default function OrgDetailPage() {
 
   const name = d?.name ?? org?.name ?? 'Organisation';
 
-  const [activeTab, setActiveTab] = useState('overview');
+  // Open the tab named in ?tab= when it's a valid one, else fall back to overview.
+  const [activeTab, setActiveTab] = useState(() => {
+    if (typeof window === 'undefined') return 'overview';
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    return tab && ['overview', 'billing', 'features', 'members', 'activity'].includes(tab)
+      ? tab
+      : 'overview';
+  });
 
   return (
     <>
@@ -642,7 +650,7 @@ export default function OrgDetailPage() {
         </TabsContent>
 
         {/* ── Billing ──────────────────────────────────────────────── */}
-        <TabsContent value="billing">
+        <TabsContent value="billing" className="space-y-6">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {/* AI plan + usage */}
             {org?.disabledFeatures?.includes('ai') ? null : (
@@ -726,6 +734,12 @@ export default function OrgDetailPage() {
                 )}
               </CardContent>
             </Card>
+          </div>
+
+          {/* Full cost & usage breakdown (consolidated from the standalone page) */}
+          <div>
+            <h3 className="mb-3 text-sm font-medium text-foreground">Cost &amp; usage</h3>
+            <TenantCostOverview orgId={id} />
           </div>
         </TabsContent>
 

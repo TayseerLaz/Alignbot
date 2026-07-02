@@ -249,18 +249,18 @@ export default function BroadcastDetailPage() {
             ) : null}
             {b && b.failedCount > 0 ? (
               <Button
-                variant="secondary"
                 onClick={() => {
                   if (
                     window.confirm(
-                      `Re-queue ${b.failedCount} failed recipient${b.failedCount === 1 ? '' : 's'}?`,
+                      `Resend the same template to ${b.failedCount} failed recipient${b.failedCount === 1 ? '' : 's'}?`,
                     )
                   )
                     rerunMutation.mutate();
                 }}
                 disabled={rerunMutation.isPending}
+                loading={rerunMutation.isPending}
               >
-                <RefreshCw className="size-4" /> Re-run failed
+                <RefreshCw className="size-4" /> Resend to failed ({b.failedCount})
               </Button>
             ) : null}
             {b && b.totalRecipients > 0 ? (

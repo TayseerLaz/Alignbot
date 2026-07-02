@@ -19,6 +19,7 @@ import { startImportWorker } from './jobs/import.js';
 import { startSequenceTick } from './jobs/sequence-tick.js';
 import { startInboxConsistencyTick } from './jobs/inbox-consistency.js';
 import { startVoiceCallReaperTick } from './jobs/voice-call-reaper.js';
+import { startBroadcastReaperTick } from './jobs/broadcast-reaper.js';
 import { startSyncWorker } from './jobs/sync.js';
 import { startShopifyWorker } from './jobs/shopify.js';
 import { startUptimeProbe } from './jobs/uptime-probe.js';
@@ -150,6 +151,10 @@ async function main() {
   // in_progress (a lost end event) to 'dropped' so hung calls don't linger.
   const voiceCallReaperTick = startVoiceCallReaperTick();
   log.info({ name: voiceCallReaperTick.name }, 'tick started');
+  // Broadcast reaper: every 5 min, force-finish any broadcast stuck in `sending`
+  // past its window (default 1h) so it never stays "sending" forever.
+  const broadcastReaperTick = startBroadcastReaperTick();
+  log.info({ name: broadcastReaperTick.name }, 'tick started');
 
   const workers = [
     startImportWorker(),

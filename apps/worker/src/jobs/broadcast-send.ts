@@ -403,7 +403,9 @@ export function startBroadcastSendWorker() {
       //   failing it, so it self-retries when the operator un-pauses.
       const broadcast = await prisma.broadcast.findUnique({ where: { id: broadcastId } });
       if (!broadcast) return;
-      if (broadcast.status === 'cancelled') {
+      if (broadcast.status === 'cancelled' || broadcast.status === 'completed') {
+        // Cancelled, or reaped after the 1-hour send window closed — don't send
+        // late. Any still-unsent recipient becomes skipped.
         await prisma.broadcastRecipient.updateMany({
           where: { id: recipientId, status: { in: ['queued', 'pending'] } },
           data: { status: 'skipped' },
@@ -423,8 +425,13 @@ export function startBroadcastSendWorker() {
         include: { contact: { select: { optedOutAt: true, blockedAt: true, timezone: true } } },
       });
       if (!recipient) return;
-      if (recipient.status === 'sent' || recipient.status === 'delivered' || recipient.status === 'read') {
-        return; // Already handled.
+      if (
+        recipient.status === 'sent' ||
+        recipient.status === 'delivered' ||
+        recipient.status === 'read' ||
+        recipient.status === 'skipped'
+      ) {
+        return; // Already handled (terminal).
       }
 
       // Phase 5.3 — opt-out gate. Skip without retry; counts as failed-soft.

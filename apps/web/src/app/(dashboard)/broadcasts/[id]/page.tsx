@@ -240,11 +240,11 @@ export default function BroadcastDetailPage() {
               <Button
                 variant="danger"
                 onClick={() => {
-                  if (window.confirm('Cancel this broadcast? Pending recipients will be skipped.'))
+                  if (window.confirm('Stop this broadcast now? Recipients not yet sent will be skipped.'))
                     cancelMutation.mutate();
                 }}
               >
-                <StopCircle className="size-4" /> Cancel
+                <StopCircle className="size-4" /> Stop broadcast
               </Button>
             ) : null}
             {b && b.failedCount > 0 ? (

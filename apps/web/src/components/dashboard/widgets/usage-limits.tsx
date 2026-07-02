@@ -25,8 +25,9 @@ export function UsageLimitsWidget() {
   });
 
   // The widget still shows plan quotas when AI is off — only the AI-messages
-  // row is skipped.
-  const hasAi = !session?.organization?.disabledFeatures?.includes('ai');
+  // row is skipped. Quotas for features the tenant lacks are hidden entirely.
+  const disabledFeatures = session?.organization?.disabledFeatures ?? [];
+  const hasAi = !disabledFeatures.includes('ai');
 
   return (
     <WidgetFrame id="usage-limits" title="Usage & limits" icon={Gauge} accent="blue">
@@ -35,7 +36,7 @@ export function UsageLimitsWidget() {
       ) : q.isError ? (
         <WidgetError onRetry={() => q.refetch()} />
       ) : !q.data ? null : (
-        <Body data={q.data} hasAi={hasAi} />
+        <Body data={q.data} hasAi={hasAi} disabledFeatures={disabledFeatures} />
       )}
     </WidgetFrame>
   );
@@ -48,7 +49,23 @@ interface Row {
   pct: number | null;
 }
 
-function Body({ data, hasAi }: { data: AiBudgetToday; hasAi: boolean }) {
+// Which org-feature each plan-quota belongs to (hidden when the tenant lacks it).
+const QUOTA_FEATURE: Record<string, string> = {
+  monthly_broadcasts: 'broadcasts',
+  monthly_imports: 'catalog',
+  products: 'catalog',
+  services: 'catalog',
+};
+
+function Body({
+  data,
+  hasAi,
+  disabledFeatures,
+}: {
+  data: AiBudgetToday;
+  hasAi: boolean;
+  disabledFeatures: string[];
+}) {
   const rows: Row[] = [];
   // AI messages first — it's the cap that actually pauses the bot. Skipped for
   // tenants without the AI feature.
@@ -61,6 +78,8 @@ function Body({ data, hasAi }: { data: AiBudgetToday; hasAi: boolean }) {
     });
   }
   for (const qa of data.quotas) {
+    const feat = QUOTA_FEATURE[qa.key];
+    if (feat && disabledFeatures.includes(feat)) continue;
     rows.push({ label: qa.label, used: qa.used, cap: qa.cap, pct: qa.pct });
   }
   // Closest-to-stopping first (capped + highest %).

@@ -46,7 +46,8 @@ export default function BillingPage() {
   const { session } = useSession();
   // Tenants without the AI/bot feature (e.g. Lexy) don't have an AI-message
   // allowance — hide every AI part of the page for them.
-  const hasAi = !session?.organization?.disabledFeatures?.includes('ai');
+  const disabledFeatures = session?.organization?.disabledFeatures ?? [];
+  const hasAi = !disabledFeatures.includes('ai');
 
   const overviewQ = useQuery({
     queryKey: ['billing', 'overview'],
@@ -149,7 +150,12 @@ export default function BillingPage() {
             </CardContent>
           </Card>
         ) : aiUsageQ.data ? (
-          <PlanUsageCard ai={aiUsageQ.data} planName={planName} hasAi={hasAi} />
+          <PlanUsageCard
+            ai={aiUsageQ.data}
+            planName={planName}
+            hasAi={hasAi}
+            disabledFeatures={disabledFeatures}
+          />
         ) : null}
 
         {/* Ledger */}
@@ -339,17 +345,29 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
+// Which org-feature each plan-quota belongs to. A tenant that lacks the feature
+// doesn't see the row (no catalog → no Products/Services/Imports; no broadcasts
+// → no Broadcasts). Messages/members/keys/webhooks are core → always shown.
+const QUOTA_FEATURE: Record<string, string> = {
+  monthly_broadcasts: 'broadcasts',
+  monthly_imports: 'catalog',
+  products: 'catalog',
+  services: 'catalog',
+};
+
 function PlanUsageCard({
   ai,
   planName,
   hasAi,
+  disabledFeatures,
 }: {
   ai: AiBudgetToday;
   planName: string | null;
   hasAi: boolean;
+  disabledFeatures: string[];
 }) {
   // AI bot replies first (the cap that pauses the bot) — only for tenants that
-  // actually have the AI feature — then every plan quota.
+  // actually have the AI feature — then every plan quota the tenant HAS.
   const rows: { label: string; used: number; cap: number | null; pct: number | null }[] = [];
   if (hasAi && !ai.unlimited) {
     rows.push({
@@ -359,7 +377,11 @@ function PlanUsageCard({
       pct: ai.percentUsed,
     });
   }
-  for (const q of ai.quotas) rows.push({ label: q.label, used: q.used, cap: q.cap, pct: q.pct });
+  for (const q of ai.quotas) {
+    const feat = QUOTA_FEATURE[q.key];
+    if (feat && disabledFeatures.includes(feat)) continue; // tenant lacks this feature
+    rows.push({ label: q.label, used: q.used, cap: q.cap, pct: q.pct });
+  }
 
   const aiRemaining =
     ai.unlimited || ai.messageCap == null ? null : Math.max(0, ai.messageCap - ai.messagesUsed);

@@ -3159,6 +3159,76 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- GET /aligned-admin/whatsapp-margin ----------------------
+  // Cross-tenant WhatsApp message economics: what tenants paid (revenue), our
+  // Meta cost, and the profit — in total and per tenant.
+  r.get(
+    '/aligned-admin/whatsapp-margin',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Total + per-tenant WhatsApp message revenue, Meta cost, and profit.',
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              totals: z.object({
+                messages: z.number(),
+                revenueMicros: z.number(),
+                metaCostMicros: z.number(),
+                profitMicros: z.number(),
+              }),
+              tenants: z.array(
+                z.object({
+                  orgId: uuidSchema,
+                  name: z.string(),
+                  slug: z.string(),
+                  messages: z.number(),
+                  revenueMicros: z.number(),
+                  metaCostMicros: z.number(),
+                  profitMicros: z.number(),
+                }),
+              ),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async () => {
+      const rows = await prisma.$queryRaw<
+        { id: string; name: string; slug: string; messages: number; revenue: bigint; meta_cost: bigint; profit: bigint }[]
+      >`
+        SELECT o.id, o.name, o.slug,
+               w.lifetime_messages AS messages,
+               w.lifetime_spent_micros AS revenue,
+               (w.lifetime_messages::bigint * w.meta_cost_micros) AS meta_cost,
+               (w.lifetime_spent_micros - w.lifetime_messages::bigint * w.meta_cost_micros) AS profit
+          FROM tenant_wallets w
+          JOIN organizations o ON o.id = w.organization_id
+         WHERE o.status <> 'deleted'
+         ORDER BY profit DESC`;
+      const tenants = rows.map((r) => ({
+        orgId: r.id,
+        name: r.name,
+        slug: r.slug,
+        messages: Number(r.messages),
+        revenueMicros: Number(r.revenue),
+        metaCostMicros: Number(r.meta_cost),
+        profitMicros: Number(r.profit),
+      }));
+      const totals = tenants.reduce(
+        (a, t) => ({
+          messages: a.messages + t.messages,
+          revenueMicros: a.revenueMicros + t.revenueMicros,
+          metaCostMicros: a.metaCostMicros + t.metaCostMicros,
+          profitMicros: a.profitMicros + t.profitMicros,
+        }),
+        { messages: 0, revenueMicros: 0, metaCostMicros: 0, profitMicros: 0 },
+      );
+      return { data: { totals, tenants } };
+    },
+  );
+
   // ---------- GET /aligned-admin/orgs/:id/wallet/ledger ----------------
   r.get(
     '/aligned-admin/orgs/:id/wallet/ledger',

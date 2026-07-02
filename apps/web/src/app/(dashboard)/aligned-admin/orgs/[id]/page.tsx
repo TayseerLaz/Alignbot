@@ -736,6 +736,58 @@ export default function OrgDetailPage() {
             </Card>
           </div>
 
+          {/* Message economics — what a WhatsApp message costs us (Meta), what
+              we charge the tenant, the per-message profit, and the profit to date. */}
+          {wallet ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Wallet className="size-4 text-brand-500" /> Message economics &amp; profit
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border border-border bg-surface-muted/40 p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">
+                      Costs us (Meta)
+                    </p>
+                    <p className="mt-0.5 text-xl font-semibold tabular-nums">
+                      ${formatMicrosUsd(wallet.metaCostMicros)}
+                    </p>
+                    <p className="text-xs text-foreground-muted">per message</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-surface-muted/40 p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-foreground-subtle">
+                      We charge them
+                    </p>
+                    <p className="mt-0.5 text-xl font-semibold tabular-nums">
+                      ${formatMicrosUsd(wallet.pricePerMessageMicros)}
+                    </p>
+                    <p className="text-xs text-foreground-muted">per message</p>
+                  </div>
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-emerald-700">Profit</p>
+                    <p className="mt-0.5 text-xl font-semibold tabular-nums text-emerald-700">
+                      ${formatMicrosUsd(wallet.marginPerMessageMicros)}
+                    </p>
+                    <p className="text-xs text-emerald-700/80">
+                      per message ({wallet.marginPct.toFixed(1)}%)
+                    </p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3 border-t border-border pt-4 sm:grid-cols-4">
+                  <Metric label="Messages billed" value={wallet.lifetimeMessages} />
+                  <Metric label="Charged (revenue)" value={`$${formatMicrosUsd(wallet.lifetimeSpentMicros)}`} />
+                  <Metric
+                    label="Meta cost (ours)"
+                    value={`$${formatMicrosUsd(wallet.lifetimeMessages * wallet.metaCostMicros)}`}
+                  />
+                  <Metric label="Profit so far" value={`$${formatMicrosUsd(wallet.lifetimeMarginMicros)}`} />
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
           {/* Full cost & usage breakdown (consolidated from the standalone page) */}
           <div>
             <h3 className="mb-3 text-sm font-medium text-foreground">Cost &amp; usage</h3>

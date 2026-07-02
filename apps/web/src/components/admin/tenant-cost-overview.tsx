@@ -1,12 +1,10 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Cpu, HardDrive, Mic, Send, Wallet } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -57,7 +55,6 @@ function bytesHuman(b: number): string {
 
 export function TenantCostOverview({ orgId }: { orgId: string }) {
   const { session } = useSession();
-  const queryClient = useQueryClient();
 
   const [preset, setPreset] = useState<RangePreset>('month');
   const [customFrom, setCustomFrom] = useState('');
@@ -89,23 +86,10 @@ export function TenantCostOverview({ orgId }: { orgId: string }) {
   });
   const o = overviewQ.data;
 
-  const [amount, setAmount] = useState<string | null>(null);
-  const savePay = useMutation({
-    mutationFn: (v: number | null) =>
-      api.patch(`/api/v1/aligned-admin/orgs/${orgId}/billing`, { monthlyPaidUsd: v }),
-    onSuccess: () => {
-      toast.success('Monthly payment saved');
-      queryClient.invalidateQueries({ queryKey: ['admin-overview', orgId] });
-      queryClient.invalidateQueries({ queryKey: ['admin-orgs'] });
-    },
-    onError: () => toast.error('Could not save'),
-  });
-
   if (!session?.user.isAlignedAdmin) {
     return <div className="p-6 text-foreground-muted">ALIGNED admins only.</div>;
   }
 
-  const payValue = amount ?? (o?.org.monthlyPaidUsd != null ? String(o.org.monthlyPaidUsd) : '');
   const rangeLabel = o
     ? `${new Date(o.range.from).toLocaleDateString()} – ${new Date(o.range.to).toLocaleDateString()}`
     : '';
@@ -193,40 +177,6 @@ export function TenantCostOverview({ orgId }: { orgId: string }) {
               hint={`${bytesHuman(o.storage.totalBytes)} • ${o.storage.objectCount.toLocaleString()} files`}
             />
           </div>
-
-          {/* Monthly payment editor */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">What this tenant pays</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-wrap items-end gap-3">
-              <div>
-                <label className="mb-1 block text-xs text-foreground-muted">
-                  Monthly payment (USD)
-                </label>
-                <Input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  placeholder="e.g. 50"
-                  value={payValue}
-                  onChange={(e) => setAmount(e.target.value)}
-                  className="h-9 w-40"
-                />
-              </div>
-              <Button
-                onClick={() => savePay.mutate(payValue === '' ? null : Number(payValue))}
-                disabled={savePay.isPending}
-              >
-                Save
-              </Button>
-              <div className="ml-auto text-sm text-foreground-muted">
-                Plan: <span className="font-medium capitalize">{o.org.aiPlan}</span>
-                {' · '}
-                Member since {new Date(o.org.createdAt).toLocaleDateString()}
-              </div>
-            </CardContent>
-          </Card>
 
           {/* AI cost by model */}
           <Card>

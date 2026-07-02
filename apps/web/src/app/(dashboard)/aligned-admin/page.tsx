@@ -15,7 +15,6 @@ import {
   ShieldCheck,
   Trash2,
   Users,
-  Wallet,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -415,11 +414,6 @@ export default function AlignedAdminPage() {
                             <DropdownMenuItem asChild>
                               <Link href={`/aligned-admin/orgs/${o.id}`}>
                                 <Eye className="size-4" /> Open details
-                              </Link>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem asChild>
-                              <Link href={`/aligned-admin/orgs/${o.id}?tab=billing`}>
-                                <Wallet className="size-4" /> Billing &amp; overview
                               </Link>
                             </DropdownMenuItem>
                             <DropdownMenuItem

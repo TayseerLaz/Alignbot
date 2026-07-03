@@ -182,6 +182,80 @@ export function renderOrdersForPrompt(orders: PastOrder[]): string {
   ].join('\n');
 }
 
+// The customer's LAST order's checkout details (name / delivery address / notes)
+// pulled from the most recent finalized Cart. Used to OFFER one-tap defaults at
+// checkout ("deliver to X like last time?") instead of asking each field cold.
+// Authoritative (from the Cart the customer actually placed), not AI-generated.
+export interface LastOrderProfile {
+  name: string | null;
+  address: string | null;
+  notes: string | null;
+}
+
+export async function loadLastOrderProfile(
+  organizationId: string,
+  phoneE164: string,
+): Promise<LastOrderProfile | null> {
+  try {
+    const cart = await withTenant(organizationId, (tx) =>
+      tx.cart.findFirst({
+        where: { organizationId, customerPhone: phoneE164, status: { in: ['new', 'confirmed'] } },
+        orderBy: { createdAt: 'desc' },
+        select: { customerName: true, notes: true, fields: true },
+      }),
+    );
+    if (!cart) return null;
+    // Cart.fields is the frozen shopForm answers: [{ key, label, value, ... }].
+    const fields = Array.isArray(cart.fields) ? (cart.fields as Array<Record<string, unknown>>) : [];
+    const findField = (pred: (k: string) => boolean): string | null => {
+      const f = fields.find((x) => typeof x.key === 'string' && pred((x.key as string).toLowerCase()));
+      const v = f?.value;
+      return typeof v === 'string' && v.trim() ? v.trim() : null;
+    };
+    const address = findField(
+      (k) => k.includes('address') || k.includes('delivery') || k.includes('location'),
+    );
+    const notesField = findField((k) => k.includes('note'));
+    const notes =
+      notesField ?? (typeof cart.notes === 'string' && cart.notes.trim() ? cart.notes.trim() : null);
+    const nameField = findField((k) => k === 'name' || k === 'full_name' || k.includes('name'));
+    const name = (cart.customerName && cart.customerName.trim()) || nameField || null;
+    if (!name && !address && !notes) return null;
+    return { name, address, notes };
+  } catch {
+    return null;
+  }
+}
+
+export function renderLastOrderDefaultsForPrompt(p: LastOrderProfile | null): string {
+  if (!p || (!p.name && !p.address && !p.notes)) return '';
+  const bits: string[] = [];
+  if (p.name) bits.push(`under the name "${p.name}"`);
+  if (p.address) bits.push(`for delivery to "${p.address}"`);
+  if (p.notes) bits.push(`with the note "${p.notes}"`);
+  const lines = [
+    "# This customer's LAST order — offer these as one-tap defaults (CONFIRM, never assume)",
+    `Last time, this customer ordered ${bits.join(', ')}.`,
+    'When they place a NEW order and you reach the checkout / order form, DO NOT ask these fields cold — offer last time’s values for a quick confirm:',
+  ];
+  if (p.name)
+    lines.push(
+      `- NAME: put the order under "${p.name}" and just confirm ("I'll put this under ${p.name} — ok?"). Only ask if they want a different name.`,
+    );
+  if (p.address)
+    lines.push(
+      `- DELIVERY ADDRESS: offer it — "Deliver to ${p.address} like last time?" Use it if they say yes; collect a fresh address only if they want somewhere else.`,
+    );
+  if (p.notes)
+    lines.push(
+      `- NOTES: if they're re-ordering something similar, ask "Same note as last time (${p.notes})?" — otherwise skip.`,
+    );
+  lines.push(
+    'ALWAYS give the customer the one-tap confirm; NEVER silently fill an order with these without them agreeing.',
+  );
+  return lines.join('\n');
+}
+
 // Fold the latest exchange into the contact's stored memory via a cheap
 // Haiku pass. Best-effort: any failure is swallowed so it can never affect
 // the reply that already went out. Call AFTER sending the reply.

@@ -189,9 +189,13 @@ export default function ConnectorsPage() {
                             <Activity className="size-4" /> Test
                           </Button>
                         ) : null}
-                        <Button size="sm" onClick={() => sync.mutate(c.id)} loading={sync.isPending}>
-                          <PlayCircle className="size-4" /> Run now
-                        </Button>
+                        {/* "Run now" pulls from the endpoint — only meaningful when
+                            there IS one. Webhook-only connectors receive pushes instead. */}
+                        {c.endpointUrl ? (
+                          <Button size="sm" onClick={() => sync.mutate(c.id)} loading={sync.isPending}>
+                            <PlayCircle className="size-4" /> Run now
+                          </Button>
+                        ) : null}
                         <Button
                           size="sm"
                           variant="ghost"

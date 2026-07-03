@@ -3819,15 +3819,26 @@ async function maybeReplyAsBot(args: {
         loadRecentOrders,
         renderOrdersForPrompt,
         pinnedSkusFromOrders,
+        loadLastOrderProfile,
+        renderLastOrderDefaultsForPrompt,
       } = await import('../../lib/contact-memory.js');
-      const [pb, orders] = await Promise.all([
+      const [pb, orders, lastProfile] = await Promise.all([
         contactMemoryEnabled
           ? loadPersonaBlock(args.organizationId, m.from)
           : Promise.resolve(null),
         loadRecentOrders(args.organizationId, m.from),
+        // Last-order name/address/notes to offer as confirmable checkout defaults.
+        // Gated on the same "AI contact memory" feature as the persona.
+        contactMemoryEnabled
+          ? loadLastOrderProfile(args.organizationId, m.from)
+          : Promise.resolve(null),
       ]);
       personaBlock =
-        [contactMemoryEnabled ? renderPersonaForPrompt(pb) : '', renderOrdersForPrompt(orders)]
+        [
+          contactMemoryEnabled ? renderPersonaForPrompt(pb) : '',
+          contactMemoryEnabled ? renderLastOrderDefaultsForPrompt(lastProfile) : '',
+          renderOrdersForPrompt(orders),
+        ]
           .filter(Boolean)
           .join('\n\n') || null;
       // Pin recent-order products so "yes add these" can re-add them even when

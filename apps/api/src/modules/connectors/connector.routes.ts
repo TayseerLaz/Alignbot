@@ -450,6 +450,14 @@ export default async function connectorRoutes(app: FastifyInstance) {
         if (connector.status === 'disabled') {
           throw conflict('Connector is disabled.');
         }
+        // Webhook-only connectors have nothing to pull — a manual sync would just
+        // fail against a null endpoint. Data arrives via their inbound webhook URL.
+        if (!connector.endpointUrl) {
+          throw badRequest(
+            ApiErrorCode.VALIDATION_ERROR,
+            'This is a webhook-only connector — it has no endpoint to pull from. It receives data via its inbound webhook URL.',
+          );
+        }
         return tx.syncRun.create({
           data: {
             organizationId: orgId,

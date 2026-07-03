@@ -28,6 +28,12 @@ HOW TO HELP
 - Ask ONE clarifying question when the request is ambiguous (which channel, which page, what error they see).
 - Confirm the fix worked and offer the next step.
 
+WHATSAPP / META CONNECTION — NEVER WALK THE USER THROUGH IT, ALWAYS REFER:
+- Connecting or reconnecting a WhatsApp (or Instagram / Facebook Messenger) number to Meta is a setup step the Hader team performs FOR the customer. This includes: getting or entering Meta credentials (WABA ID, Phone number ID, App ID, App Secret, access token), verifying, subscribing, generating tokens, the registration/two-step PIN, business verification, display-name approval, or fixing a broken/expired connection or a "no messages arriving" problem.
+- NEVER give step-by-step Meta instructions, never tell them where to find or how to generate these credentials, and never ask them for any credential. Do not describe the Meta dashboard.
+- Instead, say it briefly and OFFER A REFERRAL, e.g.: "Connecting your number to Meta is something our Hader team sets up for you — if you want, I can refer you to Hader support to do it. Want me to connect you?" If they say yes (or clearly want it done), emit [HANDOFF].
+- You CAN and SHOULD still help with everything AFTER the number is connected: using the bot, catalog, business info, FAQs, broadcasts, templates, the inbox, contacts, billing, orders, bookings, voice, and how WhatsApp behaves once live (the 24-hour window, template rules, quality rating, opt-in).
+
 ESCALATE TO A HUMAN — reply briefly then put [HANDOFF] on its own final line — when ANY of these is true:
 - The user asks for a person / agent / human / "real support".
 - You can't solve it from the knowledge base, or your steps didn't fix it.
@@ -89,24 +95,19 @@ const KB: Kb[] = [
 
   // ---------------- WhatsApp connection ----------------
   {
-    q: 'How do I connect my WhatsApp number?',
-    a: 'Go to Settings > Integrations > WhatsApp. Enter your Meta credentials: WABA ID (WhatsApp Business Account ID), Phone number ID, App ID, App Secret, and the Access token. Important: all five must come from the SAME Meta app. Then click Verify — Hader checks the number and connects inbound messages automatically. There is also a guided onboarding if you need step-by-step help getting the credentials from Meta.',
-    tags: ['connect whatsapp', 'whatsapp setup', 'meta', 'waba', 'phone number id', 'access token'],
+    q: 'How do I connect my WhatsApp number to Meta?',
+    a: 'Connecting your WhatsApp number to Meta is a setup step the Hader team takes care of for you — it involves your Meta account and is easy to get wrong, so we set it up (and get it right) rather than have you do it. If you would like, I can refer you to Hader support to get your number connected. Want me to connect you?',
+    tags: ['connect whatsapp', 'whatsapp setup', 'meta', 'waba', 'waba id', 'phone number id', 'app id', 'app secret', 'access token', 'link meta', 'credentials', 'verify', 'subscribe', 'onboarding', 'generate token', 'registration pin', 'display name', 'business verification', 'setup number'],
   },
   {
-    q: '"Verify with Meta" fails — what is wrong?',
-    a: 'The most common cause is that your access token, App ID and App Secret do not all belong to the SAME Meta app. Re-copy all of them from one and the same app in the Meta dashboard (App Settings > Basic for the App ID and App Secret, and generate the access token under that same app). Then Verify again. If it still fails, tell me the exact error message and I can connect a specialist.',
-    tags: ['verify failed', 'meta verify', 'whatsapp error', 'app id mismatch', 'credentials'],
+    q: 'My WhatsApp is not connected / verify failed / messages are not arriving.',
+    a: 'A WhatsApp connection issue (verify failing, no messages arriving, a number that stopped working, or an expired token) is something the Hader team fixes for you on the Meta side. If you would like, I can refer you to Hader support to check and fix your connection. Shall I connect you?',
+    tags: ['verify failed', 'not connected', 'stopped working', 'token expired', 'empty inbox', 'no messages', 'not receiving', 'reconnect', 'connection broken', 'subscribe', 'meta error', 'whatsapp down'],
   },
   {
-    q: 'WhatsApp is connected but messages are not showing in my Inbox.',
-    a: 'This usually means the number is not fully subscribed to receive inbound messages. Go to Settings > Integrations > WhatsApp and click Verify (or Subscribe) again — that registers the message delivery for your number. Also make sure the App Secret is filled in, because it is used to accept incoming messages. If messages still do not arrive, let me connect a specialist to check the connection.',
-    tags: ['no messages', 'empty inbox', 'inbound not working', 'not receiving', 'subscribe'],
-  },
-  {
-    q: 'Can I connect more than one WhatsApp number?',
-    a: 'Yes. On the WhatsApp page you can add multiple numbers. Each number has its own settings, its own AI bot on/off switch, and its own conversations in the Inbox. You can also pick which number a broadcast sends from.',
-    tags: ['multiple numbers', 'second number', 'multi number', 'add number'],
+    q: 'Can I add another WhatsApp number?',
+    a: 'Yes — you can run several numbers, each with its own AI bot switch and its own conversations in the Inbox, and pick which number a broadcast sends from. Adding and connecting a new number to Meta is a setup step the Hader team does for you, so if you would like, I can refer you to Hader support to add it. Want me to connect you?',
+    tags: ['multiple numbers', 'second number', 'multi number', 'add number', 'another number', 'extra number'],
   },
   {
     q: 'How do I turn the bot on or off for a specific WhatsApp number?',
@@ -127,7 +128,7 @@ const KB: Kb[] = [
   },
   {
     q: 'Why is my bot not replying to customers?',
-    a: 'Check these in order: 1) The bot is Deployed (AI bot builder > Deploy). 2) The channel/number is active and its bot switch is ON. 3) The AI feature is enabled on your account. 4) You have not hit your monthly AI message limit (see Billing) — the bot pauses when it is reached. 5) The customer is not blocked or opted-out. 6) For WhatsApp, the number is verified and subscribed. If all look right and it still is silent, let me connect a specialist.',
+    a: 'Check these in order: 1) The bot is Deployed (AI bot builder > Deploy). 2) The channel/number is active and its bot switch is ON. 3) The AI feature is enabled on your account. 4) You have not hit your monthly AI message limit (see Billing) — the bot pauses when it is reached. 5) The customer is not blocked or opted-out. If all of those look fine and it is still silent, it may be a connection issue on the Meta side — I can refer you to Hader support to check it. Want me to connect you?',
     tags: ['bot not replying', 'not responding', 'no reply', 'bot silent', 'troubleshoot bot'],
   },
   {
@@ -324,32 +325,9 @@ const KB: Kb[] = [
 
   // ================= DEEP KNOWLEDGE (100 more) =================
 
-  // ---------------- WhatsApp / Meta mechanics (deep) ----------------
-  {
-    q: 'Where do I find my WhatsApp Business Account (WABA) ID?',
-    a: 'In Meta Business Settings > Accounts > WhatsApp Accounts, click your account — the WABA ID is shown there. You can also find it in Meta for Developers under your app > WhatsApp > API Setup. Paste it into Settings > Integrations > WhatsApp in Hader.',
-    tags: ['waba id', 'whatsapp business account id', 'where find waba', 'meta id'],
-  },
-  {
-    q: 'Where do I find my Phone number ID?',
-    a: 'In Meta for Developers > your app > WhatsApp > API Setup, pick your number in the "From" dropdown — the Phone number ID is listed right under it. Note: this is NOT the phone number itself, it is a long numeric ID. Paste it into the WhatsApp settings in Hader.',
-    tags: ['phone number id', 'where find phone id', 'api setup', 'not the number'],
-  },
-  {
-    q: 'Where do I find my App ID and App Secret?',
-    a: 'In Meta for Developers, open your app > App Settings > Basic. The App ID is at the top; click Show next to App Secret to reveal it. Both must belong to the SAME app you use for the access token. Paste both into Hader.',
-    tags: ['app id', 'app secret', 'where find app secret', 'app settings basic'],
-  },
-  {
-    q: 'How do I generate a WhatsApp access token that does not expire?',
-    a: 'Temporary tokens from the API Setup page expire in 24 hours. For a permanent one, create a System User in Meta Business Settings > Users > System Users, assign it your app and WhatsApp account with the whatsapp_business_messaging and whatsapp_business_management permissions, then Generate Token (choose no expiry). Use that token in Hader.',
-    tags: ['access token', 'permanent token', 'system user', 'token expired', 'never expires'],
-  },
-  {
-    q: 'My WhatsApp stopped working / my token expired.',
-    a: 'If you used a temporary 24-hour token it has expired — generate a permanent System User token (Meta Business Settings > System Users) and paste it into Settings > Integrations > WhatsApp, then Verify. If you used a permanent token and it still failed, the token may have been reset in Meta — generate a new one. I can connect a specialist if it persists.',
-    tags: ['token expired', 'stopped working', 'whatsapp down', 'reconnect', 'refresh token'],
-  },
+  // ---------------- WhatsApp usage (deep) — how WhatsApp behaves once connected ----------------
+  // NOTE: connecting the number to Meta is intentionally NOT covered here — the
+  // bot refers those to Hader support (see the WhatsApp connection FAQs above).
   {
     q: 'What is the 24-hour customer service window?',
     a: 'WhatsApp only lets you send free-form (normal) messages within 24 hours of the customer\'s last message. After 24 hours of silence, you can only reach them with a pre-approved template message. This is a WhatsApp rule, not a Hader limit. The bot and your inbox both follow it.',
@@ -396,36 +374,6 @@ const KB: Kb[] = [
     tags: ['messaging limit', 'tier', 'daily limit', '250 1000', 'increase limit', 'sending limit'],
   },
   {
-    q: 'How do I get the verified green badge on WhatsApp?',
-    a: 'The green "Official Business Account" badge is granted by Meta, not Hader — it depends on business verification, brand notability, and account quality. You request it in the Meta WhatsApp Manager. It is not required to send or receive messages; a verified display name is enough to operate.',
-    tags: ['green badge', 'verified', 'official business account', 'blue tick', 'checkmark'],
-  },
-  {
-    q: 'How do I set or change my WhatsApp display name?',
-    a: 'Set it in Meta WhatsApp Manager > Phone numbers > your number > Profile / Display name. Meta reviews the name against their display-name rules (it should reflect your real business). Once approved, that is the name customers see. Changing it triggers a new review.',
-    tags: ['display name', 'business name', 'sender name', 'change name', 'name review'],
-  },
-  {
-    q: 'Do I need business verification for WhatsApp?',
-    a: 'Basic messaging works with an unverified business at low limits. To raise your messaging limits and unlock full features, Meta requires Business Verification (submitting documents that prove your business is real) in Meta Business Settings > Security Center. It is a Meta process, done once.',
-    tags: ['business verification', 'verify business', 'documents', 'security center', 'limits'],
-  },
-  {
-    q: 'Can I use my existing WhatsApp number that already has the normal WhatsApp app?',
-    a: 'A number can only live on one WhatsApp system at a time. To use it with the Business API (and Hader), you must first delete it from the regular WhatsApp/WhatsApp Business app, then register it in the API. Back up chats first — they do not carry over. A fresh, unused number is easiest.',
-    tags: ['existing number', 'migrate number', 'already on whatsapp', 'delete app', 'reuse number'],
-  },
-  {
-    q: 'What is the registration PIN / two-step verification?',
-    a: 'When a number is added to the WhatsApp Business API, Meta asks you to set a 6-digit two-step verification PIN to register it. Keep this PIN safe — you need it to re-register or move the number. It is different from your account password.',
-    tags: ['registration pin', 'two step', '6 digit pin', 'register number', 'verification pin'],
-  },
-  {
-    q: 'What is the difference between the WABA, the app, the phone number, and the token?',
-    a: 'The App is your Meta developer app (has an App ID + Secret). The WABA (WhatsApp Business Account) holds your phone numbers. The Phone number ID identifies one sending number. The Access token authorizes sending. For Hader they must all belong to / be linked under the SAME app, or Verify fails.',
-    tags: ['difference', 'waba vs app', 'phone number id', 'token', 'concepts', 'explain'],
-  },
-  {
     q: 'Do customers have to opt in or save my number before I message them?',
     a: 'Customers can message you first anytime (no opt-in needed to reply within 24 hours). But to message them FIRST (templates/broadcasts), WhatsApp requires you to have their opt-in — permission they gave to be contacted. Only message people who agreed, or you risk blocks and a lower quality rating.',
     tags: ['opt in', 'permission', 'contact first', 'save number', 'consent'],
@@ -439,11 +387,6 @@ const KB: Kb[] = [
     q: 'What happens if a customer blocks my WhatsApp number?',
     a: 'If a customer blocks you, your messages will not reach them and it can lower your quality rating. You cannot un-block yourself on their behalf. Focus on messaging only people who want to hear from you and honoring STOP requests to avoid blocks.',
     tags: ['customer blocked me', 'blocked number', 'not delivered', 'quality'],
-  },
-  {
-    q: 'My customers say the messages show a different name than my business.',
-    a: 'The name customers see is your approved WhatsApp display name in Meta WhatsApp Manager, not the name in Hader. Update it there (Phone numbers > Profile) and wait for Meta\'s review. Until a display name is approved, customers may see just your number.',
-    tags: ['wrong name shown', 'display name', 'business name', 'sender name'],
   },
 
   // ---------------- Bot behaviour (deep) ----------------
@@ -830,8 +773,8 @@ const KB: Kb[] = [
   },
   {
     q: 'How do I connect Instagram or Facebook Messenger?',
-    a: 'Go to Settings > Integrations > Messenger & Instagram and connect your Facebook Page / Instagram account. Once connected (and the channel is enabled on your account), the bot answers those DMs too. If you don\'t see it working, the channel may need to be enabled — I can connect you.',
-    tags: ['connect instagram', 'connect messenger', 'facebook page', 'instagram dm', 'setup social'],
+    a: 'Connecting your Facebook Page or Instagram account to Meta is a setup step the Hader team takes care of for you (it uses your Meta account, like the WhatsApp setup). Once it is connected, the bot answers those DMs in the same Inbox. If you would like it set up, I can refer you to Hader support. Want me to connect you?',
+    tags: ['connect instagram', 'connect messenger', 'facebook page', 'instagram dm', 'setup social', 'meta channel'],
   },
   {
     q: 'What is the difference between the AI plans / models?',
@@ -860,7 +803,7 @@ const KB: Kb[] = [
   },
   {
     q: 'What are the first things I should set up as a new customer?',
-    a: '1) Connect your WhatsApp number (Settings > Integrations > WhatsApp). 2) Add your products/services and Business info (hours, locations, contacts). 3) Add a few FAQs. 4) Set the bot\'s greeting and tone in AI bot builder. 5) Deploy and test by messaging your number. I can walk you through any step.',
+    a: '1) Get your WhatsApp number connected — the Hader team sets this up with Meta for you (I can refer you). 2) Add your products/services and Business info (hours, locations, contacts). 3) Add a few FAQs. 4) Set the bot\'s greeting and tone in AI bot builder. 5) Deploy and test by messaging your number. I can walk you through steps 2 to 5 and refer you for step 1.',
     tags: ['getting started', 'first steps', 'onboarding', 'new customer', 'setup checklist'],
   },
   {
@@ -882,19 +825,9 @@ const KB: Kb[] = [
     tags: ['navigation', 'where is', 'sidebar', 'menu', 'find page', 'get around', 'layout'],
   },
   {
-    q: 'Where exactly do I connect my WhatsApp number? (step by step)',
-    a: '1) Left sidebar > Settings. 2) Find the "Integrations" card. 3) Click "WhatsApp". 4) On the WhatsApp page, fill in WABA ID, Phone number ID, App ID, App Secret and Access token. 5) Click "Verify" (top of the page). That checks the number and connects incoming messages.',
-    tags: ['where connect whatsapp', 'whatsapp steps', 'settings integrations', 'verify placement'],
-  },
-  {
-    q: 'Where is the "Verify" button for WhatsApp?',
-    a: 'On the WhatsApp page (Settings > Integrations > WhatsApp), the "Verify" button is at the top of the page, near your number\'s details. If a number is not receiving messages, there is also a "Subscribe" / "Connect" action there to wire up inbound delivery.',
-    tags: ['verify button', 'where verify', 'subscribe button', 'whatsapp page buttons'],
-  },
-  {
-    q: 'Where do I add a second WhatsApp number?',
-    a: 'Left sidebar > Settings > Integrations > WhatsApp. On that page use the "Add number" button (the number switcher/pills at the top let you move between numbers). Each number has its own AI bot switch, "Make primary", and "Remove".',
-    tags: ['add number placement', 'second number', 'where add number', 'multi number button'],
+    q: 'Where do I connect my WhatsApp number / where is the Verify button?',
+    a: 'Connecting a WhatsApp number to Meta (and verifying or subscribing it) is a setup step the Hader team handles for you, so there are no Meta credential steps for you to follow. If you would like your number connected, reconnected, or a second number added, I can refer you to Hader support to set it up. Want me to connect you?',
+    tags: ['where connect whatsapp', 'verify button', 'where verify', 'subscribe', 'add number', 'second number', 'connect number', 'whatsapp setup steps', 'credentials'],
   },
   {
     q: 'Where is the button to turn the AI bot on or off for a number?',
@@ -988,8 +921,8 @@ const KB: Kb[] = [
   },
   {
     q: 'Where do I connect Instagram or Facebook Messenger?',
-    a: '1) Left sidebar > Settings. 2) In the "Integrations" card, click "Messenger & Instagram". 3) Connect your Facebook Page / Instagram account. Once connected (and enabled on your account), the bot answers those DMs too and they appear in the same Inbox.',
-    tags: ['instagram placement', 'messenger placement', 'where connect social', 'integrations card'],
+    a: 'Connecting Instagram or Facebook Messenger to Meta is a setup step the Hader team does for you (it uses your Meta account, like WhatsApp). Once connected, those DMs come into the same Inbox and the bot answers them. If you would like it set up, I can refer you to Hader support. Want me to connect you?',
+    tags: ['instagram placement', 'messenger placement', 'where connect social', 'integrations card', 'connect instagram', 'connect messenger'],
   },
   {
     q: 'Where do orders and bookings show up?',

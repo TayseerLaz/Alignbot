@@ -321,6 +321,686 @@ const KB: Kb[] = [
     a: 'Sorry about that. Tell me what you were doing, what you expected, and what happened (and any error message). If it is a real bug or outage, I will pass it to a specialist to look into — let me connect you.',
     tags: ['bug', 'broken', 'error', 'not working', 'outage', 'report problem'],
   },
+
+  // ================= DEEP KNOWLEDGE (100 more) =================
+
+  // ---------------- WhatsApp / Meta mechanics (deep) ----------------
+  {
+    q: 'Where do I find my WhatsApp Business Account (WABA) ID?',
+    a: 'In Meta Business Settings > Accounts > WhatsApp Accounts, click your account — the WABA ID is shown there. You can also find it in Meta for Developers under your app > WhatsApp > API Setup. Paste it into Settings > Integrations > WhatsApp in Hader.',
+    tags: ['waba id', 'whatsapp business account id', 'where find waba', 'meta id'],
+  },
+  {
+    q: 'Where do I find my Phone number ID?',
+    a: 'In Meta for Developers > your app > WhatsApp > API Setup, pick your number in the "From" dropdown — the Phone number ID is listed right under it. Note: this is NOT the phone number itself, it is a long numeric ID. Paste it into the WhatsApp settings in Hader.',
+    tags: ['phone number id', 'where find phone id', 'api setup', 'not the number'],
+  },
+  {
+    q: 'Where do I find my App ID and App Secret?',
+    a: 'In Meta for Developers, open your app > App Settings > Basic. The App ID is at the top; click Show next to App Secret to reveal it. Both must belong to the SAME app you use for the access token. Paste both into Hader.',
+    tags: ['app id', 'app secret', 'where find app secret', 'app settings basic'],
+  },
+  {
+    q: 'How do I generate a WhatsApp access token that does not expire?',
+    a: 'Temporary tokens from the API Setup page expire in 24 hours. For a permanent one, create a System User in Meta Business Settings > Users > System Users, assign it your app and WhatsApp account with the whatsapp_business_messaging and whatsapp_business_management permissions, then Generate Token (choose no expiry). Use that token in Hader.',
+    tags: ['access token', 'permanent token', 'system user', 'token expired', 'never expires'],
+  },
+  {
+    q: 'My WhatsApp stopped working / my token expired.',
+    a: 'If you used a temporary 24-hour token it has expired — generate a permanent System User token (Meta Business Settings > System Users) and paste it into Settings > Integrations > WhatsApp, then Verify. If you used a permanent token and it still failed, the token may have been reset in Meta — generate a new one. I can connect a specialist if it persists.',
+    tags: ['token expired', 'stopped working', 'whatsapp down', 'reconnect', 'refresh token'],
+  },
+  {
+    q: 'What is the 24-hour customer service window?',
+    a: 'WhatsApp only lets you send free-form (normal) messages within 24 hours of the customer\'s last message. After 24 hours of silence, you can only reach them with a pre-approved template message. This is a WhatsApp rule, not a Hader limit. The bot and your inbox both follow it.',
+    tags: ['24 hour window', 'session window', 'customer service window', 'cannot reply', 'free form'],
+  },
+  {
+    q: 'Why can\'t I reply to a customer in the inbox?',
+    a: 'Most likely the 24-hour window has closed — the customer has not messaged you in over 24 hours, so WhatsApp blocks free-form replies. Send an approved template message to re-open the conversation. Other causes: the contact is blocked or has opted out. If none apply, tell me the error and I can check.',
+    tags: ['cant reply', 'reply blocked', 'window closed', 'inbox cant send', 'need template'],
+  },
+  {
+    q: 'When do I need a template versus a normal message?',
+    a: 'Normal (free-form) text works only inside the 24-hour window after the customer\'s last message. To start a new conversation, or to message someone who has gone quiet for over 24 hours (including broadcasts), you must use a pre-approved template. Inside the window, no template is needed.',
+    tags: ['template vs freeform', 'when template', 'normal message', 'start conversation'],
+  },
+  {
+    q: 'What are the WhatsApp template categories (marketing, utility, authentication)?',
+    a: 'Every template has a category: Utility (order updates, reminders tied to a transaction), Marketing (promotions, offers, announcements), or Authentication (one-time passcodes). Meta reviews templates against their category — pick the one that matches your message or it may be rejected or re-categorized.',
+    tags: ['template category', 'marketing', 'utility', 'authentication', 'category'],
+  },
+  {
+    q: 'Why was my WhatsApp template rejected?',
+    a: 'Common reasons: the content does not match the chosen category (e.g. a promo submitted as Utility), placeholders like {{1}} are unclear or at the very start/end, spelling/grammar issues, missing context, or promotional content that breaks Meta\'s rules. Fix the wording, pick the right category, and resubmit. Approval usually takes minutes to a few hours.',
+    tags: ['template rejected', 'rejection', 'approval', 'why rejected', 'resubmit'],
+  },
+  {
+    q: 'How long does WhatsApp template approval take?',
+    a: 'Usually a few minutes, sometimes up to 24 hours. You will see the status change to Approved (or Rejected) in your templates area. You cannot send a template until it is Approved by Meta.',
+    tags: ['template approval time', 'how long approval', 'pending template', 'review time'],
+  },
+  {
+    q: 'How do I use variables/placeholders in a template?',
+    a: 'Templates use numbered placeholders like {{1}}, {{2}} that get filled per recipient (e.g. their name or order number). When you send a broadcast, you map each placeholder to a value or a contact field. Keep placeholders in the middle of sentences (not at the very start or end) to help approval.',
+    tags: ['template variables', 'placeholders', 'personalize', 'merge fields', '{{1}}'],
+  },
+  {
+    q: 'What is a quality rating and how do I keep it green?',
+    a: 'Meta rates your number\'s quality as Green (high), Yellow (medium) or Red (low), based on how customers react (blocks and "report" hurt it). Keep it green by only messaging people who expect to hear from you, sending relevant content, not spamming, and honoring opt-outs. A red rating can lower your sending limit.',
+    tags: ['quality rating', 'green yellow red', 'number quality', 'reputation', 'blocked reports'],
+  },
+  {
+    q: 'What are messaging limits / tiers and how do I increase mine?',
+    a: 'Meta caps how many unique customers you can start conversations with per day — tiers are typically 250, 1,000, 10,000, 100,000, then unlimited. You move up automatically as you send quality messages and keep a good rating and verified business. Sudden high volume with low quality can hold you back.',
+    tags: ['messaging limit', 'tier', 'daily limit', '250 1000', 'increase limit', 'sending limit'],
+  },
+  {
+    q: 'How do I get the verified green badge on WhatsApp?',
+    a: 'The green "Official Business Account" badge is granted by Meta, not Hader — it depends on business verification, brand notability, and account quality. You request it in the Meta WhatsApp Manager. It is not required to send or receive messages; a verified display name is enough to operate.',
+    tags: ['green badge', 'verified', 'official business account', 'blue tick', 'checkmark'],
+  },
+  {
+    q: 'How do I set or change my WhatsApp display name?',
+    a: 'Set it in Meta WhatsApp Manager > Phone numbers > your number > Profile / Display name. Meta reviews the name against their display-name rules (it should reflect your real business). Once approved, that is the name customers see. Changing it triggers a new review.',
+    tags: ['display name', 'business name', 'sender name', 'change name', 'name review'],
+  },
+  {
+    q: 'Do I need business verification for WhatsApp?',
+    a: 'Basic messaging works with an unverified business at low limits. To raise your messaging limits and unlock full features, Meta requires Business Verification (submitting documents that prove your business is real) in Meta Business Settings > Security Center. It is a Meta process, done once.',
+    tags: ['business verification', 'verify business', 'documents', 'security center', 'limits'],
+  },
+  {
+    q: 'Can I use my existing WhatsApp number that already has the normal WhatsApp app?',
+    a: 'A number can only live on one WhatsApp system at a time. To use it with the Business API (and Hader), you must first delete it from the regular WhatsApp/WhatsApp Business app, then register it in the API. Back up chats first — they do not carry over. A fresh, unused number is easiest.',
+    tags: ['existing number', 'migrate number', 'already on whatsapp', 'delete app', 'reuse number'],
+  },
+  {
+    q: 'What is the registration PIN / two-step verification?',
+    a: 'When a number is added to the WhatsApp Business API, Meta asks you to set a 6-digit two-step verification PIN to register it. Keep this PIN safe — you need it to re-register or move the number. It is different from your account password.',
+    tags: ['registration pin', 'two step', '6 digit pin', 'register number', 'verification pin'],
+  },
+  {
+    q: 'What is the difference between the WABA, the app, the phone number, and the token?',
+    a: 'The App is your Meta developer app (has an App ID + Secret). The WABA (WhatsApp Business Account) holds your phone numbers. The Phone number ID identifies one sending number. The Access token authorizes sending. For Hader they must all belong to / be linked under the SAME app, or Verify fails.',
+    tags: ['difference', 'waba vs app', 'phone number id', 'token', 'concepts', 'explain'],
+  },
+  {
+    q: 'Do customers have to opt in or save my number before I message them?',
+    a: 'Customers can message you first anytime (no opt-in needed to reply within 24 hours). But to message them FIRST (templates/broadcasts), WhatsApp requires you to have their opt-in — permission they gave to be contacted. Only message people who agreed, or you risk blocks and a lower quality rating.',
+    tags: ['opt in', 'permission', 'contact first', 'save number', 'consent'],
+  },
+  {
+    q: 'How many messages can I send per second?',
+    a: 'WhatsApp allows a certain throughput per number (commonly 80 messages/second, higher on request). For big broadcasts Hader paces sends automatically to stay within your number\'s limit, so you do not have to manage it. Very large campaigns simply take a little longer to go out.',
+    tags: ['throughput', 'per second', 'rate', 'speed', 'how fast broadcast'],
+  },
+  {
+    q: 'What happens if a customer blocks my WhatsApp number?',
+    a: 'If a customer blocks you, your messages will not reach them and it can lower your quality rating. You cannot un-block yourself on their behalf. Focus on messaging only people who want to hear from you and honoring STOP requests to avoid blocks.',
+    tags: ['customer blocked me', 'blocked number', 'not delivered', 'quality'],
+  },
+  {
+    q: 'My customers say the messages show a different name than my business.',
+    a: 'The name customers see is your approved WhatsApp display name in Meta WhatsApp Manager, not the name in Hader. Update it there (Phone numbers > Profile) and wait for Meta\'s review. Until a display name is approved, customers may see just your number.',
+    tags: ['wrong name shown', 'display name', 'business name', 'sender name'],
+  },
+
+  // ---------------- Bot behaviour (deep) ----------------
+  {
+    q: 'Why does the bot greet the customer again in the middle of a chat?',
+    a: 'It should only greet on the first reply. If it re-greets, usually the conversation was idle a long time or the thread reset. Check your greeting settings in AI bot builder. If it keeps happening mid-chat, tell me the example and I can pass it to a specialist.',
+    tags: ['re-greet', 'greets again', 'greeting repeat', 'says hi again'],
+  },
+  {
+    q: 'How do I make the bot address customers by their name?',
+    a: 'In AI bot builder, turn on "greet by name". When it is on, the bot uses the customer\'s WhatsApp profile name in its first greeting. It will not force the name into every message, only the opening.',
+    tags: ['greet by name', 'use name', 'address customer', 'personalize greeting'],
+  },
+  {
+    q: 'How do I make the bot\'s replies shorter or longer / change its style?',
+    a: 'Adjust the tone/personality in AI bot builder (e.g. friendly, formal). The bot is tuned to keep replies short and scannable for messaging. If you want a specific style, describe it in the personality settings. For big custom behavior changes, the Hader team can help — I can connect you.',
+    tags: ['shorter replies', 'longer replies', 'style', 'tone', 'too long', 'too short'],
+  },
+  {
+    q: 'Why are the tappable buttons not showing on WhatsApp?',
+    a: 'Quick-reply buttons render as tappable pills on Instagram and Messenger. On WhatsApp the experience differs and buttons may appear as text options depending on the message type. Make sure quick replies are enabled in AI bot builder. If you need WhatsApp interactive buttons for a specific flow, let me connect a specialist.',
+    tags: ['buttons not showing', 'quick replies', 'tappable', 'pills', 'whatsapp buttons'],
+  },
+  {
+    q: 'How does the bot send product photos?',
+    a: 'When the bot recommends or confirms a specific product, it automatically attaches that product\'s images — as long as the product has images uploaded on the Products page. No photos uploaded means no photos sent, so add clear images to each product.',
+    tags: ['product images', 'send photo', 'pictures', 'bot images', 'no photo'],
+  },
+  {
+    q: 'The bot quoted the wrong price.',
+    a: 'The bot only uses the prices in your catalog. If a price is wrong, update it on the Products or Services page — the bot picks up the change within about a minute. If the price looks right in the catalog but the bot still quoted wrong, send me the example and I can flag it.',
+    tags: ['wrong price', 'price mistake', 'incorrect price', 'update price'],
+  },
+  {
+    q: 'How fast do my catalog or business-info changes reach the bot?',
+    a: 'Almost immediately — changes you save propagate to the bot within about a minute. Brand-new items may take a few minutes to be fully searchable while they are indexed. If a change is not showing after several minutes, re-save it or tell me.',
+    tags: ['how fast update', 'changes reflect', 'cache', 'propagate', 'delay'],
+  },
+  {
+    q: 'How do I test my bot before customers use it?',
+    a: 'Message your own connected number from a personal phone and chat with it as a customer would. You can also send a test from the WhatsApp settings. Try your common questions (menu, prices, hours, an order) and refine your catalog/FAQs based on the answers.',
+    tags: ['test bot', 'try bot', 'preview', 'test message', 'qa bot'],
+  },
+  {
+    q: 'How does the bot choose what to show when I have hundreds of products?',
+    a: 'The bot understands the customer\'s question and pulls the most relevant products for it, rather than dumping the whole catalog. When someone asks to browse "the menu" or a category, it lists across your catalog. Keeping product names and descriptions clear helps it match accurately.',
+    tags: ['large catalog', 'many products', 'how bot picks', 'relevant products', 'hundreds'],
+  },
+  {
+    q: 'The bot says it does not have something that IS on my menu.',
+    a: 'It means that item is missing from your catalog or its name/description does not match what the customer typed. Add the item (or add common names/keywords to its description) on the Products page. For questions like ingredients or sizes, put those details in the product description so the bot can answer them.',
+    tags: ['bot cant find', 'missing item', 'not on menu', 'name mismatch', 'keywords'],
+  },
+  {
+    q: 'Can I stop the bot from talking about certain topics?',
+    a: 'The bot already refuses anything outside your business (general knowledge, other companies, etc.). If you want it to avoid a specific subject or always say a certain thing, describe that and the Hader team can add it to your bot\'s instructions — I can connect you.',
+    tags: ['restrict topics', 'avoid subject', 'block topic', 'custom rules', 'guardrails'],
+  },
+  {
+    q: 'How does taking an order through the bot work?',
+    a: 'When a customer wants to buy, the bot collects the items and any details you configured (like delivery address), confirms the order, and it appears on your Orders page. If you have a payment provider connected, it can also send a payment link. You fulfill the order from the Orders page.',
+    tags: ['order flow', 'how orders work', 'take order', 'cart', 'checkout bot'],
+  },
+  {
+    q: 'How does taking a booking/appointment work?',
+    a: 'If bookings are enabled and you set availability on a service, the bot asks for the needed details and the preferred time, checks your open slots, confirms, and creates a booking on the Bookings page. You can then see and manage it there.',
+    tags: ['booking flow', 'appointment', 'how bookings work', 'reserve', 'schedule bot'],
+  },
+  {
+    q: 'Can the bot send a payment link?',
+    a: 'Yes, if you connect a payment provider under Settings > Payments (Stripe, MyFatoorah or PayPal). Then when an order is placed the bot can send a secure payment link and mark the order paid once the customer pays.',
+    tags: ['payment link', 'bot payment', 'pay in chat', 'collect payment'],
+  },
+  {
+    q: 'Can I turn off the bot but keep receiving messages?',
+    a: 'Yes. Turn the AI bot off for the number (on the WhatsApp page) or disable the AI feature — messages still arrive in your Inbox and your team replies manually. The bot simply stops auto-replying until you turn it back on.',
+    tags: ['turn off bot keep inbox', 'manual mode', 'pause bot', 'disable auto reply'],
+  },
+  {
+    q: 'Does the bot reply at night / outside my business hours?',
+    a: 'Yes, the bot replies 24/7 by default — that is one of its biggest benefits. It knows your business hours (from Business info) and will tell customers when you are open, but it still answers questions and can take orders anytime.',
+    tags: ['night', 'after hours', '24/7', 'outside hours', 'always on'],
+  },
+  {
+    q: 'Can the bot handle two languages in the same chat?',
+    a: 'Yes. It detects and mirrors the language and dialect the customer is writing in and can switch mid-conversation if they do. Set your main languages in AI bot builder so it defaults sensibly.',
+    tags: ['two languages', 'switch language', 'bilingual', 'code switch', 'arabic english'],
+  },
+  {
+    q: 'Can I add a welcome image or banner to the greeting?',
+    a: 'Yes — in AI bot builder you can attach a greeting image that goes out with the bot\'s opening message (e.g. a welcome banner). It is sent once at the start of a conversation, not on every reply.',
+    tags: ['greeting image', 'welcome banner', 'greeting photo', 'first message image'],
+  },
+
+  // ---------------- Inbox (deep) ----------------
+  {
+    q: 'How do I reply to a customer after the 24-hour window?',
+    a: 'You cannot send a free-form message after 24 hours of no reply from them — WhatsApp requires an approved template to re-open the chat. Send a template (e.g. a "we\'re following up" utility template); once they reply, the 24-hour window opens again and you can chat normally.',
+    tags: ['reply after 24h', 'reopen conversation', 'window closed', 'template to reopen'],
+  },
+  {
+    q: 'How do I take over a conversation from the bot?',
+    a: 'Just open the conversation in the Inbox and reply. You can jump in anytime. If you want the bot to stop on that number entirely, turn its AI switch off; otherwise the bot keeps handling other chats while you handle this one.',
+    tags: ['take over', 'human takeover', 'jump in', 'intervene', 'manual reply'],
+  },
+  {
+    q: 'What do the conversation states (open, pending, escalated) mean?',
+    a: 'Open = an active conversation. Pending = waiting on something (e.g. the customer, or a next step). Escalated = the bot flagged it for a human because the customer asked for a person or it could not help. Escalated ones are the ones to prioritize.',
+    tags: ['open pending escalated', 'conversation status', 'states', 'what does escalated mean'],
+  },
+  {
+    q: 'Can several team members use the Inbox at the same time?',
+    a: 'Yes. Invite your team under Members and they can all work the shared Inbox together. Everyone sees the same conversations. Assign roles (admin/editor/viewer) to control what each person can do.',
+    tags: ['team inbox', 'multiple agents', 'shared inbox', 'collaborate', 'agents'],
+  },
+  {
+    q: 'Can I send an image or file to a customer from the Inbox?',
+    a: 'Yes, within the 24-hour window you can send media in a reply. Outside the window WhatsApp only allows approved templates, so media free-form sends are blocked until the customer messages again.',
+    tags: ['send image inbox', 'attach file', 'media reply', 'send photo to customer'],
+  },
+  {
+    q: 'How do I filter the Inbox to only conversations that need a human?',
+    a: 'Use the Inbox filters to show escalated/pending conversations, and the channel filter to focus on WhatsApp, Instagram or Messenger (or a specific number). This helps your team spot who is waiting on a person.',
+    tags: ['filter escalated', 'need human', 'inbox filter', 'sort by status'],
+  },
+
+  // ---------------- Contacts (deep) ----------------
+  {
+    q: 'How do I edit a contact\'s name or details?',
+    a: 'Open the contact on the Contacts page and edit their name, tags, timezone or notes. Their phone/identifier is set from the channel they messaged on. Saved changes apply right away.',
+    tags: ['edit contact', 'change name', 'update contact', 'contact details'],
+  },
+  {
+    q: 'What contact information does Hader keep?',
+    a: 'For each contact Hader stores their messaging identifier (e.g. WhatsApp number), any name they shared or you set, tags you add, timezone, opt-in/opt-out status, and their conversation history. You can export or delete this anytime for privacy compliance.',
+    tags: ['what data stored', 'contact info', 'privacy', 'gdpr', 'personal data'],
+  },
+  {
+    q: 'Why is a contact not receiving my broadcast?',
+    a: 'Usual reasons: they opted out (replied STOP), you have no valid opt-in / they never messaged you, the broadcast template is not approved, or their number is invalid. Opted-out and un-opted-in contacts are skipped to keep you compliant. Check the recipient status on the broadcast for the exact reason.',
+    tags: ['not receiving broadcast', 'skipped', 'opted out', 'no optin', 'broadcast failed contact'],
+  },
+  {
+    q: 'A customer opted out by mistake — how do they get messages again?',
+    a: 'Opt-outs protect you legally, so you cannot silently re-subscribe someone. The customer simply needs to message you again (or reply START where supported) to re-open contact. After they message you, the 24-hour window opens and you can chat normally.',
+    tags: ['re-subscribe', 'opted out mistake', 'resubscribe', 'start', 'undo optout'],
+  },
+  {
+    q: 'What is the difference between a contact and a conversation?',
+    a: 'A contact is a person in your list (their number, name, tags). A conversation is the thread of messages with that person in the Inbox. One contact can have conversations across different channels; the contact record is where their profile and opt-in status live.',
+    tags: ['contact vs conversation', 'difference', 'thread', 'person'],
+  },
+
+  // ---------------- Broadcasts (deep) ----------------
+  {
+    q: 'Why does a broadcast require an approved template?',
+    a: 'Broadcasts reach people outside the 24-hour window, and WhatsApp only allows business-initiated messages via pre-approved templates. So you pick an Approved template for the broadcast. Free-form broadcast text is not allowed by WhatsApp.',
+    tags: ['broadcast template', 'why template', 'approved template broadcast', 'cant free text'],
+  },
+  {
+    q: 'Can I schedule a broadcast for a specific time?',
+    a: 'Yes. In the broadcast wizard set a scheduled send time. It sends at that time in the timezone shown. You can also send immediately. You can cancel or edit a scheduled broadcast before it starts.',
+    tags: ['schedule broadcast', 'send later', 'timing', 'scheduled send', 'timezone'],
+  },
+  {
+    q: 'How do I personalize a broadcast with each person\'s name?',
+    a: 'Use a template with a placeholder like {{1}} and map it to the contact\'s name field (or a column in your CSV). Each recipient then gets the message with their own value filled in.',
+    tags: ['personalize broadcast', 'name in broadcast', 'placeholder', 'merge', 'variables'],
+  },
+  {
+    q: 'Some of my broadcast messages failed — why?',
+    a: 'Open the broadcast to see the reason per recipient. Common ones: the person opted out, no valid opt-in, an invalid number, or your daily messaging limit was reached. You can re-run the failed recipients after fixing the cause.',
+    tags: ['broadcast failed', 'why failed', 'delivery failed', 'rerun failed', 'errors'],
+  },
+  {
+    q: 'What is an A/B test in a broadcast?',
+    a: 'An A/B test sends two versions of your message to slices of your audience so you can see which performs better. Hader tracks the results and can pick the winner. Use it to test wording or offers before a bigger send.',
+    tags: ['a/b test', 'ab test', 'split test', 'variant', 'compare'],
+  },
+  {
+    q: 'Can I stop a broadcast that is already sending?',
+    a: 'Yes. Open the running broadcast and pause or cancel it. Pausing stops further sends and you can resume later; canceling ends it. Messages already delivered cannot be recalled.',
+    tags: ['stop broadcast', 'pause broadcast', 'cancel broadcast', 'halt', 'recall'],
+  },
+  {
+    q: 'How do I avoid getting my number blocked or rate-limited when broadcasting?',
+    a: 'Only message people who opted in, keep content relevant and not spammy, respect STOP requests, and grow volume gradually. Too many blocks or reports lower your quality rating and can cut your sending limit. Hader paces sends to your allowed rate automatically.',
+    tags: ['avoid block', 'not spam', 'rate limit', 'protect number', 'best practice broadcast'],
+  },
+  {
+    q: 'How is the audience for a broadcast chosen?',
+    a: 'In the wizard you pick the audience: a contact tag, an uploaded CSV list, or a manual selection. Opted-out contacts are automatically excluded. You also choose which connected number it sends from.',
+    tags: ['audience', 'who receives', 'select recipients', 'tag csv manual', 'target'],
+  },
+  {
+    q: 'Can I see who read my broadcast?',
+    a: 'You can see delivery status per recipient (sent, delivered, failed) and campaign counters live on the broadcast page. Read receipts depend on WhatsApp and the customer\'s settings, so "read" is not always available.',
+    tags: ['read receipts', 'who read', 'delivery status', 'opened', 'seen'],
+  },
+
+  // ---------------- Catalog (deep) ----------------
+  {
+    q: 'How do I add product variants like size or color?',
+    a: 'Open the product on the Products page and use the variant editor to add options (e.g. Size: S/M/L, Color: red/blue) with their own prices if needed. Save the variants. The bot can then answer about and take orders for specific variants.',
+    tags: ['variants', 'size color', 'options', 'product variations', 'sizes'],
+  },
+  {
+    q: 'How do I set a product\'s main photo or reorder images?',
+    a: 'On the product\'s edit page, upload images and set one as primary ("Make primary"). The primary image is the thumbnail and the first the bot sends. Add several clear photos so customers see the product well.',
+    tags: ['main image', 'primary photo', 'reorder images', 'thumbnail', 'gallery'],
+  },
+  {
+    q: 'What is a SKU and do I need one?',
+    a: 'A SKU is a short unique code for a product (like a barcode for your own use). It helps identify products in imports and keeps updates matched to the right item. The bot never shows SKUs to customers. If you import, giving each product a stable SKU makes future updates clean.',
+    tags: ['sku', 'product code', 'what is sku', 'do i need sku', 'identifier'],
+  },
+  {
+    q: 'How do I mark a product out of stock or hide it?',
+    a: 'On the product\'s edit page set its stock/availability or unpublish it. Out-of-stock or unavailable products can be hidden so the bot stops offering them. Re-enable when it is back.',
+    tags: ['out of stock', 'hide product', 'unavailable', 'sold out', 'disable product'],
+  },
+  {
+    q: 'How do I set prices and control which currency shows?',
+    a: 'Set each product/service price on its edit page. The currency comes from your business settings (Business info). The bot always quotes the full price with the 3-letter currency code and never converts to sub-units.',
+    tags: ['price', 'currency', 'set price', 'money', 'currency code'],
+  },
+  {
+    q: 'How do I add pricing tiers for a service?',
+    a: 'Open the service on the Services page and add pricing tiers (e.g. Basic / Standard / Premium) each with its price and included features. The bot presents these when customers ask about that service.',
+    tags: ['pricing tiers', 'service price', 'packages', 'plans', 'tiers'],
+  },
+  {
+    q: 'How do I set the weekly availability for a service or bookings?',
+    a: 'On the service, set the weekly availability grid — the open days and start/end times. Bookings use this to offer real open slots to customers. Add exceptions for holidays in Business info.',
+    tags: ['availability', 'weekly hours', 'booking slots', 'schedule', 'open times'],
+  },
+  {
+    q: 'How do I set special hours or holidays?',
+    a: 'In Business info you can set your regular operating hours and add exceptions for holidays or special days. The bot uses these to tell customers when you are open or closed.',
+    tags: ['holidays', 'special hours', 'exceptions', 'closed days', 'operating hours'],
+  },
+  {
+    q: 'How do I add more than one branch or location?',
+    a: 'In Business info > Locations, add each branch with its address and details. The bot can then share the right location and, if you have several, help the customer pick the nearest.',
+    tags: ['multiple locations', 'branches', 'stores', 'add location', 'address'],
+  },
+  {
+    q: 'How do I add policies (returns, delivery, privacy) the bot can quote?',
+    a: 'In Business info > Policies, add each policy by type (e.g. returns, delivery, privacy). The bot answers policy questions using exactly this text, so write them clearly and keep them updated.',
+    tags: ['policies', 'return policy', 'delivery policy', 'privacy', 'terms'],
+  },
+
+  // ---------------- Imports (deep) ----------------
+  {
+    q: 'What columns does the product import template need?',
+    a: 'Download the product template from Imports — it includes the exact columns (name, price, description, category, SKU, etc.) with a help sheet explaining which are required. Keep the header names as-is so the import maps correctly.',
+    tags: ['import columns', 'template fields', 'csv headers', 'required columns', 'format'],
+  },
+  {
+    q: 'Will importing overwrite my existing products or create duplicates?',
+    a: 'The import matches on SKU: rows with an existing SKU update that product, and new SKUs create new products. So give products stable SKUs to update cleanly and avoid duplicates. Without a SKU, an import may create a new entry.',
+    tags: ['overwrite', 'duplicates', 'upsert', 'update existing', 'reimport', 'sku match'],
+  },
+  {
+    q: 'How do I fix rows that failed to import?',
+    a: 'Open the import\'s detail page — it lists each failed row with the reason (e.g. missing required field, bad price format, negative stock). Fix those rows in your file and re-upload just the corrected ones, or the whole file.',
+    tags: ['failed rows', 'import errors', 'fix import', 'row errors', 'reupload'],
+  },
+  {
+    q: 'Can I import product images?',
+    a: 'Yes — include an image URL column and the importer fetches each image and attaches it. Use public, direct links to the image files. You can also add images manually per product after importing.',
+    tags: ['import images', 'image url', 'photos import', 'bulk images'],
+  },
+  {
+    q: 'My Arabic text looks broken after a CSV import.',
+    a: 'That is usually a CSV encoding issue. Use the provided XLSX template (which handles Arabic reliably), or save your CSV as UTF-8. Then re-import and the Arabic will display correctly.',
+    tags: ['arabic broken', 'encoding', 'utf-8', 'garbled text', 'csv arabic', 'xlsx'],
+  },
+  {
+    q: 'Can I import services or FAQs, not just products?',
+    a: 'Yes. On the Imports page choose the type — there are templates for products, services, FAQs and business info. Download the matching template, fill it in, and upload.',
+    tags: ['import services', 'import faqs', 'import types', 'bulk services', 'bulk faqs'],
+  },
+
+  // ---------------- Payments (deep) ----------------
+  {
+    q: 'Which payment providers can I connect?',
+    a: 'Hader supports Stripe, MyFatoorah and PayPal. Connect one under Settings > Payments. Once connected, the bot can send payment links and mark orders paid automatically when the customer pays.',
+    tags: ['payment providers', 'stripe', 'myfatoorah', 'paypal', 'which payment'],
+  },
+  {
+    q: 'How do I connect Stripe / MyFatoorah / PayPal?',
+    a: 'Go to Settings > Payments, pick your provider, and enter the keys it asks for (from your provider\'s own dashboard). Save, and Hader will use it for payment links. If you are unsure which keys to copy, I can connect a specialist.',
+    tags: ['connect stripe', 'connect payment', 'setup payments', 'api keys payment', 'configure'],
+  },
+  {
+    q: 'How does a customer actually pay through the bot?',
+    a: 'After an order, the bot sends a secure payment link from your connected provider. The customer taps it, pays on the provider\'s page, and the order is marked paid automatically — you see it update on the Orders page.',
+    tags: ['how customer pays', 'payment flow', 'pay link', 'checkout', 'paid'],
+  },
+  {
+    q: 'How do I know when an order has been paid?',
+    a: 'When the customer completes payment, the order flips to paid on your Orders page and a confirmation can be sent. This happens automatically through your payment provider\'s confirmation — no manual check needed.',
+    tags: ['order paid', 'payment confirmation', 'know paid', 'status paid'],
+  },
+  {
+    q: 'How do I refund a customer?',
+    a: 'Refunds are issued in your payment provider\'s own dashboard (Stripe, MyFatoorah or PayPal) — that is where the money moves. Hader does not process the refund for you. After refunding there, update the order status on your Orders page.',
+    tags: ['refund', 'give money back', 'reverse payment', 'cancel payment', 'return money'],
+  },
+
+  // ---------------- Voice (deep) ----------------
+  {
+    q: 'What can the phone / voice bot do?',
+    a: 'If phone is enabled, the voice bot answers calls, speaks naturally in the customer\'s language, answers questions from your business info and catalog, can take orders and bookings by phone, and hands off to a human when needed. Calls and transcripts appear on the Voice calls page.',
+    tags: ['voice bot', 'phone bot', 'what can voice do', 'answers calls', 'voicebot'],
+  },
+  {
+    q: 'Where do I see my call transcripts?',
+    a: 'On the Voice calls page (sidebar, under Operate). Each call shows its transcript, outcome (completed, handed off, dropped), and any order or booking it created.',
+    tags: ['transcripts', 'call log', 'voice calls page', 'call history', 'recordings'],
+  },
+  {
+    q: 'Can the voice bot take orders or bookings over the phone?',
+    a: 'Yes. It collects the details by voice, confirms them, and creates the order or booking just like the chat bot — you see them on your Orders/Bookings pages, marked as coming from a phone call.',
+    tags: ['voice order', 'phone order', 'voice booking', 'order by phone', 'call booking'],
+  },
+  {
+    q: 'Does the voice bot remember repeat callers?',
+    a: 'Yes — it recognizes a returning caller\'s number and can greet them, recall their name, and offer their previous details (like a delivery address) to confirm instead of asking cold. This makes repeat orders faster.',
+    tags: ['caller memory', 'repeat caller', 'remembers', 'returning customer', 'voice memory'],
+  },
+  {
+    q: 'Can a phone call be transferred to a human?',
+    a: 'Yes. When the caller asks for a person or the bot cannot help, it can escalate/hand off the call. Set this up on your Phone integration. The call and its transcript still show on the Voice calls page.',
+    tags: ['transfer call', 'human on call', 'escalate call', 'voice handoff', 'agent phone'],
+  },
+
+  // ---------------- Analytics / account / limits (deep) ----------------
+  {
+    q: 'Where do I see how my bot and channels are performing?',
+    a: 'The Dashboard shows key stats and the Analytics page has deeper metrics like conversation volume and activity over time. Your AI message usage for the month is on the Billing page.',
+    tags: ['analytics', 'performance', 'stats', 'metrics', 'dashboard', 'reports'],
+  },
+  {
+    q: 'Where is my activity / audit log?',
+    a: 'The Activity log (sidebar, under Manage) shows a history of important changes in your account — who changed what and when. Useful for tracking team actions.',
+    tags: ['activity log', 'audit log', 'history', 'who changed', 'log'],
+  },
+  {
+    q: 'How do notifications work / what is the bell icon?',
+    a: 'The bell in the top bar shows notifications like import results, low balance, or when you are near your message limit. Click it to read them and mark them read.',
+    tags: ['notifications', 'bell', 'alerts', 'unread', 'notify'],
+  },
+  {
+    q: 'How do I log out of all my devices?',
+    a: 'Changing your password signs out other sessions. You can update your password in Settings > Profile & password. If you think your account is compromised, change the password and enable two-factor authentication, and tell me so a specialist can help secure it.',
+    tags: ['logout everywhere', 'sessions', 'sign out all', 'compromised', 'security'],
+  },
+  {
+    q: 'I lost my two-factor (2FA) device — how do I get back in?',
+    a: 'Use one of the recovery codes you saved when you turned on 2FA to log in, then reset 2FA in Settings > Profile & password. If you have no recovery codes, I will connect you with a specialist to verify your identity and restore access.',
+    tags: ['2fa lost', 'lost authenticator', 'recovery codes', 'locked out 2fa', 'cant login 2fa'],
+  },
+  {
+    q: 'Can you change my plan or raise my message limit for me?',
+    a: 'I can\'t change plans or limits myself — those are set by the Hader team. Tell me what you need (e.g. a higher monthly message limit) and I will connect you with a specialist to arrange it. You can always view your current plan and usage on the Billing page.',
+    tags: ['change plan', 'upgrade', 'raise limit', 'increase quota', 'billing change'],
+  },
+  {
+    q: 'Can you tell me what other businesses on Hader are doing, or their pricing?',
+    a: 'No — I can only help with your own account. Other customers\' information and internal details are private and I can\'t share them. Is there something about your setup I can help with?',
+    tags: ['other businesses', 'competitors', 'other tenants', 'private', 'cant share'],
+  },
+  {
+    q: 'How is my data kept safe / is it private?',
+    a: 'Your data is isolated to your account and not shared with other businesses, and sensitive credentials are encrypted. You can export or delete your data anytime from Settings. For detailed security or compliance questions, I can connect you with the Hader team.',
+    tags: ['data safe', 'security', 'privacy', 'gdpr', 'encryption', 'is it secure'],
+  },
+  {
+    q: 'Can I use Hader on more than one channel at once (WhatsApp, Instagram, Messenger)?',
+    a: 'Yes — if those channels are enabled on your account, the same bot answers across WhatsApp, Instagram DM and Facebook Messenger, and all conversations land in one Inbox. Connect each channel in Settings > Integrations.',
+    tags: ['multi channel', 'instagram messenger whatsapp', 'omnichannel', 'all channels', 'one inbox'],
+  },
+  {
+    q: 'How do I connect Instagram or Facebook Messenger?',
+    a: 'Go to Settings > Integrations > Messenger & Instagram and connect your Facebook Page / Instagram account. Once connected (and the channel is enabled on your account), the bot answers those DMs too. If you don\'t see it working, the channel may need to be enabled — I can connect you.',
+    tags: ['connect instagram', 'connect messenger', 'facebook page', 'instagram dm', 'setup social'],
+  },
+  {
+    q: 'What is the difference between the AI plans / models?',
+    a: 'Higher plans use smarter AI models that follow instructions and handle tricky questions better. Your plan is set by the Hader team based on what you need. I can\'t change it, but I can connect you if you\'d like to discuss upgrading. Your current usage is on the Billing page.',
+    tags: ['ai plans', 'models', 'difference plans', 'which plan', 'upgrade model'],
+  },
+  {
+    q: 'Can you write my product descriptions or set up my catalog for me?',
+    a: 'I can guide you step by step and explain best practices, but I don\'t edit your catalog for you from here — you add products on the Products page (or import them in bulk). If you\'d like hands-on setup help, the Hader team can assist — I can connect you.',
+    tags: ['write descriptions', 'set up for me', 'do it for me', 'catalog help', 'content'],
+  },
+  {
+    q: 'Can the bot make outbound sales calls or cold-message people?',
+    a: 'No — that would break WhatsApp\'s rules and hurt your number. You can only message people who opted in, using approved templates (e.g. via Broadcasts). The bot is for answering and serving customers who contact you, not cold outreach.',
+    tags: ['cold message', 'outbound', 'sales calls', 'spam', 'unsolicited', 'limits'],
+  },
+  {
+    q: 'The bot made a mistake or said something odd — what should I do?',
+    a: 'Tell me the exact question and what it replied. Often the fix is adding or clarifying info in your catalog or FAQs. If it looks like a genuine bug (not a data gap), I\'ll pass the example to a specialist to review.',
+    tags: ['bot mistake', 'odd reply', 'hallucination', 'wrong', 'report bot'],
+  },
+  {
+    q: 'How do I get the most accurate answers from my bot?',
+    a: 'Keep your catalog and Business info complete and current, add FAQs for the questions customers actually ask, put details (ingredients, sizes, policies) in product descriptions, and set your hours and locations. The richer and cleaner your data, the smarter the bot.',
+    tags: ['accurate bot', 'best practices', 'improve bot', 'make smarter', 'tips'],
+  },
+  {
+    q: 'What are the first things I should set up as a new customer?',
+    a: '1) Connect your WhatsApp number (Settings > Integrations > WhatsApp). 2) Add your products/services and Business info (hours, locations, contacts). 3) Add a few FAQs. 4) Set the bot\'s greeting and tone in AI bot builder. 5) Deploy and test by messaging your number. I can walk you through any step.',
+    tags: ['getting started', 'first steps', 'onboarding', 'new customer', 'setup checklist'],
+  },
+  {
+    q: 'Do you offer a way to see the bot\'s conversations for quality?',
+    a: 'Yes — every conversation is in your Inbox, and you can review how the bot answered. Use that to spot gaps and improve your catalog/FAQs. For deeper review tools, the Hader team can help.',
+    tags: ['review conversations', 'quality', 'monitor bot', 'see chats', 'oversight'],
+  },
+  {
+    q: 'Can I customize the exact wording the bot uses for a specific situation?',
+    a: 'For common answers, add an FAQ with your preferred wording and the bot will use it. For broader tone or behavior changes, describe what you want and the Hader team can tailor your bot\'s instructions — I can connect you.',
+    tags: ['custom wording', 'scripts', 'exact reply', 'canned', 'tailor bot'],
+  },
+
+  // ================= EXACT BUTTON PLACEMENT / STEP-BY-STEP NAVIGATION =================
+  // Precise "where is the button" guides. Uses only real page + button names.
+  {
+    q: 'How do I get around the portal — where is everything?',
+    a: 'Everything is in the left sidebar (on mobile, tap the menu icon to open it). It is grouped: OVERVIEW (Dashboard, Analytics); OPERATE (Inbox, Voice calls, Contacts, Broadcasts); BUSINESS (Products, Services, Categories, Business info); COMMERCE (Orders, Bookings); CONFIGURE (AI bot builder); MANAGE (Members, Billing, Activity log, Settings). Tell me what you want to do and I will give you the exact clicks.',
+    tags: ['navigation', 'where is', 'sidebar', 'menu', 'find page', 'get around', 'layout'],
+  },
+  {
+    q: 'Where exactly do I connect my WhatsApp number? (step by step)',
+    a: '1) Left sidebar > Settings. 2) Find the "Integrations" card. 3) Click "WhatsApp". 4) On the WhatsApp page, fill in WABA ID, Phone number ID, App ID, App Secret and Access token. 5) Click "Verify" (top of the page). That checks the number and connects incoming messages.',
+    tags: ['where connect whatsapp', 'whatsapp steps', 'settings integrations', 'verify placement'],
+  },
+  {
+    q: 'Where is the "Verify" button for WhatsApp?',
+    a: 'On the WhatsApp page (Settings > Integrations > WhatsApp), the "Verify" button is at the top of the page, near your number\'s details. If a number is not receiving messages, there is also a "Subscribe" / "Connect" action there to wire up inbound delivery.',
+    tags: ['verify button', 'where verify', 'subscribe button', 'whatsapp page buttons'],
+  },
+  {
+    q: 'Where do I add a second WhatsApp number?',
+    a: 'Left sidebar > Settings > Integrations > WhatsApp. On that page use the "Add number" button (the number switcher/pills at the top let you move between numbers). Each number has its own AI bot switch, "Make primary", and "Remove".',
+    tags: ['add number placement', 'second number', 'where add number', 'multi number button'],
+  },
+  {
+    q: 'Where is the button to turn the AI bot on or off for a number?',
+    a: 'Left sidebar > Settings > Integrations > WhatsApp. Select the number, and toggle its AI bot switch on that number\'s card. Off = that number still lands in the Inbox but the bot will not auto-reply.',
+    tags: ['bot toggle placement', 'turn bot on off', 'ai switch', 'where toggle bot'],
+  },
+  {
+    q: 'Where is the Deploy button to turn my bot live?',
+    a: '1) Left sidebar > AI bot builder (under CONFIGURE). 2) Set your greeting, tone and languages. 3) Click "Deploy". The bot only replies once it is deployed AND the channel/number is active with its bot switch on.',
+    tags: ['deploy button', 'where deploy', 'go live', 'bot builder button', 'publish'],
+  },
+  {
+    q: 'Where do I block a customer? (exact clicks)',
+    a: '1) Open the Inbox (left sidebar > Inbox — it opens in a new tab). 2) Click the conversation with that customer. 3) At the top of the conversation, click the three-dots menu (⋯). 4) Choose "Block customer". Blocking stops the bot and any outgoing messages to them. The same menu shows "Unblock customer" to reverse it.',
+    tags: ['block placement', 'where block', 'block customer steps', 'three dots menu', 'block button'],
+  },
+  {
+    q: 'Where do I unblock someone I blocked?',
+    a: 'In the Inbox, open that conversation, click the three-dots (⋯) menu at the top, and choose "Unblock customer". You can also manage block status from the Contacts page.',
+    tags: ['unblock placement', 'where unblock', 'reverse block', 'unblock steps'],
+  },
+  {
+    q: 'Where do I reply to a customer? (exact clicks)',
+    a: '1) Left sidebar > Inbox (opens in a new tab). 2) Click a conversation on the left list. 3) Type in the message box at the bottom and send. Note: free-form replies work within 24 hours of the customer\'s last message; after that you need an approved template.',
+    tags: ['reply placement', 'where reply', 'answer customer', 'message box', 'inbox reply steps'],
+  },
+  {
+    q: 'Where do I add a new product? (exact clicks)',
+    a: '1) Left sidebar > Products (under BUSINESS). 2) Click "New product" (top of the page). 3) Fill in name, price, description and category. 4) Upload images and add variants if needed. 5) It auto-saves / use Save. The bot then knows it within about a minute.',
+    tags: ['add product placement', 'new product button', 'where add product', 'create product steps'],
+  },
+  {
+    q: 'Where do I upload photos for a product?',
+    a: 'Open the product (Products > click the product), and use the image uploader on its edit page to add photos. Set one as primary with "Make primary" — that becomes the thumbnail and the first image the bot sends.',
+    tags: ['upload images placement', 'product photos', 'where add image', 'primary image'],
+  },
+  {
+    q: 'Where do I create a broadcast? (exact clicks)',
+    a: '1) Left sidebar > Broadcasts (under OPERATE). 2) Click "New broadcast" (top of the page). 3) Follow the wizard: pick the audience (tag / CSV / manual), choose an approved template, optional A/B test and schedule, choose which number to send from, then launch.',
+    tags: ['broadcast placement', 'new broadcast button', 'where create broadcast', 'campaign steps'],
+  },
+  {
+    q: 'Where do I pause, resume or cancel a running broadcast?',
+    a: 'Left sidebar > Broadcasts > click the broadcast to open it. On its detail page you will see live delivery counts and the Pause / Resume / Cancel controls, plus an option to re-run failed recipients.',
+    tags: ['pause broadcast placement', 'where pause', 'stop broadcast button', 'resume cancel'],
+  },
+  {
+    q: 'Where do I add an FAQ so the bot can answer it? (exact clicks)',
+    a: '1) Left sidebar > Business info (under BUSINESS). 2) Open the "FAQs" tab. 3) Add the question and answer and make sure it is published/visible. The bot picks it up within about a minute.',
+    tags: ['add faq placement', 'where add faq', 'faq tab', 'teach bot steps', 'business info faqs'],
+  },
+  {
+    q: 'Where do I set my business hours, locations and contacts?',
+    a: 'Left sidebar > Business info. It has tabs: Profile & hours (set your operating hours grid), Locations (add branches), Contact channels, FAQs, and Policies. Save each tab. The bot answers customers from exactly this info.',
+    tags: ['hours placement', 'where set hours', 'locations tab', 'business info tabs', 'contacts'],
+  },
+  {
+    q: 'Where do I change my bot\'s greeting, tone or languages?',
+    a: 'Left sidebar > AI bot builder (under CONFIGURE). There you set the greeting text, the tone/personality, the languages, quick-reply buttons, and greet-by-name. Save (and Deploy if prompted) to push it live.',
+    tags: ['greeting placement', 'where change tone', 'personality settings', 'languages', 'bot settings'],
+  },
+  {
+    q: 'Where do I import products/services from a file? (exact clicks)',
+    a: '1) Left sidebar > find Imports (reachable from the Products area / import action). 2) Download the template for the type you want (products, services, FAQs, business info). 3) Fill it in keeping the headers. 4) Upload it and watch the progress; open the job to see any failed rows.',
+    tags: ['import placement', 'where import', 'upload file steps', 'csv import button', 'template download'],
+  },
+  {
+    q: 'Where do I connect a payment provider? (exact clicks)',
+    a: '1) Left sidebar > Settings. 2) Open "Payments". 3) Choose Stripe, MyFatoorah or PayPal and paste the keys from that provider\'s own dashboard. 4) Save. The bot can then send payment links and mark orders paid.',
+    tags: ['payments placement', 'where connect payment', 'stripe setup steps', 'payment settings'],
+  },
+  {
+    q: 'Where do I export my data? (exact clicks)',
+    a: '1) Left sidebar > Settings. 2) Open "Data export". 3) Pick the sections you want (products, contacts, conversations, bot config and more) and download. Great for backups or privacy requests.',
+    tags: ['export placement', 'where export', 'data export steps', 'download data button'],
+  },
+  {
+    q: 'Where do I invite a team member? (exact clicks)',
+    a: '1) Left sidebar > Members (under MANAGE). 2) Click "Invite". 3) Enter their email and pick a role (Admin / Editor / Viewer). 4) Send — they get an email invite to set their password.',
+    tags: ['invite placement', 'where invite', 'add member steps', 'members button', 'team'],
+  },
+  {
+    q: 'Where do I change my password or turn on two-factor (2FA)?',
+    a: '1) Left sidebar > Settings. 2) Open "Profile & password". There you change your name, update your password, and enable two-factor authentication (2FA) with an authenticator app. Save your 2FA recovery codes somewhere safe.',
+    tags: ['password placement', 'where change password', '2fa steps', 'profile settings', 'security'],
+  },
+  {
+    q: 'Where do I see my plan, usage and balance?',
+    a: 'Left sidebar > Billing (under MANAGE). It shows your current plan, your AI-message usage this month, and — if your account uses a prepaid balance — your balance and any low-balance warnings.',
+    tags: ['billing placement', 'where usage', 'plan page', 'balance', 'billing button'],
+  },
+  {
+    q: 'Where do I connect Instagram or Facebook Messenger?',
+    a: '1) Left sidebar > Settings. 2) In the "Integrations" card, click "Messenger & Instagram". 3) Connect your Facebook Page / Instagram account. Once connected (and enabled on your account), the bot answers those DMs too and they appear in the same Inbox.',
+    tags: ['instagram placement', 'messenger placement', 'where connect social', 'integrations card'],
+  },
+  {
+    q: 'Where do orders and bookings show up?',
+    a: 'Left sidebar under COMMERCE: "Orders" shows every order the bot took (items, customer, total, status), and "Bookings" shows appointments. If you do not see these, they may be turned off for your account — I can connect you to enable them.',
+    tags: ['orders placement', 'bookings placement', 'where orders', 'commerce', 'where bookings'],
+  },
+  {
+    q: 'Where do I see phone call transcripts?',
+    a: 'Left sidebar > Voice calls (under OPERATE). Each call shows its transcript, the outcome, and any order or booking it created. If Voice calls is not visible, the phone feature may be off for your account.',
+    tags: ['voice calls placement', 'transcripts placement', 'where calls', 'phone log'],
+  },
 ];
 
 async function main() {

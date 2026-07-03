@@ -14,6 +14,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import {
   Activity,
   ArrowRightToLine,
+  Check,
   ChevronDown,
   ChevronRight,
   Cpu,
@@ -66,16 +67,70 @@ import { Textarea } from '@/components/ui/textarea';
 import { api, ApiError, setAccessToken } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 import { useSession } from '@/lib/session';
+import { cn } from '@/lib/utils';
 
 type AiPlan = 'basic' | 'middle' | 'max' | 'ultra';
 const AI_PLANS: AiPlan[] = ['basic', 'middle', 'max', 'ultra'];
 const AI_PLAN_LABEL: Record<AiPlan, string> = { basic: 'Basic', middle: 'Middle', max: 'Max', ultra: 'Ultra' };
-// Which LLM each plan routes to (mirrors lib/openai.ts). Shown in the AI tab.
-const AI_PLAN_MODEL: Record<AiPlan, string> = {
-  basic: 'Groq · Llama 3.3 70B',
-  middle: 'OpenAI · GPT-4o',
-  max: 'Anthropic · Claude Sonnet',
-  ultra: 'Claude Sonnet + per-contact memory',
+// What each AI plan includes — model + capabilities. Single source for the
+// admin plan picker + the AI-tab overview. Mirrors lib/openai.ts routing:
+// basic→Groq Llama, middle→GPT-4o, max→Claude Sonnet, ultra→Sonnet+Haiku+memory.
+interface AiPlanMeta {
+  label: string;
+  model: string;
+  provider: string;
+  tagline: string;
+  features: string[];
+}
+const AI_PLAN_META: Record<AiPlan, AiPlanMeta> = {
+  basic: {
+    label: 'Basic',
+    model: 'Llama 3.3 70B',
+    provider: 'Groq · GPT-4o-mini fallback',
+    tagline: 'Fast & economical everyday replies',
+    features: [
+      'Groq Llama 3.3 70B (OpenAI GPT-4o-mini fallback)',
+      'Grounded in the tenant’s catalog, services & FAQs',
+      'Great for menus and simple Q&A',
+      'Lowest cost per message',
+    ],
+  },
+  middle: {
+    label: 'Middle',
+    model: 'GPT-4o',
+    provider: 'OpenAI',
+    tagline: 'Stronger reasoning & multilingual',
+    features: [
+      'OpenAI GPT-4o',
+      'Better instruction-following & Arabic dialects',
+      'More reliable orders & bookings handling',
+      'Balanced quality vs cost',
+    ],
+  },
+  max: {
+    label: 'Max',
+    model: 'Claude Sonnet 4.6',
+    provider: 'Anthropic',
+    tagline: 'Top-tier accuracy & faithfulness',
+    features: [
+      'Anthropic Claude Sonnet 4.6',
+      'Best on complex, nuanced conversations',
+      'Strongest scope-lock & anti-hallucination',
+      'Recommended for premium / brand-critical bots',
+    ],
+  },
+  ultra: {
+    label: 'Ultra',
+    model: 'Claude Sonnet 4.6 + Haiku 4.5',
+    provider: 'Anthropic · hybrid',
+    tagline: 'Flagship — Sonnet reply + per-customer memory',
+    features: [
+      'Claude Sonnet 4.6 writes every reply',
+      'Claude Haiku 4.5 handles intent + persona passes',
+      'Per-customer memory (remembers each contact)',
+      'Highest quality, highest cost',
+    ],
+  },
 };
 
 interface OrgRow {
@@ -921,16 +976,68 @@ export default function OrgDetailPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 text-sm">
-                <Row label="Plan">
-                  <Select value={currentPlan} onValueChange={(v) => setPlan.mutate(v as AiPlan)}>
-                    <SelectTrigger className="h-8 w-32"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {AI_PLANS.map((p) => (
-                        <SelectItem key={p} value={p}>{AI_PLAN_LABEL[p]}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Row>
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-foreground">
+                    Plan <span className="text-foreground-subtle">— click to change</span>
+                  </p>
+                  <div className="grid grid-cols-1 gap-2">
+                    {AI_PLANS.map((p) => {
+                      const meta = AI_PLAN_META[p];
+                      const selected = p === currentPlan;
+                      return (
+                        <button
+                          key={p}
+                          type="button"
+                          disabled={setPlan.isPending}
+                          onClick={() => {
+                            if (!selected) setPlan.mutate(p);
+                          }}
+                          className={cn(
+                            'rounded-lg border p-3 text-left transition-colors',
+                            selected
+                              ? 'border-brand-500 bg-brand-50/70 ring-1 ring-brand-500'
+                              : 'border-border hover:border-brand-300 hover:bg-surface-muted/40',
+                            setPlan.isPending && 'cursor-wait opacity-60',
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                              {meta.label}
+                              {selected && (
+                                <Badge variant="brand" className="gap-1">
+                                  <Check className="size-3" /> Current
+                                </Badge>
+                              )}
+                            </span>
+                            <span className="shrink-0 rounded bg-surface-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground-muted">
+                              {meta.model}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-xs text-foreground-muted">{meta.tagline}</p>
+                          <p className="mt-0.5 text-[10px] uppercase tracking-wider text-foreground-subtle">
+                            {meta.provider}
+                          </p>
+                          <ul className="mt-2 space-y-0.5">
+                            {meta.features.map((f) => (
+                              <li
+                                key={f}
+                                className="flex items-start gap-1.5 text-[11px] text-foreground-muted"
+                              >
+                                <Check
+                                  className={cn(
+                                    'mt-0.5 size-3 shrink-0',
+                                    selected ? 'text-brand-500' : 'text-foreground-subtle',
+                                  )}
+                                />
+                                {f}
+                              </li>
+                            ))}
+                          </ul>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
                 <div className="space-y-1.5 border-t border-border pt-3">
                   <p className="text-xs font-medium text-foreground">Monthly AI messages (allowance)</p>
                   {usage?.aiMessages ? (
@@ -1079,9 +1186,24 @@ export default function OrgDetailPage() {
                   </Row>
                   <Row label="Model">
                     <span className="font-mono text-xs">
-                      {AI_PLAN_MODEL[currentPlan as AiPlan] ?? currentPlan}
+                      {AI_PLAN_META[currentPlan as AiPlan]?.model ?? currentPlan}
                     </span>
                   </Row>
+                  <div className="rounded-md border border-border bg-surface-muted/30 p-2.5">
+                    <p className="text-xs font-medium text-foreground">
+                      {AI_PLAN_META[currentPlan as AiPlan]?.tagline}
+                    </p>
+                    <ul className="mt-1.5 space-y-0.5">
+                      {AI_PLAN_META[currentPlan as AiPlan]?.features.map((f) => (
+                        <li
+                          key={f}
+                          className="flex items-start gap-1.5 text-[11px] text-foreground-muted"
+                        >
+                          <Check className="mt-0.5 size-3 shrink-0 text-brand-500" /> {f}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                   <Row label="Monthly AI messages">
                     {usage?.aiMessages ? (
                       usage.aiMessages.unlimited ? (

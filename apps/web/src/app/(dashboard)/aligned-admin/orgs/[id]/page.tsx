@@ -169,8 +169,10 @@ interface OrgDetails {
 interface AiUsage {
   aiPlan: AiPlan;
   aiMessages: { used: number; cap: number | null; unlimited: boolean; percentUsed: number };
-  today: { tokens: number; usd: number; replies: number };
-  thisMonth: { tokens: number; usd: number; replies: number };
+  // tokens = inputTokens + outputTokens (understanding + sending). Both are
+  // billed and both are counted here; the split is shown in the admin cost card.
+  today: { tokens: number; inputTokens: number; outputTokens: number; usd: number; replies: number };
+  thisMonth: { tokens: number; inputTokens: number; outputTokens: number; usd: number; replies: number };
 }
 
 interface OrgBroadcasts {
@@ -1053,14 +1055,41 @@ export default function OrgDetailPage() {
                     <span className="text-xs text-foreground-muted">—</span>
                   )}
                 </div>
-                <div className="grid grid-cols-2 gap-2 border-t border-border pt-3">
-                  <p className="col-span-2 -mb-1 text-[10px] uppercase tracking-wider text-foreground-subtle">
+                <div className="space-y-2 border-t border-border pt-3">
+                  <p className="text-[10px] uppercase tracking-wider text-foreground-subtle">
                     Cost (admin-only)
                   </p>
-                  <Metric label="Tokens today" value={usage?.today.tokens} mono />
-                  <Metric label="USD today" value={usage ? `$${usage.today.usd.toFixed(2)}` : undefined} mono />
-                  <Metric label="Tokens / month" value={usage?.thisMonth.tokens} mono />
-                  <Metric label="USD / month" value={usage ? `$${usage.thisMonth.usd.toFixed(2)}` : undefined} mono />
+                  <p className="text-[11px] leading-snug text-foreground-muted">
+                    Tokens count <span className="font-medium text-foreground">both</span> the bot
+                    understanding the message (input) and writing the reply (output) — both are
+                    billed. USD includes both.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <p className="col-span-2 -mb-1 text-[10px] font-medium text-foreground-subtle">
+                      Today
+                    </p>
+                    <Metric label="Understanding (in)" value={usage?.today.inputTokens} mono />
+                    <Metric label="Reply (out)" value={usage?.today.outputTokens} mono />
+                    <Metric label="Total tokens" value={usage?.today.tokens} mono />
+                    <Metric
+                      label="USD today"
+                      value={usage ? `$${usage.today.usd.toFixed(2)}` : undefined}
+                      mono
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 border-t border-border/60 pt-2">
+                    <p className="col-span-2 -mb-1 text-[10px] font-medium text-foreground-subtle">
+                      This month
+                    </p>
+                    <Metric label="Understanding (in)" value={usage?.thisMonth.inputTokens} mono />
+                    <Metric label="Reply (out)" value={usage?.thisMonth.outputTokens} mono />
+                    <Metric label="Total tokens" value={usage?.thisMonth.tokens} mono />
+                    <Metric
+                      label="USD / month"
+                      value={usage ? `$${usage.thisMonth.usd.toFixed(2)}` : undefined}
+                      mono
+                    />
+                  </div>
                 </div>
               </CardContent>
             </Card>

@@ -235,7 +235,7 @@ async function transcribeInboundVoice(args: {
       withRlsBypass((tx) =>
         tx.organization.findUnique({
           where: { id: args.organizationId },
-          select: { disabledFeatures: true },
+          select: { disabledFeatures: true, botConfig: { select: { languages: true } } },
         }),
       ),
     ]);
@@ -244,11 +244,20 @@ async function transcribeInboundVoice(args: {
     // store the audio (so it's playable) but skip the paid Whisper call.
     const transcriptionEnabled = !(org?.disabledFeatures ?? []).includes('voice_transcription');
 
-    // Language signal: does the last bot reply contain Arabic codepoints?
-    // No → likely an English/Latin conversation → Groq Whisper. Yes → Arabic →
-    // OpenAI. No prior reply → null → OpenAI default.
+    // Transcription provider routing. gpt-4o-transcribe (OpenAI) is materially
+    // stronger on Gulf/Levant Arabic; Groq Whisper is faster but English-biased
+    // (its prompt lists English/French/Spanish) and mangles Arabic. The old
+    // heuristic — "last bot reply had no Arabic → Groq" — got Arabic-speaking
+    // customers STUCK in English: one English reply routed their next Arabic
+    // voice note to Groq, which mis-transcribed it toward English, so the bot
+    // replied English again, and so on. Fix: if the tenant declares Arabic in
+    // its bot languages, ALWAYS use OpenAI (it's fine on English too). Only fall
+    // back to Groq for tenants with no Arabic AND a clearly-English last reply.
+    const tenantSupportsArabic = /\bar\b/i.test(org?.botConfig?.languages ?? 'en');
     const transcribeProvider: 'openai' | 'groq' =
-      prevBotMessage?.body && !/[؀-ۿ]/.test(prevBotMessage.body) ? 'groq' : 'openai';
+      tenantSupportsArabic || !prevBotMessage?.body || /[؀-ۿ]/.test(prevBotMessage.body)
+        ? 'openai'
+        : 'groq';
 
     // Step 1: Meta returns a download URL for the media id.
     const metaUrl = `https://graph.facebook.com/v20.0/${encodeURIComponent(args.mediaId)}`;

@@ -57,6 +57,10 @@ const QUOTA_FEATURE: Record<string, string> = {
   services: 'catalog',
 };
 
+// Developer-plumbing quotas that aren't meaningful "usage" for a tenant — hidden
+// from the tenant-facing Usage & limits widget (they read as "Unlimited" noise).
+const HIDDEN_QUOTAS = new Set(['api_keys', 'webhooks']);
+
 function Body({
   data,
   hasAi,
@@ -78,6 +82,7 @@ function Body({
     });
   }
   for (const qa of data.quotas) {
+    if (HIDDEN_QUOTAS.has(qa.key)) continue;
     const feat = QUOTA_FEATURE[qa.key];
     if (feat && disabledFeatures.includes(feat)) continue;
     rows.push({ label: qa.label, used: qa.used, cap: qa.cap, pct: qa.pct });

@@ -249,6 +249,14 @@ export async function readDailyTokenUsage(orgId: string): Promise<{
 interface CompleteArgs {
   organizationId: string;
   systemPrompt: string;
+  // Optional stable/variable split of systemPrompt (they concatenate to the
+  // same content). When provided, the Claude tiers prompt-CACHE only the stable
+  // prefix (persona + rules + business info) and send the per-message variable
+  // tail (top-K catalog/FAQs) fresh — so a conversation's follow-up turns hit
+  // the cache (read @ 0.1x) instead of re-writing the whole prompt (@ 1.25x).
+  // Non-Claude tiers ignore these and use systemPrompt as before.
+  systemPromptStable?: string;
+  systemPromptVariable?: string;
   messages: { role: 'user' | 'assistant'; content: string }[];
   maxTokens?: number;
   temperature?: number;
@@ -415,6 +423,27 @@ function anthropicInputTokens(usage: {
   );
 }
 
+// Build the Anthropic `system` blocks with prompt caching applied to the STABLE
+// prefix only. When buildBotResponse supplies a stable/variable split, we cache
+// the persona+rules+business-info prefix (identical across a conversation's
+// turns → the 2nd+ message reads it at ~0.1x instead of re-writing the whole
+// prompt at ~1.25x) and send the per-message catalog/FAQ tail uncached. Without
+// the split we fall back to caching the whole prompt (legacy behaviour).
+function anthropicSystemBlocks(
+  args: CompleteArgs,
+): { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }[] {
+  if (args.systemPromptStable && args.systemPromptVariable) {
+    return [
+      { type: 'text', text: args.systemPromptStable, cache_control: { type: 'ephemeral' } },
+      // Lead with the '\n' that joined the two halves in the original single
+      // string, so the concatenated blocks are byte-identical to systemPrompt
+      // (the '# Catalog' header stays on its own line — not glued to the prefix).
+      { type: 'text', text: `\n${args.systemPromptVariable}` },
+    ];
+  }
+  return [{ type: 'text', text: args.systemPrompt, cache_control: { type: 'ephemeral' } }];
+}
+
 async function completeMax(args: CompleteArgs): Promise<CompleteResult> {
   const a = anthropicClient();
   if (!a) {
@@ -427,11 +456,10 @@ async function completeMax(args: CompleteArgs): Promise<CompleteResult> {
       model: env.ANTHROPIC_MODEL,
       max_tokens: args.maxTokens ?? 1024,
       temperature: args.temperature ?? 0.4,
-      // Prompt caching: the per-tenant system prompt is large and largely
-      // stable, so cache it (5-min ephemeral). Cached input tokens are ~90%
-      // cheaper and skip re-processing (faster TTFT). Transparent — a miss
-      // just pays normal price + a small write cost.
-      system: [{ type: 'text', text: args.systemPrompt, cache_control: { type: 'ephemeral' } }],
+      // Prompt caching: cache the stable prefix (persona/rules/business info),
+      // not the per-message catalog/FAQ tail — so a conversation's follow-up
+      // turns hit the cache (~0.1x) instead of re-writing everything (~1.25x).
+      system: anthropicSystemBlocks(args),
       messages: args.messages.map((m) => ({ role: m.role, content: m.content })),
     });
     // Concatenate text blocks (Claude can return multi-block content).
@@ -477,8 +505,8 @@ async function completeUltra(args: CompleteArgs): Promise<CompleteResult> {
       model: env.ANTHROPIC_ULTRA_MODEL,
       max_tokens: args.maxTokens ?? 1024,
       temperature: args.temperature ?? 0.4,
-      // Cache the stable per-tenant system prompt (see completeMax).
-      system: [{ type: 'text', text: args.systemPrompt, cache_control: { type: 'ephemeral' } }],
+      // Cache the stable prefix only (see completeMax / anthropicSystemBlocks).
+      system: anthropicSystemBlocks(args),
       messages: args.messages.map((m) => ({ role: m.role, content: m.content })),
     });
     const text = res.content

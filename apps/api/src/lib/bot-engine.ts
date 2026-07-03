@@ -908,7 +908,7 @@ export async function buildBotResponse(
     month: 'long',
     day: 'numeric',
   });
-  const sys = [
+  const sysParts: string[] = [
     ...deliveryBanner,
     // Ultra-plan persona/memory (empty for other plans — no prompt drift).
     args.persona ? args.persona : '',
@@ -1272,9 +1272,20 @@ export async function buildBotResponse(
             .join('\n');
         })()
       : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
+  ];
+
+  // Prompt-cache split: everything BEFORE the per-message "# Catalog" block is
+  // the STABLE prefix (persona + rules + business info + hours/contacts +
+  // operator instructions) — identical across a conversation's turns. The
+  // catalog/products/services/FAQs/cart tail is per-message. Splitting here lets
+  // the Claude tiers cache the stable prefix (follow-up turns read it at ~0.1x
+  // instead of re-writing the whole prompt at ~1.25x). `sys` is joined exactly
+  // as before, so non-Claude tiers + the provenance snapshot are byte-identical.
+  const catalogIdx = sysParts.findIndex((s) => s.startsWith('# Catalog'));
+  const splitAt = catalogIdx >= 0 ? catalogIdx : sysParts.length;
+  const systemPromptStable = sysParts.slice(0, splitAt).filter(Boolean).join('\n');
+  const systemPromptVariable = sysParts.slice(splitAt).filter(Boolean).join('\n');
+  const sys = sysParts.filter(Boolean).join('\n');
 
   const messages: { role: 'user' | 'assistant'; content: string }[] = [
     ...(args.history ?? []),
@@ -1305,6 +1316,8 @@ export async function buildBotResponse(
     : await complete({
         organizationId: args.organizationId,
         systemPrompt: sys,
+        systemPromptStable,
+        systemPromptVariable,
         messages,
         // Tight cap. Median bot reply is ~30-80 tokens; 240 covers p99 short
         // replies without giving the model permission to generate paragraphs.

@@ -350,9 +350,9 @@ function Stat({ label, value }: { label: string; value: string }) {
 // → no Broadcasts). Messages/members/keys/webhooks are core → always shown.
 const QUOTA_FEATURE: Record<string, string> = {
   monthly_broadcasts: 'broadcasts',
-  monthly_imports: 'catalog',
-  products: 'catalog',
-  services: 'catalog',
+  monthly_imports: 'imports',
+  products: 'products',
+  services: 'services',
 };
 
 function PlanUsageCard({

@@ -52,9 +52,9 @@ interface Row {
 // Which org-feature each plan-quota belongs to (hidden when the tenant lacks it).
 const QUOTA_FEATURE: Record<string, string> = {
   monthly_broadcasts: 'broadcasts',
-  monthly_imports: 'catalog',
-  products: 'catalog',
-  services: 'catalog',
+  monthly_imports: 'imports',
+  products: 'products',
+  services: 'services',
 };
 
 // Developer-plumbing quotas that aren't meaningful "usage" for a tenant — hidden

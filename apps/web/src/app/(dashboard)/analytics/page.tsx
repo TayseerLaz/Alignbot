@@ -31,7 +31,9 @@ interface Analytics {
 export default function AnalyticsPage() {
   const { session } = useSession();
   const disabledFeatures = session?.organization?.disabledFeatures ?? [];
-  const hasCatalog = !disabledFeatures.includes('catalog');
+  // Catalog analytics = products/services stats; show unless BOTH are disabled.
+  const hasCatalog =
+    !disabledFeatures.includes('products') || !disabledFeatures.includes('services');
   const hasBroadcasts = !disabledFeatures.includes('broadcasts');
   const [win, setWin] = useState<Window>('7d');
   const q = useQuery({

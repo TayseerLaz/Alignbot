@@ -14,10 +14,28 @@ export const ORG_FEATURES = [
     hrefs: ['/bot'],
   },
   {
-    key: 'catalog',
-    label: 'Catalog (products, services, business info, imports)',
-    description: 'Products, services, categories, business info, and CSV imports.',
-    hrefs: ['/products', '/services', '/categories', '/business-info', '/imports'],
+    key: 'products',
+    label: 'Products',
+    description: 'The Products catalog and the Categories page.',
+    hrefs: ['/products', '/categories'],
+  },
+  {
+    key: 'services',
+    label: 'Services',
+    description: 'The Services catalog page.',
+    hrefs: ['/services'],
+  },
+  {
+    key: 'business_info',
+    label: 'Business info',
+    description: 'Business profile, hours, locations, contacts, FAQs and policies.',
+    hrefs: ['/business-info'],
+  },
+  {
+    key: 'imports',
+    label: 'Imports',
+    description: 'CSV/XLSX bulk imports (products, services, FAQs, business info).',
+    hrefs: ['/imports'],
   },
   {
     key: 'broadcasts',

@@ -994,8 +994,9 @@ async function main() {
   //    desk, not a shop — hide orders/bookings/shopify; keep ai/catalog/
   //    contacts/broadcasts). Never meter/bill Hader's own support org.
   const HIDE = new Set([...(org.disabledFeatures ?? []), 'orders', 'bookings', 'shopify']);
-  // ensure the ones support NEEDS stay enabled
-  for (const need of ['ai', 'catalog', 'contacts', 'broadcasts', 'analytics']) HIDE.delete(need);
+  // ensure the ones support NEEDS stay enabled (business_info powers the FAQ KB)
+  for (const need of ['ai', 'products', 'services', 'business_info', 'imports', 'contacts', 'broadcasts', 'analytics'])
+    HIDE.delete(need);
   await prisma.organization.update({
     where: { id: orgId },
     data: {

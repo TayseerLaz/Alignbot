@@ -130,14 +130,6 @@ export default function SettingsPage() {
               title="Plan"
               description="Your current plan and usage caps."
             />
-            {messagingOn && (
-              <SettingsLink
-                href="/settings/messenger"
-                icon={MessageCircle}
-                title="Messenger & Instagram"
-                description="Let the AI bot answer your Facebook Page and Instagram DMs, not just WhatsApp."
-              />
-            )}
             {/* Branding is Phase 2 — hidden until logo/accent/footer
                 are wired into the actual portal layout. The /settings/branding
                 route still loads via direct URL, but no UI links to it. */}
@@ -156,7 +148,7 @@ export default function SettingsPage() {
               <Key className="size-4" /> Integrations
             </CardTitle>
             <CardDescription>
-              Connect WhatsApp and phone channels to your chatbot.
+              Connect WhatsApp, Messenger, Instagram and phone channels to your chatbot.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -166,6 +158,14 @@ export default function SettingsPage() {
               title="WhatsApp"
               description="Connect your Meta WhatsApp Business number + manage templates."
             />
+            {messagingOn && (
+              <SettingsLink
+                href="/settings/messenger"
+                icon={MessageCircle}
+                title="Messenger & Instagram"
+                description="Let the AI bot answer your Facebook Page and Instagram DMs, not just WhatsApp."
+              />
+            )}
             {shopifyOn ? (
               <SettingsLink
                 href="/settings/shopify"

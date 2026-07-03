@@ -65,6 +65,13 @@ export interface DataExportPayload {
   requestedByUserId: string;
   requestedByEmail: string;
   exportId: string;
+  // Which dataset sections to include (keys from shared EXPORT_SECTIONS).
+  // Empty / omitted = full export.
+  sections?: string[];
+  // 'csv' | 'pdf'. Default csv.
+  format?: string;
+  // 'combined' | 'separate' (PDF only). Default combined.
+  layout?: string;
 }
 
 // Phase 4 — Broadcasts.

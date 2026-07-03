@@ -2212,6 +2212,15 @@ model DataExport {
   // The user who clicked Export. Notified by email when the file is ready.
   requestedByUserId String    @map("requested_by_user_id") @db.Uuid
   status            String    @default("pending") // pending | running | succeeded | failed
+  // Which dataset sections to include (keys from shared EXPORT_SECTIONS). EMPTY
+  // = everything (the tenant self-service export sends nothing → full export).
+  // The admin UI sends an explicit selection so operators pick what's in the file.
+  sections          String[]  @default([]) @map("sections")
+  // Output format: 'csv' (ZIP of spreadsheets) or 'pdf' (formal report document).
+  format            String    @default("csv") @map("format")
+  // 'combined' = one file; 'separate' = one document per section (zipped).
+  // Only affects the PDF format; CSV is always one file per data type.
+  layout            String    @default("combined") @map("layout")
   // Storage key inside Wasabi (e.g. "exports/<orgId>/<exportId>.zip"); set
   // when the worker finishes uploading. Signed URLs are minted on demand.
   storageKey        String?   @map("storage_key")

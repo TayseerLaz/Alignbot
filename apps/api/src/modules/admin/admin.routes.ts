@@ -15,6 +15,7 @@ import {
   ORG_FEATURE_DEFAULT_DISABLED,
   itemEnvelopeSchema,
   leadSchema,
+  EXPORT_SECTION_KEYS,
   listEnvelopeSchema,
   organizationSchema,
   successSchema,
@@ -3658,14 +3659,27 @@ export default async function adminRoutes(app: FastifyInstance) {
     {
       schema: {
         tags: ['admin'],
-        summary: "Trigger a full data export for any tenant (bypasses the tenant's feature toggle).",
+        summary: "Trigger a data export for any tenant (bypasses the tenant's feature toggle). Optional `sections` picks which datasets to include; empty/omitted = everything.",
         params: z.object({ id: uuidSchema }),
+        body: z
+          .object({
+            sections: z.array(z.string().min(1).max(60)).max(50).optional(),
+            format: z.enum(['csv', 'pdf']).optional(),
+            layout: z.enum(['combined', 'separate']).optional(),
+          })
+          .optional(),
         response: { 201: itemEnvelopeSchema(adminExportSchema) },
       },
       preHandler: [app.requireAlignedAdmin],
     },
     async (req, reply) => {
       const orgId = req.params.id;
+      // Dedupe + normalise the requested sections. Empty = full export.
+      const sections = Array.from(new Set(req.body?.sections ?? [])).filter((s) =>
+        EXPORT_SECTION_KEYS.includes(s),
+      );
+      const format = req.body?.format === 'pdf' ? 'pdf' : 'csv';
+      const layout = req.body?.layout === 'separate' ? 'separate' : 'combined';
       const org = await withRlsBypass((tx) =>
         tx.organization.findUnique({ where: { id: orgId }, select: { id: true } }),
       );
@@ -3690,7 +3704,14 @@ export default async function adminRoutes(app: FastifyInstance) {
 
       const created = await withRlsBypass((tx) =>
         tx.dataExport.create({
-          data: { organizationId: orgId, requestedByUserId: req.auth!.userId, status: 'pending' },
+          data: {
+            organizationId: orgId,
+            requestedByUserId: req.auth!.userId,
+            status: 'pending',
+            sections,
+            format,
+            layout,
+          },
         }),
       );
 
@@ -3701,6 +3722,9 @@ export default async function adminRoutes(app: FastifyInstance) {
           requestedByUserId: req.auth!.userId,
           requestedByEmail: admin?.email ?? env.EMAIL_FROM,
           exportId: created.id,
+          sections,
+          format,
+          layout,
         },
         {
           attempts: 1,

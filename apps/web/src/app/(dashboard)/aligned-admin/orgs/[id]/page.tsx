@@ -1,6 +1,15 @@
 'use client';
 
-import { formatMicrosUsd, MICROS_PER_USD, ORG_FEATURES } from '@aligned/shared';
+import {
+  DEFAULT_EXPORT_SECTIONS,
+  EXPORT_FORMATS,
+  EXPORT_LAYOUTS,
+  EXPORT_SECTIONS,
+  EXPORT_SECTION_KEYS,
+  formatMicrosUsd,
+  MICROS_PER_USD,
+  ORG_FEATURES,
+} from '@aligned/shared';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
@@ -370,13 +379,22 @@ export default function OrgDetailPage() {
   const exportInflight = exports.some((e) => e.status === 'pending' || e.status === 'running');
 
   const triggerExport = useMutation({
-    mutationFn: () => api.post(`/api/v1/aligned-admin/orgs/${id}/export`, {}),
+    mutationFn: (vars: { sections: string[]; format: string; layout: string }) =>
+      api.post(`/api/v1/aligned-admin/orgs/${id}/export`, vars),
     onSuccess: () => {
       toast.success('Export started — it will appear below when ready.');
+      setExportDialogOpen(false);
       queryClient.invalidateQueries({ queryKey: ['admin-org-exports', id] });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Could not start export'),
   });
+
+  // Export selection dialog — the operator ticks which datasets go in the file,
+  // then picks the format (CSV / formal PDF) and layout (one combined / separate).
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportSel, setExportSel] = useState<Set<string>>(() => new Set(DEFAULT_EXPORT_SECTIONS));
+  const [exportFormat, setExportFormat] = useState<'csv' | 'pdf'>('csv');
+  const [exportLayout, setExportLayout] = useState<'combined' | 'separate'>('combined');
 
   // ---- WhatsApp wallet & metered billing (ALIGNED-admin only) ----
   const walletQ = useQuery({
@@ -546,11 +564,11 @@ export default function OrgDetailPage() {
                   disabled={exportInflight || triggerExport.isPending}
                   onSelect={(ev) => {
                     ev.preventDefault();
-                    triggerExport.mutate();
+                    setExportDialogOpen(true);
                   }}
                 >
                   <Download className="size-4" />
-                  {exportInflight ? 'Export in progress…' : 'Start new export'}
+                  {exportInflight ? 'Export in progress…' : 'New export — choose data…'}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel>Recent exports</DropdownMenuLabel>
@@ -579,6 +597,195 @@ export default function OrgDetailPage() {
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+
+            {/* Pick-what-you-want export dialog. */}
+            <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
+              <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>Export data — choose what to include</DialogTitle>
+                  <DialogDescription>
+                    Tick the datasets to put in the report. You get one CSV per data type in a
+                    .zip. Nothing you leave unticked is included.
+                  </DialogDescription>
+                </DialogHeader>
+
+                {/* Presets + select all / none */}
+                <div className="flex flex-wrap items-center gap-2 border-b border-border pb-3 text-xs">
+                  <span className="text-foreground-subtle">Quick pick:</span>
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-2 py-1 hover:bg-surface-muted"
+                    onClick={() => setExportSel(new Set(EXPORT_SECTION_KEYS))}
+                  >
+                    Everything
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-2 py-1 hover:bg-surface-muted"
+                    onClick={() => setExportSel(new Set(DEFAULT_EXPORT_SECTIONS))}
+                  >
+                    Recommended
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-2 py-1 hover:bg-surface-muted"
+                    onClick={() =>
+                      setExportSel(
+                        new Set(
+                          EXPORT_SECTIONS.filter((s) => s.group === 'Business').map((s) => s.key),
+                        ),
+                      )
+                    }
+                  >
+                    Business only
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-2 py-1 hover:bg-surface-muted"
+                    onClick={() =>
+                      setExportSel(
+                        new Set(EXPORT_SECTIONS.filter((s) => s.group === 'Clients').map((s) => s.key)),
+                      )
+                    }
+                  >
+                    Clients only
+                  </button>
+                  <button
+                    type="button"
+                    className="ml-auto rounded-md px-2 py-1 text-foreground-subtle hover:text-foreground"
+                    onClick={() => setExportSel(new Set())}
+                  >
+                    Clear all
+                  </button>
+                </div>
+
+                {/* Grouped checklist */}
+                <div className="max-h-[24rem] space-y-4 overflow-auto pr-1">
+                  {Array.from(new Set(EXPORT_SECTIONS.map((s) => s.group))).map((group) => (
+                    <div key={group}>
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-subtle">
+                        {group}
+                      </p>
+                      <div className="space-y-1">
+                        {EXPORT_SECTIONS.filter((s) => s.group === group).map((s) => {
+                          const on = exportSel.has(s.key);
+                          return (
+                            <label
+                              key={s.key}
+                              className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 hover:bg-surface-muted"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={on}
+                                onChange={() =>
+                                  setExportSel((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(s.key)) next.delete(s.key);
+                                    else next.add(s.key);
+                                    return next;
+                                  })
+                                }
+                                className="mt-0.5 size-4 shrink-0 accent-brand-500"
+                              />
+                              <span className="min-w-0">
+                                <span className="block text-sm font-medium text-foreground">
+                                  {s.label}
+                                </span>
+                                <span className="block text-xs text-foreground-subtle">
+                                  {s.description}
+                                </span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Format + layout */}
+                <div className="grid grid-cols-1 gap-3 border-t border-border pt-3 sm:grid-cols-2">
+                  <div>
+                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-foreground-subtle">
+                      Format
+                    </p>
+                    <div className="space-y-1">
+                      {EXPORT_FORMATS.map((f) => (
+                        <label
+                          key={f.key}
+                          className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 hover:bg-surface-muted"
+                        >
+                          <input
+                            type="radio"
+                            name="export-format"
+                            checked={exportFormat === f.key}
+                            onChange={() => setExportFormat(f.key)}
+                            className="mt-0.5 size-4 shrink-0 accent-brand-500"
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-medium text-foreground">{f.label}</span>
+                            <span className="block text-xs text-foreground-subtle">{f.description}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-foreground-subtle">
+                      Layout {exportFormat === 'csv' ? <span className="font-normal normal-case">(PDF only)</span> : null}
+                    </p>
+                    <div className="space-y-1">
+                      {EXPORT_LAYOUTS.map((l) => (
+                        <label
+                          key={l.key}
+                          className={`flex items-start gap-2 rounded-md px-2 py-1.5 ${
+                            exportFormat === 'csv'
+                              ? 'cursor-not-allowed opacity-50'
+                              : 'cursor-pointer hover:bg-surface-muted'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="export-layout"
+                            disabled={exportFormat === 'csv'}
+                            checked={exportLayout === l.key}
+                            onChange={() => setExportLayout(l.key)}
+                            className="mt-0.5 size-4 shrink-0 accent-brand-500"
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-medium text-foreground">{l.label}</span>
+                            <span className="block text-xs text-foreground-subtle">{l.description}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <DialogFooter className="items-center">
+                  <span className="mr-auto text-xs text-foreground-subtle">
+                    {exportSel.size} of {EXPORT_SECTION_KEYS.length} selected
+                  </span>
+                  <Button variant="secondary" onClick={() => setExportDialogOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    loading={triggerExport.isPending}
+                    disabled={exportSel.size === 0 || exportInflight}
+                    onClick={() =>
+                      triggerExport.mutate({
+                        sections: Array.from(exportSel),
+                        format: exportFormat,
+                        layout: exportFormat === 'csv' ? 'combined' : exportLayout,
+                      })
+                    }
+                  >
+                    <Download className="size-4" /> Start export
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
             <Button
               variant="secondary"
               loading={control.isPending}

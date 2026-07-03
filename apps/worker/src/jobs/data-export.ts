@@ -17,12 +17,33 @@ import { getConnection } from '../lib/redis.js';
 import { putObject } from '../lib/storage.js';
 
 import { prisma, withRlsBypass } from './db.js';
+import {
+  bundleToReportSections,
+  htmlToPdf,
+  renderCombinedHtml,
+  renderSectionHtml,
+} from './export-report.js';
 
 interface DataExportPayload {
   organizationId: string;
   requestedByUserId: string;
   requestedByEmail: string;
   exportId: string;
+  // Which dataset sections to include (keys from shared EXPORT_SECTIONS). Empty
+  // / omitted = everything (the tenant self-service export). The admin UI sends
+  // an explicit selection so operators pick exactly what's in the file.
+  sections?: string[];
+  // 'csv' (ZIP of spreadsheets) | 'pdf' (formal report). Default csv.
+  format?: string;
+  // 'combined' (one file) | 'separate' (one document per section, zipped).
+  // Only affects the PDF format. Default combined.
+  layout?: string;
+}
+
+// Local mirror of shared `exportWants` (kept inline so the worker has no extra
+// import surface). Empty selection = include everything.
+function want(sections: string[] | undefined, key: string): boolean {
+  return !sections || sections.length === 0 || sections.includes(key);
 }
 
 // --- CSV helpers -----------------------------------------------------------
@@ -52,7 +73,8 @@ function toCsv(rows: Record<string, unknown>[]): string {
 
 // Flatten the gathered bundle into one CSV per entity, zipped. Nested includes
 // (variants, images, pricing tiers, availability, tags) become their own CSVs
-// linked by a parent-id column.
+// linked by a parent-id column. `add` skips empty datasets, so a section the
+// operator didn't select (empty array in the bundle) simply produces no file.
 async function buildCsvZip(bundle: Record<string, unknown>): Promise<Buffer> {
   const zip = new JSZip();
   const add = (name: string, rows: Record<string, unknown>[]) => {
@@ -62,10 +84,16 @@ async function buildCsvZip(bundle: Record<string, unknown>): Promise<Buffer> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const b = bundle as any;
 
+  // Always present — the tenant identity.
   if (b.organization) add('organization.csv', [b.organization]);
 
-  const cat = b.catalog ?? {};
-  const products: any[] = cat.products ?? [];
+  // --- Business info ---
+  if (b.businessInfo) add('business_info.csv', [b.businessInfo]);
+  add('locations.csv', b.locations ?? []);
+  add('contact_channels.csv', b.contactChannels ?? []);
+
+  // --- Products ---
+  const products: any[] = b.products ?? [];
   add(
     'products.csv',
     products.map(({ variants: _v, images: _i, ...rest }) => rest),
@@ -78,8 +106,10 @@ async function buildCsvZip(bundle: Record<string, unknown>): Promise<Buffer> {
     'product_images.csv',
     products.flatMap((p) => (p.images ?? []).map((img: any) => ({ productId: p.id, ...img }))),
   );
+  add('categories.csv', b.categories ?? []);
 
-  const services: any[] = cat.services ?? [];
+  // --- Services ---
+  const services: any[] = b.services ?? [];
   add(
     'services.csv',
     services.map(({ pricingTiers: _t, availability: _a, ...rest }) => rest),
@@ -93,15 +123,38 @@ async function buildCsvZip(bundle: Record<string, unknown>): Promise<Buffer> {
     services.flatMap((s) => (s.availability ?? []).map((a: any) => ({ serviceId: s.id, ...a }))),
   );
 
-  add('categories.csv', cat.categories ?? []);
-  if (cat.businessInfo) add('business_info.csv', [cat.businessInfo]);
-  add('locations.csv', cat.locations ?? []);
-  add('contact_channels.csv', cat.contacts ?? []);
-  add('faqs.csv', cat.faqs ?? []);
-  add('policies.csv', cat.policies ?? []);
+  // --- FAQs & policies ---
+  add('faqs.csv', b.faqs ?? []);
+  add('policies.csv', b.policies ?? []);
 
-  const conv = b.conversations ?? {};
-  const threads: any[] = conv.threads ?? [];
+  // --- Clients / contacts ---
+  const clients: any[] = b.clients ?? [];
+  add(
+    'clients.csv',
+    clients.map(({ tags: _tg, ...rest }) => rest),
+  );
+  add(
+    'client_tags.csv',
+    clients.flatMap((c) => (c.tags ?? []).map((tag: any) => ({ contactId: c.id, ...tag }))),
+  );
+
+  // --- Segments ---
+  add('segments.csv', b.segments ?? []);
+
+  // --- Broadcasts ---
+  add('broadcasts.csv', b.broadcasts ?? []);
+  add('broadcast_recipients.csv', b.broadcastRecipients ?? []);
+  add('broadcast_events.csv', b.broadcastEvents ?? []);
+
+  // --- Orders / carts ---
+  add('orders.csv', b.carts ?? []);
+  add('order_items.csv', b.cartItems ?? []);
+
+  // --- Bookings ---
+  add('bookings.csv', b.bookings ?? []);
+
+  // --- Conversations ---
+  const threads: any[] = b.threads ?? [];
   add(
     'conversation_threads.csv',
     threads.map(({ tags: _tg, ...rest }) => rest),
@@ -110,19 +163,26 @@ async function buildCsvZip(bundle: Record<string, unknown>): Promise<Buffer> {
     'conversation_thread_tags.csv',
     threads.flatMap((t) => (t.tags ?? []).map((tag: any) => ({ threadId: t.id, ...tag }))),
   );
-  add('conversation_messages.csv', conv.messages ?? []);
-  add('conversation_notes.csv', conv.notes ?? []);
+  add('conversation_messages.csv', b.messages ?? []);
+  add('conversation_notes.csv', b.notes ?? []);
 
-  const bot = b.bot ?? {};
-  if (bot.config) add('bot_config.csv', [bot.config]);
-  // Drop the embedding vector — it's a huge numeric array that bloats the CSV
-  // and isn't human-useful in a portability export.
+  // --- Team members ---
+  add('members.csv', b.members ?? []);
+
+  // --- Activity ---
+  add('audit_log.csv', b.audit ?? []);
+
+  // --- AI config ---
+  if (b.botConfig) add('bot_config.csv', [b.botConfig]);
+  // Drop the embedding vector — a huge numeric array that bloats the CSV and
+  // isn't human-useful in a portability export.
   add(
     'bot_knowledge_base.csv',
-    (bot.knowledgeBase ?? []).map(({ embedding: _e, ...rest }: any) => rest),
+    (b.kb ?? []).map(({ embedding: _e, ...rest }: any) => rest),
   );
 
-  add('audit_log.csv', b.audit ?? []);
+  // --- API keys (metadata only — never the secret) ---
+  add('api_keys.csv', b.apiKeys ?? []);
 
   zip.file(
     'README.txt',
@@ -131,85 +191,156 @@ async function buildCsvZip(bundle: Record<string, unknown>): Promise<Buffer> {
       `Exported: ${new Date().toISOString()}`,
       '',
       'One CSV per data type. Rows that link to a parent (variants, images,',
-      'pricing tiers, availability, thread tags) carry a parent-id column.',
-      'Any nested value is JSON-encoded inside its cell.',
+      'pricing tiers, availability, tags, recipients) carry a parent-id column.',
+      'Any nested value is JSON-encoded inside its cell. Only the dataset',
+      'sections requested for this export are present.',
     ].join('\n'),
   );
 
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
-async function gatherBundle(orgId: string): Promise<Record<string, unknown>> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function gatherBundle(orgId: string, sections?: string[]): Promise<Record<string, any>> {
   return withRlsBypass(async (tx) => {
-    // Catalog
-    const [organization, products, services, categories, businessInfo, locations, contacts, faqs, policies] =
-      await Promise.all([
-        tx.organization.findUnique({ where: { id: orgId } }),
-        tx.product.findMany({
-          where: { organizationId: orgId },
-          include: { variants: true, images: true },
-        }),
-        tx.service.findMany({
-          where: { organizationId: orgId },
-          include: { pricingTiers: true, availability: true },
-        }),
-        tx.category.findMany({ where: { organizationId: orgId } }),
-        tx.businessInfo.findUnique({ where: { organizationId: orgId } }),
-        tx.location.findMany({ where: { organizationId: orgId } }),
-        tx.contactChannel.findMany({ where: { organizationId: orgId } }),
-        tx.fAQ.findMany({ where: { organizationId: orgId } }),
-        tx.policy.findMany({ where: { organizationId: orgId } }),
-      ]);
+    const where = { organizationId: orgId };
+    const organization = await tx.organization.findUnique({ where: { id: orgId } });
 
-    // Conversations
-    const [threads, messages, notes] = await Promise.all([
-      tx.whatsAppThread.findMany({ where: { organizationId: orgId }, include: { tags: true } }),
-      tx.whatsAppMessage.findMany({ where: { organizationId: orgId }, orderBy: { receivedAt: 'asc' } }),
-      tx.whatsAppNote.findMany({ where: { organizationId: orgId } }),
-    ]);
+    // --- Business info ---
+    const [businessInfo, locations, contactChannels] = want(sections, 'business_info')
+      ? await Promise.all([
+          tx.businessInfo.findUnique({ where: { organizationId: orgId } }),
+          tx.location.findMany({ where }),
+          tx.contactChannel.findMany({ where }),
+        ])
+      : [null, [], []];
 
-    // Bot config + KB
-    const [botConfig, kb] = await Promise.all([
-      tx.botConfig.findUnique({ where: { organizationId: orgId } }),
-      tx.knowledgeBaseEntry.findMany({ where: { organizationId: orgId } }),
-    ]);
+    // --- Products (with variants + images) + categories ---
+    const [products, categories] = want(sections, 'products')
+      ? await Promise.all([
+          tx.product.findMany({ where, include: { variants: true, images: true } }),
+          tx.category.findMany({ where }),
+        ])
+      : [[], []];
 
-    // Audit log (last 5,000 entries — full history is in cold storage if
-    // ever needed; spec calls for "exportable for compliance" not "every
-    // entry since the dawn of time").
-    const audit = await tx.auditLog.findMany({
-      where: { organizationId: orgId },
-      orderBy: { createdAt: 'desc' },
-      take: 5_000,
-    });
+    // --- Services (with pricing tiers + availability) ---
+    const services = want(sections, 'services')
+      ? await tx.service.findMany({ where, include: { pricingTiers: true, availability: true } })
+      : [];
+
+    // --- FAQs & policies ---
+    const [faqs, policies] = want(sections, 'faqs_policies')
+      ? await Promise.all([tx.fAQ.findMany({ where }), tx.policy.findMany({ where })])
+      : [[], []];
+
+    // --- Clients / contacts (the customers) ---
+    const clients = want(sections, 'contacts')
+      ? await tx.contact.findMany({ where, include: { tags: true } })
+      : [];
+
+    // --- Segments ---
+    const segments = want(sections, 'segments') ? await tx.segment.findMany({ where }) : [];
+
+    // --- Broadcasts + per-recipient delivery + events ---
+    const [broadcasts, broadcastRecipients, broadcastEvents] = want(sections, 'broadcasts')
+      ? await Promise.all([
+          tx.broadcast.findMany({ where }),
+          tx.broadcastRecipient.findMany({ where }),
+          tx.broadcastEvent.findMany({ where }),
+        ])
+      : [[], [], []];
+
+    // --- Orders / carts + line items ---
+    const [carts, cartItems] = want(sections, 'orders')
+      ? await Promise.all([tx.cart.findMany({ where }), tx.cartItem.findMany({ where })])
+      : [[], []];
+
+    // --- Bookings ---
+    const bookings = want(sections, 'bookings') ? await tx.booking.findMany({ where }) : [];
+
+    // --- Conversations (heavy + PII; off unless requested) ---
+    const [threads, messages, notes] = want(sections, 'conversations')
+      ? await Promise.all([
+          tx.whatsAppThread.findMany({ where, include: { tags: true } }),
+          tx.whatsAppMessage.findMany({ where, orderBy: { receivedAt: 'asc' } }),
+          tx.whatsAppNote.findMany({ where }),
+        ])
+      : [[], [], []];
+
+    // --- Team members (role + email via the user relation) ---
+    const memberRows = want(sections, 'members')
+      ? await tx.membership.findMany({
+          where,
+          include: { user: { select: { email: true, firstName: true, lastName: true, status: true } } },
+        })
+      : [];
+    const members = memberRows.map((m) => ({
+      userId: m.userId,
+      role: m.role,
+      isActive: m.isActive,
+      email: m.user?.email ?? null,
+      firstName: m.user?.firstName ?? null,
+      lastName: m.user?.lastName ?? null,
+      userStatus: m.user?.status ?? null,
+      createdAt: m.createdAt,
+    }));
+
+    // --- Activity (last 5,000 audit entries) ---
+    const audit = want(sections, 'activity')
+      ? await tx.auditLog.findMany({ where, orderBy: { createdAt: 'desc' }, take: 5_000 })
+      : [];
+
+    // --- AI config + knowledge base ---
+    const [botConfig, kb] = want(sections, 'ai')
+      ? await Promise.all([
+          tx.botConfig.findUnique({ where: { organizationId: orgId } }),
+          tx.knowledgeBaseEntry.findMany({ where }),
+        ])
+      : [null, []];
+
+    // --- API keys (metadata ONLY — never the hash/secret) ---
+    const apiKeys = want(sections, 'api_keys')
+      ? await tx.apiKey.findMany({
+          where,
+          select: {
+            id: true,
+            name: true,
+            prefix: true,
+            scopes: true,
+            lastUsedAt: true,
+            revokedAt: true,
+            createdAt: true,
+          },
+        })
+      : [];
 
     return {
-      meta: {
-        exportedAt: new Date().toISOString(),
-        format: 'csv+zip',
-        version: 2,
-      },
+      meta: { exportedAt: new Date().toISOString(), format: 'csv+zip', version: 3, sections: sections ?? [] },
       organization,
-      catalog: {
-        products,
-        services,
-        categories,
-        businessInfo,
-        locations,
-        contacts,
-        faqs,
-        policies,
-      },
-      conversations: {
-        threads,
-        messages,
-        notes,
-      },
-      bot: {
-        config: botConfig,
-        knowledgeBase: kb,
-      },
+      businessInfo,
+      locations,
+      contactChannels,
+      products,
+      categories,
+      services,
+      faqs,
+      policies,
+      clients,
+      segments,
+      broadcasts,
+      broadcastRecipients,
+      broadcastEvents,
+      carts,
+      cartItems,
+      bookings,
+      threads,
+      messages,
+      notes,
+      members,
       audit,
+      botConfig,
+      kb,
+      apiKeys,
     };
   });
 }
@@ -218,7 +349,9 @@ export function startDataExportWorker() {
   return new Worker<DataExportPayload>(
     'data-export',
     async (job) => {
-      const { organizationId, exportId, requestedByEmail } = job.data;
+      const { organizationId, exportId, requestedByEmail, sections } = job.data;
+      const format = job.data.format === 'pdf' ? 'pdf' : 'csv';
+      const layout = job.data.layout === 'separate' ? 'separate' : 'combined';
 
       // Mark running.
       await withRlsBypass((tx) =>
@@ -229,15 +362,53 @@ export function startDataExportWorker() {
       );
 
       try {
-        const bundle = await gatherBundle(organizationId);
-        const zipped = await buildCsvZip(bundle);
+        const bundle = await gatherBundle(organizationId, sections);
 
-        const storageKey = `exports/${organizationId}/${exportId}.zip`;
-        const bytes = await putObject({
-          storageKey,
-          body: zipped,
-          contentType: 'application/zip',
-        });
+        // Build the requested artifact.
+        let body: Buffer;
+        let ext: string;
+        let contentType: string;
+        if (format === 'pdf') {
+          const orgName = (bundle.organization?.name as string) ?? 'Organisation';
+          const reportSections = bundleToReportSections(bundle);
+          const generatedAt = new Date().toISOString();
+          const { chromium } = await import('playwright');
+          const browser = await chromium.launch({
+            args: ['--no-sandbox', '--disable-dev-shm-usage'],
+          });
+          try {
+            if (layout === 'separate') {
+              // One PDF per section, zipped.
+              const zip = new JSZip();
+              for (const s of reportSections) {
+                const pdf = await htmlToPdf(browser, renderSectionHtml(orgName, s, generatedAt));
+                zip.file(`${s.key}.pdf`, pdf);
+              }
+              zip.file(
+                'README.txt',
+                `ALIGNED / Hader data export — formal reports\nExported: ${generatedAt}\nOne PDF per section.`,
+              );
+              body = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+              ext = 'zip';
+              contentType = 'application/zip';
+            } else {
+              // One combined PDF.
+              body = await htmlToPdf(browser, renderCombinedHtml(orgName, reportSections, generatedAt));
+              ext = 'pdf';
+              contentType = 'application/pdf';
+            }
+          } finally {
+            await browser.close().catch(() => undefined);
+          }
+        } else {
+          // CSV — ZIP of spreadsheets (one per data type).
+          body = await buildCsvZip(bundle);
+          ext = 'zip';
+          contentType = 'application/zip';
+        }
+
+        const storageKey = `exports/${organizationId}/${exportId}.${ext}`;
+        const bytes = await putObject({ storageKey, body, contentType });
 
         await withRlsBypass((tx) =>
           tx.dataExport.update({
@@ -257,11 +428,17 @@ export function startDataExportWorker() {
         // longer than the URL's lifetime.
         const downloadUrl = `${env.WEB_PUBLIC_URL.replace(/\/$/, '')}/settings/data-export`;
         const sizeMb = (bytes / (1024 * 1024)).toFixed(2);
+        const fileDesc =
+          format === 'pdf'
+            ? layout === 'separate'
+              ? 'formal PDF reports in a .zip'
+              : 'a formal PDF report'
+            : 'CSV files in a .zip';
         const subject = 'Your data export is ready';
-        const text = `Your data export is ready (${sizeMb} MB, CSV files in a .zip).\n\nDownload from the portal: ${downloadUrl}\n\nThis email is sent to admins of the organization that requested the export.`;
+        const text = `Your data export is ready (${sizeMb} MB, ${fileDesc}).\n\nDownload from the portal: ${downloadUrl}\n\nThis email is sent to admins of the organization that requested the export.`;
         const html = `
           <p>Your data export is ready.</p>
-          <p><strong>Size:</strong> ${sizeMb} MB (CSV files in a .zip)</p>
+          <p><strong>Size:</strong> ${sizeMb} MB (${fileDesc})</p>
           <p><a href="${downloadUrl}">Download from the portal</a></p>
           <p style="color:#64748b;font-size:12px;margin-top:24px">Download links are short-lived and minted on demand. If the link expires, request a new one from the same page.</p>
         `;

@@ -174,7 +174,7 @@ export default async function adminRoutes(app: FastifyInstance) {
                 tx.messageProvenance.groupBy({
                   by: ['model'],
                   where: { organizationId: o.id },
-                  _sum: { promptTokens: true, completionTokens: true },
+                  _sum: { promptTokens: true, completionTokens: true, cacheReadTokens: true, cacheWriteTokens: true },
                 }),
               ]);
             let aiTokens = 0;
@@ -183,7 +183,7 @@ export default async function adminRoutes(app: FastifyInstance) {
             for (const g of aiGroups) {
               const pt = g._sum.promptTokens ?? 0;
               const ct = g._sum.completionTokens ?? 0;
-              const usd = tokensToUsd(g.model, pt, ct);
+              const usd = tokensToUsd(g.model, pt, ct, g._sum.cacheReadTokens ?? 0, g._sum.cacheWriteTokens ?? 0);
               aiTokens += pt + ct;
               aiCostUsd += usd;
               aiCostBreakdown.push({ model: g.model, tokens: pt + ct, usd: Number(usd.toFixed(4)) });
@@ -1389,7 +1389,7 @@ export default async function adminRoutes(app: FastifyInstance) {
           tx.messageProvenance.groupBy({
             by: ['model'],
             where: { organizationId: id, createdAt: inRange },
-            _sum: { promptTokens: true, completionTokens: true },
+            _sum: { promptTokens: true, completionTokens: true, cacheReadTokens: true, cacheWriteTokens: true },
           }),
           tx.whatsAppMessage.count({
             where: {
@@ -1485,7 +1485,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         for (const g of aiGroups) {
           const pt = g._sum.promptTokens ?? 0;
           const ct = g._sum.completionTokens ?? 0;
-          const usd = tokensToUsd(g.model, pt, ct);
+          const usd = tokensToUsd(g.model, pt, ct, g._sum.cacheReadTokens ?? 0, g._sum.cacheWriteTokens ?? 0);
           aiTokens += pt + ct;
           aiCostUsd += usd;
           byModel.push({ model: g.model, tokens: pt + ct, usd: Number(usd.toFixed(4)) });
@@ -2542,7 +2542,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       preHandler: [app.requireAlignedAdmin],
     },
     async (req) => {
-      const { tokensToUsd } = await import('../../lib/ai-pricing.js');
+      const { costUsdWithCache } = await import('../../lib/ai-pricing.js');
       const { getOrgQuotas } = await import('../../lib/billing.js');
       const orgId = req.params.id;
       const now = new Date();
@@ -2566,6 +2566,8 @@ export default async function adminRoutes(app: FastifyInstance) {
           select: {
             model: true,
             promptTokens: true,
+            cacheReadTokens: true,
+            cacheWriteTokens: true,
             completionTokens: true,
             createdAt: true,
           },
@@ -2598,7 +2600,13 @@ export default async function adminRoutes(app: FastifyInstance) {
       }
 
       for (const row of rows) {
-        const usd = tokensToUsd(row.model, row.promptTokens, row.completionTokens);
+        const usd = costUsdWithCache(
+          row.model,
+          row.promptTokens,
+          row.completionTokens,
+          row.cacheReadTokens,
+          row.cacheWriteTokens,
+        );
         const total = row.promptTokens + row.completionTokens;
         const day = row.createdAt.toISOString().slice(0, 10);
 

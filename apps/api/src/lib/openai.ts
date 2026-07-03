@@ -254,7 +254,19 @@ interface CompleteArgs {
   temperature?: number;
 }
 
-export async function complete(args: CompleteArgs): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
+// inputTokens = TOTAL input processed (uncached + cache read + cache write).
+// cacheReadTokens / cacheWriteTokens are subsets of it, surfaced so the cost
+// layer can price each bucket at its real rate. Non-caching providers return 0.
+type CompleteResult = {
+  text: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  model: string;
+};
+
+export async function complete(args: CompleteArgs): Promise<CompleteResult> {
   // Pre-charge the budget pessimistically (estimate input length / 4 chars
   // per token, plus the maxTokens we're requesting). Final accounting on
   // the response is best-effort.
@@ -275,7 +287,7 @@ export async function complete(args: CompleteArgs): Promise<{ text: string; inpu
   const plan = await loadOrgPlan(args.organizationId);
 
   try {
-    let result: { text: string; inputTokens: number; outputTokens: number; model: string };
+    let result: CompleteResult;
     switch (plan) {
       case 'ultra':
         result = await completeUltra(args);
@@ -307,7 +319,7 @@ export async function complete(args: CompleteArgs): Promise<{ text: string; inpu
 
 // ---------- basic tier (Groq Llama → OpenAI mini fallback) ----------------
 
-async function completeBasic(args: CompleteArgs): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
+async function completeBasic(args: CompleteArgs): Promise<CompleteResult> {
   const payload = {
     max_tokens: args.maxTokens ?? 1024,
     temperature: args.temperature ?? 0.4,
@@ -325,6 +337,8 @@ async function completeBasic(args: CompleteArgs): Promise<{ text: string; inputT
       text: (res.choices[0]?.message.content ?? '').trim(),
       inputTokens: res.usage?.prompt_tokens ?? 0,
       outputTokens: res.usage?.completion_tokens ?? 0,
+      cacheReadTokens: res.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+      cacheWriteTokens: 0,
       model: `groq:${model}`,
     };
   } catch (err) {
@@ -345,6 +359,8 @@ async function completeBasic(args: CompleteArgs): Promise<{ text: string; inputT
       text: (res.choices[0]?.message.content ?? '').trim(),
       inputTokens: res.usage?.prompt_tokens ?? 0,
       outputTokens: res.usage?.completion_tokens ?? 0,
+      cacheReadTokens: res.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+      cacheWriteTokens: 0,
       model: `openai:${env.OPENAI_MODEL}`,
     };
   }
@@ -354,7 +370,7 @@ async function completeBasic(args: CompleteArgs): Promise<{ text: string; inputT
 
 const MIDDLE_MODEL = 'gpt-4o';
 
-async function completeMiddle(args: CompleteArgs): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
+async function completeMiddle(args: CompleteArgs): Promise<CompleteResult> {
   const res = await client().chat.completions.create({
     model: MIDDLE_MODEL,
     max_tokens: args.maxTokens ?? 1024,
@@ -368,6 +384,8 @@ async function completeMiddle(args: CompleteArgs): Promise<{ text: string; input
     text: (res.choices[0]?.message.content ?? '').trim(),
     inputTokens: res.usage?.prompt_tokens ?? 0,
     outputTokens: res.usage?.completion_tokens ?? 0,
+    cacheReadTokens: res.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+    cacheWriteTokens: 0,
     model: `openai:${MIDDLE_MODEL}`,
   };
 }
@@ -397,7 +415,7 @@ function anthropicInputTokens(usage: {
   );
 }
 
-async function completeMax(args: CompleteArgs): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
+async function completeMax(args: CompleteArgs): Promise<CompleteResult> {
   const a = anthropicClient();
   if (!a) {
     // eslint-disable-next-line no-console
@@ -426,6 +444,8 @@ async function completeMax(args: CompleteArgs): Promise<{ text: string; inputTok
       text,
       inputTokens: anthropicInputTokens(res.usage),
       outputTokens: res.usage.output_tokens,
+      cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: res.usage.cache_creation_input_tokens ?? 0,
       model: `anthropic:${res.model}`,
     };
   } catch (err) {
@@ -445,7 +465,7 @@ async function completeMax(args: CompleteArgs): Promise<{ text: string; inputTok
 // below. Same graceful-degradation contract as completeMax: if Anthropic
 // is unavailable we fall back to the basic stack so a key misconfig never
 // takes the bot offline.
-async function completeUltra(args: CompleteArgs): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
+async function completeUltra(args: CompleteArgs): Promise<CompleteResult> {
   const a = anthropicClient();
   if (!a) {
     // eslint-disable-next-line no-console
@@ -470,6 +490,8 @@ async function completeUltra(args: CompleteArgs): Promise<{ text: string; inputT
       text,
       inputTokens: anthropicInputTokens(res.usage),
       outputTokens: res.usage.output_tokens,
+      cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: res.usage.cache_creation_input_tokens ?? 0,
       model: `anthropic:${res.model}`,
     };
   } catch (err) {

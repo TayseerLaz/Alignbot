@@ -43,14 +43,68 @@ export function tokensToUsd(
   modelLabel: string,
   promptTokens: number,
   completionTokens: number,
+  cacheReadTokens = 0,
+  cacheWriteTokens = 0,
 ): number {
-  // Normalise: bot-engine uses bare "gpt-4o-mini" (no provider prefix)
-  // for legacy OpenAI calls. Map those to the openai:* keys.
+  // Delegates to the cache-aware pricer. With cache counts 0 (the common case
+  // for callers that don't track the split) this is the plain input×rate +
+  // output×rate it always was.
+  return costUsdWithCache(
+    modelLabel,
+    promptTokens,
+    completionTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+  );
+}
+
+// Cache multipliers relative to the base input rate. Anthropic: reads are 10%
+// of the base rate, writes (cache creation) are 125%. OpenAI: cached input is
+// billed at 50% (and there is no separate "write" charge). Groq: no caching.
+const CACHE_READ_MULT: Record<string, number> = {
+  anthropic: 0.1,
+  openai: 0.5,
+  groq: 1, // unused (no cache)
+};
+const CACHE_WRITE_MULT: Record<string, number> = {
+  anthropic: 1.25,
+  openai: 1, // OpenAI has no explicit cache-write charge
+  groq: 1,
+};
+
+function providerOf(key: ChatModelKey): 'anthropic' | 'openai' | 'groq' {
+  if (key.startsWith('anthropic:')) return 'anthropic';
+  if (key.startsWith('groq:')) return 'groq';
+  return 'openai';
+}
+
+/**
+ * Exact cost in USD for a reply, pricing the prompt-cache split at its real
+ * per-bucket rate. `promptTokens` is the TOTAL input (uncached + cache read +
+ * cache write); `cacheReadTokens`/`cacheWriteTokens` are subsets of it. The
+ * uncached remainder is priced at the base input rate, cache reads/writes at
+ * their multiplier, completion at the output rate. With both cache counts 0
+ * this equals {@link tokensToUsd} exactly (so old rows are unaffected).
+ */
+export function costUsdWithCache(
+  modelLabel: string,
+  promptTokens: number,
+  completionTokens: number,
+  cacheReadTokens = 0,
+  cacheWriteTokens = 0,
+): number {
   const key = normaliseModelKey(modelLabel);
   const rate = key ? CHAT_PRICING[key] : null;
   if (!rate) return 0;
+  const provider = providerOf(key!);
+  const read = Math.max(0, cacheReadTokens);
+  const write = Math.max(0, cacheWriteTokens);
+  const uncached = Math.max(0, promptTokens - read - write);
+  const inM = rate.inUsdPerM / 1_000_000;
   return (
-    (promptTokens / 1_000_000) * rate.inUsdPerM +
+    uncached * inM +
+    read * inM * (CACHE_READ_MULT[provider] ?? 1) +
+    write * inM * (CACHE_WRITE_MULT[provider] ?? 1) +
     (completionTokens / 1_000_000) * rate.outUsdPerM
   );
 }

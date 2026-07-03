@@ -2785,7 +2785,15 @@ model MessageProvenance {
   // LLM call metadata.
   model            String
   temperature      Float
+  // promptTokens = TOTAL input tokens processed (uncached + cache read + cache
+  // write). The two cache sub-counts below are subsets of it, stored so cost can
+  // be priced at the correct per-bucket rate: Anthropic bills cache reads at
+  // ~10% and cache writes at ~125% of the base input rate; OpenAI cached input
+  // at ~50%. Both default 0 → non-caching providers + pre-caching rows price
+  // exactly as before (all input at the base rate).
   promptTokens     Int    @map("prompt_tokens")
+  cacheReadTokens  Int    @default(0) @map("cache_read_tokens")
+  cacheWriteTokens Int    @default(0) @map("cache_write_tokens")
   completionTokens Int    @map("completion_tokens")
   latencyMs        Int    @map("latency_ms")
 

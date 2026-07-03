@@ -681,6 +681,8 @@ export interface BotResponseInputs {
   model: string;
   temperature: number;
   promptTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
   completionTokens: number;
   latencyMs: number;
 }
@@ -1299,7 +1301,7 @@ export async function buildBotResponse(
   // the admin prompt preview costs nothing and counts no usage. `sys` is already
   // the final compiled prompt string, returned below in inputs.systemPrompt.
   const result = args.compileOnly
-    ? { text: '', inputTokens: 0, outputTokens: 0, model: 'preview' }
+    ? { text: '', inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, model: 'preview' }
     : await complete({
         organizationId: args.organizationId,
         systemPrompt: sys,
@@ -1384,6 +1386,8 @@ export async function buildBotResponse(
       model: result.model ?? activeProviderModelLabel(),
       temperature: TEMPERATURE,
       promptTokens: result.inputTokens,
+      cacheReadTokens: result.cacheReadTokens ?? 0,
+      cacheWriteTokens: result.cacheWriteTokens ?? 0,
       completionTokens: result.outputTokens,
       latencyMs,
     },

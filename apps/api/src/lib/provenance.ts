@@ -132,6 +132,8 @@ export async function recordProvenance(args: RecordProvenanceArgs): Promise<void
           model: inputs.model,
           temperature: inputs.temperature,
           promptTokens: inputs.promptTokens,
+          cacheReadTokens: inputs.cacheReadTokens ?? 0,
+          cacheWriteTokens: inputs.cacheWriteTokens ?? 0,
           completionTokens: inputs.completionTokens,
           latencyMs: inputs.latencyMs,
           pipelineTimings: (pipelineTimings ?? undefined) as never,

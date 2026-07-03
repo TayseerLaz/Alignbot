@@ -378,6 +378,25 @@ async function completeMiddle(args: CompleteArgs): Promise<{ text: string; input
 // On any error (including missing API key) we degrade gracefully to the
 // basic stack so a key misconfig doesn't take the bot offline.
 
+// Anthropic's `usage.input_tokens` counts only the UNCACHED input. With prompt
+// caching on (we cache the large per-tenant system prompt), the bulk of the real
+// input is billed under cache_read_input_tokens (cache hit, ~10% price) +
+// cache_creation_input_tokens (cache write, ~125% price). Summing all three
+// gives the true input token volume that Anthropic actually bills — otherwise a
+// cached reply looks like ~9 input tokens when it really processed ~3,500, and
+// our cost dashboard reads near-zero vs the real Anthropic invoice.
+function anthropicInputTokens(usage: {
+  input_tokens: number;
+  cache_read_input_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+}): number {
+  return (
+    (usage.input_tokens ?? 0) +
+    (usage.cache_read_input_tokens ?? 0) +
+    (usage.cache_creation_input_tokens ?? 0)
+  );
+}
+
 async function completeMax(args: CompleteArgs): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
   const a = anthropicClient();
   if (!a) {
@@ -405,7 +424,7 @@ async function completeMax(args: CompleteArgs): Promise<{ text: string; inputTok
       .trim();
     return {
       text,
-      inputTokens: res.usage.input_tokens,
+      inputTokens: anthropicInputTokens(res.usage),
       outputTokens: res.usage.output_tokens,
       model: `anthropic:${res.model}`,
     };
@@ -449,7 +468,7 @@ async function completeUltra(args: CompleteArgs): Promise<{ text: string; inputT
       .trim();
     return {
       text,
-      inputTokens: res.usage.input_tokens,
+      inputTokens: anthropicInputTokens(res.usage),
       outputTokens: res.usage.output_tokens,
       model: `anthropic:${res.model}`,
     };

@@ -25,6 +25,39 @@ import { env } from '../../lib/env.js';
 import { safeFetch } from '../../lib/safe-fetch.js';
 import { presignGetUrl } from '../../lib/storage.js';
 
+// Header media (IMAGE/VIDEO/DOCUMENT) handles are stored as the presigned
+// Wasabi URL used at submit time — those signatures expire (~1h), so the
+// template preview couldn't load the image later (it just showed a placeholder
+// icon). Re-sign any of-our-bucket header_handle so the preview shows the real
+// image. Non-ours / already-live URLs pass through untouched. Best-effort:
+// never throws.
+async function freshenHeaderMedia(
+  components: Record<string, unknown>[] | null,
+): Promise<Record<string, unknown>[] | null> {
+  if (!components) return components;
+  for (const c of components) {
+    if (typeof c.type !== 'string' || c.type.toUpperCase() !== 'HEADER') continue;
+    const fmt = typeof c.format === 'string' ? c.format.toUpperCase() : '';
+    if (fmt !== 'IMAGE' && fmt !== 'VIDEO' && fmt !== 'DOCUMENT') continue;
+    const ex = c.example as { header_handle?: unknown } | undefined;
+    const handle = Array.isArray(ex?.header_handle) ? ex!.header_handle[0] : undefined;
+    if (typeof handle !== 'string' || !/wasabisys\.com/i.test(handle)) continue;
+    try {
+      const u = new URL(handle);
+      let key = decodeURIComponent(u.pathname.replace(/^\/+/, ''));
+      // path-style URLs prefix the bucket name; virtual-hosted URLs don't.
+      if (env.WASABI_BUCKET && key.startsWith(`${env.WASABI_BUCKET}/`)) {
+        key = key.slice(env.WASABI_BUCKET.length + 1);
+      }
+      const fresh = await presignGetUrl(key, 3600);
+      c.example = { ...(ex ?? {}), header_handle: [fresh] };
+    } catch {
+      // leave the original handle untouched on any parse/sign error
+    }
+  }
+  return components;
+}
+
 // Meta requires media-header (IMAGE/VIDEO/DOCUMENT) template samples to be a
 // HANDLE from its resumable-upload API — NOT a plain URL. We upload the sample
 // to `/{app_id}/uploads`, push the bytes, and use the returned handle. Without
@@ -167,21 +200,25 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
       app.tenant(req, async (tx) => {
         const rows = await tx.whatsAppTemplate.findMany({ orderBy: { updatedAt: 'desc' } });
         return {
-          data: rows.map((t) => ({
-            id: t.id,
-            name: t.name,
-            language: t.language,
-            category: t.category,
-            bodyText: t.bodyText,
-            components: Array.isArray(t.components)
-              ? (t.components as unknown as Record<string, unknown>[])
-              : null,
-            status: t.status,
-            rejectionReason: t.rejectionReason,
-            metaTemplateId: t.metaTemplateId,
-            createdAt: t.createdAt.toISOString(),
-            updatedAt: t.updatedAt.toISOString(),
-          })),
+          data: await Promise.all(
+            rows.map(async (t) => ({
+              id: t.id,
+              name: t.name,
+              language: t.language,
+              category: t.category,
+              bodyText: t.bodyText,
+              components: await freshenHeaderMedia(
+                Array.isArray(t.components)
+                  ? (t.components as unknown as Record<string, unknown>[])
+                  : null,
+              ),
+              status: t.status,
+              rejectionReason: t.rejectionReason,
+              metaTemplateId: t.metaTemplateId,
+              createdAt: t.createdAt.toISOString(),
+              updatedAt: t.updatedAt.toISOString(),
+            })),
+          ),
           nextCursor: null,
         };
       }),
@@ -330,28 +367,30 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
           storedComponents && storedComponents.length > 0
             ? await resolveMediaHeaderSamples(storedComponents, channel.appId, channel.accessToken)
             : [{ type: 'BODY', text: tpl.bodyText }];
-        const payload = {
-          name: tpl.name,
-          language: tpl.language,
-          category: tpl.category,
-          components,
-        };
+        // Edit vs create. A template already on Meta (has a metaTemplateId) is
+        // EDITED via POST /{template_id} — name + language are IMMUTABLE there,
+        // so we send only category + components, and Meta resets it to PENDING
+        // for re-review. A brand-new template is CREATED via the WABA endpoint.
+        const isEdit = !!tpl.metaTemplateId;
+        const payload = isEdit
+          ? { category: tpl.category, components }
+          : { name: tpl.name, language: tpl.language, category: tpl.category, components };
+        const submitUrl = isEdit
+          ? `https://graph.facebook.com/v20.0/${encodeURIComponent(tpl.metaTemplateId!)}`
+          : `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.wabaId)}/message_templates`;
 
         let resBody = '';
         let resStatus = 0;
         try {
-          const res = await fetch(
-            `https://graph.facebook.com/v20.0/${encodeURIComponent(channel.wabaId)}/message_templates`,
-            {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${channel.accessToken}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(payload),
-              signal: AbortSignal.timeout(10_000),
+          const res = await fetch(submitUrl, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${channel.accessToken}`,
+              'Content-Type': 'application/json',
             },
-          );
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(10_000),
+          });
           resStatus = res.status;
           resBody = await res.text();
         } catch (err) {
@@ -416,8 +455,11 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
         await tx.whatsAppTemplate.update({
           where: { id: tpl.id },
           data: {
+            // Create returns the new template's status + id. Edit returns
+            // { success: true } (no id/status) and Meta moves it to PENDING for
+            // re-review — so default to 'pending' and KEEP the existing meta id.
             status: typeof parsed.status === 'string' ? parsed.status.toLowerCase() : 'pending',
-            metaTemplateId: typeof parsed.id === 'string' ? parsed.id : null,
+            metaTemplateId: typeof parsed.id === 'string' ? parsed.id : tpl.metaTemplateId,
             rejectionReason: null,
           },
         });
@@ -432,6 +474,68 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
         });
 
         return { data: { ok: true, status: 'pending' } };
+      });
+    },
+  );
+
+  // ---------- PUT /whatsapp/templates/:id -------------------------------
+  // Edit a template's content. Once a template exists on Meta (metaTemplateId
+  // set) its name + language are IMMUTABLE — Meta only lets you change category
+  // + components, and doing so sends it back for re-review. So we lock those
+  // two fields for on-Meta templates and reset the row to 'draft' locally; the
+  // operator then clicks Submit, which (being edit-aware) resubmits to Meta.
+  r.put(
+    '/whatsapp/templates/:id',
+    {
+      schema: {
+        tags: ['whatsapp'],
+        summary: 'Edit a template. Name/language are locked once it exists on Meta.',
+        params: z.object({ id: uuidSchema }),
+        body: z.object({
+          name: z
+            .string()
+            .trim()
+            .regex(/^[a-z0-9_]+$/, 'Lowercase letters, digits and underscores only.')
+            .max(512)
+            .optional(),
+          language: z.string().trim().min(2).max(8).optional(),
+          category: z.enum(['MARKETING', 'UTILITY', 'AUTHENTICATION']).optional(),
+          bodyText: z.string().optional(),
+          components: componentsSchema.optional(),
+        }),
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      return app.tenant(req, async (tx) => {
+        const tpl = await tx.whatsAppTemplate.findFirst({ where: { id: req.params.id } });
+        if (!tpl) throw notFound('Template not found.');
+        const onMeta = !!tpl.metaTemplateId;
+        if (
+          onMeta &&
+          ((req.body.name && req.body.name !== tpl.name) ||
+            (req.body.language && req.body.language !== tpl.language))
+        ) {
+          throw badRequest(
+            ApiErrorCode.VALIDATION_ERROR,
+            'Name and language cannot change once a template exists on Meta. Create a new template instead.',
+          );
+        }
+        const updated = await tx.whatsAppTemplate.update({
+          where: { id: tpl.id },
+          data: {
+            name: !onMeta && req.body.name ? req.body.name : tpl.name,
+            language: !onMeta && req.body.language ? req.body.language : tpl.language,
+            category: req.body.category ?? tpl.category,
+            bodyText: req.body.bodyText ?? tpl.bodyText,
+            components: (req.body.components ?? tpl.components) as never,
+            // Editing invalidates any prior verdict — back to draft until the
+            // operator explicitly resubmits for review.
+            status: 'draft',
+            rejectionReason: null,
+          },
+        });
+        return { data: { id: updated.id, status: updated.status } };
       });
     },
   );

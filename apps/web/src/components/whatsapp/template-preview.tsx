@@ -1,7 +1,7 @@
 'use client';
 
 import { Copy, ExternalLink, FileText, ImageIcon, Phone, Reply, Video } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 // A faithful WhatsApp-style preview of an approved message template — exactly
 // how the message lands on the customer's phone (it's business→customer, so it
@@ -39,6 +39,28 @@ const BTN_ICON: Record<string, typeof Reply> = {
   COPY_CODE: Copy,
 };
 
+// Render the real header image when we have a (freshly-signed) URL; fall back to
+// the icon placeholder if there's no URL or it fails to load.
+function ImageHeader({ url }: { url?: string }) {
+  const [failed, setFailed] = useState(false);
+  if (url && !failed) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={url}
+        alt="Header"
+        className="mb-1.5 max-h-52 w-full rounded-md bg-black/5 object-contain dark:bg-white/10"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return (
+    <div className="mb-1.5 flex h-32 items-center justify-center rounded-md bg-black/5 text-foreground-subtle dark:bg-white/10">
+      <ImageIcon className="size-8" />
+    </div>
+  );
+}
+
 export function TemplatePreview({
   components,
   bodyText,
@@ -55,6 +77,7 @@ export function TemplatePreview({
 
   const headerFormat = str(header?.format)?.toUpperCase();
   const headerText = str(header?.text);
+  const headerMediaUrl = (header?.example as { header_handle?: string[] } | undefined)?.header_handle?.[0];
   const bodyResolved = str(body?.text) ?? bodyText ?? '';
   const bodyExamples = (body?.example as { body_text?: string[][] } | undefined)?.body_text?.[0] ?? [];
   const headerExamples =
@@ -73,9 +96,7 @@ export function TemplatePreview({
             headerFormat === 'TEXT' && headerText ? (
               <p className="mb-1 font-semibold">{renderWithVars(headerText, headerExamples)}</p>
             ) : headerFormat === 'IMAGE' ? (
-              <div className="mb-1.5 flex h-32 items-center justify-center rounded-md bg-black/5 text-foreground-subtle dark:bg-white/10">
-                <ImageIcon className="size-8" />
-              </div>
+              <ImageHeader url={headerMediaUrl} />
             ) : headerFormat === 'VIDEO' ? (
               <div className="mb-1.5 flex h-32 items-center justify-center rounded-md bg-black/5 text-foreground-subtle dark:bg-white/10">
                 <Video className="size-8" />

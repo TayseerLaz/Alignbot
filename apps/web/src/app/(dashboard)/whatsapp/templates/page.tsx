@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle2, Clock, Eye, MessageSquare, Plus, RefreshCw, Send, Trash2, Upload, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock, Eye, MessageSquare, Pencil, Plus, RefreshCw, Send, Trash2, Upload, XCircle } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -66,6 +66,7 @@ const STATUS_ICON: Record<string, typeof Clock> = {
 export default function TemplatesPage({ showHeader = true }: { showHeader?: boolean } = {}) {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  const [editTemplate, setEditTemplate] = useState<Template | null>(null);
   // Template whose WhatsApp preview popup is open (null = closed).
   const [previewTemplate, setPreviewTemplate] = useState<Template | null>(null);
 
@@ -238,6 +239,14 @@ export default function TemplatesPage({ showHeader = true }: { showHeader?: bool
                         >
                           <Eye className="size-3.5" /> Preview
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setEditTemplate(t)}
+                          title="Edit this template (resubmits to Meta for review)"
+                        >
+                          <Pencil className="size-3.5" /> Edit
+                        </Button>
                         {t.status === 'draft' || t.status === 'rejected' ? (
                           <Button
                             size="sm"
@@ -277,7 +286,16 @@ export default function TemplatesPage({ showHeader = true }: { showHeader?: bool
         </CardContent>
       </Card>
 
-      <CreateTemplateDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <CreateTemplateDialog
+        open={createOpen || !!editTemplate}
+        editTemplate={editTemplate}
+        onOpenChange={(v) => {
+          if (!v) {
+            setCreateOpen(false);
+            setEditTemplate(null);
+          }
+        }}
+      />
 
       {/* WhatsApp preview popup — how the template lands on the customer's phone. */}
       <Dialog open={previewTemplate !== null} onOpenChange={(o) => !o && setPreviewTemplate(null)}>
@@ -331,10 +349,15 @@ function countPlaceholders(s: string): number {
 function CreateTemplateDialog({
   open,
   onOpenChange,
+  editTemplate,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  editTemplate?: Template | null;
 }) {
+  const isEdit = !!editTemplate;
+  // Once a template exists on Meta its name + language are immutable.
+  const lockIdentity = !!editTemplate?.metaTemplateId;
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [language, setLanguage] = useState('en_US');
@@ -383,6 +406,66 @@ function CreateTemplateDialog({
   // Buttons
   const [buttons, setButtons] = useState<ButtonRow[]>([]);
   const headerHasVar = /{{\s*1\s*}}/.test(headerText);
+
+  // Populate the builder from an existing template when opened in edit mode;
+  // reset to blank for a fresh create. Runs whenever the dialog opens.
+  useEffect(() => {
+    if (!open) return;
+    if (editTemplate) {
+      const comps = (editTemplate.components ?? []) as Record<string, unknown>[];
+      const find = (ty: string) =>
+        comps.find((c) => String(c.type ?? '').toUpperCase() === ty) as
+          | Record<string, unknown>
+          | undefined;
+      const h = find('HEADER');
+      const b = find('BODY');
+      const f = find('FOOTER');
+      const btns = find('BUTTONS');
+      const ex = (o: Record<string, unknown> | undefined) =>
+        (o?.example ?? {}) as { header_text?: string[]; header_handle?: string[]; body_text?: string[][] };
+      setName(editTemplate.name);
+      setLanguage(editTemplate.language);
+      setCategory((editTemplate.category as 'MARKETING' | 'UTILITY' | 'AUTHENTICATION') ?? 'UTILITY');
+      setHeaderFormat(h ? (String(h.format ?? 'NONE').toUpperCase() as HeaderFormat) : 'NONE');
+      setHeaderText(typeof h?.text === 'string' ? h.text : '');
+      setHeaderTextExample(ex(h).header_text?.[0] ?? '');
+      setHeaderMediaUrl(ex(h).header_handle?.[0] ?? '');
+      setBodyText(typeof b?.text === 'string' ? b.text : editTemplate.bodyText ?? '');
+      setBodyExamples(ex(b).body_text?.[0] ?? []);
+      setFooter(typeof f?.text === 'string' ? f.text : '');
+      setButtons(
+        ((btns?.buttons as Record<string, unknown>[] | undefined) ?? []).map((x): ButtonRow => {
+          const t = String(x.type ?? '').toUpperCase();
+          const text = typeof x.text === 'string' ? x.text : '';
+          if (t === 'URL')
+            return {
+              type: 'URL',
+              text,
+              url: typeof x.url === 'string' ? x.url : 'https://',
+              example: Array.isArray(x.example) ? String(x.example[0] ?? '') : '',
+            };
+          if (t === 'PHONE_NUMBER')
+            return { type: 'PHONE_NUMBER', text, phoneNumber: typeof x.phone_number === 'string' ? x.phone_number : '+' };
+          if (t === 'COPY_CODE')
+            return { type: 'COPY_CODE', example: Array.isArray(x.example) ? String(x.example[0] ?? '') : String(x.example ?? '') };
+          return { type: 'QUICK_REPLY', text };
+        }),
+      );
+    } else {
+      setName('');
+      setLanguage('en_US');
+      setCategory('UTILITY');
+      setHeaderFormat('NONE');
+      setHeaderText('');
+      setHeaderTextExample('');
+      setHeaderMediaUrl('');
+      setBodyText('');
+      setBodyExamples([]);
+      setFooter('');
+      setButtons([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editTemplate]);
 
   const buildComponents = (): Record<string, unknown>[] => {
     const out: Record<string, unknown>[] = [];
@@ -463,6 +546,29 @@ function CreateTemplateDialog({
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Create failed'),
   });
 
+  // Edit an existing template: save the new content, then resubmit so it goes
+  // (back) to Meta for review — an approved template that's edited returns to
+  // PENDING, exactly what the operator expects.
+  const edit = useMutation({
+    mutationFn: async () => {
+      const components = buildComponents();
+      await api.put(`/api/v1/whatsapp/templates/${editTemplate!.id}`, {
+        name,
+        language,
+        category,
+        bodyText,
+        components,
+      });
+      await api.post(`/api/v1/whatsapp/templates/${editTemplate!.id}/submit`);
+    },
+    onSuccess: () => {
+      toast.success('Saved & submitted for review');
+      queryClient.invalidateQueries({ queryKey: ['whatsapp-templates'] });
+      onOpenChange(false);
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Save failed'),
+  });
+
   const submitDisabled =
     !name ||
     !bodyText.trim() ||
@@ -497,10 +603,21 @@ function CreateTemplateDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>New template</DialogTitle>
+          <DialogTitle>{isEdit ? `Edit template · ${editTemplate?.name}` : 'New template'}</DialogTitle>
           <DialogDescription>
-            Header + body + footer + buttons — full Meta template builder. Submitted as a draft;
-            click <span className="font-mono">Submit to Meta</span> on the list to request approval.
+            {isEdit ? (
+              <>
+                Editing sends the template {lockIdentity ? 'back ' : ''}to Meta for review — an
+                approved template returns to <span className="font-mono">pending</span> until
+                re-approved.{lockIdentity ? ' Name and language can’t change once it’s on Meta.' : ''}
+              </>
+            ) : (
+              <>
+                Header + body + footer + buttons — full Meta template builder. Submitted as a draft;
+                click <span className="font-mono">Submit to Meta</span> on the list to request
+                approval.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
@@ -511,13 +628,14 @@ function CreateTemplateDialog({
               id="tpl-name"
               placeholder="order_shipped"
               value={name}
+              disabled={lockIdentity}
               onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="tpl-lang">Language</Label>
-              <Input id="tpl-lang" value={language} onChange={(e) => setLanguage(e.target.value)} />
+              <Input id="tpl-lang" value={language} disabled={lockIdentity} onChange={(e) => setLanguage(e.target.value)} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="tpl-cat">Category</Label>
@@ -773,17 +891,18 @@ function CreateTemplateDialog({
             Cancel
           </Button>
           <Button
-            loading={create.isPending}
+            loading={isEdit ? edit.isPending : create.isPending}
             onClick={() => {
               try {
-                create.mutate();
+                if (isEdit) edit.mutate();
+                else create.mutate();
               } catch (err) {
                 toast.error(err instanceof Error ? err.message : 'Invalid template');
               }
             }}
             disabled={submitDisabled}
           >
-            Create draft
+            {isEdit ? 'Save & submit for review' : 'Create draft'}
           </Button>
         </DialogFooter>
       </DialogContent>

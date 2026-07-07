@@ -690,8 +690,11 @@ export default async function botRoutes(app: FastifyInstance) {
     {
       schema: {
         tags: ['bot'],
-        summary: 'Most recent crawl job for the active org (any status). 404 if none.',
-        response: { 200: itemEnvelopeSchema(crawlJobDto) },
+        summary: 'Most recent crawl job for the active org (any status). data:null if none.',
+        // Returns { data: null } (200) rather than 404 when the org has never
+        // run a website analysis — the /bot page polls this on mount, and a 404
+        // would spam the browser console on every normal first-time visit.
+        response: { 200: itemEnvelopeSchema(crawlJobDto.nullable()) },
       },
       preHandler: [app.requireRole('viewer')],
     },
@@ -700,7 +703,7 @@ export default async function botRoutes(app: FastifyInstance) {
         const job = await tx.crawlJob.findFirst({
           orderBy: { createdAt: 'desc' },
         });
-        if (!job) throw notFound('No crawl jobs.');
+        if (!job) return { data: null };
         const liveCounts = await buildCrawlLiveCounts(tx, job.id);
         return {
           data: {

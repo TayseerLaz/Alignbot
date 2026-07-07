@@ -373,12 +373,41 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
         }
         if (resStatus < 200 || resStatus >= 300 || !parsed) {
           const errObj = (parsed?.error ?? {}) as Record<string, unknown>;
+          const s = (k: string) => (typeof errObj[k] === 'string' ? (errObj[k] as string) : null);
+          // Meta's top-level `message` is often just "Invalid parameter". The
+          // useful "which field / why" text lives in error_user_title,
+          // error_user_msg, or error_data — surface the most specific we got so
+          // the operator sees WHAT to fix, not a generic "Invalid parameter".
+          let errData: string | null = null;
+          if (errObj.error_data && typeof errObj.error_data === 'object') {
+            const d = errObj.error_data as Record<string, unknown>;
+            errData =
+              (typeof d.details === 'string' && d.details) ||
+              (typeof d.blame_field_specs === 'object' ? JSON.stringify(d.blame_field_specs) : null) ||
+              null;
+          }
+          const code =
+            typeof errObj.code === 'number'
+              ? ` (Meta code ${errObj.code}${errObj.error_subcode ? `/${String(errObj.error_subcode)}` : ''})`
+              : '';
+          const detail =
+            [s('error_user_title'), s('error_user_msg'), errData].filter(Boolean).join(' — ') ||
+            s('message') ||
+            `HTTP ${resStatus}`;
+          // A code-100 "Invalid parameter" on submit most often means the
+          // template already exists in Meta (same name+language) — in that case
+          // it may already be APPROVED there. Steer the operator to Sync rather
+          // than implying they must rewrite it.
+          const looksLikeDuplicate =
+            /already exist|same name|duplicate|name.*taken/i.test(`${detail} ${s('message') ?? ''}`) ||
+            String(errObj.error_subcode) === '2388023';
           await tx.whatsAppTemplate.update({
             where: { id: tpl.id },
             data: {
               status: 'rejected',
-              rejectionReason:
-                typeof errObj.message === 'string' ? errObj.message : `HTTP ${resStatus}`,
+              rejectionReason: looksLikeDuplicate
+                ? `This template already exists in Meta — click "Sync from Meta" to pull its real status.${code}`
+                : `${detail}${code}`,
             },
           });
           return { data: { ok: false, status: 'rejected' } };
@@ -507,60 +536,70 @@ export default async function whatsappTemplatesRoutes(app: FastifyInstance) {
           const status = (t.status ?? 'pending').toLowerCase();
           const category = (t.category ?? 'UTILITY').toUpperCase();
 
-          // Find by Meta id first; then by name+language.
-          const existing = t.id
-            ? await tx.whatsAppTemplate.findFirst({
-                where: { organizationId: orgId, metaTemplateId: t.id },
-              })
-            : await tx.whatsAppTemplate.findFirst({
-                where: { organizationId: orgId, name: t.name, language: t.language },
-              });
+          // Match by Meta id first, then ALWAYS fall back to (name, language).
+          // Critical: a locally-submitted row often has metaTemplateId=null
+          // (e.g. the submit returned an error before Meta issued an id, yet the
+          // template still exists + got approved on Meta's side). Matching ONLY
+          // by metaTemplateId missed it → the code tried to CREATE a duplicate →
+          // the (org, name, language) unique index threw → the WHOLE sync 500'd
+          // and the stale 'rejected' status could never be reconciled. The
+          // name+language fallback UPDATES that row to Meta's real status.
+          const existing =
+            (t.id
+              ? await tx.whatsAppTemplate.findFirst({
+                  where: { organizationId: orgId, metaTemplateId: t.id },
+                })
+              : null) ??
+            (await tx.whatsAppTemplate.findFirst({
+              where: { organizationId: orgId, name: t.name, language: t.language },
+            }));
 
           // Store the full components array Meta sent us. Makes the
           // builder UI editable (operator can read/edit existing
           // headers/footers/buttons) and lets future submits include
           // every component without us having to remodel each one.
           const components = Array.isArray(t.components) ? (t.components as unknown) : null;
-          if (existing) {
-            await tx.whatsAppTemplate.update({
-              where: { id: existing.id },
-              data: {
-                metaTemplateId: t.id ?? existing.metaTemplateId,
-                status,
-                category,
-                bodyText: bodyText || existing.bodyText,
-                components: components as never,
-                // Meta returns "NONE" for approved templates that have no
-                // rejection reason — treat that as null at ingest time so
-                // the UI never has to guess.
-                rejectionReason:
-                  t.rejected_reason && t.rejected_reason.toUpperCase() !== 'NONE'
-                    ? t.rejected_reason
-                    : null,
-              },
-            });
-            updated += 1;
-          } else {
-            await tx.whatsAppTemplate.create({
-              data: {
-                organizationId: orgId,
-                name: t.name,
-                language: t.language,
-                category,
-                bodyText: bodyText || '(imported from Meta — no body component)',
-                components: components as never,
-                status,
-                metaTemplateId: t.id ?? null,
-                // Meta returns "NONE" for approved templates that have no
-                // rejection reason — treat that as null at ingest time so
-                // the UI never has to guess.
-                rejectionReason:
-                  t.rejected_reason && t.rejected_reason.toUpperCase() !== 'NONE'
-                    ? t.rejected_reason
-                    : null,
-              },
-            });
-            imported += 1;
+          // Meta returns "NONE" for approved templates with no rejection reason
+          // — treat that as null so the UI never has to guess.
+          const rejectionReason =
+            t.rejected_reason && t.rejected_reason.toUpperCase() !== 'NONE' ? t.rejected_reason : null;
+          // Per-row guard: never let a single bad template (e.g. an unexpected
+          // duplicate) throw and 500 the whole sync — log + skip it instead.
+          try {
+            if (existing) {
+              await tx.whatsAppTemplate.update({
+                where: { id: existing.id },
+                data: {
+                  metaTemplateId: t.id ?? existing.metaTemplateId,
+                  status,
+                  category,
+                  bodyText: bodyText || existing.bodyText,
+                  components: components as never,
+                  rejectionReason,
+                },
+              });
+              updated += 1;
+            } else {
+              await tx.whatsAppTemplate.create({
+                data: {
+                  organizationId: orgId,
+                  name: t.name,
+                  language: t.language,
+                  category,
+                  bodyText: bodyText || '(imported from Meta — no body component)',
+                  components: components as never,
+                  status,
+                  metaTemplateId: t.id ?? null,
+                  rejectionReason,
+                },
+              });
+              imported += 1;
+            }
+          } catch (err) {
+            req.log.warn(
+              { err, name: t.name, language: t.language, metaId: t.id },
+              '[templates] sync: skipped one template row that failed to upsert',
+            );
           }
         }
 

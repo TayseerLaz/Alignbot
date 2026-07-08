@@ -58,16 +58,18 @@ function DashboardShell({ greeting }: { greeting: string }) {
   const { editing, setEditing, layout } = useEditMode();
   const { session } = useSession();
   const disabledFeatures = session?.organization?.disabledFeatures ?? [];
+  const isAlignedAdmin = !!session?.user.isAlignedAdmin;
   const [addOpen, setAddOpen] = useState(false);
 
   // Pre-bucket the visible widgets by render slot so the layout below
   // doesn't have to scan the registry inline. Widgets whose org-feature the
   // tenant doesn't have (catalog/orders/broadcasts/contacts/phone/AI/inbox…)
-  // are hidden entirely.
+  // are hidden entirely, and admin-only widgets never show to tenants.
   const visible = layout.visible
     .map((id) => WIDGETS_BY_ID[id])
     .filter(Boolean)
-    .filter((w) => !w.feature || !disabledFeatures.includes(w.feature));
+    .filter((w) => !w.feature || !disabledFeatures.includes(w.feature))
+    .filter((w) => !w.adminOnly || isAlignedAdmin);
   const kpi = visible.find((w) => w.slot === 'kpi');
   const fullWidth = visible.filter((w) => w.slot === 'full');
   const halfWidth = visible.filter((w) => w.slot === 'half');

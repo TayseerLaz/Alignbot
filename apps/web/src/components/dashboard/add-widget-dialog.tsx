@@ -32,9 +32,12 @@ export function AddWidgetDialog({
   const { layout } = useEditMode();
   const { session } = useSession();
   const disabledFeatures = session?.organization?.disabledFeatures ?? [];
-  // Don't offer widgets for features this tenant doesn't have.
+  const isAlignedAdmin = !!session?.user.isAlignedAdmin;
+  // Don't offer widgets for features this tenant doesn't have, or admin-only
+  // widgets to a regular tenant.
   const hidden = layout.hidden.filter((id) => {
     const def = WIDGETS_BY_ID[id as WidgetId];
+    if (def?.adminOnly && !isAlignedAdmin) return false;
     return !def?.feature || !disabledFeatures.includes(def.feature);
   });
 

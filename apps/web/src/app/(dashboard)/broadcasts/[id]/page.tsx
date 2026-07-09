@@ -184,6 +184,35 @@ export default function BroadcastDetailPage() {
     onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Resend failed'),
   });
 
+  // "Not on WhatsApp" cleanup — how many recipients failed because the number
+  // isn't a WhatsApp user (Meta 131026), + tag-aside / delete those contacts.
+  const undeliverableQuery = useQuery({
+    queryKey: ['broadcast-undeliverable', id],
+    queryFn: () =>
+      api.get<{ data: { count: number; sample: string[] } }>(
+        `/api/v1/broadcasts/${id}/undeliverable`,
+      ),
+    enabled: (broadcastQuery.data?.data.failedCount ?? 0) > 0,
+  });
+  const noWa = undeliverableQuery.data?.data.count ?? 0;
+  const cleanupMutation = useMutation({
+    mutationFn: (action: 'tag' | 'delete') =>
+      api.post<{ data: { affected: number } }>(
+        `/api/v1/broadcasts/${id}/undeliverable-contacts`,
+        { action },
+      ),
+    onSuccess: (res, action) => {
+      toast.success(
+        action === 'delete'
+          ? `Deleted ${res.data.affected} contact${res.data.affected === 1 ? '' : 's'} not on WhatsApp`
+          : `Tagged ${res.data.affected} contact${res.data.affected === 1 ? '' : 's'} as "no-whatsapp"`,
+      );
+      qc.invalidateQueries({ queryKey: ['broadcast-undeliverable', id] });
+      qc.invalidateQueries({ queryKey: ['contacts'] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.payload.message : 'Cleanup failed'),
+  });
+
   const exportCsv = () => {
     const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/broadcasts/${id}/recipients.csv`;
     fetch(url, {
@@ -319,6 +348,48 @@ export default function BroadcastDetailPage() {
           <CounterCard label="Delivered" value={b.deliveredCount} />
           <CounterCard label="Read" value={b.readCount} />
           <CounterCard label="Failed" value={b.failedCount} accent="text-red-600" />
+        </div>
+      ) : null}
+
+      {/* "Not on WhatsApp" cleanup — surfaces recipients Meta marked
+          undeliverable because the number isn't a WhatsApp user, and lets the
+          operator tag them aside or delete them. */}
+      {noWa > 0 ? (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-400/40 dark:bg-amber-400/10">
+          <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
+            {noWa.toLocaleString()} number{noWa === 1 ? '' : 's'} on this broadcast{' '}
+            {noWa === 1 ? "isn't" : "aren't"} on WhatsApp
+          </p>
+          <p className="mt-0.5 text-xs text-amber-800/80 dark:text-amber-200/70">
+            Meta returned “undeliverable” for {noWa === 1 ? 'it' : 'these'} — the number
+            {noWa === 1 ? " doesn't have" : "s don't have"} WhatsApp, so resending won’t reach{' '}
+            {noWa === 1 ? 'it' : 'them'}. Clean {noWa === 1 ? 'it' : 'them'} out of your list:
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={cleanupMutation.isPending && cleanupMutation.variables === 'tag'}
+              onClick={() => cleanupMutation.mutate('tag')}
+            >
+              Tag aside (“no-whatsapp”)
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              loading={cleanupMutation.isPending && cleanupMutation.variables === 'delete'}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `Delete ${noWa} contact${noWa === 1 ? '' : 's'} that ${noWa === 1 ? "isn't" : "aren't"} on WhatsApp from your contact list? Their conversation history is kept, but they're removed from the list.`,
+                  )
+                )
+                  cleanupMutation.mutate('delete');
+              }}
+            >
+              Delete from contacts
+            </Button>
+          </div>
         </div>
       ) : null}
 

@@ -1372,6 +1372,92 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- "Not on WhatsApp" cleanup -------------------------------------
+  // Recipients that failed with Meta 131026 ("Message Undeliverable") are
+  // numbers that aren't WhatsApp users. Surface them so the tenant can tag those
+  // contacts aside (excluded from future broadcasts) or delete them.
+  const NO_WHATSAPP_ERROR_CODES = ['131026'];
+
+  r.get(
+    '/broadcasts/:id/undeliverable',
+    {
+      schema: {
+        tags: ['broadcasts'],
+        summary: 'Count of recipients that failed because the number is not on WhatsApp.',
+        params: z.object({ id: uuidSchema }),
+        response: {
+          200: z.object({
+            data: z.object({ count: z.number().int(), sample: z.array(z.string()) }),
+          }),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) =>
+      app.tenant(req, async (tx) => {
+        const rows = await tx.broadcastRecipient.findMany({
+          where: {
+            broadcastId: req.params.id,
+            status: 'failed',
+            metaErrorCode: { in: NO_WHATSAPP_ERROR_CODES },
+          },
+          select: { phoneE164: true },
+        });
+        const phones = Array.from(new Set(rows.map((x) => x.phoneE164)));
+        return { data: { count: phones.length, sample: phones.slice(0, 5) } };
+      }),
+  );
+
+  r.post(
+    '/broadcasts/:id/undeliverable-contacts',
+    {
+      schema: {
+        tags: ['broadcasts'],
+        summary: 'Tag aside or delete the contacts whose numbers are not on WhatsApp.',
+        params: z.object({ id: uuidSchema }),
+        body: z.object({
+          action: z.enum(['tag', 'delete']),
+          tag: z.string().trim().min(1).max(40).default('no-whatsapp'),
+        }),
+        response: { 200: z.object({ data: z.object({ affected: z.number().int() }) }) },
+      },
+      preHandler: [app.requireRole('editor')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const { action, tag } = req.body;
+      return app.tenant(req, async (tx) => {
+        const rows = await tx.broadcastRecipient.findMany({
+          where: {
+            broadcastId: req.params.id,
+            status: 'failed',
+            metaErrorCode: { in: NO_WHATSAPP_ERROR_CODES },
+          },
+          select: { phoneE164: true },
+        });
+        const phones = Array.from(new Set(rows.map((x) => x.phoneE164)));
+        if (phones.length === 0) return { data: { affected: 0 } };
+        const contacts = await tx.contact.findMany({
+          where: { organizationId: orgId, phoneE164: { in: phones }, deletedAt: null },
+          select: { id: true },
+        });
+        if (contacts.length === 0) return { data: { affected: 0 } };
+        if (action === 'delete') {
+          const res = await tx.contact.updateMany({
+            where: { id: { in: contacts.map((c) => c.id) } },
+            data: { deletedAt: new Date() },
+          });
+          return { data: { affected: res.count } };
+        }
+        await tx.contactTag.createMany({
+          data: contacts.map((c) => ({ organizationId: orgId, contactId: c.id, tag })),
+          skipDuplicates: true,
+        });
+        return { data: { affected: contacts.length } };
+      });
+    },
+  );
+
   // ---------- POST /broadcasts/:id/resend ----------------------------------
   // Clone a broadcast and immediately send it to the same recipients.
   // Used from the detail page to fire the exact same template + audience

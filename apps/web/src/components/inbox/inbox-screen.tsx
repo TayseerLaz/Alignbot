@@ -12,6 +12,7 @@ import {
   FileText,
   Inbox,
   Info,
+  MapPin,
   MessageCircle,
   MoreHorizontal,
   Paperclip,
@@ -143,6 +144,14 @@ interface Message {
   headerMediaType?: string | null;
   // Meta delivery state for outbound messages → WhatsApp-style ticks.
   deliveryStatus?: 'sent' | 'delivered' | 'read' | 'failed' | null;
+  // Shared-location (WhatsApp) coordinates so the bubble renders a map link
+  // instead of a bare "[location]". Null/absent for non-location messages.
+  location?: {
+    latitude: number;
+    longitude: number;
+    name: string | null;
+    address: string | null;
+  } | null;
 }
 
 // Phase 8 / 1.3 — shape returned by GET /inbox/messages/:id/provenance.
@@ -1805,6 +1814,16 @@ function Bubble({
   // customer captions.
   const bodyIsImagePlaceholder =
     isImage && (!message.body || /^\[image\]/i.test(message.body.trim()));
+  // Shared-location message → render an interactive map card (name/address +
+  // "Open in Google Maps") instead of the bare "[location]" placeholder. The
+  // card links out because the portal CSP blocks external map-tile images.
+  const loc = message.location ?? null;
+  const showLocation = mt === 'location' && !!loc;
+  const bodyIsLocationPlaceholder =
+    mt === 'location' && (!message.body || /^\[location\]/i.test(message.body.trim()));
+  const mapUrl = loc
+    ? `https://www.google.com/maps/search/?api=1&query=${loc.latitude},${loc.longitude}`
+    : null;
   const flaggedCount = provQ.data?.data?.hallucinations?.length ?? 0;
   return (
     <div className={cn('flex flex-col', isOut ? 'items-end' : 'items-start')}>
@@ -1825,7 +1844,7 @@ function Bubble({
           >
             🔘 Button tapped
           </p>
-        ) : mediaTag && !showImage ? (
+        ) : mediaTag && !showImage && !showLocation ? (
           <p
             className={cn(
               'mb-1 text-[10px] font-semibold uppercase tracking-wide',
@@ -1884,6 +1903,61 @@ function Bubble({
             ) : null}
           </div>
         ) : null}
+        {/* Shared-location card. Renders the sender's pin as a clickable card
+            (name / address / coordinates) that opens the exact spot in Google
+            Maps in a new tab — CSP blocks embedding an external map tile, so a
+            link is the reliable way to actually SEE the location. */}
+        {showLocation && loc && mapUrl ? (
+          <a
+            href={mapUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open in Google Maps"
+            className={cn(
+              'group flex items-start gap-2.5 rounded-lg border px-3 py-2.5 transition-colors',
+              isOut
+                ? 'border-white/30 hover:bg-white/10'
+                : 'border-border bg-surface hover:bg-surface-muted',
+            )}
+          >
+            <span
+              className={cn(
+                'mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full',
+                isOut ? 'bg-white/20 text-white' : 'bg-brand-50 text-brand-600',
+              )}
+            >
+              <MapPin className="size-4" />
+            </span>
+            <span className="min-w-0">
+              <span
+                className={cn(
+                  'block text-sm font-semibold',
+                  isOut ? 'text-white' : 'text-foreground',
+                )}
+              >
+                {loc.name || 'Shared location'}
+              </span>
+              {loc.address ? (
+                <span
+                  className={cn(
+                    'mt-0.5 block break-words text-xs',
+                    isOut ? 'text-white/80' : 'text-foreground-subtle',
+                  )}
+                >
+                  {loc.address}
+                </span>
+              ) : null}
+              <span
+                className={cn(
+                  'mt-1 block text-[11px] font-medium underline-offset-2 group-hover:underline',
+                  isOut ? 'text-white/90' : 'text-brand-600',
+                )}
+              >
+                {loc.latitude.toFixed(5)}, {loc.longitude.toFixed(5)} · Open in Maps ↗
+              </span>
+            </span>
+          </a>
+        ) : null}
         {/* Template header media (broadcast / test-send) — the image / video /
             document the customer received, above the rendered body text. */}
         {message.headerImageUrl ? (
@@ -1924,8 +1998,8 @@ function Bubble({
             </button>
           )
         ) : null}
-        {bodyIsImagePlaceholder || showAudio ? null : (
-          <p className={cn('whitespace-pre-wrap break-words', showImage && 'mt-1.5')}>
+        {bodyIsImagePlaceholder || showAudio || (showLocation && bodyIsLocationPlaceholder) ? null : (
+          <p className={cn('whitespace-pre-wrap break-words', (showImage || showLocation) && 'mt-1.5')}>
             {message.body ?? <em className="opacity-70">[{message.messageType ?? 'media'}]</em>}
           </p>
         )}

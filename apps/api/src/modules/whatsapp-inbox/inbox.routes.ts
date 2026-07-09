@@ -108,6 +108,18 @@ const messageDtoSchema = z.object({
   // Meta delivery state for OUTBOUND messages — drives the WhatsApp-style
   // ticks (sent ✓, delivered ✓✓, read ✓✓ blue, failed). Null on inbound.
   deliveryStatus: z.enum(['sent', 'delivered', 'read', 'failed']).nullable(),
+  // Inbound WhatsApp location messages carry coordinates (+ optional
+  // name/address the sender's map picked). Surfaced so the operator can
+  // actually open the spot on a map instead of seeing a bare "[location]".
+  // Null for every non-location row.
+  location: z
+    .object({
+      latitude: z.number(),
+      longitude: z.number(),
+      name: z.string().nullable(),
+      address: z.string().nullable(),
+    })
+    .nullable(),
 });
 
 const noteDtoSchema = z.object({
@@ -731,6 +743,12 @@ export default async function inboxRoutes(app: FastifyInstance) {
                   sku?: unknown;
                   quickReplies?: unknown;
                   headerImageUrl?: unknown;
+                  location?: {
+                    latitude?: unknown;
+                    longitude?: unknown;
+                    name?: unknown;
+                    address?: unknown;
+                  };
                 }
               | null;
             const quickReplies =
@@ -772,6 +790,29 @@ export default async function inboxRoutes(app: FastifyInstance) {
                 imageSource = { kind: 'product', productSku: raw.sku };
               }
             }
+            // Inbound shared-location → surface the coordinates so the inbox can
+            // render a map link. Meta's inbound shape is m.location =
+            // { latitude, longitude, name?, address? }, stored verbatim on
+            // rawPayload. Guard on finite numbers so a malformed payload is
+            // treated as no-location rather than crashing the DTO.
+            let location: {
+              latitude: number;
+              longitude: number;
+              name: string | null;
+              address: string | null;
+            } | null = null;
+            if (m.messageType === 'location' && raw && raw.location) {
+              const lat = Number(raw.location.latitude);
+              const lng = Number(raw.location.longitude);
+              if (Number.isFinite(lat) && Number.isFinite(lng)) {
+                location = {
+                  latitude: lat,
+                  longitude: lng,
+                  name: typeof raw.location.name === 'string' ? raw.location.name : null,
+                  address: typeof raw.location.address === 'string' ? raw.location.address : null,
+                };
+              }
+            }
             return {
               id: m.id,
               direction: m.direction === 'outbound' ? ('outbound' as const) : ('inbound' as const),
@@ -801,6 +842,7 @@ export default async function inboxRoutes(app: FastifyInstance) {
                   m.metaStatus === 'failed')
                   ? (m.metaStatus as 'sent' | 'delivered' | 'read' | 'failed')
                   : null,
+              location,
             };
           }),
           nextCursor: olderCursor,

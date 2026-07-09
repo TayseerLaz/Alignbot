@@ -437,6 +437,67 @@ export async function chargeAtSend(args: {
   });
 }
 
+/**
+ * Refund a charge-at-send debit when the message later FAILED delivery. Meta
+ * bills on delivery, not the send attempt (failed = $0), but chargeAtSend debits
+ * the tenant the moment Meta ACCEPTS the send — so an undelivered message would
+ * otherwise leave the tenant over-charged. This credits the exact amount back.
+ *
+ * Idempotent + race-safe: the refund is "claimed" with an atomic conditional
+ * UPDATE that only fires when the recipient was billed and NOT yet refunded, so
+ * duplicate 'failed' webhooks (or a re-delivered one) never double-refund. The
+ * refunded amount is read from the recipient's own `settle` ledger row, so it
+ * matches whatever price was actually charged for that recipient.
+ */
+export async function refundFailedSend(
+  orgId: string,
+  recipientId: string,
+): Promise<{ refunded: boolean; micros: number }> {
+  return prisma.$transaction(async (tx) => {
+    // Atomic idempotency claim: only proceed if billed and not already refunded.
+    const claimed = await tx.$queryRaw<{ id: string; broadcast_id: string | null }[]>`
+      UPDATE broadcast_recipients SET refunded_at = now()
+       WHERE id = ${recipientId}::uuid AND organization_id = ${orgId}::uuid
+         AND billed_at IS NOT NULL AND refunded_at IS NULL
+       RETURNING id, broadcast_id`;
+    if (claimed.length === 0) return { refunded: false, micros: 0 };
+    const broadcastId = claimed[0]!.broadcast_id;
+    // The exact amount charged for THIS recipient (from its settle ledger row).
+    const led = await tx.$queryRaw<{ unit_price_micros: bigint | null }[]>`
+      SELECT unit_price_micros FROM wallet_ledger
+       WHERE organization_id = ${orgId}::uuid AND recipient_id = ${recipientId}::uuid AND kind = 'settle'
+       ORDER BY created_at DESC LIMIT 1`;
+    const P = led[0]?.unit_price_micros ?? 0n;
+    if (P <= 0n) return { refunded: true, micros: 0 };
+    const rows = await tx.$queryRaw<{ available_micros: bigint; held_micros: bigint }[]>`
+      UPDATE tenant_wallets
+         SET available_micros = available_micros + ${P}::bigint,
+             lifetime_spent_micros = GREATEST(lifetime_spent_micros - ${P}::bigint, 0),
+             lifetime_messages = GREATEST(lifetime_messages - 1, 0),
+             updated_at = now()
+       WHERE organization_id = ${orgId}::uuid
+       RETURNING available_micros, held_micros`;
+    const after = rows[0];
+    if (!after) return { refunded: true, micros: 0 };
+    if (broadcastId) {
+      await tx.$executeRaw`UPDATE broadcasts SET billing_settled_micros = GREATEST(billing_settled_micros - ${P}::bigint, 0) WHERE id = ${broadcastId}::uuid`;
+    }
+    await tx.walletLedger.create({
+      data: {
+        organizationId: orgId,
+        kind: 'release',
+        amountMicros: P,
+        availableAfter: after.available_micros,
+        heldAfter: after.held_micros,
+        broadcastId,
+        recipientId,
+        unitPriceMicros: P,
+      },
+    });
+    return { refunded: true, micros: Number(P) };
+  });
+}
+
 /** Return a completed broadcast's unspent hold to available. Terminal + idempotent. */
 export async function releaseRemainder(orgId: string, broadcastId: string): Promise<{ released: number }> {
   return prisma.$transaction(async (tx) => {

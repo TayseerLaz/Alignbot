@@ -2593,6 +2593,9 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 '[AL-VOICE-DEBUG] Meta marked outbound as FAILED',
               );
             }
+            // Captured inside the tx, used AFTER commit to refund a failed-but-
+            // billed metered send (see below).
+            let failedBilledRecipientId: string | null = null;
             await withRlsBypass(async (tx) => {
               await tx.whatsAppMessage.updateMany({
                 where: {
@@ -2631,6 +2634,15 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 updates.status = 'failed';
                 updates.failedAt = ts;
                 counterDelta.failedCount = 1;
+                // Meta bills on delivery, not the send attempt — a failed
+                // delivery costs $0. chargeAtSend already debited the tenant, so
+                // the charge must be refunded (done after commit, idempotently).
+                // Guard on never-delivered: a message that was delivered/read was
+                // billed correctly and must NOT be refunded even on an odd late
+                // 'failed'.
+                if (recipient.billedAt && !recipient.deliveredAt && !recipient.readAt) {
+                  failedBilledRecipientId = recipient.id;
+                }
                 // Persist Meta's reason so the recipient row shows WHY it failed
                 // (previously only logged → every delivery-failure was blank).
                 // Most common: the number isn't a WhatsApp user / undeliverable.
@@ -2656,6 +2668,29 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                 });
               }
             }).catch((err) => req.log.error({ err }, '[whatsapp] status update failed'));
+
+            // Refund the charge-at-send debit for a metered message that FAILED
+            // delivery (Meta bills on delivery, not the attempt). Idempotent
+            // (atomic refunded_at claim) + fire-and-forget so the webhook ack
+            // stays fast; a duplicate 'failed' webhook can't double-refund.
+            if (failedBilledRecipientId) {
+              void wallet
+                .refundFailedSend(channel.organizationId, failedBilledRecipientId)
+                .then((r) => {
+                  if (r.refunded && r.micros > 0) {
+                    req.log.info(
+                      { recipientId: failedBilledRecipientId, micros: r.micros },
+                      '[wallet] refunded a failed-delivery charge',
+                    );
+                  }
+                })
+                .catch((err) =>
+                  req.log.error(
+                    { err, recipientId: failedBilledRecipientId },
+                    '[wallet] refund on failed delivery threw',
+                  ),
+                );
+            }
           }
         }
       }

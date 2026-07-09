@@ -2548,6 +2548,12 @@ model BroadcastRecipient {
   // Wallet settle idempotency (§4.4): set when this send is charged so a retried
   // send job never double-charges.
   billedAt         DateTime?        @map("billed_at")
+  // Set when a billed message later FAILED delivery and its wallet charge was
+  // refunded. Meta bills on delivery, not the send attempt (failed = $0), but
+  // the wallet charges at send — so a failed delivery must credit the tenant
+  // back. The atomic (billed_at IS NOT NULL AND refunded_at IS NULL) claim makes
+  // the refund idempotent against duplicate 'failed' webhooks.
+  refundedAt       DateTime?        @map("refunded_at")
   createdAt        DateTime         @default(now()) @map("created_at")
 
   organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)

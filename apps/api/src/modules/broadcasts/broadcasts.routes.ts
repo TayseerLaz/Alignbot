@@ -324,7 +324,9 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
             segmentId: body.segmentId ?? null,
             audienceTags: normalizedTags,
             audienceTagsMode: body.audienceTagsMode ?? 'any',
-            includeOptedOut: body.includeOptedOut ?? false,
+            // Unsubscribed contacts are NEVER messaged — the "send anyway"
+            // override was removed (compliance). Always false.
+            includeOptedOut: false,
             abTest: body.abTest,
             variantATemplateId: body.variantATemplateId,
             variantBTemplateId: body.variantBTemplateId ?? null,
@@ -427,7 +429,8 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
             audienceKind: body.audienceKind ?? undefined,
             csvAssetId: body.csvAssetId !== undefined ? body.csvAssetId : undefined,
             segmentId: body.segmentId !== undefined ? body.segmentId : undefined,
-            includeOptedOut: body.includeOptedOut ?? undefined,
+            // Never messaged unsubscribed contacts — override removed.
+            includeOptedOut: false,
             abTest: body.abTest ?? undefined,
             variantATemplateId: body.variantATemplateId ?? undefined,
             variantBTemplateId:
@@ -541,7 +544,9 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
           if (!seg) throw notFound('Segment no longer exists.');
           const where = buildContactWhereForSegment(segmentFilterSchema.parse(seg.filter));
           const contacts = await tx.contact.findMany({
-            where,
+            // Unsubscribed contacts are excluded from every audience — they can
+            // still be seen (tagged "unsubscribed") in the contact list.
+            where: { ...where, optedOutAt: null },
             select: { id: true, phoneE164: true },
             take: 100_000,
           });
@@ -608,7 +613,8 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
             );
           }
           const contacts = await tx.contact.findMany({
-            where: { id: { in: contactIds }, deletedAt: null },
+            // Exclude unsubscribed contacts from tag audiences too.
+            where: { id: { in: contactIds }, deletedAt: null, optedOutAt: null },
             select: { id: true, phoneE164: true },
             take: 100_000,
           });

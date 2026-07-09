@@ -134,9 +134,7 @@ export default function NewBroadcastPage() {
   const [batchEnabled, setBatchEnabled] = useState(false);
   const [batchSize, setBatchSize] = useState(300);
   const [batchIntervalMinutes, setBatchIntervalMinutes] = useState(30);
-  // Compliance: by default unsubscribed contacts are skipped. Operator can
-  // explicitly choose to send to them anyway.
-  const [includeOptedOut, setIncludeOptedOut] = useState(false);
+  // Compliance: unsubscribed contacts are ALWAYS excluded (no override).
 
   // Data
   const channelsQuery = useQuery({
@@ -259,7 +257,8 @@ export default function NewBroadcastPage() {
         audienceTags: audienceKind === 'tags' ? tagAudience : undefined,
         audienceTagsMode: audienceKind === 'tags' ? tagAudienceMode : undefined,
         manualPhones,
-        includeOptedOut,
+        // Always false — unsubscribed contacts are never messaged (no UI toggle).
+        includeOptedOut: false,
         abTest,
         variantATemplateId: variantATemplateId!,
         variantBTemplateId: abTest ? variantBTemplateId ?? undefined : undefined,
@@ -919,26 +918,17 @@ export default function NewBroadcastPage() {
               </div>
             ) : null}
 
-            {/* Unsubscribe compliance note + explicit override. */}
+            {/* Unsubscribe compliance note — unsubscribed are ALWAYS excluded. */}
             <div className="border-t border-border pt-4">
-              <div className="rounded-md border border-red-300 bg-red-50 p-3">
-                <p className="text-sm font-medium text-red-800">
-                  Unsubscribed contacts won&apos;t receive this broadcast
+              <div className="rounded-md border border-border bg-surface-muted/50 p-3">
+                <p className="text-sm text-foreground-muted">
+                  Unsubscribed contacts are automatically excluded from every broadcast (WhatsApp
+                  compliance). You can still see them in your{' '}
+                  <a href="/contacts" className="font-medium text-brand-600 underline">
+                    contact list
+                  </a>{' '}
+                  with an <span className="font-medium">Unsubscribed</span> badge.
                 </p>
-                <p className="mt-1 text-sm text-red-700">
-                  Contacts who unsubscribed (tagged{' '}
-                  <code className="rounded bg-red-100 px-1">unsubscribed</code>) are skipped. Only
-                  override this if you have a lawful reason to message them again — re-sending to
-                  people who opted out can violate WhatsApp policy.
-                </p>
-                <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm font-medium text-red-800">
-                  <input
-                    type="checkbox"
-                    checked={includeOptedOut}
-                    onChange={(e) => setIncludeOptedOut(e.target.checked)}
-                  />
-                  Send anyway — include unsubscribed contacts
-                </label>
               </div>
             </div>
           </CardContent>

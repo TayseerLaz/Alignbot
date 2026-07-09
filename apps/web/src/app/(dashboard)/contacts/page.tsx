@@ -518,6 +518,14 @@ function ContactRow({
                 <Ban className="size-3" /> Blocked
               </span>
             ) : null}
+            {contact.optedOutAt ? (
+              <span
+                className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"
+                title="This contact unsubscribed — excluded from all broadcasts"
+              >
+                Unsubscribed
+              </span>
+            ) : null}
           </span>
         )}
       </td>

@@ -366,7 +366,23 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
   );
   // Real total for the current filter (not just how many are loaded).
   const totalThreads = threadsQ.data?.pages[0]?.total ?? threads.length;
-  const active = threads.find((t) => t.id === activeId) ?? null;
+
+  // Fetch the OPEN thread by id as a stable fallback. During a broadcast every
+  // recipient's thread bumps to the top of the (last-message-ordered) list,
+  // which pushes the conversation the operator is viewing down and off the
+  // loaded/refetched pages — then `threads.find` returns null and the detail
+  // pane empties ("it takes me out of the convo"). Fetching it by id keeps it
+  // open + fresh regardless of the list churn. Shares the ['inbox-thread', id]
+  // key prefix so the existing onChanged / SSE invalidations refresh it too.
+  const activeThreadQ = useQuery({
+    queryKey: ['inbox-thread', activeId, 'row'],
+    queryFn: () => api.get<{ data: Thread }>(`/api/v1/inbox/threads/${activeId}`),
+    enabled: !!activeId,
+    staleTime: 5_000,
+  });
+  const active =
+    threads.find((t) => t.id === activeId) ??
+    (activeThreadQ.data?.data.id === activeId ? activeThreadQ.data.data : null);
 
   // Auto-select the first thread ONLY on desktop (the two-pane lg+ layout always
   // wants a conversation showing). On mobile this must NOT run: the master-detail

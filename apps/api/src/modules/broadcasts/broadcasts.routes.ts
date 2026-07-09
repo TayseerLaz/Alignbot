@@ -1303,12 +1303,30 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
     async (req) => {
       const orgId = req.auth!.organizationId;
       const id = req.params.id;
-      const requeued = await app.tenant(req, async (tx) => {
+      // Guard, then collect the failed recipients that still carry a wallet
+      // charge (metered sends). We refund those BEFORE re-arming billing below,
+      // so the resend is a clean fresh charge → fresh refund-if-fails cycle
+      // rather than a silent free (already-billed) send.
+      const billedFailed = await app.tenant(req, async (tx) => {
         const existing = await tx.broadcast.findUnique({ where: { id } });
         if (!existing) throw notFound('Broadcast not found.');
         if (existing.status === 'cancelled') {
           throw conflict('Cannot re-run a cancelled broadcast. Clone it instead.');
         }
+        return tx.broadcastRecipient.findMany({
+          where: { broadcastId: id, status: 'failed', billedAt: { not: null }, refundedAt: null },
+          select: { id: true },
+        });
+      });
+      if (billedFailed.length > 0) {
+        const { refundFailedSend } = await import('../../lib/wallet.js');
+        for (const r of billedFailed) {
+          await refundFailedSend(orgId, r.id).catch((err) =>
+            req.log.error({ err, recipientId: r.id }, '[broadcasts] rerun-failed refund threw'),
+          );
+        }
+      }
+      const requeued = await app.tenant(req, async (tx) => {
         const updated = await tx.broadcastRecipient.updateMany({
           where: { broadcastId: id, status: 'failed' },
           data: {
@@ -1317,6 +1335,10 @@ export default async function broadcastsRoutes(app: FastifyInstance) {
             metaErrorMessage: null,
             failedAt: null,
             attemptCount: 0,
+            // Re-arm billing: a resend must charge fresh (billed_at NULL) and be
+            // refundable again if it fails once more (refunded_at NULL).
+            billedAt: null,
+            refundedAt: null,
           },
         });
         if (updated.count > 0) {

@@ -284,32 +284,33 @@ export default async function billingRoutes(app: FastifyInstance) {
   );
 
   // ---------- GET /billing/ledger --------------------------------------
-  // The tenant's own wallet history. Charges (settle) show as negative,
-  // top-ups/releases positive. Holds are hidden — they're transient
-  // reservations, not real spend, and would only confuse a tenant.
+  // The tenant's own wallet history, GROUPED so a broadcast that charged 2,000
+  // messages shows as ONE "Messages sent · 2,000 · -$160.00" row, not 2,000
+  // rows. Aggregated by (day, kind, broadcast): per-broadcast message charges +
+  // refunds roll up to a single line each; top-ups/adjustments stay effectively
+  // individual (rarely more than one a day). Holds are hidden (transient).
   r.get(
     '/billing/ledger',
     {
       schema: {
         tags: ['billing'],
-        summary: "This org's wallet history (top-ups, charges, refunds).",
+        summary: "This org's wallet history, grouped (charges/refunds rolled up).",
         querystring: z.object({
-          cursor: z.string().uuid().optional(),
-          limit: z.coerce.number().int().min(1).max(100).default(50),
+          limit: z.coerce.number().int().min(1).max(500).default(200),
         }),
         response: {
           200: z.object({
             data: z.array(
               z.object({
-                id: uuidSchema,
+                day: z.string(), // YYYY-MM-DD
                 kind: z.string(),
+                type: z.string(), // friendly label
+                count: z.number().int(),
                 amountMicros: z.number(),
                 availableAfterMicros: z.number(),
                 note: z.string().nullable(),
-                createdAt: z.string(),
               }),
             ),
-            nextCursor: z.string().nullable(),
           }),
         },
       },
@@ -317,25 +318,70 @@ export default async function billingRoutes(app: FastifyInstance) {
     },
     async (req) => {
       const orgId = req.auth!.organizationId;
-      const { cursor, limit } = req.query;
-      const rows = await prisma.walletLedger.findMany({
-        where: { organizationId: orgId, kind: { not: 'hold' } },
-        orderBy: { createdAt: 'desc' },
-        take: limit + 1,
-        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      });
-      const hasMore = rows.length > limit;
-      const page = hasMore ? rows.slice(0, limit) : rows;
+      const { limit } = req.query;
+      const rows = await prisma.$queryRaw<
+        {
+          day: Date;
+          kind: string;
+          cnt: bigint;
+          total_micros: bigint;
+          available_after: bigint;
+          broadcast_name: string | null;
+          a_note: string | null;
+        }[]
+      >`
+        SELECT date_trunc('day', wl.created_at) AS day,
+               wl.kind,
+               count(*) AS cnt,
+               sum(wl.amount_micros) AS total_micros,
+               (array_agg(wl.available_after_micros ORDER BY wl.created_at DESC))[1] AS available_after,
+               max(b.name) AS broadcast_name,
+               max(wl.note) AS a_note
+          FROM wallet_ledger wl
+          LEFT JOIN broadcasts b ON b.id = wl.broadcast_id
+         WHERE wl.organization_id = ${orgId}::uuid AND wl.kind <> 'hold'
+         GROUP BY date_trunc('day', wl.created_at), wl.kind, wl.broadcast_id
+         ORDER BY date_trunc('day', wl.created_at) DESC, max(wl.created_at) DESC
+         LIMIT ${limit}`;
+
+      const describe = (
+        kind: string,
+        count: number,
+        name: string | null,
+        note: string | null,
+      ): { type: string; label: string | null } => {
+        const nm = name ? ` · ${name}` : '';
+        switch (kind) {
+          case 'settle':
+            return { type: 'Messages sent', label: `${count.toLocaleString()} message${count === 1 ? '' : 's'}${nm}` };
+          case 'release':
+            return {
+              type: 'Refunds',
+              label: `${count.toLocaleString()} failed delivery refunded${nm}`,
+            };
+          case 'topup':
+            return { type: 'Top-up', label: count > 1 ? `${count} top-ups` : note ?? 'Wallet top-up' };
+          case 'adjust':
+            return { type: 'Adjustment', label: count > 1 ? `${count} adjustments` : note ?? 'Manual adjustment' };
+          default:
+            return { type: kind, label: note };
+        }
+      };
+
       return {
-        data: page.map((x) => ({
-          id: x.id,
-          kind: x.kind,
-          amountMicros: Number(x.amountMicros),
-          availableAfterMicros: Number(x.availableAfter),
-          note: x.note,
-          createdAt: x.createdAt.toISOString(),
-        })),
-        nextCursor: hasMore ? page[page.length - 1]!.id : null,
+        data: rows.map((r) => {
+          const count = Number(r.cnt);
+          const d = describe(r.kind, count, r.broadcast_name, r.a_note);
+          return {
+            day: r.day.toISOString().slice(0, 10),
+            kind: r.kind,
+            type: d.type,
+            count,
+            amountMicros: Number(r.total_micros),
+            availableAfterMicros: Number(r.available_after),
+            note: d.label,
+          };
+        }),
       };
     },
   );

@@ -1,7 +1,7 @@
 'use client';
 
 import { formatMicrosUsd } from '@aligned/shared';
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { AlertOctagon, AlertTriangle, Gauge, Wallet } from 'lucide-react';
 
 import { PageHeader } from '@/components/shell/page-header';
@@ -16,30 +16,16 @@ import { cn } from '@/lib/utils';
 
 type LedgerKind = 'topup' | 'adjust' | 'settle' | 'release' | 'hold';
 
-interface LedgerEntry {
-  id: string;
+// Grouped wallet activity — the API rolls per-message charges/refunds up into
+// one line per (day, kind, broadcast) so we never render thousands of rows.
+interface LedgerGroup {
+  day: string; // YYYY-MM-DD
   kind: LedgerKind;
+  type: string; // friendly label ("Messages sent", "Refunds", …)
+  count: number;
   amountMicros: number;
   availableAfterMicros: number;
   note: string | null;
-  createdAt: string;
-}
-
-interface LedgerPage {
-  data: LedgerEntry[];
-  nextCursor: string | null;
-}
-
-const KIND_LABEL: Record<LedgerKind, string> = {
-  topup: 'Top-up',
-  settle: 'Message charge',
-  adjust: 'Adjustment',
-  release: 'Refund',
-  hold: 'Hold',
-};
-
-function humanizeKind(kind: LedgerKind): string {
-  return KIND_LABEL[kind] ?? kind;
 }
 
 export default function BillingPage() {
@@ -73,17 +59,13 @@ export default function BillingPage() {
   });
   const planName = subQ.data?.data.planName ?? null;
 
-  const ledgerQ = useInfiniteQuery({
+  const ledgerQ = useQuery({
     queryKey: ['billing', 'ledger'],
-    queryFn: ({ pageParam }: { pageParam: string | null }) =>
-      api.get<LedgerPage>(
-        `/api/v1/billing/ledger?limit=50${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ''}`,
-      ),
-    initialPageParam: null as string | null,
-    getNextPageParam: (last) => last.nextCursor,
+    queryFn: () => api.get<{ data: LedgerGroup[] }>('/api/v1/billing/ledger?limit=200'),
+    staleTime: 30_000,
   });
 
-  const ledgerRows = ledgerQ.data?.pages.flatMap((p) => p.data) ?? [];
+  const ledgerRows = ledgerQ.data?.data ?? [];
 
   return (
     <>
@@ -187,20 +169,21 @@ export default function BillingPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {ledgerRows.map((r) => {
+                    {ledgerRows.map((r, i) => {
                       const positive = r.amountMicros >= 0;
                       return (
-                        <tr key={r.id}>
+                        <tr key={`${r.day}-${r.kind}-${i}`}>
                           <td className="whitespace-nowrap px-4 py-2 text-foreground-muted">
-                            {new Date(r.createdAt).toLocaleDateString()}{' '}
-                            <span className="text-xs text-foreground-subtle">
-                              {new Date(r.createdAt).toLocaleTimeString([], {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </span>
+                            {new Date(`${r.day}T00:00:00`).toLocaleDateString()}
                           </td>
-                          <td className="px-4 py-2">{humanizeKind(r.kind)}</td>
+                          <td className="px-4 py-2">
+                            {r.type}
+                            {r.count > 1 ? (
+                              <span className="ml-1.5 rounded bg-surface-muted px-1.5 py-0.5 text-[11px] tabular-nums text-foreground-muted">
+                                ×{r.count.toLocaleString()}
+                              </span>
+                            ) : null}
+                          </td>
                           <td
                             className={cn(
                               'px-4 py-2 text-right font-medium tabular-nums',
@@ -222,18 +205,6 @@ export default function BillingPage() {
                 </table>
               </div>
             )}
-            {ledgerQ.hasNextPage ? (
-              <div className="flex justify-center border-t border-border p-3">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  loading={ledgerQ.isFetchingNextPage}
-                  onClick={() => ledgerQ.fetchNextPage()}
-                >
-                  Load older
-                </Button>
-              </div>
-            ) : null}
           </CardContent>
         </Card>
       </div>

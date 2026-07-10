@@ -516,6 +516,17 @@ export async function refreshSession(refreshToken: string, meta: RequestMeta) {
       previousTokenRotatedAt: new Date(),
       refreshTokenHash: hashToken(newRefresh.token),
       lastUsedAt: new Date(),
+      // SLIDING SESSION. Previously expiresAt was stamped once at login
+      // (login + JWT_REFRESH_TTL) and never moved, so every user was hard
+      // logged-out exactly 7 days after their FIRST login no matter how
+      // active they were — felt like "it keeps asking me to sign in",
+      // especially on mobile where the in-memory access token is always
+      // lost on tab eviction and the session rides entirely on this cookie.
+      // Now each refresh pushes the expiry forward, so a user who opens the
+      // app within the window stays signed in indefinitely. The refresh
+      // cookie's maxAge is already re-set to the same TTL on every refresh
+      // (auth.routes.ts), so cookie + DB session now expire in lockstep.
+      expiresAt: new Date(Date.now() + env.JWT_REFRESH_TTL_SECONDS * 1000),
       userAgent: meta.userAgent ?? session.userAgent,
       ipAddress: meta.ip ?? session.ipAddress,
     },

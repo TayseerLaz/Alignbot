@@ -17,9 +17,15 @@ const envSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().positive().default(900),
-  // 7 days. Combined with refresh-token rotation, this caps the silent
-  // damage window if a refresh token leaks. Ops can override per-env.
-  JWT_REFRESH_TTL_SECONDS: z.coerce.number().int().positive().default(60 * 60 * 24 * 7),
+  // 30 days, and SLIDING — every /auth/refresh pushes the expiry forward
+  // (auth.service.ts), so an active user effectively stays signed in and
+  // only a full month of no-opens forces a re-login. This is the "stay
+  // logged in on my phone" window: mobile browsers evict the in-memory
+  // access token constantly, so the session lives on the refresh cookie,
+  // and 7 days was too short (felt like re-login every week). Refresh-token
+  // rotation + reuse-detection still cap the damage window if one leaks.
+  // Ops can shorten per-env for stricter tenants.
+  JWT_REFRESH_TTL_SECONDS: z.coerce.number().int().positive().default(60 * 60 * 24 * 30),
   COOKIE_DOMAIN: z.string().default('localhost'),
   COOKIE_SECURE: z
     .string()

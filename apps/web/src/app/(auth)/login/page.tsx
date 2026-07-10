@@ -65,9 +65,18 @@ const LINK_SUBTLE =
 
 export default function LoginPage() {
   const router = useRouter();
-  const { refresh } = useSession();
+  const { refresh, status } = useSession();
   const [showPassword, setShowPassword] = useState(false);
   const [step, setStep] = useState<Step>('credentials');
+
+  // Already signed in? Bounce straight into the app. This is what makes the
+  // phone "back button" behave: after login we replace() to the dashboard, but
+  // if the browser ever lands back on /login while the refresh cookie is still
+  // valid (back gesture, stale bookmark, tab restore), we redirect instead of
+  // showing the sign-in form — which previously looked like being logged out.
+  useEffect(() => {
+    if (status === 'authenticated') router.replace('/dashboard');
+  }, [status, router]);
 
   const stash = useRef<{ email: string; password: string } | null>(null);
   const [totpCode, setTotpCode] = useState('');
@@ -87,7 +96,9 @@ export default function LoginPage() {
   const finishLogin = async (res: { accessToken: string; expiresAt: string }) => {
     setAccessToken(res.accessToken, res.expiresAt);
     await refresh();
-    router.push('/dashboard');
+    // replace(), not push(): drop /login from the history stack so the phone
+    // back gesture doesn't return to the sign-in form after logging in.
+    router.replace('/dashboard');
   };
 
   const onSubmitCredentials = form.handleSubmit(async (values) => {
@@ -144,6 +155,9 @@ export default function LoginPage() {
       setVerifying(false);
     }
   };
+
+  // Redirect in flight (already authenticated) — don't flash the sign-in form.
+  if (status === 'authenticated') return null;
 
   if (step === 'credentials') {
     return (

@@ -778,6 +778,15 @@ model Product {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
   deletedAt        DateTime? @map("deleted_at") // soft-delete
+  // --- Alinia integration -------------------------------------------------
+  // 'native' = a normal Hader-authored product. 'alinia' = a READ-ONLY mirror
+  // of an Alinia real-estate listing, synced one-way (edited only in Alinia,
+  // and DB-trigger-protected from local writes). RE fields (beds/area/city/
+  // sale+rent price/currency/status) live in `attributes` for mirror rows —
+  // this dodges the Int32 priceMinor + per-org-currency limits entirely.
+  sourceSystem     String    @default("native") @map("source_system")
+  // Stable Alinia property UUID this row mirrors (null for native products).
+  aliniaPropertyId String?   @map("alinia_property_id")
 
   organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   category     Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
@@ -789,6 +798,10 @@ model Product {
   @@index([organizationId, isAvailable, createdAt(sort: Desc)])
   @@index([organizationId, categoryId])
   @@index([organizationId, deletedAt])
+  // Idempotent upsert key for the Alinia mirror (NULLs are distinct in PG, so
+  // native products with a NULL alinia_property_id never collide).
+  @@unique([organizationId, aliniaPropertyId])
+  @@index([organizationId, sourceSystem])
   // pg_trgm GIN index added in raw SQL after migration (Prisma can't express it):
   //   CREATE INDEX products_search_trgm_idx ON products USING gin (search_text gin_trgm_ops);
   @@map("products")
@@ -834,6 +847,8 @@ model ProductImage {
   // Media_ids are scoped to the WhatsApp business account (phone_number_id).
   // Cached id only valid if the active primary channel matches this id.
   metaMediaIdChannelId String?   @map("meta_media_id_channel_id") @db.Uuid
+  // Mirror provenance: 'alinia' images are pulled from Alinia and read-only.
+  sourceSystem String   @default("native") @map("source_system")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   product      Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -869,6 +884,8 @@ model Service {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
   deletedAt        DateTime? @map("deleted_at")
+  // Mirror provenance (mirrors Product). 'alinia' services are read-only.
+  sourceSystem     String    @default("native") @map("source_system")
 
   organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   category     Category?            @relation(fields: [categoryId], references: [id], onDelete: SetNull)

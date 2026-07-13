@@ -64,4 +64,29 @@ export async function withRlsBypass<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Alinia integration — run the one-way listing-mirror ingest/sync with writes
+ * to Alinia-owned rows (products/services with source_system='alinia') UNLOCKED.
+ *
+ * Tenant-scoped exactly like withTenant (SET ROLE aligned_app + current_org_id
+ * so RLS still filters to this org) AND sets app.alinia_sync='on', which the
+ * read-only trigger (`_alinia_guard_mirror_row`) checks before allowing a write
+ * to a mirror row. ONLY the Alinia→Hader sync path may use this — never a
+ * user-facing request. `organizationId` MUST be resolved server-side from the
+ * agency↔org link, never from a client-supplied value.
+ */
+export async function withAliniaSync<T>(organizationId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL ROLE aligned_app`);
+      await tx.$executeRawUnsafe(`SELECT set_config('app.current_org_id', $1, true)`, organizationId);
+      await tx.$executeRawUnsafe(`SELECT set_config('app.alinia_sync', 'on', true)`);
+      return fn(tx as Tx);
+    });
+  } catch (err) {
+    reportPostgresRlsViolation(err, { kind: 'tenant', organizationId });
+    throw err;
+  }
+}
+
 export type { Prisma };

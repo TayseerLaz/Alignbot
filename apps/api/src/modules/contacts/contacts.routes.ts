@@ -58,6 +58,7 @@ async function mirrorTagToThreads(
 interface ContactRow {
   id: string;
   phoneE164: string;
+  email: string | null;
   displayName: string | null;
   whatsappName: string | null;
   locale: string | null;
@@ -79,6 +80,7 @@ function toContactDto(row: ContactRow) {
   return {
     id: row.id,
     phoneE164: row.phoneE164,
+    email: row.email,
     displayName: row.displayName,
     whatsappName: row.whatsappName,
     locale: row.locale,
@@ -114,6 +116,7 @@ export default async function contactsRoutes(app: FastifyInstance) {
         .object({
           id: uuidSchema,
           phoneE164: z.string(),
+          email: z.string().nullable(),
           displayName: z.string().nullable(),
           whatsappName: z.string().nullable(),
           optedInAt: z.string().nullable(),
@@ -226,6 +229,7 @@ export default async function contactsRoutes(app: FastifyInstance) {
               ? {
                   id: contact.id,
                   phoneE164: contact.phoneE164,
+                  email: contact.email,
                   displayName: contact.displayName,
                   whatsappName: contact.whatsappName,
                   optedInAt: contact.optedInAt?.toISOString() ?? null,
@@ -351,6 +355,7 @@ export default async function contactsRoutes(app: FastifyInstance) {
           where.OR = [
             { phoneE164: { contains: trimmed, mode: 'insensitive' } },
             { displayName: { contains: trimmed, mode: 'insensitive' } },
+            { email: { contains: trimmed, mode: 'insensitive' } },
           ];
         }
         if (tag) {
@@ -477,11 +482,14 @@ export default async function contactsRoutes(app: FastifyInstance) {
           body.optedOut === true ? new Date() : body.optedOut === false ? null : undefined;
         const blockedAt =
           body.blocked === true ? new Date() : body.blocked === false ? null : undefined;
+        // Normalize email: empty string clears it; undefined leaves it unset.
+        const email = body.email !== undefined ? body.email?.trim() || null : undefined;
         const upserted = await tx.contact.upsert({
           where: { organizationId_phoneE164: { organizationId: orgId, phoneE164: body.phoneE164 } },
           create: {
             organizationId: orgId,
             phoneE164: body.phoneE164,
+            email: email ?? null,
             displayName: body.displayName ?? null,
             locale: body.locale ?? null,
             timezone: body.timezone ?? null,
@@ -493,6 +501,7 @@ export default async function contactsRoutes(app: FastifyInstance) {
           },
           update: {
             deletedAt: null,
+            email,
             displayName: body.displayName ?? null,
             locale: body.locale ?? null,
             timezone: body.timezone ?? undefined,
@@ -564,6 +573,8 @@ export default async function contactsRoutes(app: FastifyInstance) {
           where: { id },
           data: {
             phoneE164: body.phoneE164 ?? undefined,
+            // Empty string clears; undefined leaves it unchanged.
+            email: body.email !== undefined ? body.email?.trim() || null : undefined,
             displayName: body.displayName !== undefined ? body.displayName : undefined,
             locale: body.locale !== undefined ? body.locale : undefined,
             attributes: body.attributes !== undefined ? (body.attributes as never) : undefined,
@@ -798,9 +809,10 @@ export default async function contactsRoutes(app: FastifyInstance) {
         body: z.object({
           assetId: uuidSchema,
           // Optional column overrides — by default we look for "phone", "name",
-          // "locale", and the rest land in attributes.
+          // "email", "locale", and the rest land in attributes.
           phoneColumn: z.string().optional(),
           nameColumn: z.string().optional(),
+          emailColumn: z.string().optional(),
           localeColumn: z.string().optional(),
           tagColumn: z.string().optional(), // comma-separated tags per row
         }),
@@ -827,6 +839,7 @@ export default async function contactsRoutes(app: FastifyInstance) {
         assetId: req.body.assetId,
         phoneColumn: req.body.phoneColumn,
         nameColumn: req.body.nameColumn,
+        emailColumn: req.body.emailColumn,
         localeColumn: req.body.localeColumn,
         tagColumn: req.body.tagColumn,
       });

@@ -257,6 +257,7 @@ export default async function segmentsRoutes(app: FastifyInstance) {
             sample: sample.map((c) => ({
               id: c.id,
               phoneE164: c.phoneE164,
+              email: c.email,
               displayName: c.displayName,
               whatsappName: c.whatsappName,
               locale: c.locale,

@@ -2319,6 +2319,10 @@ model Contact {
   id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId String        @map("organization_id") @db.Uuid
   phoneE164      String        @map("phone_e164")
+  // Operator-entered email address (optional). First-class column so it can be
+  // shown + edited on the contact and searched — distinct from attributes.email
+  // (which importers historically wrote); backfilled from that on introduction.
+  email          String?
   // Operator-set nickname / business name. Free-form. Survives Meta
   // updates so a customer's preferred internal name isn't overwritten.
   displayName    String?       @map("display_name")

@@ -155,7 +155,7 @@ export default function ContactsPage() {
 
   // Inline edit — patches displayName or phoneE164 in one call.
   const editMutation = useMutation({
-    mutationFn: (vars: { id: string; displayName?: string | null; phoneE164?: string; blocked?: boolean }) => {
+    mutationFn: (vars: { id: string; displayName?: string | null; email?: string | null; phoneE164?: string; blocked?: boolean }) => {
       const { id, ...body } = vars;
       return api.patch(`/api/v1/contacts/${id}`, body);
     },
@@ -308,6 +308,7 @@ export default function ContactsPage() {
                     WhatsApp nickname
                   </th>
                   <th className="px-4 py-3 sm:px-6">Name (your label)</th>
+                  <th className="hidden px-6 py-3 lg:table-cell">Email</th>
                   <th className="hidden px-6 py-3 md:table-cell">Tags</th>
                   <th className="hidden px-6 py-3 lg:table-cell">Source</th>
                   <th className="hidden px-6 py-3 sm:table-cell">Last inbound</th>
@@ -432,7 +433,7 @@ function ContactRow({
   onRemoveTag,
 }: {
   contact: ContactDto;
-  onSave: (patch: { displayName?: string | null; phoneE164?: string; blocked?: boolean }) => void;
+  onSave: (patch: { displayName?: string | null; email?: string | null; phoneE164?: string; blocked?: boolean }) => void;
   saving: boolean;
   onShowInfo: () => void;
   onDelete: () => void;
@@ -442,6 +443,7 @@ function ContactRow({
   const [editing, setEditing] = useState(false);
   const [phone, setPhone] = useState(contact.phoneE164);
   const [name, setName] = useState(contact.displayName ?? '');
+  const [email, setEmail] = useState(contact.email ?? '');
   const [tagDraft, setTagDraft] = useState('');
 
   // Instagram/Messenger contacts: phoneE164 holds a PSID, not a real number.
@@ -451,16 +453,24 @@ function ContactRow({
   const igHandle = handleMatch ? `@${handleMatch[1]}` : null;
 
   // Reset draft when the row identity changes (after save → refetch).
-  if (!editing && (phone !== contact.phoneE164 || name !== (contact.displayName ?? ''))) {
+  if (
+    !editing &&
+    (phone !== contact.phoneE164 ||
+      name !== (contact.displayName ?? '') ||
+      email !== (contact.email ?? ''))
+  ) {
     setPhone(contact.phoneE164);
     setName(contact.displayName ?? '');
+    setEmail(contact.email ?? '');
   }
 
   const commit = () => {
-    const patch: { displayName?: string | null; phoneE164?: string } = {};
+    const patch: { displayName?: string | null; email?: string | null; phoneE164?: string } = {};
     if (phone.trim() !== contact.phoneE164) patch.phoneE164 = phone.trim();
     const nextName = name.trim();
     if (nextName !== (contact.displayName ?? '')) patch.displayName = nextName || null;
+    const nextEmail = email.trim();
+    if (nextEmail !== (contact.email ?? '')) patch.email = nextEmail || null;
     if (Object.keys(patch).length === 0) {
       setEditing(false);
       return;
@@ -471,6 +481,7 @@ function ContactRow({
   const cancel = () => {
     setPhone(contact.phoneE164);
     setName(contact.displayName ?? '');
+    setEmail(contact.email ?? '');
     setEditing(false);
   };
 
@@ -527,6 +538,28 @@ function ContactRow({
               </span>
             ) : null}
           </span>
+        )}
+      </td>
+      <td className="hidden px-6 py-3 text-sm lg:table-cell">
+        {editing ? (
+          <Input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="name@example.com"
+            className="h-8 max-w-[16rem] text-sm"
+            aria-label="Email"
+          />
+        ) : contact.email ? (
+          <a
+            href={`mailto:${contact.email}`}
+            className="text-brand-600 hover:underline"
+            title={contact.email}
+          >
+            {contact.email}
+          </a>
+        ) : (
+          <span className="text-foreground-subtle">—</span>
         )}
       </td>
       <td className="hidden px-6 py-3 md:table-cell">
@@ -636,6 +669,7 @@ function CreateContactDialog({
 }) {
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [tagsRaw, setTagsRaw] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -645,6 +679,7 @@ function CreateContactDialog({
       await api.post('/api/v1/contacts', {
         phoneE164: phone,
         displayName: name || undefined,
+        email: email.trim() || undefined,
         tags: tagsRaw
           ? tagsRaw
               .split(',')
@@ -655,6 +690,7 @@ function CreateContactDialog({
       toast.success('Contact added');
       setPhone('');
       setName('');
+      setEmail('');
       setTagsRaw('');
       onOpenChange(false);
       onCreated();
@@ -685,6 +721,16 @@ function CreateContactDialog({
           <div>
             <Label htmlFor="name">Display name</Label>
             <Input id="name" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div>
+            <Label htmlFor="email">Email (optional)</Label>
+            <Input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="name@example.com"
+            />
           </div>
           <div>
             <Label htmlFor="tags">Tags (comma-separated)</Label>
@@ -779,7 +825,8 @@ function ImportCsvDialog({
           <DialogTitle>Import contacts</DialogTitle>
           <DialogDescription>
             CSV with at least a phone column. Recognized columns: <code>phone</code>,{' '}
-            <code>name</code>, <code>locale</code>, <code>tags</code>. Extras land in attributes.
+            <code>name</code>, <code>email</code>, <code>locale</code>, <code>tags</code>. Extras land in
+            attributes.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">

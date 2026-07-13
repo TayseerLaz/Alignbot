@@ -14,6 +14,7 @@ interface ImportArgs {
   assetId: string;
   phoneColumn?: string;
   nameColumn?: string;
+  emailColumn?: string;
   localeColumn?: string;
   tagColumn?: string;
 }
@@ -28,6 +29,7 @@ interface ImportResult {
 
 const DEFAULT_PHONE_COLS = ['phone', 'phone_e164', 'mobile', 'whatsapp', 'msisdn'];
 const DEFAULT_NAME_COLS = ['name', 'display_name', 'first_name', 'full_name'];
+const DEFAULT_EMAIL_COLS = ['email', 'email_address', 'e-mail', 'mail'];
 const DEFAULT_LOCALE_COLS = ['locale', 'language', 'lang'];
 const DEFAULT_TAG_COLS = ['tags', 'tag'];
 
@@ -88,6 +90,7 @@ export async function importContactsFromCsv(args: ImportArgs): Promise<ImportRes
 
   const phoneCol = pickColumn(headers, args.phoneColumn, DEFAULT_PHONE_COLS);
   const nameCol = pickColumn(headers, args.nameColumn, DEFAULT_NAME_COLS);
+  const emailCol = pickColumn(headers, args.emailColumn, DEFAULT_EMAIL_COLS);
   const localeCol = pickColumn(headers, args.localeColumn, DEFAULT_LOCALE_COLS);
   const tagCol = pickColumn(headers, args.tagColumn, DEFAULT_TAG_COLS);
 
@@ -117,12 +120,13 @@ export async function importContactsFromCsv(args: ImportArgs): Promise<ImportRes
           continue;
         }
         const displayName = nameCol ? row[nameCol] || null : null;
+        const email = emailCol ? row[emailCol]?.trim() || null : null;
         const locale = localeCol ? row[localeCol] || null : null;
 
         const attributes: Record<string, string> = {};
         for (const h of headers) {
           if (h === phoneCol) continue;
-          if (h === nameCol || h === localeCol || h === tagCol) continue;
+          if (h === nameCol || h === emailCol || h === localeCol || h === tagCol) continue;
           const v = row[h];
           if (v !== undefined && v !== '') attributes[h] = v;
         }
@@ -137,6 +141,7 @@ export async function importContactsFromCsv(args: ImportArgs): Promise<ImportRes
               data: {
                 deletedAt: null,
                 displayName: displayName ?? existing.displayName,
+                email: email ?? existing.email,
                 locale: locale ?? existing.locale,
                 attributes: { ...((existing.attributes as object) || {}), ...attributes } as never,
                 source: 'csv',
@@ -149,6 +154,7 @@ export async function importContactsFromCsv(args: ImportArgs): Promise<ImportRes
                 organizationId,
                 phoneE164,
                 displayName,
+                email,
                 locale,
                 attributes: attributes as never,
                 source: 'csv',

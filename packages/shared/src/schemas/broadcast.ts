@@ -31,6 +31,9 @@ export const phoneE164Schema = z
 export const contactDtoSchema = z.object({
   id: uuidSchema,
   phoneE164: z.string(),
+  // Operator-entered email address (optional). Not format-validated on READ so
+  // a legacy/imported non-conforming value can't 500 the whole list.
+  email: z.string().nullable(),
   displayName: z.string().nullable(),
   // Read-only mirror of the WhatsApp profile name Meta provides on
   // inbound messages (contacts[].profile.name). Kept distinct from
@@ -59,6 +62,15 @@ export type ContactDto = z.infer<typeof contactDtoSchema>;
 
 export const createContactBodySchema = z.object({
   phoneE164: phoneE164Schema,
+  // Optional email. Empty string is allowed (treated as "clear"); any non-empty
+  // value must look like an address. The API normalizes '' → null.
+  email: z
+    .string()
+    .trim()
+    .max(200)
+    .refine((v) => v === '' || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v), 'Enter a valid email address.')
+    .optional()
+    .nullable(),
   displayName: z.string().trim().max(120).optional().nullable(),
   locale: z.string().trim().max(20).optional().nullable(),
   timezone: z.string().trim().max(60).optional().nullable(),

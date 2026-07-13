@@ -151,7 +151,9 @@ export async function capCheck(
   if (cap == null) return; // unlimited
 
   let current = 0;
-  if (kind === 'product') current = await tx.product.count({ where: { deletedAt: null } });
+  // Exclude Alinia read-only mirror listings — they are not the tenant's own
+  // products and must not consume their plan's product allowance.
+  if (kind === 'product') current = await tx.product.count({ where: { deletedAt: null, sourceSystem: { not: 'alinia' } } });
   else if (kind === 'service') current = await tx.service.count({ where: { deletedAt: null } });
   else if (kind === 'member') current = await tx.membership.count({ where: { isActive: true } });
   else if (kind === 'api_key') current = await tx.apiKey.count({ where: { revokedAt: null } });
@@ -315,7 +317,9 @@ export async function getOrgQuotas(
   // would span the WHOLE platform, not this tenant.
   const [products, services, members, apiKeys, webhooks, msgs, broadcasts, imports] =
     await Promise.all([
-      tx.product.count({ where: { organizationId: orgId, deletedAt: null } }),
+      // Alinia read-only mirror listings don't count toward the tenant's own
+      // product usage (they're synced from Alinia, not authored here).
+      tx.product.count({ where: { organizationId: orgId, deletedAt: null, sourceSystem: { not: 'alinia' } } }),
       tx.service.count({ where: { organizationId: orgId, deletedAt: null } }),
       tx.membership.count({ where: { organizationId: orgId, isActive: true } }),
       tx.apiKey.count({ where: { organizationId: orgId, revokedAt: null } }),

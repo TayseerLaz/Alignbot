@@ -502,6 +502,11 @@ model User {
   // so the layout follows the operator across devices / browsers /
   // cleared cookies. NULL = "use the registry's defaults".
   dashboardLayout            Json?      @map("dashboard_layout")
+  // Federation ("Sign in with Alinia"): the Alinia identity_id (id_token `sub`)
+  // of an Alinia-provisioned tenant owner. NULL for normal Hader users. These
+  // users are seeded with a random passwordHash (native password login stays
+  // available as break-glass); disconnect sets status='disabled'.
+  aliniaSubject              String?    @unique @map("alinia_subject")
   createdAt                  DateTime   @default(now()) @map("created_at")
   updatedAt                  DateTime   @updatedAt @map("updated_at")
 

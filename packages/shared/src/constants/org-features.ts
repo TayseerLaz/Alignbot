@@ -115,6 +115,15 @@ export const ORG_FEATURES = [
     defaultDisabled: true,
   },
   {
+    key: 'alinia_listings',
+    label: 'Alinia real-estate listings',
+    description:
+      "Read-only real-estate listings mirrored one-way from the agency's Alinia marketplace account. Provisioned and kept in sync by Alinia; the tenant views them here but edits them in Alinia. Opt-in: OFF by default — enabled automatically when an Alinia agency connects.",
+    hrefs: ['/listings'],
+    // Opt-in: new orgs start DISABLED; enabled at Alinia-connect provisioning.
+    defaultDisabled: true,
+  },
+  {
     key: 'voice_transcription',
     label: 'Voice note transcription',
     description:

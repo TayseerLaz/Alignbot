@@ -10,6 +10,13 @@ const envSchema = z.object({
   WEB_PUBLIC_URL: z.string().url().default('http://localhost:3000'),
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
 
+  // Alinia federation ("Sign in with Alinia"). Hader verifies Alinia-issued
+  // RS256 id_tokens against this JWKS; issuer/audience MUST match what Alinia
+  // signs (see Alinea-v2 services/federationService.ts).
+  ALINIA_JWKS_URL: z.string().url().default('https://www.aliniarealestate.com/.well-known/jwks.json'),
+  ALINIA_FEDERATION_ISSUER: z.string().default('https://www.aliniarealestate.com'),
+  ALINIA_FEDERATION_AUDIENCE: z.string().default('hader'),
+
   DATABASE_URL: z.string().url(),
   DIRECT_DATABASE_URL: z.string().url().optional(),
   REDIS_URL: z.string().url(),

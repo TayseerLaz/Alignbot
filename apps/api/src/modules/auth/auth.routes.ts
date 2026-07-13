@@ -37,6 +37,7 @@ import {
   updateProfile,
   verifyEmail,
 } from './auth.service.js';
+import { loginWithAlinia } from './alinia-sso.service.js';
 
 const meta = (req: { ip: string; headers: { 'user-agent'?: string | string[] } }) => ({
   ip: req.ip,
@@ -122,6 +123,42 @@ export default async function authRoutes(app: FastifyInstance) {
     },
     async (req, reply) => {
       const result = await login({ ...req.body, meta: meta(req) });
+      reply.setCookie(REFRESH_COOKIE_NAME, result.refreshToken, refreshCookieOptions());
+      return {
+        accessToken: result.accessToken,
+        expiresAt: result.expiresAt.toISOString(),
+        user: {
+          id: result.user.id,
+          email: result.user.email,
+          firstName: result.user.firstName,
+          lastName: result.user.lastName,
+          isAlignedAdmin: result.user.isAlignedAdmin,
+        },
+        organization: {
+          id: result.organization.id,
+          slug: result.organization.slug,
+          name: result.organization.name,
+          role: result.organization.role,
+        },
+        availableOrganizations: result.availableOrganizations,
+      };
+    },
+  );
+
+  // ---------- POST /auth/alinia (Sign in with Alinia, SSO) -----------------
+  r.post(
+    '/auth/alinia',
+    {
+      schema: {
+        tags: ['auth'],
+        summary: 'Sign in with an Alinia-issued federation token (SSO).',
+        body: z.object({ token: z.string().min(1) }),
+        response: { 200: loginResponseSchema },
+      },
+      config: authLimit,
+    },
+    async (req, reply) => {
+      const result = await loginWithAlinia({ token: req.body.token, meta: meta(req) });
       reply.setCookie(REFRESH_COOKIE_NAME, result.refreshToken, refreshCookieOptions());
       return {
         accessToken: result.accessToken,

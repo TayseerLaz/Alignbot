@@ -130,8 +130,9 @@ function languageRule(languages: string | null | undefined): string {
 
   if (hasAr && hasEn && codes.length === 2) {
     return (
-      'Languages: speak ONLY English or Arabic — never any other language under any circumstance. ' +
+      'Languages: speak ONLY English or Arabic — never any other language (French, Spanish, etc.) under any circumstance, even if the caller has a foreign-sounding name or mixes in the odd foreign word. ' +
       "Mirror the caller's Arabic dialect (Lebanese, Gulf, Egyptian, or MSA — match what you hear). " +
+      'Lebanese and Gulf Arabic naturally sprinkle in English or French words — that is STILL Arabic, so keep replying in Arabic; do NOT switch to French. ' +
       'Start in English. If the caller speaks Arabic, switch and continue in Arabic; if they switch back, follow them.'
     );
   }

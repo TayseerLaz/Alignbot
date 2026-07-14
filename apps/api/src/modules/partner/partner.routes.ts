@@ -363,8 +363,20 @@ export default async function partnerRoutes(app: FastifyInstance) {
         // non-ASCII (·/Arabic) on write. Non-fatal so it can't break introspect.
         let db: unknown = null;
         try {
-          const enc = await tx.$queryRawUnsafe<Array<{ server: string; client: string; roundtrip: string }>>(
-            "SELECT current_setting('server_encoding') AS server, current_setting('client_encoding') AS client, chr(183) AS roundtrip",
+          // length()/octet_length() return integers (decode-immune), so they
+          // reveal the TRUE stored bytes even if text reads mis-decode:
+          //  clean UTF8 '·' → charlen 1, bytelen 2, extra_bytes(name)=#middots
+          //  double-encoded → charlen 2, bytelen 4, extra_bytes doubles
+          const enc = await tx.$queryRawUnsafe<
+            Array<{ server: string; client: string; roundtrip: string; chr_bytelen: number; chr_charlen: number; name_extra_bytes: number | null; name_charlen: number | null }>
+          >(
+            `SELECT current_setting('server_encoding') AS server,
+                    current_setting('client_encoding') AS client,
+                    chr(183) AS roundtrip,
+                    octet_length(chr(183)) AS chr_bytelen,
+                    length(chr(183)) AS chr_charlen,
+                    (SELECT octet_length(name) - length(name) FROM products WHERE organization_id = '${haderOrgId}' AND source_system = 'alinia' LIMIT 1) AS name_extra_bytes,
+                    (SELECT length(name) FROM products WHERE organization_id = '${haderOrgId}' AND source_system = 'alinia' LIMIT 1) AS name_charlen`,
           );
           db = enc[0] ?? null;
         } catch (e) {

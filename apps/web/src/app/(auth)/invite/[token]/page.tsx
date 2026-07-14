@@ -9,13 +9,15 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, setAccessToken } from '@/lib/api';
+import { useSession } from '@/lib/session';
 
 type FormValues = Omit<AcceptInvitationBody, 'token'>;
 
 export default function AcceptInvitePage() {
   const params = useParams<{ token: string }>();
   const router = useRouter();
+  const { refresh } = useSession();
   const form = useForm<FormValues>({
     resolver: zodResolver(acceptInvitationBodyWithoutTokenSchema),
     defaultValues: { firstName: '', lastName: '', password: '' },
@@ -23,9 +25,18 @@ export default function AcceptInvitePage() {
 
   const onSubmit = form.handleSubmit(async (values) => {
     try {
-      await api.post(`/api/v1/auth/invites/${params.token}/accept`, values, { anonymous: true });
-      toast.success('Invitation accepted. Please sign in.');
-      router.push('/login');
+      // Accepting returns a session (the API logs the invitee in) — adopt the
+      // token, hydrate the session, and go straight to the app. No bounce to
+      // /login where a brand-new user would have no password to enter.
+      const res = await api.post<{ accessToken: string; expiresAt: string }>(
+        `/api/v1/auth/invites/${params.token}/accept`,
+        values,
+        { anonymous: true },
+      );
+      setAccessToken(res.accessToken, res.expiresAt);
+      await refresh();
+      toast.success('Welcome aboard! 🎉');
+      router.replace('/dashboard');
     } catch (err) {
       if (err instanceof ApiError) toast.error(err.payload.message);
       else toast.error('Could not accept invitation.');

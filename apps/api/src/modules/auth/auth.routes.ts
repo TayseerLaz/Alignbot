@@ -28,6 +28,7 @@ import {
   changePassword,
   forgotPassword,
   getSessionContext,
+  issueSession,
   login,
   logout,
   refreshSession,
@@ -273,16 +274,32 @@ export default async function authRoutes(app: FastifyInstance) {
     {
       schema: {
         tags: ['auth'],
-        summary: 'Accept an invitation (creates user if needed).',
+        summary: 'Accept an invitation (creates user if needed) and sign in.',
         params: z.object({ token: z.string().min(20) }),
         body: acceptInvitationBodyWithoutTokenSchema,
-        response: { 200: successSchema },
+        response: { 200: refreshResponseSchema },
       },
       config: authLimit,
     },
-    async (req) => {
-      await acceptInvitation({ token: req.params.token, ...req.body, meta: meta(req) });
-      return { ok: true as const };
+    async (req, reply) => {
+      const { user, invitation } = await acceptInvitation({
+        token: req.params.token,
+        ...req.body,
+        meta: meta(req),
+      });
+      // Log the invitee straight in instead of bouncing them to /login. A brand
+      // new user JUST set their password here (existing users prove mailbox
+      // control via the emailed token), so making them re-authenticate is pure
+      // friction — and confused new users who "don't have a password yet".
+      const session = await issueSession({
+        userId: user.id,
+        organizationId: invitation.organizationId,
+        role: invitation.role,
+        isAlignedAdmin: user.isAlignedAdmin,
+        meta: meta(req),
+      });
+      reply.setCookie(REFRESH_COOKIE_NAME, session.refreshToken, refreshCookieOptions());
+      return { accessToken: session.accessToken, expiresAt: session.expiresAt.toISOString() };
     },
   );
 

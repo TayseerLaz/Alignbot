@@ -16,6 +16,9 @@ const envSchema = z.object({
   ALINIA_JWKS_URL: z.string().url().default('https://www.aliniarealestate.com/api/federation/jwks.json'),
   ALINIA_FEDERATION_ISSUER: z.string().default('https://www.aliniarealestate.com'),
   ALINIA_FEDERATION_AUDIENCE: z.string().default('hader'),
+  // Partner provisioning: shared secret Alinia sends as X-Partner-Secret to
+  // provision a federated tenant on connect-approval. Unset => endpoint 401s.
+  PARTNER_PROVISION_SECRET: z.string().optional(),
 
   DATABASE_URL: z.string().url(),
   DIRECT_DATABASE_URL: z.string().url().optional(),

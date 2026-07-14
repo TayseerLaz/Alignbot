@@ -48,6 +48,7 @@ import serviceRoutes from './modules/catalog/service.routes.js';
 import connectorRoutes from './modules/connectors/connector.routes.js';
 import inboundWebhookRoutes from './modules/connectors/inbound-webhook.routes.js';
 import integrationRoutes from './modules/integration/integration.routes.js';
+import partnerRoutes from './modules/partner/partner.routes.js';
 import shopifyRoutes from './modules/shopify/shopify.routes.js';
 import shopifyWebhookRoutes from './modules/shopify/shopify-webhook.routes.js';
 import contactsRoutes from './modules/contacts/contacts.routes.js';
@@ -360,6 +361,7 @@ export async function buildServer() {
   await app.register(revisionRoutes, { prefix: '/api/v1' });
   await app.register(notificationRoutes, { prefix: '/api/v1' });
   await app.register(integrationRoutes, { prefix: '/api/v1' });
+  await app.register(partnerRoutes, { prefix: '/api/v1' });
   await app.register(dashboardRoutes, { prefix: '/api/v1' });
   await app.register(auditRoutes, { prefix: '/api/v1' });
   await app.register(accountRoutes, { prefix: '/api/v1' });

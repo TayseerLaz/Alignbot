@@ -360,16 +360,20 @@ export default async function partnerRoutes(app: FastifyInstance) {
         });
 
         // Encoding diagnostic — a client_encoding != UTF8 double-encodes
-        // non-ASCII (·/Arabic) on write. chr(183) is '·'; if it comes back as
-        // 'Â·' the read path is also affected.
-        const enc = await tx.$queryRaw<Array<{ server: string; client: string; roundtrip: string }>>`
-          SELECT current_setting('server_encoding') AS server,
-                 current_setting('client_encoding') AS client,
-                 chr(183) AS roundtrip`;
+        // non-ASCII (·/Arabic) on write. Non-fatal so it can't break introspect.
+        let db: unknown = null;
+        try {
+          const enc = await tx.$queryRawUnsafe<Array<{ server: string; client: string; roundtrip: string }>>(
+            "SELECT current_setting('server_encoding') AS server, current_setting('client_encoding') AS client, chr(183) AS roundtrip",
+          );
+          db = enc[0] ?? null;
+        } catch (e) {
+          db = { error: (e as Error).message };
+        }
 
         return {
           found: true,
-          db: enc[0] ?? null,
+          db,
           organization,
           businessInfo,
           botConfigExists: !!botConfig,

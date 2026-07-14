@@ -251,4 +251,52 @@ export default async function partnerRoutes(app: FastifyInstance) {
       });
     },
   );
+
+  // Purge an org's Alinia mirror — deletes every sourceSystem='alinia' product
+  // (and any alinia images/services) for the org. Runs under withAliniaSync so
+  // the read-only trigger permits the deletes. Used to reset a demo, and the
+  // teardown primitive a full "disconnect from Hader" will build on.
+  const resetBody = z.object({ haderOrgId: z.string().uuid() });
+
+  r.post(
+    '/partner/reset',
+    {
+      schema: {
+        tags: ['partner'],
+        summary: "Alinia → Hader: delete an org's read-only listing mirror.",
+        body: resetBody,
+        response: {
+          200: z.object({
+            deletedProducts: z.number(),
+            deletedImages: z.number(),
+            deletedServices: z.number(),
+          }),
+        },
+      },
+    },
+    async (req) => {
+      const sig = req.headers['x-partner-secret'];
+      if (!partnerSecretOk(Array.isArray(sig) ? sig[0] : sig)) {
+        throw unauthorized(ApiErrorCode.AUTH_TOKEN_INVALID, 'Invalid partner credential.');
+      }
+      const { haderOrgId } = req.body;
+
+      return withAliniaSync(haderOrgId, async (tx) => {
+        const imgs = await tx.productImage.deleteMany({
+          where: { sourceSystem: 'alinia', product: { organizationId: haderOrgId } },
+        });
+        const svcs = await tx.service.deleteMany({
+          where: { sourceSystem: 'alinia', organizationId: haderOrgId },
+        });
+        const prods = await tx.product.deleteMany({
+          where: { sourceSystem: 'alinia', organizationId: haderOrgId },
+        });
+        return {
+          deletedProducts: prods.count,
+          deletedImages: imgs.count,
+          deletedServices: svcs.count,
+        };
+      });
+    },
+  );
 }

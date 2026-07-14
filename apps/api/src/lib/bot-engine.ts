@@ -780,7 +780,7 @@ export async function buildBotResponse(
     /\b(menu|carte|catalog|catalogue|list|everything|all|options?|recommend|suggest|what (do|have|you)|show me|got)\b/.test(
       msgLower,
     ) ||
-    /(قائمة|منيو|الكل|شو في|شو عند|عندك|عندكن|بتقدم|أكل|طعام|صحي|مشروب|حلو|سلطة|وجب)/.test(
+    /(قائمة|منيو|الكل|شو في|شو عند|عندك|عندكن|بتقدم|أكل|طعام|صحي|مشروب|مشروبات|عصير|عصاير|عصائر|حلو|حلويات|سلطة|وجب)/.test(
       args.userMessage,
     ) ||
     /(3andak|3indak|3indkon|3indkon|menyou|sa7tein|sahtein|healthy|drinks?|desserts?|salad|combo|offers?|specials?)/.test(
@@ -837,6 +837,43 @@ export async function buildBotResponse(
         (p) => keepSkus.has(p.sku.toLowerCase()) && !have.has(p.id),
       );
       if (extra.length > 0) products = [...products, ...extra];
+    }
+  }
+
+  // CATEGORY / KEYWORD augmentation (anti-hallucination). A generic ask —
+  // "juice", "عصير", "milkshake", "فراولة" — often doesn't embed close enough to
+  // the specific SKUs, and top-K returns a slice that omits them. The model then
+  // INVENTS products + prices ("orange juice, baby size, 0.085 KWD") to fill the
+  // gap. So we deterministically pull EVERY real product whose NAME contains a
+  // salient word from the customer's message into the packed set. Now the model
+  // always sees the real matching items and lists those instead of fabricating.
+  if (products.length < allProducts.length) {
+    // Salient tokens: Arabic (script) or Latin words ≥ 3 chars, minus generic
+    // filler that would match half the catalog.
+    const STOP = new Set([
+      'the', 'and', 'you', 'want', 'need', 'have', 'get', 'give', 'order', 'please', 'can',
+      'add', 'one', 'two', 'with', 'for', 'كل', 'شي', 'بدي', 'ابي', 'أبي', 'عطيني', 'ممكن',
+      'واحد', 'اثنين', 'مع', 'من', 'في', 'هاد', 'هاي', 'شو', 'عندك', 'عندكن',
+    ]);
+    const tokens = Array.from(
+      new Set(
+        (args.userMessage.match(/[\p{L}]{3,}/gu) ?? [])
+          .map((w) => w.toLowerCase())
+          .filter((w) => !STOP.has(w)),
+      ),
+    ).slice(0, 8);
+    if (tokens.length > 0) {
+      const have = new Set(products.map((p) => p.id));
+      const matches: typeof allProducts = [];
+      for (const p of allProducts) {
+        if (have.has(p.id)) continue;
+        const name = (p.name ?? '').toLowerCase();
+        if (tokens.some((t) => name.includes(t))) {
+          matches.push(p);
+          if (matches.length >= 30) break; // bound token/prompt cost
+        }
+      }
+      if (matches.length > 0) products = [...products, ...matches];
     }
   }
 
@@ -1044,6 +1081,7 @@ export async function buildBotResponse(
     `# Core rules`,
     `- STAY IN SCOPE (see the SCOPE LOCK above): only answer questions about ${biz?.legalName ?? 'this business'} using the data below. For ANY out-of-scope question (general knowledge, math, world facts, other businesses, etc.) politely decline in one sentence and redirect — never answer it from your own knowledge.`,
     `- Only mention products, prices, hours, locations, contacts, policies that appear VERBATIM in the data below. No invented items, no rounded prices, no industry-knowledge gap-fills. If the data isn't there, say so honestly and offer to connect a human.`,
+    `- NEVER INVENT PRODUCTS OR PRICES. If the customer asks for an item or a TYPE of item (e.g. "juice", "عصير", "a milkshake", "something cold") and you cannot find a matching product in the PRODUCTS data below, DO NOT make one up and DO NOT guess a price. Say you don't have that exact item, then offer the closest REAL products that ARE listed below (with their exact names + prices). Every product name and price you state MUST be copied from the data below — if it's not there, it does not exist.`,
     `- Currency: quote the exact 3-letter code (e.g. "0.150 ${currencyCode}"). NEVER convert to fils / halala / baisa / qirsh / cents / piastres / paisa — even in Arabic or via voice. Decimals stay attached to the code.`,
     `- Language: obey the LANGUAGE LOCK above. Reply ONLY in a configured language (${languageList}); match the customer's dialect (Lebanese / Egyptian / Gulf / Maghrebi / MSA Arabic each differ). Latin-script Arabic (franco/arabizi) is ARABIC — never reply in French/Spanish/etc.`,
     `- Style: warm but brief, like texting a friend. No em-dashes (— or –) AT ALL — break sentences with commas, periods, or new lines. Drop filler ("Great choice!"). One emoji max.`,

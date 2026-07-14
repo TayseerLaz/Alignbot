@@ -4667,6 +4667,17 @@ async function maybeReplyAsBot(args: {
         );
       }
     }
+    // Image-spam guard: never fire more than N images in one reply. The model
+    // sometimes emits an [IMAGE:] per size/variant (e.g. 5 juice sizes at once),
+    // which floods the customer. Cap to the first few — enough to show options.
+    const MAX_IMAGES_PER_REPLY = 3;
+    if (dedupedImageSends.length > MAX_IMAGES_PER_REPLY) {
+      args.log.info(
+        { threadId: ctx.threadId, total: dedupedImageSends.length, cap: MAX_IMAGES_PER_REPLY },
+        '[whatsapp] image cap: trimmed image sends',
+      );
+      dedupedImageSends = dedupedImageSends.slice(0, MAX_IMAGES_PER_REPLY);
+    }
     // Greeting image: if the operator configured one and this reply
     // opens with a greeting word, prepend it to the send queue so the
     // welcome graphic lands alongside the bot's "Hi there!". Dedup per
@@ -4832,6 +4843,19 @@ async function maybeReplyAsBot(args: {
       if (orderInfo && !reply.includes(orderInfo.idShort)) {
         reply = `${reply.trimEnd()}\n\nOrder #${orderInfo.idShort} · Total ${orderInfo.total}`;
       }
+    }
+
+    // FINAL OUTPUT GUARD — a raw internal token must NEVER reach a customer.
+    // The [PAYMENT_LINK] resolver upstream only runs when a *draft* cart with
+    // items exists, so a marker emitted after the order was already captured
+    // (draft→new) would otherwise leak verbatim (seen in prod). Likewise strip
+    // any unresolved {{…}} template tokens. Belt-and-suspenders, all paths.
+    if (reply) {
+      reply = reply
+        .replace(/\[PAYMENT_LINK\]/gi, 'We will send you a secure payment link shortly.')
+        .replace(/\{\{\s*[\w.]+\s*\}\}/g, '')
+        .replace(/[ \t]{2,}/g, ' ')
+        .trimEnd();
     }
 
     if (!reply && dedupedImageSends.length === 0) {

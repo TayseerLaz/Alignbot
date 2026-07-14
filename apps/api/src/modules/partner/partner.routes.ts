@@ -299,4 +299,76 @@ export default async function partnerRoutes(app: FastifyInstance) {
       });
     },
   );
+
+  // Read-only introspection of a provisioned tenant — so Alinia (and operators)
+  // can see exactly what provisioning set vs left at defaults. Debug/support.
+  const introspectBody = z.object({ haderOrgId: z.string().uuid() });
+
+  r.post(
+    '/partner/introspect',
+    {
+      schema: {
+        tags: ['partner'],
+        summary: 'Alinia → Hader: read the provisioned tenant state (org, business info, admin, subscription, mirror).',
+        body: introspectBody,
+      },
+    },
+    async (req) => {
+      const sig = req.headers['x-partner-secret'];
+      if (!partnerSecretOk(Array.isArray(sig) ? sig[0] : sig)) {
+        throw unauthorized(ApiErrorCode.AUTH_TOKEN_INVALID, 'Invalid partner credential.');
+      }
+      const { haderOrgId } = req.body;
+
+      return withRlsBypass(async (tx) => {
+        const organization = await tx.organization.findUnique({
+          where: { id: haderOrgId },
+          select: { id: true, slug: true, name: true, status: true, aiPlan: true, disabledFeatures: true, createdAt: true },
+        });
+        if (!organization) return { found: false };
+
+        const businessInfo = await tx.businessInfo.findUnique({
+          where: { organizationId: haderOrgId },
+          select: {
+            legalName: true, tagline: true, about: true, websiteUrl: true,
+            operatingHours: true, hoursExceptions: true, timezone: true, currency: true,
+            bookingForm: true, shopForm: true,
+          },
+        });
+        const botConfig = await tx.botConfig.findFirst({ where: { organizationId: haderOrgId }, select: { id: true } });
+        const adminRow = await tx.user.findFirst({
+          where: { aliniaSubject: { not: null }, memberships: { some: { organizationId: haderOrgId } } },
+          select: { email: true, firstName: true, lastName: true, status: true, emailVerifiedAt: true, aliniaSubject: true, passwordHash: true },
+        });
+        const admin = adminRow
+          ? {
+              email: adminRow.email, firstName: adminRow.firstName, lastName: adminRow.lastName,
+              status: adminRow.status, emailVerified: !!adminRow.emailVerifiedAt,
+              aliniaSubject: adminRow.aliniaSubject, hasBreakGlassPassword: !!adminRow.passwordHash,
+              emailIsSynthesized: adminRow.email.endsWith('@tenants.hader.ai'),
+            }
+          : null;
+        const subscription = await tx.subscription.findFirst({
+          where: { organizationId: haderOrgId },
+          select: { status: true, plan: { select: { code: true } } },
+        });
+        const totalProducts = await tx.product.count({ where: { organizationId: haderOrgId } });
+        const aliniaProducts = await tx.product.count({ where: { organizationId: haderOrgId, sourceSystem: 'alinia' } });
+        const sample = await tx.product.findMany({
+          where: { organizationId: haderOrgId, sourceSystem: 'alinia' },
+          select: { name: true, isAvailable: true }, take: 5,
+        });
+
+        return {
+          found: true,
+          organization,
+          businessInfo,
+          botConfigExists: !!botConfig,
+          admin,
+          subscription,
+          products: { total: totalProducts, alinia: aliniaProducts, sample },
+        };
+      });
+    },
+  );
 }

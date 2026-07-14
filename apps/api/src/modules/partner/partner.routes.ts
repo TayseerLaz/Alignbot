@@ -17,7 +17,7 @@ import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
 import { generateTempPassword, hashPassword } from '../../lib/crypto.js';
-import { prisma, withRlsBypass } from '../../lib/db.js';
+import { prisma, withAliniaSync, withRlsBypass } from '../../lib/db.js';
 import { env } from '../../lib/env.js';
 import { conflict, unauthorized } from '../../lib/errors.js';
 import { slugify } from '../catalog/shared.js';
@@ -158,6 +158,96 @@ export default async function partnerRoutes(app: FastifyInstance) {
         });
 
         return { haderOrgId: org.id, adminUserId: user.id, adminEmail: email, alreadyProvisioned: false };
+      });
+    },
+  );
+
+  // Rich read-only listing ingest — Alinia pushes its property mirror here.
+  // RE content lives in Product.attributes (dodges Int32/one-currency); writes
+  // run under withAliniaSync so the read-only trigger permits mirror upserts.
+  const ingestBody = z.object({
+    haderOrgId: z.string().uuid(),
+    listings: z
+      .array(
+        z.object({
+          aliniaPropertyId: z.string().min(1),
+          name: z.string().min(1),
+          shortDescription: z.string().nullish(),
+          description: z.string().nullish(),
+          currency: z.string().length(3).optional(),
+          isAvailable: z.boolean().optional(),
+          attributes: z.record(z.string(), z.unknown()).optional(),
+        }),
+      )
+      .max(2000),
+    // The property ids the agency currently publishes. Any mirror row NOT in
+    // this set is delisted (isAvailable=false) — a full sync self-heals drift.
+    activePropertyIds: z.array(z.string()).optional(),
+  });
+
+  r.post(
+    '/partner/ingest',
+    {
+      schema: {
+        tags: ['partner'],
+        summary: 'Alinia → Hader: upsert the read-only listing mirror for an org.',
+        body: ingestBody,
+        response: { 200: z.object({ upserted: z.number(), delisted: z.number() }) },
+      },
+    },
+    async (req) => {
+      const sig = req.headers['x-partner-secret'];
+      if (!partnerSecretOk(Array.isArray(sig) ? sig[0] : sig)) {
+        throw unauthorized(ApiErrorCode.AUTH_TOKEN_INVALID, 'Invalid partner credential.');
+      }
+      const b = req.body;
+
+      return withAliniaSync(b.haderOrgId, async (tx) => {
+        let upserted = 0;
+        for (const l of b.listings) {
+          const data = {
+            name: l.name,
+            shortDescription: l.shortDescription ?? null,
+            description: l.description ?? null,
+            currency: (l.currency ?? 'USD').toUpperCase(),
+            attributes: (l.attributes ?? {}) as object,
+            isAvailable: l.isAvailable ?? true,
+          };
+          await tx.product.upsert({
+            where: {
+              organizationId_aliniaPropertyId: {
+                organizationId: b.haderOrgId,
+                aliniaPropertyId: l.aliniaPropertyId,
+              },
+            },
+            create: {
+              organizationId: b.haderOrgId,
+              sku: `alinia:${l.aliniaPropertyId}`,
+              slug: `alinia-${l.aliniaPropertyId}`,
+              sourceSystem: 'alinia',
+              aliniaPropertyId: l.aliniaPropertyId,
+              ...data,
+            },
+            update: data,
+          });
+          upserted++;
+        }
+
+        let delisted = 0;
+        if (b.activePropertyIds) {
+          const keep = b.activePropertyIds.length ? b.activePropertyIds : ['__none__'];
+          const res = await tx.product.updateMany({
+            where: {
+              organizationId: b.haderOrgId,
+              sourceSystem: 'alinia',
+              isAvailable: true,
+              aliniaPropertyId: { notIn: keep },
+            },
+            data: { isAvailable: false },
+          });
+          delisted = res.count;
+        }
+        return { upserted, delisted };
       });
     },
   );

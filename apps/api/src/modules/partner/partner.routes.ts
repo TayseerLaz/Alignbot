@@ -360,11 +360,12 @@ export default async function partnerRoutes(app: FastifyInstance) {
         });
 
         // Encoding diagnostic — a client_encoding != UTF8 double-encodes
-        // non-ASCII (·/Arabic) on write. `roundtrip` should be exactly '·'.
+        // non-ASCII (·/Arabic) on write. chr(183) is '·'; if it comes back as
+        // 'Â·' the read path is also affected.
         const enc = await tx.$queryRaw<Array<{ server: string; client: string; roundtrip: string }>>`
           SELECT current_setting('server_encoding') AS server,
                  current_setting('client_encoding') AS client,
-                 U&'\00B7' AS roundtrip`;
+                 chr(183) AS roundtrip`;
 
         return {
           found: true,

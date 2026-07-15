@@ -396,4 +396,56 @@ export default async function partnerRoutes(app: FastifyInstance) {
       });
     },
   );
+
+  // Full deprovision — deletes the org (cascades products/members/business
+  // info/bot config/etc., same as the admin delete) and TOMBSTONES the
+  // federated user (null aliniaSubject + rewrite email + disable) so a later
+  // re-approval provisions a brand-new tenant with no idempotency/email clash.
+  // This is the hard-reset teardown; a real "disconnect" (graduate-to-native)
+  // would keep the org — that's a separate future path.
+  const deprovisionBody = z.object({
+    haderOrgId: z.string().uuid(),
+    aliniaSubject: z.string().optional(),
+  });
+
+  r.post(
+    '/partner/deprovision',
+    {
+      schema: {
+        tags: ['partner'],
+        summary: 'Alinia → Hader: delete a provisioned tenant (org) and retire its federated user.',
+        body: deprovisionBody,
+        response: {
+          200: z.object({ orgDeleted: z.boolean(), userAction: z.enum(['none', 'tombstoned']) }),
+        },
+      },
+    },
+    async (req) => {
+      const sig = req.headers['x-partner-secret'];
+      if (!partnerSecretOk(Array.isArray(sig) ? sig[0] : sig)) {
+        throw unauthorized(ApiErrorCode.AUTH_TOKEN_INVALID, 'Invalid partner credential.');
+      }
+      const { haderOrgId, aliniaSubject } = req.body;
+
+      return withRlsBypass(async (tx) => {
+        const org = await tx.organization.findUnique({ where: { id: haderOrgId }, select: { id: true } });
+        if (org) await tx.organization.delete({ where: { id: haderOrgId } });
+
+        let userAction: 'none' | 'tombstoned' = 'none';
+        if (aliniaSubject) {
+          const u = await tx.user.findUnique({ where: { aliniaSubject }, select: { id: true } });
+          if (u) {
+            // Update (not delete) — never risks FK aborts inside this tx; the
+            // orphaned tombstone is harmless and unblocks fresh provisioning.
+            await tx.user.update({
+              where: { id: u.id },
+              data: { aliniaSubject: null, email: `deleted+${u.id}@tenants.hader.ai`, status: 'disabled' },
+            });
+            userAction = 'tombstoned';
+          }
+        }
+        return { orgDeleted: !!org, userAction };
+      });
+    },
+  );
 }

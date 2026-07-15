@@ -14,6 +14,7 @@ import {
 } from '../../lib/email.js';
 import { env } from '../../lib/env.js';
 import { badRequest, conflict, forbidden, notFound, unauthorized } from '../../lib/errors.js';
+import { syncHqAdminForOrgChange } from '../../lib/hq-admin.js';
 import { signAccessToken, signRefreshToken } from '../../lib/jwt.js';
 
 const MAX_FAILED_ATTEMPTS = 5;
@@ -808,7 +809,7 @@ export async function acceptInvitation(args: {
   lastName?: string;
   meta: RequestMeta;
 }) {
-  return withRlsBypass(async (tx) => {
+  const result = await withRlsBypass(async (tx) => {
     const tokenHash = hashToken(args.token);
     const invite = await tx.invitation.findUnique({
       where: { tokenHash },
@@ -877,6 +878,11 @@ export async function acceptInvitation(args: {
 
     return { user, invitation: invite };
   });
+  // If they just accepted an invite as ADMIN of the ALIGNED org, mirror the
+  // owner's access: grant platform HQ admin (isAlignedAdmin). No-op for any
+  // other org or role.
+  await syncHqAdminForOrgChange(result.invitation.organizationId, result.user.id);
+  return result;
 }
 
 // ---------- switch active org for a session -------------------------------

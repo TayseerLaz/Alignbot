@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { recordAudit } from '../../lib/audit.js';
 import { prisma } from '../../lib/db.js';
 import { badRequest, forbidden, notFound } from '../../lib/errors.js';
+import { syncHqAdminForOrgChange } from '../../lib/hq-admin.js';
 import { createInvitation } from '../auth/auth.service.js';
 
 // Human-readable subject for audit metadata, so the activity log shows a name
@@ -131,7 +132,7 @@ export default async function memberRoutes(app: FastifyInstance) {
       preHandler: [app.requireRole('admin')],
     },
     async (req) => {
-      return app.tenant(req, async (tx) => {
+      const result = await app.tenant(req, async (tx) => {
         const membership = await tx.membership.findUnique({ where: { id: req.params.id } });
         if (!membership) throw notFound('Member not found.');
 
@@ -203,6 +204,11 @@ export default async function memberRoutes(app: FastifyInstance) {
           },
         };
       });
+      // Auto-sync platform HQ access: if this role change is in the ALIGNED org,
+      // an admin there becomes a full HQ admin (isAlignedAdmin), and a demotion
+      // revokes it — so HQ access mirrors ALIGNED-org admin status exactly.
+      await syncHqAdminForOrgChange(req.auth!.organizationId, result.data.userId);
+      return result;
     },
   );
 
@@ -256,6 +262,8 @@ export default async function memberRoutes(app: FastifyInstance) {
           metadata: subjectMeta(membership.user),
         });
 
+        // Losing an active ALIGNED-org admin membership revokes HQ access.
+        await syncHqAdminForOrgChange(orgId, membership.userId);
         return { ok: true as const };
       });
     },
@@ -294,6 +302,8 @@ export default async function memberRoutes(app: FastifyInstance) {
           entityId: membership.id,
           metadata: subjectMeta(membership.user),
         });
+        // Reactivating an ALIGNED-org admin restores their HQ access.
+        await syncHqAdminForOrgChange(orgId, membership.userId);
         return { ok: true as const };
       });
     },
@@ -370,6 +380,9 @@ export default async function memberRoutes(app: FastifyInstance) {
 
         return { userId: membership.userId };
       });
+
+      // Removing an ALIGNED-org admin revokes their platform HQ access.
+      await syncHqAdminForOrgChange(orgId, subject.userId);
 
       // Post-commit: was that their last membership anywhere? If so, release the
       // email + disable the account so the address can be reused for signup.

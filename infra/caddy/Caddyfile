@@ -1,113 +1,65 @@
-# Caddyfile — production. Auto-TLS via Let's Encrypt.
-# Override domains via environment when needed; defaults match a typical layout.
 {
-    email {$ACME_EMAIL:ops@aligned.example}
+    email ops@aligned-tech.com
+}
 
-    # On-demand TLS for tenant-supplied custom CNAMEs. Caddy hits the
-    # API's /api/v1/caddy/ask?domain=<host> and only issues a cert when
-    # the domain is `verified` in the branding_configs table.
-    on_demand_tls {
-        ask http://api:4000/api/v1/caddy/ask
+hader.ai {
+    encode zstd gzip
+    # Safe headers for the whole site. The portal (/app) sets its OWN CSP /
+    # frame-ancestors / permissions via Next middleware, so the marketing CSP is
+    # scoped to the marketing handle below — otherwise the browser enforces the
+    # intersection of both CSPs on /app and blocks the portal's Wasabi audio,
+    # images, api calls, etc. (media-src 'self' was killing voice-note playback).
+    header {
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        -Server
+        -Via
+        -X-Powered-By
     }
 
-    # Globally pin TLS to 1.2 / 1.3. TLS 1.0 / 1.1 are deprecated; pinning
-    # explicitly avoids surprises if the upstream Caddy defaults ever soften.
-    servers {
-        protocols h1 h2 h3
+    @portal path /app /app/*
+    handle @portal {
+        reverse_proxy 127.0.0.1:3000
+    }
+
+    # Portal deep-links that arrive WITHOUT the /app base path — invite,
+    # password-reset and verify-email emails, plus payment-gateway billing
+    # returns and admin lead links. The portal lives under /app, so without this
+    # they fall through to the marketing SPA catch-all below and the user gets
+    # stranded on the landing page. Redirect them under /app so they reach the
+    # portal. Robust against WEB_PUBLIC_URL drift AND rescues already-sent email
+    # links. {uri} preserves the path + query (e.g. ?token=…).
+    @portal_deeplinks path /invite/* /reset-password* /verify-email* /aligned-admin /aligned-admin/* /settings /settings/*
+    handle @portal_deeplinks {
+        redir https://hader.ai/app{uri} temporary
+    }
+
+    handle {
+        header {
+            Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.clarity.ms https://*.clarity.ms; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self'; connect-src 'self' https://api.hader.ai https://*.clarity.ms; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; upgrade-insecure-requests"
+            X-Frame-Options "DENY"
+            Permissions-Policy "camera=(), microphone=(self), geolocation=()"
+            Referrer-Policy "strict-origin-when-cross-origin"
+        }
+        root * /opt/aligned/hader-ai-website
+        file_server
+        try_files {path} /index.html
     }
 }
 
-# Portal
-{$WEB_DOMAIN:app.aligned.example} {
-    tls {
-        protocols tls1.2 tls1.3
-    }
+api.hader.ai {
     encode zstd gzip
     header {
         Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
-        Referrer-Policy "strict-origin-when-cross-origin"
-        Cross-Origin-Opener-Policy "same-origin"
-        Cross-Origin-Resource-Policy "same-site"
-        # Allow same-origin microphone so the inbox can record voice
-        # notes via MediaRecorder. Camera/geolocation stay disabled.
-        Permissions-Policy "geolocation=(), camera=(), microphone=(self)"
+        Referrer-Policy "no-referrer"
         -Server
+        -Via
         -X-Powered-By
     }
-    # Belt-and-braces MIME fix for Next.js static assets. Next.js itself
-    # serves these with the right Content-Type, but if the upstream ever
-    # 404s (e.g. mismatched build between replicas during a rolling
-    # deploy) Caddy was forwarding the HTML 404 page and the browser
-    # would refuse to apply it as CSS / parse it as JS. Forcing the
-    # Content-Type on the response means even a stale upstream returns
-    # something the browser at least parses correctly.
-    @nextcss path /_next/static/css/*
-    header @nextcss Content-Type "text/css; charset=utf-8"
-    @nextjs path /_next/static/chunks/*.js /_next/static/*.js
-    header @nextjs Content-Type "application/javascript; charset=utf-8"
-    reverse_proxy web:3000 {
-        # Pin a client to a single upstream so HTML + its referenced
-        # static assets always come from the same replica. Removes the
-        # cross-replica build-hash mismatch that produced the MIME-type
-        # errors in May 2026. Safe to leave on if replicas==1.
-        lb_policy ip_hash
-        health_uri /
-        health_interval 10s
-    }
-}
 
-# API + chatbot read API
-{$API_DOMAIN:api.aligned.example} {
-    tls {
-        protocols tls1.2 tls1.3
-    }
-    encode zstd gzip
-    header {
-        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
-        X-Content-Type-Options "nosniff"
-        # Unified across portal + API for consistency. Strict cross-origin
-        # but still emits a same-origin referrer so internal navigations
-        # work for analytics / audit trails.
-        Referrer-Policy "strict-origin-when-cross-origin"
-        Cross-Origin-Opener-Policy "same-origin"
-        Cross-Origin-Resource-Policy "same-site"
-        -Server
-        -X-Powered-By
-    }
-    @health path /health /health/ready
-    handle @health {
-        reverse_proxy api:4000
-    }
-    reverse_proxy api:4000 {
-        health_uri /health
-        health_interval 10s
-    }
-}
+    @metrics path /metrics
+    respond @metrics 403
 
-# Tenant custom CNAMEs — on-demand TLS gated by /caddy/ask. Any hostname
-# that isn't matched by a static block above falls into here. Caddy asks
-# the API whether it should issue a cert; the API checks branding_configs
-# for `cnameStatus = 'verified'`. Verified custom domains land on the
-# portal (the inbox lives at app.*/<inbox>; the chatbot read API lives at
-# api.*/api/v1/read — those keep their own domains).
-:443 {
-    tls {
-        on_demand
-        protocols tls1.2 tls1.3
-    }
-    encode zstd gzip
-    header {
-        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
-        X-Content-Type-Options "nosniff"
-        Referrer-Policy "strict-origin-when-cross-origin"
-        Cross-Origin-Opener-Policy "same-origin"
-        Cross-Origin-Resource-Policy "same-site"
-        -Server
-        -X-Powered-By
-    }
-    reverse_proxy web:3000 {
-        health_uri /
-        health_interval 10s
-    }
+    reverse_proxy 127.0.0.1:4000
 }

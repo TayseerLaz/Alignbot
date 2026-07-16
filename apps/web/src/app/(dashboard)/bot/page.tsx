@@ -10,6 +10,7 @@ import {
   Globe,
   Image as ImageIcon,
   Loader2,
+  Mic,
   Play,
   PowerOff,
   RefreshCw,
@@ -68,6 +69,7 @@ interface BotConfig {
   ttsProvider: 'google' | 'elevenlabs';
   ttsVoiceName: string | null;
   greetingImageStorageKey: string | null;
+  greetingVoiceStorageKey: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -1024,6 +1026,12 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
   const [greetingImageUrl, setGreetingImageUrl] = useState<string | null>(null);
   const [uploadingGreeting, setUploadingGreeting] = useState(false);
   const greetingFileRef = useRef<HTMLInputElement | null>(null);
+  const [greetingVoiceKey, setGreetingVoiceKey] = useState<string | null>(
+    config?.greetingVoiceStorageKey ?? null,
+  );
+  const [greetingVoiceUrl, setGreetingVoiceUrl] = useState<string | null>(null);
+  const [uploadingVoice, setUploadingVoice] = useState(false);
+  const voiceFileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!config) return;
@@ -1034,7 +1042,31 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
     setLanguages(config.languages ?? 'en');
     setFallback((config.escalationRules as Record<string, string> | null)?.fallback ?? '');
     setGreetingImageKey(config.greetingImageStorageKey ?? null);
+    setGreetingVoiceKey(config.greetingVoiceStorageKey ?? null);
   }, [config]);
+
+  // Presigned GET URL for the existing greeting voice so the operator can play
+  // back what they uploaded (same preview-by-key endpoint the image uses).
+  useEffect(() => {
+    let cancelled = false;
+    if (!greetingVoiceKey) {
+      setGreetingVoiceUrl(null);
+      return;
+    }
+    api
+      .get<{ data: { url: string } }>(
+        `/api/v1/assets/preview-by-key?key=${encodeURIComponent(greetingVoiceKey)}`,
+      )
+      .then((r) => {
+        if (!cancelled) setGreetingVoiceUrl(r.data.url);
+      })
+      .catch(() => {
+        if (!cancelled) setGreetingVoiceUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [greetingVoiceKey]);
 
   // Fetch a presigned GET URL for the existing greeting image so the
   // operator can see what they uploaded last time. The endpoint is
@@ -1070,6 +1102,7 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
         languages,
         escalationRules: fallback ? { fallback } : null,
         greetingImageStorageKey: greetingImageKey,
+        greetingVoiceStorageKey: greetingVoiceKey,
       }),
     onSuccess: () => {
       toast.success('Saved');
@@ -1099,6 +1132,32 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
     } finally {
       setUploadingGreeting(false);
       if (greetingFileRef.current) greetingFileRef.current.value = '';
+    }
+  };
+
+  const onPickGreetingVoice = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0]!;
+    if (!file.type.startsWith('audio/')) {
+      toast.warning('Please choose an audio file');
+      return;
+    }
+    setUploadingVoice(true);
+    try {
+      // Audio uploads through the 'document' kind (its MIME allowlist covers
+      // audio/*). The server stores the object; we keep its storage key.
+      const { storageKey } = await uploadFile(file, 'document');
+      setGreetingVoiceKey(storageKey);
+      toast.success('Greeting voice uploaded — remember to save');
+    } catch (err) {
+      if (err instanceof ApiError && err.payload.code === 'SERVICE_UNAVAILABLE') {
+        toast.error('Object storage not configured. Add Wasabi keys to .env.');
+      } else {
+        toast.error(err instanceof Error ? err.message : 'Upload failed');
+      }
+    } finally {
+      setUploadingVoice(false);
+      if (voiceFileRef.current) voiceFileRef.current.value = '';
     }
   };
 
@@ -1246,6 +1305,64 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
             accept="image/*"
             className="hidden"
             onChange={(e) => onPickGreetingImage(e.target.files)}
+          />
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Greeting voice note (optional)</Label>
+            {greetingVoiceKey ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setGreetingVoiceKey(null)}
+                className="text-foreground-muted hover:text-red-600"
+              >
+                <Trash2 className="size-3.5" /> Remove
+              </Button>
+            ) : null}
+          </div>
+          <p className="text-[11px] text-foreground-muted">
+            When set, the bot sends this voice note as the introductory greeting — it plays
+            with the first message (not after). Ideal as a warm welcome in the customer&apos;s
+            language.
+          </p>
+          {greetingVoiceKey && greetingVoiceUrl ? (
+            <div className="flex items-center gap-3">
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+              <audio controls preload="none" src={greetingVoiceUrl} className="h-10 max-w-[16rem]" />
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => voiceFileRef.current?.click()}
+                loading={uploadingVoice}
+              >
+                <Upload className="size-4" /> Replace
+              </Button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => voiceFileRef.current?.click()}
+              disabled={uploadingVoice}
+              className="flex w-full flex-col items-center justify-center rounded-md border-2 border-dashed border-border px-4 py-6 text-sm text-foreground-muted transition-colors hover:border-brand-400 hover:bg-brand-50/30 disabled:opacity-60"
+            >
+              {uploadingVoice ? (
+                <Loader2 className="mb-1 size-5 animate-spin" />
+              ) : (
+                <Mic className="mb-1 size-5 text-foreground-subtle" />
+              )}
+              <span>{uploadingVoice ? 'Uploading…' : 'Click to upload a greeting voice note'}</span>
+              <span className="mt-0.5 text-[10px] text-foreground-subtle">
+                OGG / MP3 / M4A / WAV — OGG shows as a WhatsApp voice bubble
+              </span>
+            </button>
+          )}
+          <input
+            ref={voiceFileRef}
+            type="file"
+            accept="audio/*"
+            className="hidden"
+            onChange={(e) => onPickGreetingVoice(e.target.files)}
           />
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr]">

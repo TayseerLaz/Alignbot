@@ -58,6 +58,9 @@ const botConfigDto = z.object({
   // Wasabi storage key for the greeting image (banner / welcome graphic).
   // Bot attaches it alongside greeting replies; null = no image.
   greetingImageStorageKey: z.string().nullable(),
+  // Wasabi storage key for the greeting voice note (intro audio). Sent with the
+  // greeting / the scripted flow's entry node; null = no voice.
+  greetingVoiceStorageKey: z.string().nullable(),
   version: z.number().int(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -372,6 +375,7 @@ function serializeConfig(c: {
   ttsProvider?: string | null;
   ttsVoiceName?: string | null;
   greetingImageStorageKey?: string | null;
+  greetingVoiceStorageKey?: string | null;
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -398,6 +402,7 @@ function serializeConfig(c: {
       | 'elevenlabs',
     ttsVoiceName: c.ttsVoiceName ?? null,
     greetingImageStorageKey: c.greetingImageStorageKey ?? null,
+    greetingVoiceStorageKey: c.greetingVoiceStorageKey ?? null,
     version: c.version,
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
@@ -562,6 +567,8 @@ export default async function botRoutes(app: FastifyInstance) {
           // Greeting image — Wasabi storage key (returned by the same
           // /assets/presign-put flow product images use). `null` clears.
           greetingImageStorageKey: z.string().trim().max(500).nullable().optional(),
+          // Greeting voice note — Wasabi storage key (audio). `null` clears.
+          greetingVoiceStorageKey: z.string().trim().max(500).nullable().optional(),
         }),
         response: { 200: itemEnvelopeSchema(botConfigDto) },
       },
@@ -594,6 +601,10 @@ export default async function botRoutes(app: FastifyInstance) {
               req.body.greetingImageStorageKey === undefined
                 ? undefined
                 : req.body.greetingImageStorageKey,
+            greetingVoiceStorageKey:
+              req.body.greetingVoiceStorageKey === undefined
+                ? undefined
+                : req.body.greetingVoiceStorageKey,
             version: { increment: 1 },
           },
         });

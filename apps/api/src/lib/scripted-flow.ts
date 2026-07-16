@@ -24,7 +24,9 @@ export interface FlowNode {
   // Message text to send for this node (may be multi-line). Optional for
   // action-only nodes.
   text?: string;
-  // Optional voice note (Asset id) sent BEFORE the text.
+  // Optional voice note sent BEFORE the text — by Wasabi storage key (preferred,
+  // matches the bot-builder upload) or by Asset id.
+  voiceKey?: string | null;
   voiceAssetId?: string | null;
   // Tap-buttons (max 3 on WhatsApp). Presence implies waitFor:'button'.
   buttons?: FlowButton[];
@@ -98,6 +100,9 @@ export async function runScriptedFlow(args: {
   channel: FlowChannel;
   thread: { id: string; flowState: unknown };
   scriptedFlow: unknown;
+  // Greeting voice note (BotConfig.greetingVoiceStorageKey) — played before the
+  // entry node's text when that node has no explicit voice of its own.
+  greetingVoiceKey?: string | null;
   message: FlowInbound;
   log: Logger;
 }): Promise<boolean> {
@@ -142,9 +147,14 @@ export async function runScriptedFlow(args: {
       args.log.warn({ nodeId }, '[flow] missing node — ending');
       return { nodeId, done: true, waiting: false };
     }
-    // Optional voice note first.
-    if (node.voiceAssetId) {
-      await sendVoice(args, node.voiceAssetId).catch((err) =>
+    // Optional voice note first. Explicit per-node voice wins; otherwise the
+    // ENTRY node plays the configured greeting voice note (bot-builder upload).
+    const voiceKey =
+      node.voiceKey ??
+      (node.voiceAssetId ? await resolveAssetKey(args, node.voiceAssetId) : null) ??
+      (nodeId === flow.entry ? args.greetingVoiceKey ?? null : null);
+    if (voiceKey) {
+      await sendVoiceByKey(args, voiceKey).catch((err) =>
         args.log.warn({ err, nodeId }, '[flow] voice send failed (continuing)'),
       );
     }
@@ -336,33 +346,43 @@ async function markThreadPending(args: {
   );
 }
 
-// Voice note: download the Asset from storage → upload to Meta /media → send as
-// audio. No-op (logged) if the asset/storage isn't available yet.
-async function sendVoice(
-  args: { organizationId: string; channel: FlowChannel; message: FlowInbound; log: Logger },
+// Resolve an Asset id → its Wasabi storage key (voice notes stored as assets).
+async function resolveAssetKey(
+  args: { organizationId: string },
   assetId: string,
-): Promise<void> {
+): Promise<string | null> {
   const asset = await withTenant(args.organizationId, (tx) =>
-    tx.asset.findFirst({ where: { id: assetId }, select: { storageKey: true, contentType: true } }),
+    tx.asset.findFirst({ where: { id: assetId }, select: { storageKey: true } }),
   );
-  if (!asset) {
-    args.log.warn({ assetId }, '[flow] voice asset not found — skipping');
-    return;
-  }
+  return asset?.storageKey ?? null;
+}
+
+// Voice note: stream the object from storage → upload to Meta /media → send as
+// audio. No-op (logged) if storage isn't configured or the object is missing.
+async function sendVoiceByKey(
+  args: { organizationId: string; channel: FlowChannel; message: FlowInbound; log: Logger },
+  storageKey: string,
+): Promise<void> {
   const { getObjectStream, isStorageConfigured } = await import('./storage.js');
   if (!isStorageConfigured()) return;
-  const stream = await getObjectStream(asset.storageKey);
+  const stream = await getObjectStream(storageKey);
   const chunks: Buffer[] = [];
   for await (const c of stream) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c as Uint8Array));
   const buf = Buffer.concat(chunks);
+  // Content type from the key's extension (WhatsApp needs a correct audio mime).
+  const ext = (storageKey.split('.').pop() ?? '').toLowerCase();
+  const mime =
+    ext === 'mp3' ? 'audio/mpeg'
+    : ext === 'm4a' ? 'audio/mp4'
+    : ext === 'webm' ? 'audio/webm'
+    : ext === 'aac' ? 'audio/aac'
+    : ext === 'wav' ? 'audio/wav'
+    : ext === 'amr' ? 'audio/amr'
+    : 'audio/ogg';
   // Upload to Meta /media.
   const form = new FormData();
   form.append('messaging_product', 'whatsapp');
-  form.append(
-    'file',
-    new Blob([new Uint8Array(buf)], { type: asset.contentType || 'audio/ogg' }),
-    'voice.ogg',
-  );
+  form.append('file', new Blob([new Uint8Array(buf)], { type: mime }), `voice.${ext || 'ogg'}`);
   const up = await fetch(`${GRAPH}/${encodeURIComponent(args.channel.phoneNumberId!)}/media`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${args.channel.accessToken!}` },

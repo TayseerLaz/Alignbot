@@ -1929,6 +1929,9 @@ model BotConfig {
   // with a greeting word (hi/hello/مرحبا/etc.). Dedup keeps it from
   // re-attaching within a 24h window per thread.
   greetingImageStorageKey String?   @map("greeting_image_storage_key")
+  // Optional voice note sent as the introductory greeting (alongside the
+  // greeting image). For a scripted flow it plays with the entry node.
+  greetingVoiceStorageKey String?   @map("greeting_voice_storage_key")
   createdAt               DateTime  @default(now()) @map("created_at")
   updatedAt               DateTime  @updatedAt @map("updated_at")
 

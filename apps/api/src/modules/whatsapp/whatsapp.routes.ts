@@ -3378,6 +3378,8 @@ async function maybeReplyAsBot(args: {
         // Deterministic scripted-flow inputs (null/disabled ⇒ normal LLM bot).
         scriptedFlow: (config as { scriptedFlow?: unknown }).scriptedFlow ?? null,
         threadFlowState: (thread as { flowState?: unknown }).flowState ?? null,
+        greetingVoiceKey:
+          (config as { greetingVoiceStorageKey?: string | null }).greetingVoiceStorageKey ?? null,
         threadOutboundCount: thread.outboundCount ?? 0,
         replyMode: effectiveReplyMode,
         ttsProvider:
@@ -3425,6 +3427,7 @@ async function maybeReplyAsBot(args: {
           },
           thread: { id: ctx.threadId, flowState: ctx.threadFlowState },
           scriptedFlow: ctx.scriptedFlow,
+          greetingVoiceKey: ctx.greetingVoiceKey,
           message: { from: m.from, type: m.type, bodyText: m.bodyText, mediaId: m.mediaId },
           log: args.log,
         });

@@ -23,6 +23,7 @@ import {
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import { ScriptedFlowEditor, type ScriptedFlowValue } from '@/components/bot/scripted-flow-editor';
 import { PageHeader } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -70,6 +71,7 @@ interface BotConfig {
   ttsVoiceName: string | null;
   greetingImageStorageKey: string | null;
   greetingVoiceStorageKey: string | null;
+  scriptedFlow: Record<string, unknown> | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -1162,6 +1164,7 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
   };
 
   return (
+    <>
     <Card>
       <CardHeader>
         <CardTitle>Personality + greeting</CardTitle>
@@ -1388,6 +1391,25 @@ function PersonalityCard({ config }: { config: BotConfig | null }) {
         </Button>
       </CardContent>
     </Card>
+    {config?.scriptedFlow ? (
+      <Card>
+        <CardHeader>
+          <CardTitle>Guided flow (scripted)</CardTitle>
+          <CardDescription>
+            This bot follows a fixed, button-driven flow — the AI is bypassed. Edit the exact
+            message and button wording for every step below. Changes go live immediately for new
+            conversations.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ScriptedFlowEditor
+            flow={config.scriptedFlow as unknown as ScriptedFlowValue}
+            onSaved={() => qc.invalidateQueries({ queryKey: ['bot-config'] })}
+          />
+        </CardContent>
+      </Card>
+    ) : null}
+    </>
   );
 }
 

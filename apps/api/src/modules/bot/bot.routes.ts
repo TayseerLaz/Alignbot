@@ -61,6 +61,9 @@ const botConfigDto = z.object({
   // Wasabi storage key for the greeting voice note (intro audio). Sent with the
   // greeting / the scripted flow's entry node; null = no voice.
   greetingVoiceStorageKey: z.string().nullable(),
+  // Deterministic scripted flow (guided button-driven intake). Editable from the
+  // bot builder. Null = pure LLM bot.
+  scriptedFlow: z.record(z.string(), z.unknown()).nullable(),
   version: z.number().int(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -376,6 +379,7 @@ function serializeConfig(c: {
   ttsVoiceName?: string | null;
   greetingImageStorageKey?: string | null;
   greetingVoiceStorageKey?: string | null;
+  scriptedFlow?: unknown;
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -403,6 +407,10 @@ function serializeConfig(c: {
     ttsVoiceName: c.ttsVoiceName ?? null,
     greetingImageStorageKey: c.greetingImageStorageKey ?? null,
     greetingVoiceStorageKey: c.greetingVoiceStorageKey ?? null,
+    scriptedFlow:
+      c.scriptedFlow && typeof c.scriptedFlow === 'object'
+        ? (c.scriptedFlow as Record<string, unknown>)
+        : null,
     version: c.version,
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
@@ -569,6 +577,8 @@ export default async function botRoutes(app: FastifyInstance) {
           greetingImageStorageKey: z.string().trim().max(500).nullable().optional(),
           // Greeting voice note — Wasabi storage key (audio). `null` clears.
           greetingVoiceStorageKey: z.string().trim().max(500).nullable().optional(),
+          // Full scripted-flow definition (edited in the bot builder). `null` clears.
+          scriptedFlow: z.record(z.string(), z.unknown()).nullable().optional(),
         }),
         response: { 200: itemEnvelopeSchema(botConfigDto) },
       },
@@ -605,6 +615,8 @@ export default async function botRoutes(app: FastifyInstance) {
               req.body.greetingVoiceStorageKey === undefined
                 ? undefined
                 : req.body.greetingVoiceStorageKey,
+            scriptedFlow:
+              req.body.scriptedFlow === undefined ? undefined : (req.body.scriptedFlow as never),
             version: { increment: 1 },
           },
         });

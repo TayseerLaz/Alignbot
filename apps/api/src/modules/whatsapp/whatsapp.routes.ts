@@ -3375,6 +3375,9 @@ async function maybeReplyAsBot(args: {
         contacts,
         channel: ch,
         threadId: thread.id,
+        // Deterministic scripted-flow inputs (null/disabled ⇒ normal LLM bot).
+        scriptedFlow: (config as { scriptedFlow?: unknown }).scriptedFlow ?? null,
+        threadFlowState: (thread as { flowState?: unknown }).flowState ?? null,
         threadOutboundCount: thread.outboundCount ?? 0,
         replyMode: effectiveReplyMode,
         ttsProvider:
@@ -3404,6 +3407,32 @@ async function maybeReplyAsBot(args: {
     }
     if (!m.bodyText || !m.from) continue;
     if (!ctx) continue;
+
+    // ---- Deterministic scripted flow ----------------------------------------
+    // If this tenant has an ENABLED scripted flow, it fully owns the
+    // conversation: it replies with the operator's EXACT text + tap-buttons and
+    // advances node-by-node on each tap/answer. The LLM path below never runs
+    // for these tenants. Any error falls through to the normal bot.
+    if (ctx.scriptedFlow) {
+      try {
+        const { runScriptedFlow } = await import('../../lib/scripted-flow.js');
+        const handled = await runScriptedFlow({
+          organizationId: args.organizationId,
+          channel: {
+            id: ctx.channel.id,
+            phoneNumberId: ctx.channel.phoneNumberId,
+            accessToken: ctx.channel.accessToken,
+          },
+          thread: { id: ctx.threadId, flowState: ctx.threadFlowState },
+          scriptedFlow: ctx.scriptedFlow,
+          message: { from: m.from, type: m.type, bodyText: m.bodyText, mediaId: m.mediaId },
+          log: args.log,
+        });
+        if (handled) continue;
+      } catch (err) {
+        args.log.error({ err }, '[whatsapp] scripted flow failed — falling through to LLM');
+      }
+    }
 
     // Show typing indicator the moment we know a reply is coming. Meta's
     // /messages endpoint accepts a combined read-receipt + typing marker

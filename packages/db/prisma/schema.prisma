@@ -1570,6 +1570,9 @@ model WhatsAppThread {
   // actually goes by on WhatsApp.
   customerWhatsappName String?              @map("customer_whatsapp_name")
   status               WhatsAppThreadStatus @default(open)
+  // Per-thread state for the deterministic scripted flow (BotConfig.scriptedFlow):
+  // { nodeId, done, answers }. Null until the flow starts for this conversation.
+  flowState            Json?                @map("flow_state")
   assignedToUserId     String?              @map("assigned_to_user_id") @db.Uuid
   // Optional skill that auto-assign should match a member by.
   requiredSkill        String?              @map("required_skill")
@@ -1895,6 +1898,11 @@ model BotConfig {
   conversationFlow        Json?     @map("conversation_flow")
   // Pre-generated response templates: { intent_key: "template text" }
   responseTemplates       Json?     @map("response_templates")
+  // Deterministic scripted flow (a guided button-driven state machine that
+  // runs BEFORE the LLM and replies with the operator's EXACT text + buttons).
+  // JSON: { enabled, channel, entryNodeId, nodes: { <id>: { text, buttons[],
+  // waitFor, next, action, voiceAssetId } } }. Null / disabled = pure LLM bot.
+  scriptedFlow            Json?     @map("scripted_flow")
   // True once the client clicks "Deploy". Inbound webhook's bot-runtime
   // hook only fires when this is set + WhatsAppChannel.isActive is true.
   deployedAt              DateTime? @map("deployed_at")

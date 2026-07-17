@@ -36,7 +36,9 @@ hader.ai {
 
     handle {
         header {
-            Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.clarity.ms https://*.clarity.ms; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self'; connect-src 'self' https://api.hader.ai https://*.clarity.ms; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; upgrade-insecure-requests"
+            # Google domains per Google's CSP guide for GTM/GA4 (wildcards cover
+            # regional endpoints like region1.google-analytics.com).
+            Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.clarity.ms https://*.clarity.ms https://*.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self'; connect-src 'self' https://api.hader.ai https://*.clarity.ms https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; upgrade-insecure-requests"
             X-Frame-Options "DENY"
             Permissions-Policy "camera=(), microphone=(self), geolocation=()"
             Referrer-Policy "strict-origin-when-cross-origin"

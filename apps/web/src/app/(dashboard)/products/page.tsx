@@ -2,7 +2,7 @@
 
 import type { Category, ProductListItem } from '@aligned/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Eye, EyeOff, MoreHorizontal, Package, Plus, Search, Trash2, Upload } from 'lucide-react';
+import { Building2, CheckCircle2, Eye, EyeOff, MoreHorizontal, Package, Plus, Search, Trash2, Upload } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
@@ -28,6 +28,7 @@ import { SkeletonRows } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 import { formatMoney, formatRelative } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { useSession } from '@/lib/session';
 
 const ALL_CATEGORIES = '__all__';
 const ALL_AVAILABILITY = '__all__';
@@ -35,6 +36,15 @@ const ALL_AVAILABILITY = '__all__';
 export default function ProductsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { session } = useSession();
+  // Alinia-provisioned tenant: this catalog is a one-way, read-only mirror of
+  // the agency's Alinia real-estate listings. Re-skin the page as read-only
+  // "Properties" (no create/edit/delete; managed in Alinia). alinia_listings is
+  // default-disabled, so it being ENABLED (absent from disabledFeatures) marks
+  // an Alinia tenant. Require the array to be present to avoid a false positive.
+  const disabledFeatures = session?.organization?.disabledFeatures;
+  const isAlinia = Array.isArray(disabledFeatures) && !disabledFeatures.includes('alinia_listings');
+  const Glyph = isAlinia ? Building2 : Package;
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [categoryId, setCategoryId] = useState<string>(ALL_CATEGORIES);
@@ -173,9 +183,14 @@ export default function ProductsPage() {
   return (
     <>
       <PageHeader
-        title="Products"
-        description="Catalog items the chatbot can answer questions about and the team can sell."
+        title={isAlinia ? 'Properties' : 'Products'}
+        description={
+          isAlinia
+            ? 'Real-estate listings mirrored from Alinia — read-only. Managed in Alinia; changes there sync here automatically.'
+            : 'Catalog items the chatbot can answer questions about and the team can sell.'
+        }
         actions={
+          isAlinia ? undefined : (
           <div className="flex items-center gap-2">
             {/* Wipe-all is gated by a second-step confirmation that
                 requires typing DELETE — keeps an itchy click from
@@ -208,6 +223,7 @@ export default function ProductsPage() {
               <Plus className="size-4" /> New product
             </Button>
           </div>
+          )
         }
       />
 
@@ -247,7 +263,7 @@ export default function ProductsPage() {
           </Select>
         </div>
 
-        {someSelected ? (
+        {!isAlinia && someSelected ? (
           <div className="flex items-center justify-between gap-3 border-b border-border bg-brand-50/40 px-4 py-2 text-sm">
             <span>
               <strong>{selected.size}</strong> selected
@@ -301,15 +317,17 @@ export default function ProductsPage() {
             </div>
           ) : products.length === 0 ? (
             <EmptyState
-              icon={Package}
-              title={debouncedSearch ? 'No matches' : 'No products yet'}
+              icon={Glyph}
+              title={debouncedSearch ? 'No matches' : isAlinia ? 'No properties yet' : 'No products yet'}
               description={
                 debouncedSearch
                   ? 'Try a different search term or filter.'
-                  : 'Add your first product to start populating your catalog.'
+                  : isAlinia
+                    ? 'Listings synced from Alinia will appear here.'
+                    : 'Add your first product to start populating your catalog.'
               }
               action={
-                !debouncedSearch ? (
+                !isAlinia && !debouncedSearch ? (
                   <Button onClick={createDraft} loading={creating}>
                     <Plus className="size-4" /> Create your first product
                   </Button>
@@ -321,123 +339,141 @@ export default function ProductsPage() {
               <table className="w-full text-left text-sm">
                 <thead className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
                   <tr>
-                    <th className="w-10 px-4 py-3">
-                      <input
-                        type="checkbox"
-                        aria-label="Select all"
-                        checked={allSelected}
-                        onChange={toggleAll}
-                        className="size-4 cursor-pointer rounded border-border accent-brand-500"
-                      />
-                    </th>
-                    <th className="px-4 py-3">Product</th>
+                    {!isAlinia && (
+                      <th className="w-10 px-4 py-3">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all"
+                          checked={allSelected}
+                          onChange={toggleAll}
+                          className="size-4 cursor-pointer rounded border-border accent-brand-500"
+                        />
+                      </th>
+                    )}
+                    <th className="px-4 py-3">{isAlinia ? 'Property' : 'Product'}</th>
                     <th className="hidden px-4 py-3 lg:table-cell">SKU</th>
                     <th className="hidden px-4 py-3 md:table-cell">Category</th>
                     <th className="px-4 py-3 text-right">Price</th>
                     <th className="hidden px-4 py-3 sm:table-cell">Status</th>
                     <th className="hidden px-4 py-3 lg:table-cell">Updated</th>
-                    <th className="w-12 px-4 py-3" />
+                    {!isAlinia && <th className="w-12 px-4 py-3" />}
                   </tr>
                 </thead>
                 <tbody>
-                  {products.map((p) => (
-                    <tr
-                      key={p.id}
-                      className={cn(
-                        'group border-b border-border transition-colors last:border-0 hover:bg-surface-muted/50',
-                        selected.has(p.id) && 'bg-brand-50/30',
-                      )}
-                    >
-                      <td className="px-4 py-3">
-                        <input
-                          type="checkbox"
-                          aria-label={`Select ${p.name}`}
-                          checked={selected.has(p.id)}
-                          onChange={() => toggleOne(p.id)}
-                          className="size-4 cursor-pointer rounded border-border accent-brand-500"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <Link href={`/products/${p.id}`} className="flex items-center gap-3">
-                          <div className="size-12 shrink-0 overflow-hidden rounded-md border border-border bg-surface-muted">
-                            {p.primaryImageUrl ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={p.primaryImageUrl}
-                                alt=""
-                                className="size-full object-cover"
-                                loading="lazy"
-                              />
-                            ) : (
-                              <div className="flex size-full items-center justify-center text-foreground-subtle">
-                                <Package className="size-5" />
-                              </div>
-                            )}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="truncate font-medium">{p.name}</p>
-                            {p.shortDescription ? (
-                              <p className="truncate text-xs text-foreground-subtle">{p.shortDescription}</p>
-                            ) : null}
-                          </div>
-                        </Link>
-                      </td>
-                      <td className="hidden px-4 py-3 font-mono text-xs text-foreground-muted lg:table-cell">
-                        {p.sku}
-                      </td>
-                      <td className="hidden px-4 py-3 text-foreground-muted md:table-cell">
-                        {p.categoryName ?? <span className="text-foreground-subtle">—</span>}
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium">
-                        {formatMoney(p.priceMinor, p.currency)}
-                      </td>
-                      <td className="hidden px-4 py-3 sm:table-cell">
-                        {p.isAvailable ? (
-                          <Badge variant="success">
-                            <CheckCircle2 className="mr-1 size-3" /> Available
-                          </Badge>
-                        ) : (
-                          <Badge variant="muted">Unavailable</Badge>
+                  {products.map((p) => {
+                    const productCell = (
+                      <>
+                        <div className="size-12 shrink-0 overflow-hidden rounded-md border border-border bg-surface-muted">
+                          {p.primaryImageUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={p.primaryImageUrl}
+                              alt=""
+                              className="size-full object-cover"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="flex size-full items-center justify-center text-foreground-subtle">
+                              <Glyph className="size-5" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{p.name}</p>
+                          {p.shortDescription ? (
+                            <p className="truncate text-xs text-foreground-subtle">{p.shortDescription}</p>
+                          ) : null}
+                        </div>
+                      </>
+                    );
+                    return (
+                      <tr
+                        key={p.id}
+                        className={cn(
+                          'group border-b border-border transition-colors last:border-0 hover:bg-surface-muted/50',
+                          selected.has(p.id) && 'bg-brand-50/30',
                         )}
-                      </td>
-                      <td className="hidden px-4 py-3 text-foreground-muted lg:table-cell">
-                        {formatRelative(p.updatedAt)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreHorizontal className="size-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem asChild>
-                              <Link href={`/products/${p.id}`}>Edit</Link>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="text-red-600 focus:text-red-700"
-                              onSelect={async () => {
-                                if (
-                                  await confirmDialog({
-                                    title: `Delete "${p.name}"?`,
-                                    body: 'The product will be hidden from the chatbot immediately. You can still find it in the database for 30 days.',
-                                    confirmLabel: 'Delete product',
-                                    destructive: true,
-                                  })
-                                ) {
-                                  deleteMutation.mutate(p.id);
-                                }
-                              }}
-                            >
-                              <Trash2 className="size-4" /> Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </td>
-                    </tr>
-                  ))}
+                      >
+                        {!isAlinia && (
+                          <td className="px-4 py-3">
+                            <input
+                              type="checkbox"
+                              aria-label={`Select ${p.name}`}
+                              checked={selected.has(p.id)}
+                              onChange={() => toggleOne(p.id)}
+                              className="size-4 cursor-pointer rounded border-border accent-brand-500"
+                            />
+                          </td>
+                        )}
+                        <td className="px-4 py-3">
+                          {isAlinia ? (
+                            // Read-only mirror — no edit page to navigate to.
+                            <div className="flex items-center gap-3">{productCell}</div>
+                          ) : (
+                            <Link href={`/products/${p.id}`} className="flex items-center gap-3">
+                              {productCell}
+                            </Link>
+                          )}
+                        </td>
+                        <td className="hidden px-4 py-3 font-mono text-xs text-foreground-muted lg:table-cell">
+                          {p.sku}
+                        </td>
+                        <td className="hidden px-4 py-3 text-foreground-muted md:table-cell">
+                          {p.categoryName ?? <span className="text-foreground-subtle">—</span>}
+                        </td>
+                        <td className="px-4 py-3 text-right font-medium">
+                          {formatMoney(p.priceMinor, p.currency)}
+                        </td>
+                        <td className="hidden px-4 py-3 sm:table-cell">
+                          {p.isAvailable ? (
+                            <Badge variant="success">
+                              <CheckCircle2 className="mr-1 size-3" /> Available
+                            </Badge>
+                          ) : (
+                            <Badge variant="muted">Unavailable</Badge>
+                          )}
+                        </td>
+                        <td className="hidden px-4 py-3 text-foreground-muted lg:table-cell">
+                          {formatRelative(p.updatedAt)}
+                        </td>
+                        {!isAlinia && (
+                          <td className="px-4 py-3 text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon">
+                                  <MoreHorizontal className="size-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem asChild>
+                                  <Link href={`/products/${p.id}`}>Edit</Link>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-red-600 focus:text-red-700"
+                                  onSelect={async () => {
+                                    if (
+                                      await confirmDialog({
+                                        title: `Delete "${p.name}"?`,
+                                        body: 'The product will be hidden from the chatbot immediately. You can still find it in the database for 30 days.',
+                                        confirmLabel: 'Delete product',
+                                        destructive: true,
+                                      })
+                                    ) {
+                                      deleteMutation.mutate(p.id);
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="size-4" /> Delete
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

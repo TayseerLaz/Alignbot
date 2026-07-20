@@ -96,6 +96,9 @@ function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: bool
 
   const isAdmin = !!session?.user.isAlignedAdmin;
   const disabledFeatures = session?.organization?.disabledFeatures ?? [];
+  const isAlinia =
+    Array.isArray(session?.organization?.disabledFeatures) &&
+    !disabledFeatures.includes('alinia_listings');
 
   const commands = React.useMemo<Command[]>(() => {
     const nav: Command[] = [
@@ -103,7 +106,7 @@ function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: bool
       { id: 'inbox', label: 'Inbox', group: 'Go to', icon: Inbox, href: '/inbox', keywords: 'chat messages conversations' },
       { id: 'contacts', label: 'Contacts', group: 'Go to', icon: ContactIcon, href: '/contacts', keywords: 'crm customers' },
       { id: 'broadcasts', label: 'Broadcasts & templates', group: 'Go to', icon: Megaphone, href: '/broadcasts', keywords: 'campaign blast' },
-      { id: 'products', label: 'Products', group: 'Go to', icon: Package, href: '/products' },
+      { id: 'products', label: isAlinia ? 'Properties' : 'Products', group: 'Go to', icon: isAlinia ? Building2 : Package, href: '/products' },
       { id: 'services', label: 'Services', group: 'Go to', icon: Briefcase, href: '/services' },
       { id: 'categories', label: 'Categories', group: 'Go to', icon: Building2, href: '/categories' },
       { id: 'business', label: 'Business info', group: 'Go to', icon: Building2, href: '/business-info' },
@@ -139,9 +142,12 @@ function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: bool
           run: () => void switchOrg(o.id),
         }));
     return [...nav, ...actions, ...admin, ...orgs].filter(
-      (c) => !c.href || !isHrefDisabled(c.href.split('?')[0]!, disabledFeatures),
+      (c) =>
+        (!c.href || !isHrefDisabled(c.href.split('?')[0]!, disabledFeatures)) &&
+        // Alinia tenants have a read-only catalog — no "New product" shortcut.
+        !(isAlinia && c.id === 'new-product'),
     );
-  }, [isAdmin, disabledFeatures, session, signOut, switchOrg]);
+  }, [isAdmin, isAlinia, disabledFeatures, session, signOut, switchOrg]);
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();

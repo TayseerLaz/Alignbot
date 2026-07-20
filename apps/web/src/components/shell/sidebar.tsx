@@ -182,16 +182,26 @@ export function Sidebar({
     return item.exact ? pathname === href : pathname.startsWith(href);
   };
   const disabledFeatures = session?.organization?.disabledFeatures ?? [];
+  // Alinia-provisioned tenants see the catalog as a read-only "Properties" view.
+  const isAlinia =
+    Array.isArray(session?.organization?.disabledFeatures) &&
+    !disabledFeatures.includes('alinia_listings');
   const visibleGroups = groups
     .map((g) => ({
       ...g,
-      items: g.items.filter(
-        (it) =>
-          !isHrefDisabled(it.href, disabledFeatures) &&
-          !(it.adminOnly && !isAdmin) &&
-          !(it.hideForAdmin && isAdmin) &&
-          !(it.hideForAdminHome && isAdminHome),
-      ),
+      items: g.items
+        .filter(
+          (it) =>
+            !isHrefDisabled(it.href, disabledFeatures) &&
+            !(it.adminOnly && !isAdmin) &&
+            !(it.hideForAdmin && isAdmin) &&
+            !(it.hideForAdminHome && isAdminHome),
+        )
+        .map((it) =>
+          isAlinia && it.href === '/products'
+            ? { ...it, label: 'Properties', icon: Building2 }
+            : it,
+        ),
     }))
     .filter((g) => g.items.length > 0);
 

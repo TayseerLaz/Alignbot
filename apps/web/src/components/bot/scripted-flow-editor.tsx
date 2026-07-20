@@ -25,19 +25,28 @@ export interface ScriptedFlowValue {
 
 // Friendly, editable labels for the known Fatme nodes; falls back to the id.
 const NODE_LABELS: Record<string, string> = {
-  welcome: 'رسالة البداية · Opening / context (first message)',
-  safety: 'فحص الأمان · Safety check',
-  urgent_help: 'مساعدة فورية · Crisis referral (ends here)',
-  main_menu: 'القائمة الرئيسية · Main menu',
-  free_consult: 'استشارة مجانية · Free consultation',
-  free_consult_done: 'استشارة مجانية — تأكيد · Confirmation',
-  draw_intro: 'رسم · Draw (intro)',
-  draw_release: 'تفريغ مشاعر · Draw — release',
-  draw_connect: 'اتواصل مع ذاتي · Draw — connect',
-  draw_receipt: 'وصلتني رسمتك · Draw receipt',
-  just_connecting: 'تواصل فقط · Just connecting',
-  urgent_call: 'مكالمة عاجلة · Urgent call',
-  urgent_call_done: 'مكالمة عاجلة — تأكيد · Confirmation',
+  // S0 — welcome burst (3 bubbles sent one after another)
+  s0_welcome: 'الترحيب · Welcome (bubble 1)',
+  s0_team: 'شرح الفريق · Team explainer (bubble 2)',
+  s0_safe: 'محفوظ وآمن · Safe & private (bubble 3)',
+  // Safety check — right after the opening
+  safety_check: 'فحص الأمان · Safety check (after opening)',
+  // S1–S4 — one question per message
+  s1_origin: 'سؤال ١: من وين · Q1: where from',
+  s2_age: 'سؤال ٢: العمر · Q2: age',
+  s3_how_found: 'سؤال ٣: كيف وصلتك · Q3: how found',
+  s4_what_caught: 'سؤال ٤: شو لفتك · Q4: what caught you',
+  // S5–S6 — thanks, then the audio + drawing task
+  s5_thanks: 'شكراً · Thanks',
+  s6_intro: 'تمهيد التسجيل · Audio intro (bubble 1)',
+  s6_audio: 'التسجيل + مهمة الرسم · Voice note + draw prompt',
+  // S8 — drawing received → handoff to Fatima
+  s8_received: 'وصلتني رسمتك · Drawing received (bubble 1)',
+  s8_expect: 'شو رح يصير · What happens next (bubble 2)',
+  s8_wait: 'استنّيها · Wait for Fatima (handoff)',
+  // Safety branch (distress diversion)
+  safety: 'الأمان · Safety (distress)',
+  safety_resources: 'خطوط الدعم · Support lines + handoff',
 };
 
 /**

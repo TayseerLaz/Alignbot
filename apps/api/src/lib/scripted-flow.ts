@@ -33,6 +33,16 @@ export interface FlowNode {
   // Typed-keyword shortcuts (checked when the node waits on a button but the
   // customer types instead — e.g. a menu's merged 4th option).
   keywords?: FlowKeyword[];
+  // Auto-advance: after sending this node's message(s), immediately continue to
+  // `next` WITHOUT waiting for the customer. Used to emit several bubbles in a
+  // row (e.g. a multi-line welcome) that feel like a natural WhatsApp burst.
+  // Ignored when the node has buttons (those always wait for a tap).
+  auto?: boolean;
+  // Short message sent when the customer's input doesn't satisfy this node's
+  // wait (e.g. they type a question instead of sending the drawing). Sent
+  // INSTEAD of re-running the whole node — so a node's voice note / long text
+  // isn't resent every time. Currently applied to the 'image' wait.
+  repromptText?: string;
   // What advances the flow from here. Defaults: 'button' if buttons present,
   // else 'text' if `next` present, else the node ends the flow.
   waitFor?: 'button' | 'text' | 'image';
@@ -48,6 +58,16 @@ export interface ScriptedFlow {
   channel?: string; // 'whatsapp'
   entry: string; // entry node id
   nodes: Record<string, FlowNode>;
+  // Opt-in AI distress pre-check. When screenText is true, each free-text
+  // inbound is screened for acute distress / self-harm (fast LLM + keyword
+  // backstop) BEFORE the scripted intake runs; a positive diverts to `node`
+  // and a human handoff. Omit / undefined = no screening (pure deterministic).
+  safety?: { node: string; screenText?: boolean };
+  // When true, the configured greeting voice note (BotConfig.greetingVoiceStorageKey)
+  // plays automatically at the ENTRY node. Leave off for flows that place the
+  // voice on a specific later node (e.g. an S6 audio task) — otherwise it would
+  // play twice (at the welcome AND that node).
+  greetingVoiceOnEntry?: boolean;
 }
 interface FlowState {
   nodeId: string;
@@ -56,7 +76,7 @@ interface FlowState {
 }
 
 const GRAPH = 'https://graph.facebook.com/v20.0';
-const MAX_CHAIN = 6; // safety bound on auto-advance chaining
+const MAX_CHAIN = 10; // safety bound on auto-advance chaining (multi-bubble bursts)
 
 export interface FlowChannel {
   id: string;
@@ -147,12 +167,15 @@ export async function runScriptedFlow(args: {
       args.log.warn({ nodeId }, '[flow] missing node — ending');
       return { nodeId, done: true, waiting: false };
     }
-    // Optional voice note first. Explicit per-node voice wins; otherwise the
-    // ENTRY node plays the configured greeting voice note (bot-builder upload).
+    // Optional voice note first. Explicit per-node voice wins. The ENTRY node
+    // plays the configured greeting voice note (bot-builder upload) ONLY when the
+    // flow opts in via greetingVoiceOnEntry — otherwise a flow that places the
+    // voice on a later node (e.g. fatme's S6 audio task) would double-play it at
+    // the welcome AND that node.
     const voiceKey =
       node.voiceKey ??
       (node.voiceAssetId ? await resolveAssetKey(args, node.voiceAssetId) : null) ??
-      (nodeId === flow.entry ? args.greetingVoiceKey ?? null : null);
+      (flow.greetingVoiceOnEntry && nodeId === flow.entry ? args.greetingVoiceKey ?? null : null);
     if (voiceKey) {
       await sendVoiceByKey(args, voiceKey).catch((err) =>
         args.log.warn({ err, nodeId }, '[flow] voice send failed (continuing)'),
@@ -173,8 +196,11 @@ export async function runScriptedFlow(args: {
       await markThreadPending(args).catch(() => undefined);
     }
     // Decide what happens next.
-    const waitFor = node.waitFor ?? (buttons.length > 0 ? 'button' : node.next ? 'text' : undefined);
     if (node.action === 'end') return { nodeId, done: true, waiting: false };
+    // Explicit auto-advance (multi-bubble bursts): sent already, keep going.
+    if (node.auto && node.next && buttons.length === 0)
+      return { nodeId: node.next, done: false, waiting: false };
+    const waitFor = node.waitFor ?? (buttons.length > 0 ? 'button' : node.next ? 'text' : undefined);
     if (waitFor) return { nodeId, done: false, waiting: true };
     if (node.next) return { nodeId: node.next, done: false, waiting: false }; // auto-advance
     return { nodeId, done: true, waiting: false }; // terminal node with no next
@@ -197,13 +223,61 @@ export async function runScriptedFlow(args: {
     await saveState(args, { nodeId: cur, done, answers });
   };
 
+  // Re-prompt WITHOUT re-running the node: send its short repromptText (if set)
+  // and stay put, so a node's voice note / long body isn't resent on every
+  // wrong input. Falls back to fully re-entering the node when none is set.
+  const reprompt = async (nodeId: string, answers: string[]): Promise<void> => {
+    const n = flow.nodes[nodeId];
+    if (n?.repromptText) {
+      await sendText(n.repromptText);
+      await saveState(args, { nodeId, done: false, answers });
+      return;
+    }
+    await settle(nodeId, answers);
+  };
+
   const state = parseState(args.thread.flowState);
+
+  // ---- AI distress pre-check (opt-in via flow.safety.screenText) -----------
+  // Screen free-text for acute distress BEFORE the intake proceeds and divert
+  // to the safety node + human handoff. Taps/images aren't screened; a
+  // completed (handed-off) conversation stays silent.
+  const screenInbound = (args.message.bodyText ?? '').trim();
+  if (
+    flow.safety?.screenText &&
+    flow.safety.node &&
+    flow.nodes[flow.safety.node] &&
+    args.message.type === 'text' &&
+    screenInbound &&
+    !state?.done
+  ) {
+    const distress = await screenDistress(args.organizationId, screenInbound, args.log);
+    if (distress) {
+      args.log.warn(
+        { orgId: args.organizationId, node: flow.safety.node },
+        '[flow] distress detected — diverting to safety + handoff',
+      );
+      await settle(flow.safety.node, state?.answers ?? []);
+      return true;
+    }
+  }
 
   // ---- Fresh start: no state, or a previous run already finished ----
   if (!state || state.done) {
     // If the flow already completed for this conversation, stay silent (the
-    // operator follows up) rather than restarting the whole intake.
-    if (state?.done) return true;
+    // operator follows up) rather than restarting the whole intake. Logged so a
+    // "bot not replying" report on a re-used test thread is diagnosable.
+    if (state?.done) {
+      args.log.info(
+        { orgId: args.organizationId, threadId: args.thread.id, node: state.nodeId },
+        '[flow] already completed for this thread — staying silent (handed off to human)',
+      );
+      return true;
+    }
+    args.log.info(
+      { orgId: args.organizationId, threadId: args.thread.id, entry: flow.entry },
+      '[flow] fresh start — running entry node',
+    );
     await settle(flow.entry, []);
     return true;
   }
@@ -249,8 +323,9 @@ export async function runScriptedFlow(args: {
       await settle(node.next, state.answers ?? []);
       return true;
     }
-    // Gently re-prompt for the drawing.
-    await settle(state.nodeId, state.answers ?? []);
+    // Gently re-anchor for the drawing (short repromptText — not the whole node,
+    // so the audio task / long instructions aren't resent).
+    await reprompt(state.nodeId, state.answers ?? []);
     return true;
   }
 
@@ -267,6 +342,36 @@ export async function runScriptedFlow(args: {
   // No wait defined (shouldn't happen mid-flow) — re-enter to be safe.
   await settle(state.nodeId, state.answers ?? []);
   return true;
+}
+
+// ---------- AI distress pre-check --------------------------------------------
+// A tiny keyword backstop (works even if the LLM is down) short-circuits to
+// true on explicit self-harm phrases; otherwise a cheap Haiku JSON classifier
+// decides. Any failure → false (never block the intake on an API blip), logged.
+const DISTRESS_KEYWORDS = [
+  'بدي موت', 'بموت', 'بدي انتحر', 'انتحار', 'اقتل حالي', 'اقتل نفسي', 'قتل نفسي',
+  'اذي حالي', 'اذية نفسي', 'ما بدي عيش', 'ما عاد بدي عيش', 'مابدي عيش', 'خلص حياتي',
+  'kill myself', 'suicide', 'suicidal', 'want to die', 'wanna die', 'end my life',
+  'end it all', 'self harm', 'self-harm', 'hurt myself', 'harming myself',
+];
+async function screenDistress(orgId: string, text: string, log: Logger): Promise<boolean> {
+  const low = text.toLowerCase();
+  if (DISTRESS_KEYWORDS.some((k) => low.includes(k.toLowerCase()))) return true;
+  try {
+    const { completeFast } = await import('./openai.js');
+    const r = await completeFast<{ distress?: boolean }>({
+      organizationId: orgId,
+      systemPrompt:
+        'You are a safety classifier for a warm Levantine-Arabic intake bot. Decide if the user message expresses ACUTE distress: suicidal thoughts, wanting to die, self-harm, being abused or in danger right now, or an active mental-health crisis. Ordinary sadness, stress, tiredness, or venting is NOT acute. Answer ONLY as minified JSON {"distress": true|false}.',
+      userContent: text.slice(0, 800),
+      maxTokens: 12,
+      temperature: 0,
+    });
+    return r?.distress === true;
+  } catch (err) {
+    log.warn({ err }, '[flow] distress screen failed — continuing intake');
+    return false;
+  }
 }
 
 // ---------- side effects / persistence --------------------------------------
@@ -364,7 +469,11 @@ async function sendVoiceByKey(
   storageKey: string,
 ): Promise<void> {
   const { getObjectStream, isStorageConfigured } = await import('./storage.js');
-  if (!isStorageConfigured()) return;
+  if (!isStorageConfigured()) {
+    // Silent-fail here used to hide the #1 reason a greeting voice never plays.
+    args.log.warn({ storageKey }, '[flow] voice skipped: storage not configured');
+    return;
+  }
   const stream = await getObjectStream(storageKey);
   const chunks: Buffer[] = [];
   for await (const c of stream) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c as Uint8Array));
@@ -389,13 +498,17 @@ async function sendVoiceByKey(
     body: form,
     signal: AbortSignal.timeout(20_000),
   });
+  const upBody = await up.text();
   if (!up.ok) {
-    args.log.warn({ status: up.status }, '[flow] voice media upload failed');
+    args.log.warn({ status: up.status, body: upBody.slice(0, 300), mime, ext }, '[flow] voice media upload failed');
     return;
   }
-  const mediaId = (JSON.parse(await up.text()) as { id?: string }).id;
-  if (!mediaId) return;
-  await fetch(`${GRAPH}/${encodeURIComponent(args.channel.phoneNumberId!)}/messages`, {
+  const mediaId = (JSON.parse(upBody) as { id?: string }).id;
+  if (!mediaId) {
+    args.log.warn({ body: upBody.slice(0, 300) }, '[flow] voice media upload returned no id');
+    return;
+  }
+  const sent = await fetch(`${GRAPH}/${encodeURIComponent(args.channel.phoneNumberId!)}/messages`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${args.channel.accessToken!}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -407,4 +520,13 @@ async function sendVoiceByKey(
     }),
     signal: AbortSignal.timeout(15_000),
   });
+  // The final send used to be fire-and-forget — a Meta rejection (bad audio
+  // format, recipient outside the 24h window) vanished with no trace. Log it so
+  // "the greeting voice didn't play" is diagnosable from prod logs.
+  if (!sent.ok) {
+    const body = await sent.text().catch(() => '');
+    args.log.warn({ status: sent.status, body: body.slice(0, 300) }, '[flow] voice audio send failed');
+    return;
+  }
+  args.log.info({ storageKey, mime }, '[flow] greeting voice sent');
 }

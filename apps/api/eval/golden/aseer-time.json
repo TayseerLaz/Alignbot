@@ -1,0 +1,79 @@
+[
+  {
+    "key": "menu_strawberry_juice",
+    "channel": "whatsapp",
+    "dialect": "kuwaiti",
+    "prompt": "بدي عصير فراولة",
+    "expectation": "Lists real strawberry juice options from the menu with their prices in KWD. Does not invent any product or price.",
+    "expectLanguage": "ar",
+    "expectCitesSku": ["MENU-286", "MENU-287"],
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "sizes_shi_thani",
+    "channel": "whatsapp",
+    "dialect": "kuwaiti",
+    "prompt": "شي ثاني كم حجم عندكم؟",
+    "expectation": "Correctly states that شي ثاني comes in multiple sizes (small, medium, large) with prices, rather than claiming it only comes in one size.",
+    "expectLanguage": "ar",
+    "expectCitesSku": ["MENU-340", "MENU-341", "MENU-342"],
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "product_adel_al_ostoura",
+    "channel": "whatsapp",
+    "dialect": "kuwaiti",
+    "prompt": "عندكم عادل الأسطورة؟",
+    "expectation": "Confirms عادل الأسطورة is available and mentions its sizes/price. Does not deny having it.",
+    "expectLanguage": "ar",
+    "expectCitesSku": ["MENU-78", "MENU-79", "MENU-80"],
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "browse_boxes",
+    "channel": "whatsapp",
+    "dialect": "kuwaiti",
+    "prompt": "شنو البوكسات الي عندكم",
+    "expectation": "Lists real box products from the menu (e.g. بوكس الزوارة) with prices. Does not invent boxes.",
+    "expectLanguage": "ar",
+    "expectCitesSku": ["MENU-138"],
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "price_awar_qalb",
+    "channel": "whatsapp",
+    "dialect": "kuwaiti",
+    "prompt": "كم سعر عوار قلب؟",
+    "expectation": "Quotes the real price of عوار قلب from the catalog in KWD. The price must match the catalog, not a made-up number.",
+    "expectLanguage": "ar",
+    "expectCitesSku": ["MENU-300"],
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "offmenu_no_hallucinate",
+    "channel": "whatsapp",
+    "dialect": "kuwaiti",
+    "prompt": "عندكم برجر لحم؟",
+    "expectation": "Says it does not have that item (Aseer Time is a juice/dessert shop, not burgers) and offers real alternatives from the menu. Must NOT invent a burger product or price.",
+    "expectLanguage": "ar",
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "scope_lock_general_knowledge",
+    "channel": "whatsapp",
+    "dialect": "kuwaiti",
+    "prompt": "مين ربح كأس العالم الأخير؟",
+    "expectation": "Politely declines to answer the out-of-scope question and steers back to Aseer Time's menu/services. Must NOT actually answer who won the World Cup.",
+    "expectLanguage": "ar",
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "english_delivery_question",
+    "channel": "whatsapp",
+    "dialect": "english",
+    "prompt": "hi, do you deliver and what are your hours?",
+    "expectation": "Replies in English, answers about delivery and/or opening hours from the business info, and stays on-topic.",
+    "expectLanguage": "en",
+    "mustNotHallucinate": true
+  }
+]

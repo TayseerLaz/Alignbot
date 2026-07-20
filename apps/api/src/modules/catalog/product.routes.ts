@@ -109,6 +109,16 @@ export default async function productRoutes(app: FastifyInstance) {
         const orgCurrency = orgInfo?.currency || 'USD';
         const hasMore = products.length > q.limit;
         const page = hasMore ? products.slice(0, q.limit) : products;
+        // Alinia mirror rows have no ProductImage/Asset — their image URLs live
+        // in `attributes` (primaryImageUrl / imageUrls[0], absolute proxied
+        // URLs). Fall back to those so mirrored listings show their photos.
+        const aliniaImg = (attributes: unknown): string | null => {
+          if (!attributes || typeof attributes !== 'object') return null;
+          const a = attributes as Record<string, unknown>;
+          if (typeof a.primaryImageUrl === 'string' && a.primaryImageUrl) return a.primaryImageUrl;
+          if (Array.isArray(a.imageUrls) && typeof a.imageUrls[0] === 'string') return a.imageUrls[0] as string;
+          return null;
+        };
         const data = await Promise.all(
           page.map(async (p) => ({
             id: p.id,
@@ -120,7 +130,7 @@ export default async function productRoutes(app: FastifyInstance) {
             currency: orgCurrency,
             isAvailable: p.isAvailable,
             stockQuantity: p.stockQuantity,
-            primaryImageUrl: p.images[0] ? await resolveAssetUrl(p.images[0].asset.storageKey) : null,
+            primaryImageUrl: p.images[0] ? await resolveAssetUrl(p.images[0].asset.storageKey) : aliniaImg(p.attributes),
             categoryId: p.categoryId,
             categoryName: p.category?.name ?? null,
             variantCount: p._count.variants,

@@ -570,9 +570,18 @@ export function scanReply(
         'Delivery', 'Shipping', 'Discount', 'Discounts', 'Service', 'Tip',
         'Charge', 'Surcharge', 'Refund', 'Credit', 'Balance', 'Amount',
         'Price', 'Quantity', 'Qty',
-        // ISO 4217 codes for currencies we support today + common ones
+        // ISO 4217 codes for currencies we support today + common ones. The
+        // MENA set matters: LBP/IQD/LYD/TND/etc. followed the price token in
+        // real replies and were flagged as "products" (e.g. "…150000.00 LBP").
         'USD', 'EUR', 'GBP', 'KWD', 'BHD', 'OMR', 'JOD', 'AED', 'SAR',
         'QAR', 'EGP', 'JPY', 'CNY', 'INR', 'TRY', 'CHF', 'CAD', 'AUD',
+        'LBP', 'IQD', 'LYD', 'TND', 'MAD', 'DZD', 'YER', 'SYP', 'SDG', 'PKR',
+        // size / quantity / descriptor words — these sit next to a price
+        // ("Mango Ice Cream (Small), 0.085 KWD") but are qualifiers, not
+        // standalone products; the real product is matched separately.
+        'Small', 'Medium', 'Large', 'Big', 'Baby', 'Mini', 'Regular', 'Kids',
+        'Kid', 'Single', 'Double', 'Triple', 'Extra', 'Half', 'Full', 'Fresh',
+        'Hot', 'Cold', 'Iced', 'Spicy', 'Sweet', 'Sour', 'Nuts', 'Combo', 'Box',
       ]);
       if (stop.has(frag.split(/\s+/)[0]!)) {
         // Common opener captured — fall back to scanning ALL phrases and

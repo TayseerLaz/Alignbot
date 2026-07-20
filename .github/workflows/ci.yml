@@ -75,6 +75,19 @@ jobs:
       - name: Tenant isolation deploy gate (HARD)
         run: pnpm --filter @aligned/api test -- test/tenant-isolation.test.ts
 
+      # HARD GATE — the eval harness's own logic (retrieval fusion + sparse rank,
+      # scorers, the grounding gate, reply normalisers). These are the checks
+      # that catch bot-quality regressions; if the gate logic itself breaks, the
+      # whole safety net is silently down. Pure-logic tests, no external deps.
+      - name: Eval-harness logic gate (HARD)
+        run: >-
+          pnpm --filter @aligned/api test --
+          test/eval-scorers.test.ts
+          test/retrieval.test.ts
+          test/grounding-gate.test.ts
+          test/variant-image-collapse.test.ts
+          test/markdown-normalize.test.ts
+
       # Sprint 3 — secondary security gates. Each runs the focused vitest
       # files that exercise a tenant-isolation-adjacent boundary so a
       # regression in any of them surfaces with a specific failure name.

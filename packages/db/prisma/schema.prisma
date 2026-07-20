@@ -387,6 +387,17 @@ model Organization {
   // 'ai' additionally turns off the bot's auto-reply (manual inbox only — a
   // pure social-media handler). Empty = full access. See ORG_FEATURES in shared.
   disabledFeatures String[] @default([]) @map("disabled_features")
+  // Provenance of this tenant. 'native' = a normal Hader tenant. 'alinia' = a
+  // tenant provisioned by Alinia (the federated real-estate SSO agencies): its
+  // catalog is a one-way READ-ONLY mirror of Alinia listings, so the portal
+  // reskins Products -> read-only "Properties". Set at partner provisioning and
+  // backfilled for existing orgs. This is the POSITIVE, authoritative marker for
+  // tenant type — the UI keys the Alinia reskin off THIS, so detection fails
+  // CLOSED (unknown => 'native' => Products). It deliberately does NOT infer
+  // Alinia-ness from the absence of the default-disabled `alinia_listings`
+  // feature flag, which failed OPEN when the flag backfill was forgotten
+  // (2026-07-20 incident: every tenant wrongly showed "Properties").
+  sourceSystem     String   @default("native") @map("source_system")
   // What this tenant pays ALIGNED per month (USD), entered manually by an
   // ALIGNED admin. Drives the per-tenant Billing & overview (paid vs cost).
   monthlyPaidUsd   Float?   @map("monthly_paid_usd")

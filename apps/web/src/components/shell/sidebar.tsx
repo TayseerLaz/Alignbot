@@ -183,9 +183,11 @@ export function Sidebar({
   };
   const disabledFeatures = session?.organization?.disabledFeatures ?? [];
   // Alinia-provisioned tenants see the catalog as a read-only "Properties" view.
-  const isAlinia =
-    Array.isArray(session?.organization?.disabledFeatures) &&
-    !disabledFeatures.includes('alinia_listings');
+  // Keyed off the AUTHORITATIVE org.sourceSystem marker so this fails CLOSED
+  // (unknown => 'native' => normal Products) — not the alinia_listings flag's
+  // absence, which failed OPEN when the flag backfill was forgotten (2026-07-20
+  // incident: the whole fleet wrongly reskinned to "Properties").
+  const isAlinia = session?.organization?.sourceSystem === 'alinia';
   const visibleGroups = groups
     .map((g) => ({
       ...g,

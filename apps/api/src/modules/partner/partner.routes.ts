@@ -115,7 +115,17 @@ export default async function partnerRoutes(app: FastifyInstance) {
         const disabledFeatures = ORG_FEATURE_DEFAULT_DISABLED.filter((k) => k !== 'alinia_listings');
 
         const org = await tx.organization.create({
-          data: { slug, name: b.agencyName, status: 'active', aiPlan: 'basic', disabledFeatures },
+          // sourceSystem:'alinia' is the authoritative marker that drives the
+          // read-only "Properties" reskin (NOT the alinia_listings flag's
+          // absence — see the 2026-07-20 incident note on Organization).
+          data: {
+            slug,
+            name: b.agencyName,
+            status: 'active',
+            aiPlan: 'basic',
+            disabledFeatures,
+            sourceSystem: 'alinia',
+          },
         });
 
         // Random break-glass password (native login/reset stays available); login

@@ -39,11 +39,12 @@ export default function ProductsPage() {
   const { session } = useSession();
   // Alinia-provisioned tenant: this catalog is a one-way, read-only mirror of
   // the agency's Alinia real-estate listings. Re-skin the page as read-only
-  // "Properties" (no create/edit/delete; managed in Alinia). alinia_listings is
-  // default-disabled, so it being ENABLED (absent from disabledFeatures) marks
-  // an Alinia tenant. Require the array to be present to avoid a false positive.
-  const disabledFeatures = session?.organization?.disabledFeatures;
-  const isAlinia = Array.isArray(disabledFeatures) && !disabledFeatures.includes('alinia_listings');
+  // "Properties" (no create/edit/delete; managed in Alinia). Keyed off the
+  // AUTHORITATIVE org.sourceSystem marker so detection fails CLOSED (unknown =>
+  // 'native' => normal editable Products) — NOT the alinia_listings flag's
+  // absence, which failed OPEN when the flag backfill was forgotten (2026-07-20
+  // incident: every tenant wrongly showed read-only "Properties").
+  const isAlinia = session?.organization?.sourceSystem === 'alinia';
   const Glyph = isAlinia ? Building2 : Package;
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');

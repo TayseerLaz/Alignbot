@@ -96,9 +96,11 @@ function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: bool
 
   const isAdmin = !!session?.user.isAlignedAdmin;
   const disabledFeatures = session?.organization?.disabledFeatures ?? [];
-  const isAlinia =
-    Array.isArray(session?.organization?.disabledFeatures) &&
-    !disabledFeatures.includes('alinia_listings');
+  // Authoritative provenance marker (fails CLOSED: unknown => normal Products).
+  // NOT inferred from the alinia_listings flag's absence, which failed OPEN when
+  // the flag backfill was forgotten (2026-07-20 incident — whole fleet showed
+  // "Properties").
+  const isAlinia = session?.organization?.sourceSystem === 'alinia';
 
   const commands = React.useMemo<Command[]>(() => {
     const nav: Command[] = [

@@ -163,6 +163,11 @@ export const sessionResponseSchema = z.object({
     role: z.nativeEnum(OrgRole),
     // ALIGNED-admin per-tenant access control (disabled feature keys).
     disabledFeatures: z.array(z.string()).default([]),
+    // Tenant provenance: 'native' (normal Hader tenant) or 'alinia' (real-estate
+    // mirror). Authoritative signal for the read-only "Properties" reskin — the
+    // web keys off THIS, not the alinia_listings flag's absence. Defaults to
+    // 'native' so an older API build (no column) is treated as a normal tenant.
+    sourceSystem: z.string().default('native'),
   }),
   availableOrganizations: z.array(
     z.object({

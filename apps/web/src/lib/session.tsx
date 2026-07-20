@@ -32,6 +32,11 @@ export interface SessionOrganization {
   // ALIGNED-admin per-tenant access control (disabled feature keys). Absent on
   // availableOrganizations entries (only the active org carries it).
   disabledFeatures?: string[];
+  // Tenant provenance: 'native' (normal Hader tenant) or 'alinia' (real-estate
+  // mirror). The authoritative signal for the read-only "Properties" reskin.
+  // Absent on availableOrganizations entries (only the active org carries it);
+  // treat absent/undefined as 'native' (fail closed → normal Products).
+  sourceSystem?: string;
 }
 
 export interface SessionState {

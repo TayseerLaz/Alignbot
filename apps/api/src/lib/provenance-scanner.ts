@@ -587,6 +587,7 @@ export function scanReply(
         'Small', 'Medium', 'Large', 'Big', 'Baby', 'Mini', 'Regular', 'Kids',
         'Kid', 'Single', 'Double', 'Triple', 'Extra', 'Half', 'Full', 'Fresh',
         'Hot', 'Cold', 'Iced', 'Spicy', 'Sweet', 'Sour', 'Nuts', 'Combo', 'Box',
+        'Litre', 'Liter', 'Litres', 'Liters', 'Ml', 'Piece', 'Pieces', 'Pcs',
         // menu-structure headers — a list reply groups items under headings
         // ("Signature Drops:", "Popular Picks:") that precede a price line and
         // were flagged as products.

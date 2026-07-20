@@ -75,5 +75,14 @@
     "expectation": "Replies in English, answers about delivery and/or opening hours from the business info, and stays on-topic.",
     "expectLanguage": "en",
     "mustNotHallucinate": true
+  },
+  {
+    "key": "crosslang_strawberry_juice_english",
+    "channel": "whatsapp",
+    "dialect": "english",
+    "prompt": "do you have strawberry juice?",
+    "expectation": "Recognises that the Arabic-named عصير فراولة products ARE strawberry juice and confirms it with sizes/prices. Cross-language understanding: the customer asked in English, the product is stored in Arabic. (Reply may mix English with the Arabic product names — that's correct.)",
+    "expectCitesSku": ["MENU-286", "MENU-287"],
+    "mustNotHallucinate": true
   }
 ]

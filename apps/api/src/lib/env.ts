@@ -157,6 +157,17 @@ const envSchema = z.object({
   ANTHROPIC_FAST_MODEL: z.string().default('claude-haiku-4-5'),
   ANTHROPIC_ULTRA_MODEL: z.string().default('claude-sonnet-4-6'),
 
+  // Two-stage retrieval (lib/retrieval.ts). The in-memory hybrid (dense +
+  // trigram sparse + RRF) always runs; the Cohere cross-encoder rerank is
+  // gated by RERANK_MODE + a key. 'off' = hybrid only; 'shadow' = call the
+  // reranker + log its order but don't use it; 'enforce' = use it. Missing key
+  // → the reranker no-ops (returns the input order), so nothing breaks.
+  RERANK_MODE: z.enum(['off', 'shadow', 'enforce']).default('off'),
+  COHERE_API_KEY: z.string().optional(),
+  COHERE_RERANK_MODEL: z.string().default('rerank-v3.5'),
+  RERANK_CANDIDATE_N: z.coerce.number().int().positive().default(60),
+  RERANK_TIMEOUT_MS: z.coerce.number().int().positive().default(1500),
+
   // MyFatoorah payment gateway — used by the bot to mint per-order
   // invoice URLs at checkout. When MYFATOORAH_API_KEY is unset, the
   // bot's payment-link request falls back to a generic gateway URL

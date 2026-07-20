@@ -24,6 +24,7 @@
 import { activeChatProvider, complete, completeJson } from './openai.js';
 import { env } from './env.js';
 import { baseName } from './variant-image-collapse.js';
+import { rerankCandidates, rrfFuse, sparseRank } from './retrieval.js';
 import {
   buildAliniaReTag,
   hasReConstraints,
@@ -823,32 +824,67 @@ export async function buildBotResponse(
     }
   }
 
+  // Sparse (char-trigram) signal over the ranking pool — catches lexical matches
+  // the dense embedding misses (exact names, plurals like "البوكسات" → "بوكس
+  // الزوارة"). Computed once; fused into the search ranking AND merged into a
+  // browse slice so a specifically-named item always surfaces regardless of
+  // intent. In-memory (no tx / no round-trip) because the engine holds no tx.
+  const byId = new Map(rankPool.map((p) => [p.id, p]));
+  const docText = (p: (typeof rankPool)[number]) => `${p.name} ${p.shortDescription ?? ''}`;
+  const sparseTopIds =
+    rankPool.length > SMALL_CATALOG && args.userMessage.trim().length > 0
+      ? sparseRank(
+          args.userMessage,
+          rankPool.map((p) => ({ id: p.id, text: docText(p) })),
+          25,
+        )
+      : [];
+
   let products = rankPool;
   if (rankPool.length > SMALL_CATALOG && args.userMessage.trim().length > 0) {
     if (browseIntent) {
       // Browse the menu — send everything (bounded) so the bot can list/suggest
-      // across the full catalog instead of a top-K slice.
+      // across the full catalog. The slice is arbitrary w.r.t. a specific ask,
+      // so merge in the sparse-matched named items too.
       products = rankPool.slice(0, BROWSE_CAP);
+      const have = new Set(products.map((p) => p.id));
+      const named = sparseTopIds
+        .filter((id) => !have.has(id))
+        .map((id) => byId.get(id))
+        .filter((p): p is (typeof rankPool)[number] => Boolean(p));
+      if (named.length > 0) products = [...products, ...named];
     } else {
       try {
         const { embed, topKByEmbedding, isEmbeddingAvailable } = await import('./embedding.js');
         if (isEmbeddingAvailable()) {
           const queryVec = await embed(args.userMessage.trim().slice(0, 500));
-          const ranked = topKByEmbedding(
+          // Dense candidates (wider than the final slice so fusion + rerank have
+          // room to reorder), fused with the sparse ranking via RRF, then an
+          // optional Cohere cross-encoder rerank. Every stage falls back to the
+          // prior order, so no key / an outage still yields a valid ranking.
+          const denseIds = topKByEmbedding(
             rankPool.filter((p) => p.embedding.length > 0),
             queryVec,
+            env.RERANK_CANDIDATE_N,
+          ).map((p) => p.id);
+          const fusedIds = rrfFuse([denseIds, sparseTopIds]).slice(0, env.RERANK_CANDIDATE_N);
+          const topIds = await rerankCandidates(
+            args.userMessage,
+            fusedIds.map((id) => ({ id, text: docText(byId.get(id)!) })),
             TOP_K,
           );
+          const ranked = topIds
+            .map((id) => byId.get(id))
+            .filter((p): p is (typeof rankPool)[number] => Boolean(p));
           // Plus any products without embeddings — keeps them visible while
           // the backfill catches up.
           const unembedded = rankPool.filter((p) => p.embedding.length === 0);
           products = [...ranked, ...unembedded].slice(0, TOP_K);
         }
       } catch (err) {
-        // Embedding failed; fall back to the full catalog. Better slow than
-        // empty.
+        // Hybrid failed; fall back to the full catalog. Better slow than empty.
         // eslint-disable-next-line no-console
-        console.warn('[bot-engine] top-K embedding failed, sending full catalog', err);
+        console.warn('[bot-engine] hybrid retrieval failed, sending full catalog', err);
       }
     }
   }

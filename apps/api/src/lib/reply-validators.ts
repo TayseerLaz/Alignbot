@@ -13,6 +13,7 @@
 // logs and we surface in /aligned-admin/provenance over time.
 
 import type { BotResponseInputs } from './bot-engine.js';
+import { normalizeMarkdownForChannel } from './markdown-normalize.js';
 import type { ScanCandidates } from './provenance-scanner.js';
 
 export type ValidatorCategory =
@@ -25,6 +26,7 @@ export type ValidatorCategory =
   | 'cart_marker_missing'
   | 'currency_subunit_conversion'
   | 'em_dash_stripped'
+  | 'markdown_normalized'
   | 'sku_stripped';
 
 export interface ValidatorWarning {
@@ -486,6 +488,29 @@ function stripEmDashes(reply: string, _ctx: ValidationContext): {
 }
 
 // --------------------------------------------------------------------------
+// Markdown normalize.
+//
+// gpt-4o-mini emits Markdown (**bold**, ## headings) that no messaging
+// channel renders — WhatsApp bold is a single asterisk, Messenger/IG render
+// nothing, voice is read aloud. Convert to the channel's native form so the
+// customer never sees literal ** or ## characters. Voice replies strip all
+// emphasis (they're spoken); text WhatsApp keeps bold as *single asterisk*.
+// --------------------------------------------------------------------------
+function normalizeMarkdown(reply: string, ctx: ValidationContext): {
+  reply: string;
+  warnings: ValidatorWarning[];
+} {
+  const mode = ctx.voiceMode === 'voice' ? 'plain' : 'whatsapp';
+  const out = normalizeMarkdownForChannel(reply, mode);
+  return {
+    reply: out,
+    warnings: out !== reply
+      ? [{ category: 'markdown_normalized', detail: `Converted Markdown to ${mode} formatting.` }]
+      : [],
+  };
+}
+
+// --------------------------------------------------------------------------
 // SKU strip.
 //
 // Customer wants SKUs (internal identifiers) never to appear in visible
@@ -583,6 +608,9 @@ export function validateReply(ctx: ValidationContext): ValidationResult {
     // strip skips marker contents specifically.
     stripCatalogSkus,
     stripEmDashes,
+    // Markdown → channel-native text. Runs late so earlier validators see the
+    // raw ** / ## the LLM emitted; nothing downstream depends on markdown.
+    normalizeMarkdown,
     dedupWelcomeText,
   ];
 

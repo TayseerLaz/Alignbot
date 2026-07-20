@@ -32,6 +32,7 @@ import type { BookingFormLite, CatalogProductLite, ShopFormLite } from '../../li
 import { env } from '../../lib/env.js';
 import { generateOpaqueToken } from '../../lib/crypto.js';
 import { publishInboxEvent } from '../../lib/inbox-events.js';
+import { normalizeMarkdownForChannel } from '../../lib/markdown-normalize.js';
 
 function webhookCallbackUrl(orgId: string): string {
   return `${env.API_PUBLIC_URL.replace(/\/$/, '')}/api/v1/messenger/webhook/${orgId}`;
@@ -1017,12 +1018,15 @@ async function maybeReplyOnMessenger(
   // The order receipt (if any) is the single confirmation; else the bot text.
   // If a booking was captured but the marker was the whole reply (nothing left
   // after stripping), fall back to a friendly confirmation.
-  const customerText =
+  const customerText = normalizeMarkdownForChannel(
     orderReceiptBody ??
-    (replyText ||
-      (bookingCaptured
-        ? 'All set — your request has been captured. A teammate will follow up shortly.'
-        : ''));
+      (replyText ||
+        (bookingCaptured
+          ? 'All set — your request has been captured. A teammate will follow up shortly.'
+          : '')),
+    // Messenger / Instagram render no markup — strip all emphasis to plain.
+    'plain',
+  );
   if (!customerText) return;
 
   const { sendMessengerText, sendMessengerImage } = await import('../../lib/messenger-send.js');
@@ -1030,20 +1034,30 @@ async function maybeReplyOnMessenger(
   // Send product images for [IMAGE: <sku>] markers (skip on an order-confirm
   // turn — the receipt stands alone).
   if (!orderReceiptBody) {
-    const imageSkus = Array.from(rawText.matchAll(/\[IMAGE:\s*([^\]\s]+)\s*\]/gi))
-      .map((m) => m[1]!.trim())
-      .slice(0, 3);
+    const imageSkus = Array.from(rawText.matchAll(/\[IMAGE:\s*([^\]\s]+)\s*\]/gi)).map((m) =>
+      m[1]!.trim(),
+    );
     if (imageSkus.length > 0) {
       const { presignGetUrl } = await import('../../lib/storage.js');
+      const { collapseVariantSiblings } = await import('../../lib/variant-image-collapse.js');
+      const seenIds = new Set<string>();
+      const resolved: typeof products = [];
       for (const sku of imageSkus) {
         const p = products.find((x) => x.sku.toLowerCase() === sku.toLowerCase());
-        const key = p?.images?.[0]?.storageKey;
+        if (!p || seenIds.has(p.id)) continue;
+        seenIds.add(p.id);
+        resolved.push(p);
+      }
+      // Size/count variants of the same item share a visually identical
+      // photo — send ONE per sibling group, then cap at 3 per reply.
+      for (const p of collapseVariantSiblings(resolved).slice(0, 3)) {
+        const key = p.images?.[0]?.storageKey;
         if (!key) continue;
         try {
           const url = await presignGetUrl(key, 3600);
           await sendMessengerImage(orgId, psid, url, log);
         } catch (err) {
-          log.warn({ err, sku }, '[messenger] product image send failed');
+          log.warn({ err, sku: p.sku }, '[messenger] product image send failed');
         }
       }
     }

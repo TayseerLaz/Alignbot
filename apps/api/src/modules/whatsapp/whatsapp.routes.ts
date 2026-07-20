@@ -46,6 +46,7 @@ import { generateOpaqueToken } from '../../lib/crypto.js';
 import { withRlsBypass, withTenant, type Tx } from '../../lib/db.js';
 import { env } from '../../lib/env.js';
 import { upsertWaThread } from '../../lib/wa-thread.js';
+import { collapseVariantSiblings } from '../../lib/variant-image-collapse.js';
 import { badRequest, notFound, paymentRequired } from '../../lib/errors.js';
 import * as wallet from '../../lib/wallet.js';
 import { getRedis } from '../../lib/redis.js';
@@ -4628,7 +4629,11 @@ async function maybeReplyAsBot(args: {
     }
     // Resolve every emitted SKU against the catalog. Dedupe by product
     // id so multiple markers for the same SKU collapse to one send.
-    const imageSends: { sku: string; name: string; storageKey: string; productImageId?: string; kind?: 'product' | 'greeting' }[] = [];
+    const explicitImageRequest =
+      /\b(image|images|picture|pictures|photo|photos|pic|pics|show me|send.*pic|send.*image|send.*photo)\b/i.test(
+        m.bodyText ?? '',
+      ) || /صورة|صور|ابعتلي.*صور|ورّيني/.test(m.bodyText ?? '');
+    const resolvedImageProducts: (typeof ctx.data.products)[number][] = [];
     const seenProductIds = new Set<string>();
     for (const sku of imageSkus) {
       const product = ctx.data.products.find(
@@ -4636,6 +4641,16 @@ async function maybeReplyAsBot(args: {
       );
       if (!product || seenProductIds.has(product.id)) continue;
       seenProductIds.add(product.id);
+      resolvedImageProducts.push(product);
+    }
+    // Size/count variants of the same item are separate catalog rows whose
+    // photos are visually identical — send ONE per sibling group, unless
+    // the customer explicitly asked to see pictures.
+    const imageProducts = explicitImageRequest
+      ? resolvedImageProducts
+      : collapseVariantSiblings(resolvedImageProducts);
+    const imageSends: { sku: string; name: string; storageKey: string; productImageId?: string; kind?: 'product' | 'greeting' }[] = [];
+    for (const product of imageProducts) {
       for (const im of product.images ?? []) {
         if (im.storageKey && im.storageKey.length > 0) {
           imageSends.push({
@@ -4656,10 +4671,6 @@ async function maybeReplyAsBot(args: {
     //     gallery as part of the confirmation), or
     //   - the customer explicitly asked for an image / picture / photo
     //     / صورة in their latest message.
-    const explicitImageRequest =
-      /\b(image|images|picture|pictures|photo|photos|pic|pics|show me|send.*pic|send.*image|send.*photo)\b/i.test(
-        m.bodyText ?? '',
-      ) || /صورة|صور|ابعتلي.*صور|ورّيني/.test(m.bodyText ?? '');
     let dedupedImageSends = imageSends;
     if (imageSends.length > 0 && !cartMarkerPayload && !explicitImageRequest) {
       const recentlySent = await withRlsBypass(async (tx) => {

@@ -122,6 +122,15 @@ async function main() {
 
     const retrieval = scoreRetrieval(candidateSkus, sc.expectCitesSku);
 
+    // Best (lowest) position of an expected SKU in the packed candidate list —
+    // this is what a reranker moves: not "is it in the set" but "is it near the
+    // top of what the model sees".
+    const wantLower = (sc.expectCitesSku ?? []).map((s) => s.toLowerCase());
+    const positions = wantLower
+      .map((s) => candidateSkus.findIndex((c) => c.toLowerCase() === s))
+      .filter((i) => i >= 0);
+    const bestRank = positions.length > 0 ? Math.min(...positions) + 1 : null;
+
     // Score the CUSTOMER-FACING reply (markers stripped, as the send-path does),
     // not the engine's raw output.
     const customerReply = stripInternalMarkers(res.text);
@@ -152,6 +161,7 @@ async function main() {
       reply: customerReply,
       candidateSkus,
       retrieval,
+      bestRank,
       deterministic,
       judge,
       model: res.inputs.model,
@@ -200,7 +210,11 @@ function printReport(s: EvalSummary, retrievalOnly: boolean) {
   for (const r of s.results) {
     const marks: string[] = [];
     marks.push(
-      r.retrieval.expected === 0 ? 'ret —' : r.retrieval.hit ? 'ret ✓' : `ret ✗(${r.retrieval.missing.join(',')})`,
+      r.retrieval.expected === 0
+        ? 'ret —'
+        : r.retrieval.hit
+          ? `ret ✓ @${r.bestRank ?? '?'}`
+          : `ret ✗(${r.retrieval.missing.join(',')})`,
     );
     if (!retrievalOnly) {
       marks.push(r.deterministic.passed ? 'det ✓' : `det ✗(${r.deterministic.failures.join('; ')})`);
@@ -209,7 +223,10 @@ function printReport(s: EvalSummary, retrievalOnly: boolean) {
     console.log(`  ${r.key.padEnd(30)} ${marks.join('  ')}`);
   }
   console.log('');
+  const ranks = s.results.map((r) => r.bestRank).filter((n): n is number => n != null);
+  const avgRank = ranks.length ? (ranks.reduce((a, b) => a + b, 0) / ranks.length).toFixed(1) : 'n/a';
   console.log(`  retrieval hit-rate : ${pct(s.retrievalHits, s.retrievalScored)}  (${s.retrievalHits}/${s.retrievalScored})`);
+  console.log(`  avg best-rank      : ${avgRank.padStart(5)}  (position of the top expected item; lower = better)`);
   if (!retrievalOnly) {
     console.log(`  deterministic pass : ${pct(s.deterministicPass, s.total)}  (${s.deterministicPass}/${s.total})`);
     console.log(`  judge pass         : ${pct(s.judgePass, s.judgeScored)}  (${s.judgePass}/${s.judgeScored})`);

@@ -58,6 +58,10 @@ export interface ScenarioResult {
   reply: string;
   candidateSkus: string[];
   retrieval: RetrievalResult;
+  /** 1-based position of the best-ranked expected SKU in the packed candidate
+   *  list (lower = nearer the top of what the model sees). null when the
+   *  scenario has no retrieval expectation or none were found. */
+  bestRank: number | null;
   deterministic: DeterministicResult;
   judge?: JudgeResult;
   /** Model that actually generated the reply (from the engine). */

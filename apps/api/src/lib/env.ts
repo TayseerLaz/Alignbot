@@ -166,7 +166,9 @@ const envSchema = z.object({
   COHERE_API_KEY: z.string().optional(),
   COHERE_RERANK_MODEL: z.string().default('rerank-v3.5'),
   RERANK_CANDIDATE_N: z.coerce.number().int().positive().default(60),
-  RERANK_TIMEOUT_MS: z.coerce.number().int().positive().default(1500),
+  // Cold Cohere calls from the server can take 1–2s; give the cross-encoder
+  // room before falling back to the unreranked order.
+  RERANK_TIMEOUT_MS: z.coerce.number().int().positive().default(4000),
 
   // MyFatoorah payment gateway — used by the bot to mint per-order
   // invoice URLs at checkout. When MYFATOORAH_API_KEY is unset, the

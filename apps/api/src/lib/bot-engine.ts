@@ -843,16 +843,17 @@ export async function buildBotResponse(
   let products = rankPool;
   if (rankPool.length > SMALL_CATALOG && args.userMessage.trim().length > 0) {
     if (browseIntent) {
-      // Browse the menu — send everything (bounded) so the bot can list/suggest
-      // across the full catalog. The slice is arbitrary w.r.t. a specific ask,
-      // so merge in the sparse-matched named items too.
-      products = rankPool.slice(0, BROWSE_CAP);
-      const have = new Set(products.map((p) => p.id));
+      // Browse — send a broad slice so the bot can list across the menu, but put
+      // the sparse-matched named items FIRST. A browse slice is arbitrary w.r.t.
+      // a specific ask, so leading with the lexical matches keeps a named item
+      // ("عصير فراولة", "البوكسات" → "بوكس الزوارة") from landing at the bottom
+      // of what the model sees (the model weights earlier items more).
       const named = sparseTopIds
-        .filter((id) => !have.has(id))
         .map((id) => byId.get(id))
         .filter((p): p is (typeof rankPool)[number] => Boolean(p));
-      if (named.length > 0) products = [...products, ...named];
+      const namedIds = new Set(named.map((p) => p.id));
+      const rest = rankPool.filter((p) => !namedIds.has(p.id));
+      products = [...named, ...rest].slice(0, BROWSE_CAP);
     } else {
       try {
         const { embed, topKByEmbedding, isEmbeddingAvailable } = await import('./embedding.js');
@@ -867,13 +868,8 @@ export async function buildBotResponse(
             queryVec,
             env.RERANK_CANDIDATE_N,
           ).map((p) => p.id);
-          const fusedIds = rrfFuse([denseIds, sparseTopIds]).slice(0, env.RERANK_CANDIDATE_N);
-          const topIds = await rerankCandidates(
-            args.userMessage,
-            fusedIds.map((id) => ({ id, text: docText(byId.get(id)!) })),
-            TOP_K,
-          );
-          const ranked = topIds
+          const fusedIds = rrfFuse([denseIds, sparseTopIds]).slice(0, TOP_K);
+          const ranked = fusedIds
             .map((id) => byId.get(id))
             .filter((p): p is (typeof rankPool)[number] => Boolean(p));
           // Plus any products without embeddings — keeps them visible while
@@ -969,6 +965,33 @@ export async function buildBotResponse(
         }
       }
       if (siblings.length > 0) products = [...products, ...siblings];
+    }
+  }
+
+  // Final cross-encoder rerank — reorder the FULL packed set so the most
+  // query-relevant products come FIRST (the model weights earlier items more),
+  // whatever path each entered by (dense/sparse rank, browse slice, sibling or
+  // keyword merge). This is where the reranker earns its keep: hit-rate can be
+  // 100% while the right item sits at position 150. Bounded to 100 docs = one
+  // Cohere search unit. Gated by RERANK_MODE: 'enforce' applies the new order,
+  // 'shadow' computes it (to warm/measure) without changing output, 'off' /
+  // no-key / error leaves the order untouched.
+  if ((env.RERANK_MODE ?? 'off') !== 'off' && products.length > 1 && args.userMessage.trim().length > 0) {
+    try {
+      const head = products.slice(0, 100);
+      const order = await rerankCandidates(
+        args.userMessage,
+        head.map((p) => ({ id: p.id, text: docText(p) })),
+        head.length,
+      );
+      if (env.RERANK_MODE === 'enforce') {
+        const pos = new Map(order.map((id, i) => [id, i]));
+        const reordered = [...head].sort((a, b) => (pos.get(a.id) ?? 1e9) - (pos.get(b.id) ?? 1e9));
+        products = [...reordered, ...products.slice(100)];
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[bot-engine] final rerank failed, order unchanged', err);
     }
   }
 

@@ -1,0 +1,48 @@
+[
+  {
+    "key": "arabizi_specific_fajita",
+    "channel": "whatsapp",
+    "dialect": "lebanese-arabizi",
+    "prompt": "Bde w7de high protein beef fajita shaker",
+    "expectation": "Recognises the High Protein Beef Fajita Shaker as a real menu item and adds it / confirms it with its price in LBP. Replies in Arabic (the customer wrote Lebanese in Latin letters). Does not invent products.",
+    "expectLanguage": "ar",
+    "expectCitesSku": ["DRAFT-MQAOCEVQ"],
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "offmenu_crazy_sandwich",
+    "channel": "whatsapp",
+    "dialect": "english",
+    "prompt": "Do you have the crazy sandwich?",
+    "expectation": "There is no 'crazy sandwich' on the menu. The bot must say it doesn't have that item and offer real alternatives (e.g. Lebanese Burger, Philly Steak Sandwich, Kafta Sandwich). It must NOT invent a 'crazy sandwich' or a price for it.",
+    "expectLanguage": "en",
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "arabizi_high_protein_recommend",
+    "channel": "whatsapp",
+    "dialect": "lebanese-arabizi",
+    "prompt": "Ana aamel diet, shu fi kteer protein?",
+    "expectation": "Recommends real high-protein items from the menu (e.g. High Protein Beef Fajita Shaker, Power Loaded Chicken Avo, Kale Quinoa Chicken Salad) with prices. Replies in Arabic. No invented products or prices.",
+    "expectLanguage": "ar",
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "english_delivery_area",
+    "channel": "whatsapp",
+    "dialect": "english",
+    "prompt": "do you deliver to Saida?",
+    "expectation": "Answers the delivery question from the business info / delivery areas (confirms, declines, or asks for the address). Stays on topic. Does not invent a policy.",
+    "expectLanguage": "en",
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "scope_lock_offtopic",
+    "channel": "whatsapp",
+    "dialect": "english",
+    "prompt": "what's the weather in Beirut today?",
+    "expectation": "Politely declines the off-topic question and steers back to the food menu. Must NOT actually answer the weather.",
+    "expectLanguage": "en",
+    "mustNotHallucinate": true
+  }
+]

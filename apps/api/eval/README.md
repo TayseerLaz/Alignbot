@@ -44,11 +44,39 @@ set -a; . ../../.env.production; set +a          # or a staging env
 ./node_modules/.bin/tsx --conditions=source eval/runner.ts --org aseer-time --no-judge
 ```
 
-Flags: `--org <slug>` · `--retrieval-only` · `--no-judge` · `--threshold <0..1>` (default 0.8) · `--json`.
+```bash
+# The multi-tenant GATE — run EVERY tenant that has a golden set and fail if ANY
+# one regresses (an average would hide a single-tenant regression). This is the
+# pre-deploy check: run it against staging before shipping a prompt/model change.
+cd apps/api
+set -a; . ../../.env.production; set +a
+pnpm eval:gate                       # = tsx eval/runner.ts --all --retrieval-only
+pnpm eval -- --all                   # full: retrieval + deterministic + judge, all tenants
+```
 
-Exit code is **non-zero** when the pass rate is below `--threshold`, so the command can gate
-CI or a pre-deploy check. `--retrieval-only` gates on hit-rate; the full run gates on the
-overall pass rate (deterministic AND judge).
+Flags: `--org <slug>` · `--all` (every golden set) · `--retrieval-only` · `--no-judge` ·
+`--threshold <0..1>` (default 0.8) · `--json`.
+
+Exit code is **non-zero** when any tenant's pass rate is below `--threshold`, so the command
+gates CI or a pre-deploy check. `--retrieval-only` gates on hit-rate; the full run gates on
+the overall pass rate (deterministic AND judge). With `--all`, the gate fails if *any single
+tenant* falls below threshold — the whole point being to catch a per-tenant regression (a
+non-standard dialect, a tuned prompt) that an average would mask.
+
+Golden sets today: `aseer-time` (Kuwaiti, 477-item), `sandwich-wnos` (Lebanese/arabizi,
+small menu, LBP), `full-volume` (English high-protein). Add more by dropping a
+`golden/<slug>.json` next to them.
+
+### Hard gate vs. advisory
+
+- **`--retrieval-only` is the HARD gate** (what `eval:gate` runs). Retrieval is deterministic,
+  so the result is stable run-to-run — safe to fail a deploy on. All three tenants sit at 100%.
+- **The full run (with the judge) is DIAGNOSTIC, not a hard gate — yet.** The bot generates at
+  temperature 0.4, so replies (and therefore judge/deterministic verdicts) vary run-to-run;
+  and the judge isn't calibrated to a human reviewer (κ) yet. Use the full run to *surface*
+  quality signals to investigate — not to block a deploy. Calibrating the judge (few-shot from
+  ~50 human pass/fail labels, confirm κ>0.7) + a temperature-0 eval mode are the next WS3 steps
+  that graduate the full run into a hard gate.
 
 ## Adding scenarios
 

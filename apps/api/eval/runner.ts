@@ -18,7 +18,7 @@
 //   --threshold <0..1>  min overall pass rate before exit 0 (default 0.8)
 //   --json              emit the raw EvalSummary as JSON
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -87,15 +87,66 @@ async function main() {
   const noJudge = flag('no-judge');
   const threshold = Number(arg('threshold') ?? '0.8');
 
-  const org = await prisma.organization.findFirst({ where: { slug }, select: { id: true } });
-  if (!org) {
-    console.error(`No org with slug "${slug}".`);
-    process.exit(2);
+  const opts = { retrievalOnly, noJudge };
+
+  // --all runs every tenant that has a golden set (eval/golden/*.json). This is
+  // the point of the gate: a change that improves the average can silently
+  // regress ONE tenant (a non-standard language, a tuned prompt), so we fail if
+  // ANY tenant drops below threshold — never an average that hides it.
+  const slugs = flag('all')
+    ? readdirSync(join(HERE, 'golden'))
+        .filter((f) => f.endsWith('.json'))
+        .map((f) => f.replace(/\.json$/, ''))
+        .sort()
+    : [slug];
+
+  const summaries: EvalSummary[] = [];
+  for (const s of slugs) {
+    const summary = await runOrg(s, opts);
+    if (!summary) continue;
+    summaries.push(summary);
+    if (flag('json')) console.log(JSON.stringify(summary, null, 2));
+    else printReport(summary, retrievalOnly);
   }
 
-  const golden = JSON.parse(
-    readFileSync(join(HERE, 'golden', `${slug}.json`), 'utf8'),
-  ) as GoldenScenario[];
+  await prisma.$disconnect();
+
+  const rateOf = (su: EvalSummary) =>
+    retrievalOnly
+      ? su.retrievalScored === 0
+        ? 1
+        : su.retrievalHits / su.retrievalScored
+      : su.total === 0
+        ? 1
+        : su.overallPass / su.total;
+  const failures = summaries.filter((su) => rateOf(su) + 1e-9 < threshold);
+  if (summaries.length > 1) {
+    console.log(
+      `\n=== gate: ${summaries.length - failures.length}/${summaries.length} tenants passed (threshold ${threshold}) ===`,
+    );
+    for (const su of failures) console.log(`  ✗ ${su.org}: ${(rateOf(su) * 100).toFixed(0)}%`);
+    if (failures.length === 0) console.log('  ✓ all tenants passed');
+  }
+  process.exit(failures.length === 0 ? 0 : 1);
+}
+
+async function runOrg(
+  slug: string,
+  opts: { retrievalOnly: boolean; noJudge: boolean },
+): Promise<EvalSummary | null> {
+  const { retrievalOnly, noJudge } = opts;
+  const org = await prisma.organization.findFirst({ where: { slug }, select: { id: true } });
+  if (!org) {
+    console.error(`(skip) no org with slug "${slug}"`);
+    return null;
+  }
+  let golden: GoldenScenario[];
+  try {
+    golden = JSON.parse(readFileSync(join(HERE, 'golden', `${slug}.json`), 'utf8')) as GoldenScenario[];
+  } catch {
+    console.error(`(skip) no golden set file for "${slug}"`);
+    return null;
+  }
 
   const results: ScenarioResult[] = [];
 
@@ -149,7 +200,19 @@ async function main() {
         const facts = (res.inputs.candidateProductIds ?? [])
           .map((id: string) => data.products.find((p) => p.id === id))
           .filter(Boolean)
-          .map((p) => `- ${p!.name}${formatMoney(p!.priceMinor ?? null, p!.currency ?? null)}`)
+          .map((p) => {
+            // Include the description too — a high-protein brand legitimately
+            // states "65g protein" from the product's own description, and the
+            // judge must see it to avoid flagging a grounded claim as invented.
+            const desc = ((p as { shortDescription?: string | null; description?: string | null }).description ??
+              (p as { shortDescription?: string | null }).shortDescription ??
+              '')
+              .replace(/<[^>]+>/g, '')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .slice(0, 160);
+            return `- ${p!.name}${formatMoney(p!.priceMinor ?? null, p!.currency ?? null)}${desc ? ` — ${desc}` : ''}`;
+          })
           .join('\n');
         judge = (await judgeReply(sc, customerReply, facts || undefined)) ?? undefined;
       }
@@ -170,7 +233,7 @@ async function main() {
 
   const retrievalScored = results.filter((r) => r.retrieval.expected > 0);
   const judgeScored = results.filter((r) => r.judge);
-  const summary: EvalSummary = {
+  return {
     org: slug,
     total: results.length,
     retrievalScored: retrievalScored.length,
@@ -181,24 +244,6 @@ async function main() {
     overallPass: results.filter((r) => r.deterministic.passed && (!r.judge || r.judge.pass)).length,
     results,
   };
-
-  if (flag('json')) {
-    console.log(JSON.stringify(summary, null, 2));
-  } else {
-    printReport(summary, retrievalOnly);
-  }
-
-  await prisma.$disconnect();
-
-  // Gate: retrieval-only gates on hit-rate; full run gates on overall pass rate.
-  const rate = retrievalOnly
-    ? summary.retrievalScored === 0
-      ? 1
-      : summary.retrievalHits / summary.retrievalScored
-    : summary.total === 0
-      ? 1
-      : summary.overallPass / summary.total;
-  process.exit(rate + 1e-9 >= threshold ? 0 : 1);
 }
 
 function pct(n: number, d: number): string {

@@ -1,0 +1,50 @@
+[
+  {
+    "key": "max_protein_recommend",
+    "channel": "whatsapp",
+    "dialect": "english",
+    "prompt": "what's your highest protein option?",
+    "expectation": "Recommends real high-protein menu items (e.g. Muscle Maker, Powerhouse Turkey, Lean Machine) with prices. Does not invent products or protein numbers not in the catalog.",
+    "expectLanguage": "en",
+    "expectCitesSku": ["FV-HP-MUSCLE-MAKER"],
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "specific_backstage_beef",
+    "channel": "whatsapp",
+    "dialect": "english",
+    "prompt": "tell me about the Backstage Beef",
+    "expectation": "Describes The Backstage Beef from the catalog (ingredients/description) and its price. Does not invent details or a wrong price.",
+    "expectLanguage": "en",
+    "expectCitesSku": ["FV-SIG-BACKSTAGE-BEEF"],
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "drinks_list",
+    "channel": "whatsapp",
+    "dialect": "english",
+    "prompt": "what drinks do you have?",
+    "expectation": "Lists real drinks from the menu (e.g. Pepsi, Diet Pepsi, Fresh Orange Juice, Water, Protein Shake) with prices. Does not invent drinks.",
+    "expectLanguage": "en",
+    "expectCitesSku": ["FV-DRINK-PEPSI"],
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "offmenu_pizza",
+    "channel": "whatsapp",
+    "dialect": "english",
+    "prompt": "do you have pizza?",
+    "expectation": "There is no pizza on the menu. The bot must say so and offer real alternatives (sandwiches/wraps). Must NOT invent a pizza or a price for it.",
+    "expectLanguage": "en",
+    "mustNotHallucinate": true
+  },
+  {
+    "key": "scope_lock_general",
+    "channel": "whatsapp",
+    "dialect": "english",
+    "prompt": "how many grams of protein should I eat per day?",
+    "expectation": "Politely declines to give general nutrition/medical advice and steers back to the menu. May mention it can recommend high-protein items. Must NOT give a specific daily protein recommendation as fact.",
+    "expectLanguage": "en",
+    "mustNotHallucinate": true
+  }
+]

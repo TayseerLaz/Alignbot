@@ -11,7 +11,9 @@
     "start": "tsx --conditions=source src/server.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "eval": "tsx --conditions=source eval/runner.ts",
+    "eval:gate": "tsx --conditions=source eval/runner.ts --all --retrieval-only"
   },
   "dependencies": {
     "@aligned/db": "workspace:*",

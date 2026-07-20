@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { recordAudit } from '../../lib/audit.js';
 import { generateTempPassword, hashPassword } from '../../lib/crypto.js';
 import { prisma, withAliniaSync, withRlsBypass } from '../../lib/db.js';
+import { syncMirrorImages, type MirrorImageItem } from '../../lib/alinia-image-sync.js';
 import { env } from '../../lib/env.js';
 import { conflict, unauthorized } from '../../lib/errors.js';
 import { slugify } from '../catalog/shared.js';
@@ -29,6 +30,14 @@ function partnerSecretOk(headerVal: string | undefined): boolean {
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
+}
+
+/** Pull the https image URLs out of a mirror listing's attributes JSON. */
+function extractImageUrls(attributes: unknown): string[] {
+  if (!attributes || typeof attributes !== 'object') return [];
+  const arr = (attributes as Record<string, unknown>).imageUrls;
+  if (!Array.isArray(arr)) return [];
+  return arr.filter((u): u is string => typeof u === 'string' && u.startsWith('https://'));
 }
 
 const provisionBody = z.object({
@@ -202,7 +211,8 @@ export default async function partnerRoutes(app: FastifyInstance) {
       }
       const b = req.body;
 
-      return withAliniaSync(b.haderOrgId, async (tx) => {
+      const imagePairs: MirrorImageItem[] = [];
+      const result = await withAliniaSync(b.haderOrgId, async (tx) => {
         let upserted = 0;
         for (const l of b.listings) {
           const data = {
@@ -212,8 +222,12 @@ export default async function partnerRoutes(app: FastifyInstance) {
             currency: (l.currency ?? 'USD').toUpperCase(),
             attributes: (l.attributes ?? {}) as object,
             isAvailable: l.isAvailable ?? true,
+            // Clear the embedding so the backfill tick re-embeds with the fresh
+            // RE canonical string whenever Alinia pushes a change to a listing.
+            embedding: [],
+            embeddingHash: null,
           };
-          await tx.product.upsert({
+          const product = await tx.product.upsert({
             where: {
               organizationId_aliniaPropertyId: {
                 organizationId: b.haderOrgId,
@@ -231,6 +245,8 @@ export default async function partnerRoutes(app: FastifyInstance) {
             update: data,
           });
           upserted++;
+          const urls = extractImageUrls(l.attributes);
+          if (urls.length) imagePairs.push({ productId: product.id, imageUrls: urls });
         }
 
         let delisted = 0;
@@ -249,6 +265,15 @@ export default async function partnerRoutes(app: FastifyInstance) {
         }
         return { upserted, delisted };
       });
+
+      // Re-host listing photos into Asset/ProductImage so the WhatsApp bot can
+      // send them (Meta media_id cache). Background — never blocks the ingest ack.
+      if (imagePairs.length) {
+        void syncMirrorImages(b.haderOrgId, imagePairs).catch((err) =>
+          req.log.error({ err }, '[partner] mirror image sync failed'),
+        );
+      }
+      return result;
     },
   );
 

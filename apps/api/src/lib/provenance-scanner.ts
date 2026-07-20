@@ -582,6 +582,22 @@ export function scanReply(
         'Small', 'Medium', 'Large', 'Big', 'Baby', 'Mini', 'Regular', 'Kids',
         'Kid', 'Single', 'Double', 'Triple', 'Extra', 'Half', 'Full', 'Fresh',
         'Hot', 'Cold', 'Iced', 'Spicy', 'Sweet', 'Sour', 'Nuts', 'Combo', 'Box',
+        // menu-structure headers — a list reply groups items under headings
+        // ("Signature Drops:", "Popular Picks:") that precede a price line and
+        // were flagged as products.
+        'Signature', 'Signatures', 'Special', 'Specials', 'Popular', 'Featured',
+        'New', 'Classic', 'Classics', 'Favorite', 'Favorites', 'Menu', 'Picks',
+        'Pick', 'Options', 'Option', 'Selection', 'Bestseller', 'Recommended',
+        'Drops', 'Sides', 'Side', 'Mains', 'Main', 'Starters', 'Starter',
+        'Desserts', 'Dessert', 'Drinks', 'Drink', 'Beverages', 'Beverage',
+        'Extras', 'Toppings', 'Topping', 'Here', 'Based',
+        // prep / quality descriptors — adjectives, not products. NB: words that
+        // are real product-name components for some tenants (Protein, Lean,
+        // Fresh...) are deliberately NOT here — a real product is matched by
+        // fragmentMatchesAnyCandidate, and stoplisting them could mask a real
+        // hallucination that happens to start with one.
+        'Freshly', 'Bottled', 'Homemade', 'Grilled', 'Fried', 'Baked', 'Roasted',
+        'Crispy', 'Creamy', 'Loaded', 'Premium', 'Organic', 'Natural',
       ]);
       if (stop.has(frag.split(/\s+/)[0]!)) {
         // Common opener captured — fall back to scanning ALL phrases and

@@ -165,6 +165,9 @@ async function runOrg(
       cartState: null,
       channelLabel: 'WhatsApp',
       compileOnly: retrievalOnly,
+      // Greedy decoding so a full run is reproducible — a regression gate must
+      // not flip on sampling noise.
+      temperature: 0,
     } as never);
 
     const candidateSkus = (res.inputs.candidateProductIds ?? [])

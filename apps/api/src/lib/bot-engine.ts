@@ -684,6 +684,10 @@ interface BotResponseArgs {
   // "AI" section so the previewed prompt is byte-identical to what the bot
   // actually sends — a code change to the prompt shows up automatically.
   compileOnly?: boolean;
+  // Override the sampling temperature for this call. Live replies omit it (use
+  // the default 0.4); the eval harness passes 0 so a run is reproducible and a
+  // regression gate isn't fooled by sampling noise.
+  temperature?: number;
 }
 
 // Provenance bundle returned alongside the bot reply text. Captures
@@ -1241,7 +1245,7 @@ export async function buildBotResponse(
     `# Menu & recommendations (load-bearing)`,
     `- When the customer asks what you have, for "the menu", for recommendations, or for a category ("something healthy", "drinks", "desserts", "sandwiches"...), you MUST LIST the matching products from the Catalog below — each as: name + price in ${currencyCode} + a few words of description. Match by the product's "cat:" tag when they name a category. This applies EVEN IF an intent template matched: a template like "Here's our menu…" is only framing — never send it without the actual product list.`,
     `- NEVER say you don't have menu / product / item info when the Catalog has products. The Catalog IS your menu. Saying "I don't have the menu" while products are listed is a hard error.`,
-    `- Answer specific product questions (ingredients, nutrition, protein/calories, allergens, size, spice level) from that product's description in the Catalog. The description after "·" may contain these details (e.g. "41g protein") — read it before saying you don't know.`,
+    `- Answer specific product questions (ingredients, nutrition, protein/calories, allergens, size, spice level) from that product's description in the Catalog. The description after "·" may contain these details (e.g. "41g protein") — read it before saying you don't know. But if the description does NOT contain the specific figure, DO NOT invent one: never state a protein/calorie/gram/macro/weight number, percentage, or any other quantity that is not written verbatim in the product's data. Say you don't have that exact detail (and offer to help another way) rather than guessing a number — a made-up "65g protein" is a hallucination even when the product really is high-protein.`,
     `- Near-miss: if the customer names an item you can't find exactly, DON'T jump to a human handoff. Suggest the closest available alternative(s) from the Catalog first (e.g. a "taouk"/"tawook" request → the closest taouk/chicken wrap you carry). Only offer a human when they ask for one, or you truly can't help from the Catalog/FAQs.`,
     `- Images when recommending: when you recommend or list specific products (up to ~4 in one reply), add each one's [IMAGE: <SKU>] marker on its own line at the end so the customer sees the photos. For a long full-menu dump, skip images to avoid spamming. EXCEPTION — size/count variants: when the products you list are sizes or pack-counts of the SAME item (same name, different size/quantity), their photos are identical — emit ONE [IMAGE:] marker for the whole group, not one per size.`,
     // Customer-service handoff protocol — when a customer explicitly asks
@@ -1583,7 +1587,7 @@ export async function buildBotResponse(
         // "[IMAGE: MENU-"); 560 lets a ~15-20 line list finish while still
         // discouraging essays. Brevity is enforced by the style rules, not this.
         maxTokens: 560,
-        temperature: TEMPERATURE,
+        temperature: args.temperature ?? TEMPERATURE,
       });
   const latencyMs = Date.now() - llmStartedAt;
 

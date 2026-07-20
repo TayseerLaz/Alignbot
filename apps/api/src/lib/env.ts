@@ -170,6 +170,13 @@ const envSchema = z.object({
   // room before falling back to the unreranked order.
   RERANK_TIMEOUT_MS: z.coerce.number().int().positive().default(4000),
 
+  // Grounding gate (lib/grounding-gate.ts). 'shadow' (default) logs what it
+  // would block without changing output; 'enforce' replaces an ungrounded reply
+  // with the fallback + escalates; 'off' disables. Ships in shadow so the block
+  // rate can be tuned on real traffic before it ever withholds a reply.
+  GROUNDING_GATE_MODE: z.enum(['off', 'shadow', 'enforce']).default('shadow'),
+  GROUNDING_GATE_FALLBACK: z.string().optional(),
+
   // MyFatoorah payment gateway — used by the bot to mint per-order
   // invoice URLs at checkout. When MYFATOORAH_API_KEY is unset, the
   // bot's payment-link request falls back to a generic gateway URL

@@ -748,6 +748,7 @@ async function maybeReplyOnMessenger(
   }
 
   let rawText: string;
+  let botInputs: import('../../lib/bot-engine.js').BotResponseInputs | null = null;
   try {
     const result = await buildBotResponse({
       organizationId: orgId,
@@ -760,9 +761,61 @@ async function maybeReplyOnMessenger(
       openSlots,
     });
     rawText = result.text;
+    botInputs = result.inputs;
   } catch (err) {
     log.warn({ err }, '[messenger] buildBotResponse failed');
     return;
+  }
+
+  // WS4a — run the same validator pipeline WhatsApp uses (Messenger/IG
+  // previously only stripped markdown), plus the grounding gate. Both read the
+  // same candidate KB the reply was built from. Never throws.
+  let mgroundingFlagged = false;
+  let mgroundingReason: string | null = null;
+  try {
+    const { buildScanCandidates, groundingGate, gateMode, safeFallback } = await import(
+      '../../lib/grounding-gate.js'
+    );
+    const { validateReply } = await import('../../lib/reply-validators.js');
+    const candidates = buildScanCandidates(
+      data as never,
+      (thread as { customerWhatsappName?: string | null } | null)?.customerWhatsappName ?? null,
+    );
+    if (botInputs) {
+      const validation = validateReply({
+        reply: rawText,
+        userMessage,
+        inputs: botInputs,
+        kb: candidates,
+        cartDraft: null,
+        bookingFormEnabled: Boolean(
+          (data as { bookingForm?: { enabled?: boolean } }).bookingForm?.enabled,
+        ),
+        shopFormEnabled: Boolean((data as { shopForm?: unknown }).shopForm),
+        voiceMode: 'text',
+        previousBotReply: null,
+        configuredGreeting: (data as { config?: { greeting?: string | null } }).config?.greeting ?? null,
+      });
+      rawText = validation.reply;
+    }
+    const stripped = rawText
+      .replace(/\[IMAGE:[^\]]*\]/gi, '')
+      .replace(/\[CART:[\s\S]*\}\s*\]/gi, '')
+      .replace(/\[BUTTONS:[^\]]*\]/gi, '')
+      .replace(/\[BOOKING:[\s\S]*\}\s*\]/gi, '')
+      .replace(/\[HANDOFF\]/gi, '')
+      .replace(/\[CLEAR_CART\]/gi, '')
+      .replace(/\[PAYMENT_LINK\]/gi, '')
+      .trim();
+    const gate = groundingGate(stripped, candidates);
+    if (gate.wouldBlock) {
+      mgroundingFlagged = true;
+      mgroundingReason = gate.reason;
+      log.warn({ orgId, threadId, mode: gateMode(), reason: gate.reason }, '[messenger] grounding gate flagged reply');
+    }
+    if (!gate.ok) rawText = safeFallback();
+  } catch (err) {
+    log.warn({ err }, '[messenger] validators/grounding gate errored (non-fatal)');
   }
   // Count one AI message against the monthly allowance for this bot reply.
   void recordAiMessages(orgId, 1);
@@ -1096,7 +1149,7 @@ async function maybeReplyOnMessenger(
   const metaMessageId = await sendMessengerText(orgId, psid, customerText, log, quickReplies);
   if (metaMessageId === null) return; // send failed — don't persist a phantom outbound
 
-  await withRlsBypass((tx) =>
+  const botMessage = await withRlsBypass((tx) =>
     tx.whatsAppMessage.create({
       data: {
         threadId,
@@ -1112,6 +1165,7 @@ async function maybeReplyOnMessenger(
           ...(quickReplies.length ? { quickReplies } : {}),
         } as never,
       },
+      select: { id: true },
     }),
   );
   await withRlsBypass((tx) =>
@@ -1125,4 +1179,29 @@ async function maybeReplyOnMessenger(
     }),
   );
   publishInboxEvent(orgId); // push the bot reply to the inbox instantly
+
+  // WS4a — provenance for Messenger/IG (previously WhatsApp-only). Same audit
+  // trail: prompt snapshot, citations, hallucinations, grounding-gate flag.
+  // Never load-bearing — swallowed on error.
+  if (botInputs && botMessage?.id) {
+    try {
+      const { recordProvenance } = await import('../../lib/provenance.js');
+      const { buildScanCandidates } = await import('../../lib/grounding-gate.js');
+      await recordProvenance({
+        organizationId: orgId,
+        messageId: botMessage.id,
+        inputs: botInputs,
+        reply: customerText,
+        kb: buildScanCandidates(
+          data as never,
+          (thread as { customerWhatsappName?: string | null } | null)?.customerWhatsappName ?? null,
+        ),
+        blocked: mgroundingFlagged,
+        blockReason: mgroundingReason,
+        log,
+      });
+    } catch (err) {
+      log.warn({ err }, '[messenger] provenance recordProvenance threw (non-fatal)');
+    }
+  }
 }

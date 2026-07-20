@@ -4193,6 +4193,51 @@ async function maybeReplyAsBot(args: {
     }
     stopwatch.lap('validators');
 
+    // Grounding gate — flag (shadow) or refuse (enforce) a reply that asserts a
+    // product/price not in the catalog. Scan the customer-facing text (markers
+    // stripped, as the send path will), against the same candidate KB provenance
+    // uses. Shadow (default) only logs + records; enforce swaps in the safe
+    // fallback so the downstream marker/cart/image steps find nothing and only
+    // the fallback goes out. Never throws — a gate error can't block a reply.
+    let groundingFlagged = false;
+    let groundingReason: string | null = null;
+    if (result && rawReply) {
+      try {
+        const { buildScanCandidates, groundingGate, gateMode, safeFallback } = await import(
+          '../../lib/grounding-gate.js'
+        );
+        const strippedForScan = rawReply
+          .replace(/\[IMAGE:[^\]]*\]/gi, '')
+          .replace(/\[CART:[\s\S]*\}\s*\]/gi, '')
+          .replace(/\[BUTTONS:[^\]]*\]/gi, '')
+          .replace(/\[BOOKING:[\s\S]*\}\s*\]/gi, '')
+          .replace(/\[HANDOFF\]/gi, '')
+          .replace(/\[CLEAR_CART\]/gi, '')
+          .replace(/\[PAYMENT_LINK\]/gi, '')
+          .trim();
+        const candidates = buildScanCandidates(
+          ctx.data,
+          (ctx as { customerName?: string | null }).customerName ?? null,
+        );
+        const gate = groundingGate(strippedForScan, candidates);
+        if (gate.wouldBlock) {
+          groundingFlagged = true;
+          groundingReason = gate.reason;
+          args.log.warn(
+            { threadId: ctx.threadId, orgId: args.organizationId, mode: gateMode(), reason: gate.reason },
+            '[whatsapp] grounding gate flagged reply',
+          );
+        }
+        if (!gate.ok) {
+          // enforce: replace with the safe fallback (no markers → downstream
+          // cart/image/payment steps no-op → only the fallback is sent).
+          rawReply = safeFallback();
+        }
+      } catch (err) {
+        args.log.warn({ err }, '[whatsapp] grounding gate errored (non-fatal, reply unchanged)');
+      }
+    }
+
     // MyFatoorah payment-link swap. The LLM is trained to emit
     // "https://myfatoorah.com" as a placeholder when the customer
     // asks for a payment link — useless because it's the marketing
@@ -6060,6 +6105,11 @@ async function maybeReplyAsBot(args: {
           // Phase 13 — per-station pipeline trace from the stopwatch
           // we've been lapping through the whole bot reply path.
           pipelineTimings: stopwatch.snapshot(),
+          // WS2 grounding gate — record whether the gate flagged this reply
+          // (blocked=true) and why, so the shadow-mode block rate is queryable
+          // for tuning before enforce.
+          blocked: groundingFlagged,
+          blockReason: groundingReason,
           log: args.log,
         });
         } catch (err) {

@@ -42,6 +42,12 @@ export interface RecordProvenanceArgs {
   // threaded through maybeReplyAsBot. Optional; older callers can
   // still skip it and the column stays NULL.
   pipelineTimings?: PipelineSnapshot | null;
+  // Grounding gate decision for this reply (lib/grounding-gate.ts). blocked =
+  // the gate flagged an ungrounded assertion (in shadow the reply still went
+  // out; in enforce the sent reply is the fallback). Defaulted so old callers
+  // record blocked=false.
+  blocked?: boolean;
+  blockReason?: string | null;
   log?: FastifyBaseLogger | Pick<FastifyBaseLogger, 'warn' | 'info'>;
 }
 
@@ -104,7 +110,7 @@ async function upsertSystemPromptSnapshot(
  * path should NOT block on it. Errors are logged at WARN and swallowed.
  */
 export async function recordProvenance(args: RecordProvenanceArgs): Promise<void> {
-  const { organizationId, messageId, inputs, reply, kb, pipelineTimings, log } = args;
+  const { organizationId, messageId, inputs, reply, kb, pipelineTimings, blocked, blockReason, log } = args;
   try {
     const snapshotId = await upsertSystemPromptSnapshot(organizationId, inputs.systemPrompt);
     // Phase 8 / 1.7 — load operator-curated suppression list before
@@ -136,6 +142,8 @@ export async function recordProvenance(args: RecordProvenanceArgs): Promise<void
           cacheWriteTokens: inputs.cacheWriteTokens ?? 0,
           completionTokens: inputs.completionTokens,
           latencyMs: inputs.latencyMs,
+          blocked: blocked ?? false,
+          blockReason: blockReason ?? null,
           pipelineTimings: (pipelineTimings ?? undefined) as never,
         },
       });

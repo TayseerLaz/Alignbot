@@ -2840,6 +2840,13 @@ model MessageProvenance {
   completionTokens Int    @map("completion_tokens")
   latencyMs        Int    @map("latency_ms")
 
+  // Grounding gate (lib/grounding-gate.ts). `blocked` = the gate detected an
+  // ungrounded product/price assertion in this reply. In shadow mode the reply
+  // was still sent (blocked records the would-block for tuning); in enforce mode
+  // the sent reply is the safe fallback. `blockReason` is the short cause.
+  blocked     Boolean @default(false)
+  blockReason String? @map("block_reason")
+
   createdAt DateTime @default(now()) @map("created_at")
 
   organization         Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)

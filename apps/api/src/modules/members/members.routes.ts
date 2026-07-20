@@ -1,4 +1,6 @@
 import {
+  adminResetMemberPasswordBodySchema,
+  adminResetMemberPasswordResponseSchema,
   ApiErrorCode,
   createInvitationBodySchema,
   invitationListItemSchema,
@@ -15,6 +17,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { recordAudit } from '../../lib/audit.js';
+import { generateTempPassword, hashPassword } from '../../lib/crypto.js';
 import { prisma } from '../../lib/db.js';
 import { badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { syncHqAdminForOrgChange } from '../../lib/hq-admin.js';
@@ -209,6 +212,77 @@ export default async function memberRoutes(app: FastifyInstance) {
       // revokes it — so HQ access mirrors ALIGNED-org admin status exactly.
       await syncHqAdminForOrgChange(req.auth!.organizationId, result.data.userId);
       return result;
+    },
+  );
+
+  // ---------- POST /members/:id/reset-password -----------------------------
+  // An admin resets another member's password. Sets a new password (supplied,
+  // or a strong server-generated temporary one returned once), clears any login
+  // lockout, and revokes ALL the member's sessions so they must sign in again
+  // with the new password. Passwords are a global user credential, so the
+  // update + session revoke use the owner client (not the tenant tx); the
+  // membership lookup stays tenant-scoped so an admin can only reset members of
+  // their own org.
+  r.post(
+    '/members/:id/reset-password',
+    {
+      schema: {
+        tags: ['members'],
+        summary: 'Reset a member’s password (admin sets a temporary password).',
+        params: z.object({ id: uuidSchema }),
+        body: adminResetMemberPasswordBodySchema,
+        response: { 200: itemEnvelopeSchema(adminResetMemberPasswordResponseSchema) },
+      },
+      preHandler: [app.requireRole('admin')],
+    },
+    async (req) => {
+      const orgId = req.auth!.organizationId;
+      const membership = await app.tenant(req, async (tx) =>
+        tx.membership.findUnique({ where: { id: req.params.id }, include: { user: true } }),
+      );
+      if (!membership) throw notFound('Member not found.');
+      if (membership.isProtected) {
+        throw forbidden(
+          ApiErrorCode.FORBIDDEN,
+          'This account is protected — its password cannot be reset here.',
+        );
+      }
+      if (membership.userId === req.auth!.userId) {
+        throw badRequest(
+          ApiErrorCode.CONFLICT,
+          'Use your profile settings to change your own password.',
+        );
+      }
+
+      const generated = req.body.password ? null : generateTempPassword(16);
+      const newPassword = req.body.password ?? generated!;
+      const passwordHash = await hashPassword(newPassword);
+
+      await prisma.user.update({
+        where: { id: membership.userId },
+        data: { passwordHash, failedLoginAttempts: 0, lockedUntil: null },
+      });
+      // Global credential change → revoke every active session for this user
+      // (across all orgs), forcing a fresh login with the new password.
+      await prisma.session.updateMany({
+        where: { userId: membership.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+
+      await recordAudit({
+        action: 'password_reset_by_admin',
+        organizationId: orgId,
+        actorUserId: req.auth!.userId,
+        entityType: 'membership',
+        entityId: membership.id,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        metadata: subjectMeta(membership.user),
+      });
+
+      // Return the temp password ONLY when the server generated it — never echo
+      // an admin-supplied one back.
+      return { data: { email: membership.user.email, temporaryPassword: generated } };
     },
   );
 

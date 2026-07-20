@@ -49,3 +49,24 @@ export const changePasswordBodySchema = z.object({
     .refine((s) => /[a-z]/.test(s) && /[A-Z]/.test(s) && /[0-9]/.test(s), 'Password too weak.'),
 });
 export type ChangePasswordBody = z.infer<typeof changePasswordBodySchema>;
+
+// Admin resets ANOTHER member's password. If `password` is omitted the server
+// generates a strong temporary one and returns it once for the admin to share.
+// If provided, it must meet the same strength bar as a self-chosen password.
+export const adminResetMemberPasswordBodySchema = z.object({
+  password: z
+    .string()
+    .min(12)
+    .max(128)
+    .refine((s) => /[a-z]/.test(s) && /[A-Z]/.test(s) && /[0-9]/.test(s), 'Password too weak.')
+    .optional(),
+});
+export type AdminResetMemberPasswordBody = z.infer<typeof adminResetMemberPasswordBodySchema>;
+
+export const adminResetMemberPasswordResponseSchema = z.object({
+  email: emailSchema,
+  // The temporary password — returned ONCE for the admin to share. Present only
+  // when the server generated it (null when the admin supplied their own).
+  temporaryPassword: z.string().nullable(),
+});
+export type AdminResetMemberPasswordResponse = z.infer<typeof adminResetMemberPasswordResponseSchema>;

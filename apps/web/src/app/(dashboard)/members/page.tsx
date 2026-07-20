@@ -137,6 +137,24 @@ export default function MembersPage() {
     onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Revoke failed'),
   });
 
+  // The generated temporary password, shown once in a dialog for the admin to copy.
+  const [resetResult, setResetResult] = useState<{ email: string; password: string } | null>(null);
+  const resetPasswordMutation = useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ data: { email: string; temporaryPassword: string | null } }>(
+        `/api/v1/members/${id}/reset-password`,
+        {},
+      ),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['members'] });
+      if (res.data.temporaryPassword) {
+        setResetResult({ email: res.data.email, password: res.data.temporaryPassword });
+      }
+      toast.success('Password reset — the member’s sessions were revoked');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.payload.message : 'Reset failed'),
+  });
+
   return (
     <>
       <PageHeader
@@ -278,6 +296,22 @@ export default function MembersPage() {
                               )}
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
+                                onSelect={async () => {
+                                  const confirmed = await confirmDialog({
+                                    title: `Reset password for ${fullName(m.firstName, m.lastName, m.email)}?`,
+                                    body:
+                                      'A new temporary password will be generated and shown to you once. ' +
+                                      'The member’s active sessions are revoked, so they must sign in with the ' +
+                                      'new password (they can change it afterward in their settings).',
+                                    confirmLabel: 'Reset password',
+                                  });
+                                  if (confirmed) resetPasswordMutation.mutate(m.membershipId);
+                                }}
+                              >
+                                Reset password
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
                                 className="text-red-600 focus:text-red-700"
                                 onSelect={async () => {
                                   const confirmed = await confirmDialog({
@@ -360,6 +394,41 @@ export default function MembersPage() {
       ) : null}
 
       <InviteDialog open={inviteOpen} onOpenChange={setInviteOpen} />
+
+      <Dialog
+        open={resetResult !== null}
+        onOpenChange={(open) => {
+          if (!open) setResetResult(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Temporary password</DialogTitle>
+            <DialogDescription>
+              Share this with {resetResult?.email}. It won’t be shown again. They’ll sign in with it
+              and can change it in their settings.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 select-all rounded-md border border-border bg-surface-muted px-3 py-2 font-mono text-sm">
+              {resetResult?.password}
+            </code>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (!resetResult) return;
+                void navigator.clipboard.writeText(resetResult.password);
+                toast.success('Copied');
+              }}
+            >
+              Copy
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setResetResult(null)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

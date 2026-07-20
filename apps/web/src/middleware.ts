@@ -32,7 +32,10 @@ function buildCsp(nonce: string): string {
     "worker-src 'self'",
     // PWA manifest is same-origin; keep it explicit alongside default-src.
     "manifest-src 'self'",
-    "img-src 'self' data: blob: https://*.wasabisys.com",
+    // Alinia real-estate mirror: listing photos are served from the Alinia
+    // media proxy (www.aliniarealestate.com/api/media/*); picsum is the demo
+    // seed host. Without these, CSP blocks the mirrored <img> thumbnails.
+    "img-src 'self' data: blob: https://*.wasabisys.com https://www.aliniarealestate.com https://aliniarealestate.com https://picsum.photos",
     // Wasabi is in connect-src AND in img-src/media-src below: the browser
     // does a presigned PUT (fetch → connect-src) when uploading images +
     // voice notes, then loads the resulting URL as <img>/<audio>

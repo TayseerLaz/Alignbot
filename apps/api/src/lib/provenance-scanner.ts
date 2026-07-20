@@ -565,6 +565,11 @@ export function scanReply(
         'Add', 'Order', 'Pick', 'Have', 'Take', 'Need', 'Yes', 'No', 'Sure',
         'Okay', 'Great', 'Perfect', 'Thanks', 'Thank', 'Sorry', 'The', 'Just',
         'Got', 'Done', 'Cool', 'Awesome', 'Lovely', 'Nice', 'Excellent',
+        // pronouns / determiners / openers that begin a sentence containing a
+        // price ("Your subtotal is …", "That comes to …")
+        'Your', 'My', 'Our', 'Their', 'His', 'Her', 'Its', 'This', 'That',
+        'These', 'Those', 'There', 'So', 'And', 'With', 'Please', 'Would',
+        'Could', 'Also', 'Then', 'Here', 'Now', 'Let', 'Well',
         // order-summary labels
         'Subtotal', 'Total', 'Grandtotal', 'Tax', 'Vat', 'Fee', 'Fees',
         'Delivery', 'Shipping', 'Discount', 'Discounts', 'Service', 'Tip',

@@ -19,6 +19,7 @@ import OpenAI from 'openai';
 import { createHash } from 'node:crypto';
 
 import { env } from './env.js';
+import { buildAliniaReEmbedText } from './alinia-re.js';
 
 const MODEL = 'text-embedding-3-small';
 const DIMENSIONS = 1536;
@@ -46,7 +47,18 @@ export function embeddingHash(text: string): string {
  * Build the canonical "embed text" for a product: name + short
  * description. Stable across calls so the hash works as a dedup key.
  */
-export function productEmbedText(p: { name: string; shortDescription: string | null }): string {
+export function productEmbedText(p: {
+  name: string;
+  shortDescription: string | null;
+  sourceSystem?: string | null;
+  attributes?: unknown;
+}): string {
+  // Alinia real-estate mirror rows get an RE-rich canonical string (beds/area/
+  // price) so semantic search matches property queries. Native rows are
+  // byte-identical to before — non-Alinia tenants are 100% unaffected.
+  if (p.sourceSystem === 'alinia') {
+    return buildAliniaReEmbedText(p.attributes, p.name);
+  }
   const parts = [p.name];
   if (p.shortDescription) parts.push(p.shortDescription);
   return parts.join(' — ').slice(0, 500); // cap to avoid embedding novel-length descriptions

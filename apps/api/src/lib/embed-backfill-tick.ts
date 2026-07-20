@@ -53,7 +53,9 @@ async function tick(): Promise<void> {
   if (budget > 0) {
     const ps = await prisma.product.findMany({
       where: { embeddingHash: null, deletedAt: null },
-      select: { id: true, name: true, shortDescription: true },
+      // sourceSystem + attributes let productEmbedText build the RE string for
+      // Alinia mirror rows; native rows ignore them (unchanged embed text).
+      select: { id: true, name: true, shortDescription: true, sourceSystem: true, attributes: true },
       take: budget,
     });
     if (ps.length) {

@@ -24,6 +24,12 @@
 import { activeChatProvider, complete, completeJson } from './openai.js';
 import { env } from './env.js';
 import { baseName } from './variant-image-collapse.js';
+import {
+  buildAliniaReTag,
+  hasReConstraints,
+  matchesReConstraints,
+  parseReConstraints,
+} from './alinia-re.js';
 
 function activeProviderModelLabel(): string {
   const { provider, model } = activeChatProvider();
@@ -85,6 +91,10 @@ export interface BotData {
     // includes products with no embedding as filler so we never silently
     // hide them from the bot.
     embedding: number[];
+    // Alinia real-estate mirror fields — 'native'/null for normal products.
+    // Only consumed when sourceSystem === 'alinia' (RE embed / pre-filter / tag).
+    sourceSystem: string;
+    attributes: Record<string, unknown> | null;
   }[];
   services: {
     id: string;
@@ -331,6 +341,8 @@ export async function gatherBotData(
         // (double precision[] in Postgres). Empty array means "not yet
         // embedded" — the ranker handles that gracefully.
         embedding: true,
+        sourceSystem: true,
+        attributes: true,
         category: { select: { name: true } },
         variants: {
           where: { isAvailable: true },
@@ -432,6 +444,9 @@ export async function gatherBotData(
     embedding: Array.isArray((p as { embedding?: unknown }).embedding)
       ? ((p as { embedding: number[] }).embedding)
       : [],
+    sourceSystem: (p as { sourceSystem?: string | null }).sourceSystem ?? 'native',
+    attributes:
+      ((p as { attributes?: unknown }).attributes ?? null) as Record<string, unknown> | null,
     images: (p.images ?? [])
       .map((im) => ({
         storageKey: im.asset?.storageKey ?? '',
@@ -793,25 +808,40 @@ export async function buildBotResponse(
     ) ||
     tenantBrowseWords.some((w) => w.length >= 3 && msgLower.includes(w));
 
-  let products = allProducts;
-  if (allProducts.length > SMALL_CATALOG && args.userMessage.trim().length > 0) {
+  // Alinia real-estate structured pre-filter. Gated per-row: native products
+  // always pass the predicate, so a pure-native catalog gets a byte-identical
+  // ranking pool. Runs before the embedding rank; if a too-strict parse empties
+  // the alinia subset we fall back to unfiltered so we never return zero results.
+  let rankPool = allProducts;
+  if (allProducts.some((p) => p.sourceSystem === 'alinia') && args.userMessage.trim().length > 0) {
+    const c = parseReConstraints(args.userMessage);
+    if (hasReConstraints(c)) {
+      const narrowed = allProducts.filter(
+        (p) => p.sourceSystem !== 'alinia' || matchesReConstraints(p.attributes, c),
+      );
+      if (narrowed.some((p) => p.sourceSystem === 'alinia')) rankPool = narrowed;
+    }
+  }
+
+  let products = rankPool;
+  if (rankPool.length > SMALL_CATALOG && args.userMessage.trim().length > 0) {
     if (browseIntent) {
       // Browse the menu — send everything (bounded) so the bot can list/suggest
       // across the full catalog instead of a top-K slice.
-      products = allProducts.slice(0, BROWSE_CAP);
+      products = rankPool.slice(0, BROWSE_CAP);
     } else {
       try {
         const { embed, topKByEmbedding, isEmbeddingAvailable } = await import('./embedding.js');
         if (isEmbeddingAvailable()) {
           const queryVec = await embed(args.userMessage.trim().slice(0, 500));
           const ranked = topKByEmbedding(
-            allProducts.filter((p) => p.embedding.length > 0),
+            rankPool.filter((p) => p.embedding.length > 0),
             queryVec,
             TOP_K,
           );
           // Plus any products without embeddings — keeps them visible while
           // the backfill catches up.
-          const unembedded = allProducts.filter((p) => p.embedding.length === 0);
+          const unembedded = rankPool.filter((p) => p.embedding.length === 0);
           products = [...ranked, ...unembedded].slice(0, TOP_K);
         }
       } catch (err) {
@@ -1334,7 +1364,8 @@ export async function buildBotResponse(
               .replace(/\s+/g, ' ')
               .trim();
             const desc = cleanDesc ? ` · ${cleanDesc.slice(0, 300)}` : '';
-            return `- ${p.name}${priceTag}${catTag}${desc}${varTag}${imgTag} · sku-ref:${p.sku}`;
+            const reTag = p.sourceSystem === 'alinia' ? buildAliniaReTag(p.attributes) : '';
+            return `- ${p.name}${priceTag}${reTag}${catTag}${desc}${varTag}${imgTag} · sku-ref:${p.sku}`;
           })
           .join('\n')}`
       : '(no products listed)',

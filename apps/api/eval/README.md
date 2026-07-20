@@ -9,9 +9,16 @@ three axes:
 | **Deterministic** | No critical hallucination · reply language matches · no markdown/marker leak | **required gate** |
 | **Binary LLM judge** | Does the reply meet the plain-English pass criteria? (fixed strong model, pass/fail) | advisory |
 
-This is the Phase-0 slice from `docs/ai-upgrade-plan.md` (WS3). It is the safety net the
-P0 changes (reranking retrieval, grounding gate) ship behind. Multi-turn simulation and
-the CI-workflow wiring come in Phase 2.
+This is WS3 from `docs/ai-upgrade-plan.md`.
+
+Beyond the single-turn gate, there are two more tools:
+- **`pnpm eval:cart`** (`cart-sim.ts`) — **multi-turn cart simulation**. A user-simulator LLM
+  plays a customer working toward an order goal (`cart-goals/<slug>.json`); the real engine
+  replies each turn; the harness parses the confirmed `[CART:]` order and asserts the right
+  items/quantities came out. Catches order-taking drift (wrong item, wrong qty, dropped item,
+  re-asking a captured field) a one-shot eval can't.
+- **`pnpm eval:replay`** (`gate-replay.ts`) — replays the grounding gate over recent real
+  replies to measure the would-block rate that decides shadow → enforce.
 
 ## Layout
 

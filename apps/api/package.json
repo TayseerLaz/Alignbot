@@ -13,7 +13,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "eval": "tsx --conditions=source eval/runner.ts",
-    "eval:gate": "tsx --conditions=source eval/runner.ts --all --retrieval-only"
+    "eval:gate": "tsx --conditions=source eval/runner.ts --all --retrieval-only",
+    "eval:cart": "tsx --conditions=source eval/cart-sim.ts",
+    "eval:replay": "tsx --conditions=source eval/gate-replay.ts"
   },
   "dependencies": {
     "@aligned/db": "workspace:*",

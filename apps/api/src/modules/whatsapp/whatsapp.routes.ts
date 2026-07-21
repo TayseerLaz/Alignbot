@@ -4835,17 +4835,74 @@ async function maybeReplyAsBot(args: {
         }
         if (greetingVoiceKey && ctx.channel.phoneNumberId && ctx.channel.accessToken && m.from) {
           // Fire-and-forget audio send — must never block or break the text reply.
+          // On success, persist an outbound message row (mediaAssetId → the voice
+          // object) so the note SHOWS + PLAYS in the inbox, mirroring the bot's
+          // TTS voice reply. Without this the customer hears it but the operator
+          // sees nothing in the conversation.
+          const voiceKey = greetingVoiceKey;
+          const voiceTo = m.from;
           const { sendStoredVoiceNote } = await import('../../lib/wa-voice-note.js');
           void sendStoredVoiceNote({
             phoneNumberId: ctx.channel.phoneNumberId,
             accessToken: ctx.channel.accessToken,
-            to: m.from,
-            storageKey: greetingVoiceKey,
+            to: voiceTo,
+            storageKey: voiceKey,
             log: args.log,
           })
-            .then((ok) =>
-              args.log.info({ threadId: ctx.threadId, ok }, '[whatsapp] greeting voice note send'),
-            )
+            .then(async (res) => {
+              args.log.info({ threadId: ctx.threadId, ok: res.ok }, '[whatsapp] greeting voice note send');
+              if (!res.ok) return;
+              try {
+                await withRlsBypass(async (tx) => {
+                  // find-or-create an Asset for the voice object (storageKey is @unique).
+                  let asset = await tx.asset.findFirst({
+                    where: { organizationId: args.organizationId, storageKey: voiceKey },
+                    select: { id: true },
+                  });
+                  if (!asset) {
+                    const ext = (voiceKey.split('.').pop() ?? 'ogg').toLowerCase();
+                    const ct =
+                      ext === 'mp3' ? 'audio/mpeg'
+                      : ext === 'm4a' ? 'audio/mp4'
+                      : ext === 'wav' ? 'audio/wav'
+                      : ext === 'webm' ? 'audio/webm'
+                      : 'audio/ogg';
+                    asset = await tx.asset.create({
+                      data: {
+                        organizationId: args.organizationId,
+                        kind: 'document', // AssetKind has no 'audio'; TTS replies use 'document' too
+                        storageKey: voiceKey,
+                        contentType: ct,
+                        byteSize: 0,
+                      },
+                      select: { id: true },
+                    });
+                  }
+                  await tx.whatsAppMessage.create({
+                    data: {
+                      threadId: ctx.threadId,
+                      organizationId: args.organizationId,
+                      direction: 'outbound',
+                      metaMessageId: res.metaMessageId,
+                      toNumber: voiceTo,
+                      messageType: 'audio',
+                      body: '🎙 رسالة صوتية',
+                      mediaAssetId: asset.id,
+                      rawPayload: { sentBy: 'bot', kind: 'greeting' } as never,
+                    },
+                  });
+                  await tx.whatsAppThread.update({
+                    where: { id: ctx.threadId },
+                    data: { lastMessageAt: new Date(), outboundCount: { increment: 1 } },
+                  });
+                });
+              } catch (err) {
+                args.log.warn(
+                  { err, threadId: ctx.threadId },
+                  '[whatsapp] greeting voice persist failed (sent but not shown in inbox)',
+                );
+              }
+            })
             .catch((err) =>
               args.log.warn({ err, threadId: ctx.threadId }, '[whatsapp] greeting voice note threw'),
             );

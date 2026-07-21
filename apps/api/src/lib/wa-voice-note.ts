@@ -3,8 +3,9 @@
 // Streams the object from Wasabi → uploads to Meta /media → sends type:'audio'.
 // Used by the bot reply path to play a tenant's greeting voice note on the
 // opening reply (the LLM reply path doesn't send voice natively). Fully
-// self-contained + fail-soft: returns false (logged) on any problem, never
-// throws, so a voice-send failure can't break the text reply.
+// self-contained + fail-soft: returns {ok:false} (logged) on any problem, never
+// throws, so a voice-send failure can't break the text reply. On success it
+// returns the Meta message id so the caller can persist an inbox message row.
 import type { Readable } from 'node:stream';
 
 const GRAPH = 'https://graph.facebook.com/v20.0';
@@ -14,6 +15,13 @@ type Logger = {
   warn: (...a: unknown[]) => void;
   error: (...a: unknown[]) => void;
 };
+
+export interface SendVoiceResult {
+  ok: boolean;
+  metaMessageId: string | null;
+}
+
+const FAIL: SendVoiceResult = { ok: false, metaMessageId: null };
 
 function mimeForExt(ext: string): string {
   switch (ext) {
@@ -40,11 +48,11 @@ export async function sendStoredVoiceNote(args: {
   to: string;
   storageKey: string;
   log: Logger;
-}): Promise<boolean> {
+}): Promise<SendVoiceResult> {
   const { getObjectStream, isStorageConfigured } = await import('./storage.js');
   if (!isStorageConfigured()) {
     args.log.warn({ storageKey: args.storageKey }, '[wa-voice] storage not configured — voice skipped');
-    return false;
+    return FAIL;
   }
 
   // 1) Pull the bytes from storage.
@@ -56,7 +64,7 @@ export async function sendStoredVoiceNote(args: {
     buf = Buffer.concat(chunks);
   } catch (err) {
     args.log.warn({ err, storageKey: args.storageKey }, '[wa-voice] fetch from storage failed');
-    return false;
+    return FAIL;
   }
 
   const ext = (args.storageKey.split('.').pop() ?? '').toLowerCase();
@@ -77,16 +85,16 @@ export async function sendStoredVoiceNote(args: {
     const body = await up.text();
     if (!up.ok) {
       args.log.warn({ status: up.status, body: body.slice(0, 300), mime, ext }, '[wa-voice] media upload failed');
-      return false;
+      return FAIL;
     }
     mediaId = (JSON.parse(body) as { id?: string }).id;
   } catch (err) {
     args.log.warn({ err }, '[wa-voice] media upload threw');
-    return false;
+    return FAIL;
   }
   if (!mediaId) {
     args.log.warn('[wa-voice] media upload returned no id');
-    return false;
+    return FAIL;
   }
 
   // 3) Send the audio message.
@@ -103,14 +111,16 @@ export async function sendStoredVoiceNote(args: {
       }),
       signal: AbortSignal.timeout(15_000),
     });
+    const sentBody = await sent.text();
     if (!sent.ok) {
-      const b = await sent.text().catch(() => '');
-      args.log.warn({ status: sent.status, body: b.slice(0, 300) }, '[wa-voice] audio send failed');
-      return false;
+      args.log.warn({ status: sent.status, body: sentBody.slice(0, 300) }, '[wa-voice] audio send failed');
+      return FAIL;
     }
-    return true;
+    const metaMessageId =
+      (JSON.parse(sentBody) as { messages?: { id?: string }[] }).messages?.[0]?.id ?? null;
+    return { ok: true, metaMessageId };
   } catch (err) {
     args.log.warn({ err }, '[wa-voice] audio send threw');
-    return false;
+    return FAIL;
   }
 }

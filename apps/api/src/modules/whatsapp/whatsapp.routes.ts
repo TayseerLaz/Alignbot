@@ -4785,14 +4785,20 @@ async function maybeReplyAsBot(args: {
     const greetingImageKey =
       (ctx.data.config as { greetingImageStorageKey?: string | null } | null)
         ?.greetingImageStorageKey ?? null;
+    // Greeting VOICE note: the LLM reply path doesn't send voice natively, so a
+    // tenant that uploaded a greeting voice (e.g. fatme's pure-LLM intake) gets
+    // it played on the opening reply — same trigger + 1h dedup as the image.
+    const greetingVoiceKey =
+      (ctx.data.config as { greetingVoiceStorageKey?: string | null } | null)
+        ?.greetingVoiceStorageKey ?? null;
     // /u flag is REQUIRED — the emoji char class contains surrogate-pair
     // characters (👋 etc.) and without Unicode mode they don't match,
     // so "👋 Welcome to ..." silently fell through and the greeting
     // image never sent.
     const GREETING_REPLY_RE =
       /^(\s*[👋🙏✨🌟😊]?\s*)?(hi|hello|hey|welcome|good\s+(morning|afternoon|evening)|greetings|أهل[اًاً]?|مرحب[اًا]|سلام|bonjour|salut|hola|buen(os|as)\s+(d[ií]as|tardes|noches))[\s,!.:؛،]/iu;
-    if (greetingImageKey && reply && GREETING_REPLY_RE.test(reply.trim())) {
-      // The welcome banner is for the START of a visit — not every time the
+    if ((greetingImageKey || greetingVoiceKey) && reply && GREETING_REPLY_RE.test(reply.trim())) {
+      // The welcome banner/voice is for the START of a visit — not every time the
       // bot opens a mid-conversation reply with "Hey <name>". Suppress it when
       // the bot has already replied in this thread within the last hour (an
       // active/continuing session). A genuinely returning customer (dormant >
@@ -4812,22 +4818,38 @@ async function maybeReplyAsBot(args: {
         return !!row;
       });
       if (!recentlyChatting) {
-        // Prepend so the greeting image sends before any product images
-        // in the same reply.
-        dedupedImageSends.unshift({
-          sku: '__greeting__',
-          name: '',
-          storageKey: greetingImageKey,
-          kind: 'greeting',
-        });
-        args.log.info(
-          { threadId: ctx.threadId },
-          '[whatsapp] greeting image queued',
-        );
+        if (greetingImageKey) {
+          // Prepend so the greeting image sends before any product images
+          // in the same reply.
+          dedupedImageSends.unshift({
+            sku: '__greeting__',
+            name: '',
+            storageKey: greetingImageKey,
+            kind: 'greeting',
+          });
+          args.log.info({ threadId: ctx.threadId }, '[whatsapp] greeting image queued');
+        }
+        if (greetingVoiceKey && ctx.channel.phoneNumberId && ctx.channel.accessToken && m.from) {
+          // Fire-and-forget audio send — must never block or break the text reply.
+          const { sendStoredVoiceNote } = await import('../../lib/wa-voice-note.js');
+          void sendStoredVoiceNote({
+            phoneNumberId: ctx.channel.phoneNumberId,
+            accessToken: ctx.channel.accessToken,
+            to: m.from,
+            storageKey: greetingVoiceKey,
+            log: args.log,
+          })
+            .then((ok) =>
+              args.log.info({ threadId: ctx.threadId, ok }, '[whatsapp] greeting voice note send'),
+            )
+            .catch((err) =>
+              args.log.warn({ err, threadId: ctx.threadId }, '[whatsapp] greeting voice note threw'),
+            );
+        }
       } else {
         args.log.info(
           { threadId: ctx.threadId },
-          '[whatsapp] greeting image suppressed (mid-conversation — bot replied within last hour)',
+          '[whatsapp] greeting image/voice suppressed (mid-conversation — bot replied within last hour)',
         );
       }
     }

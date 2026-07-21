@@ -13,7 +13,7 @@ async function main(): Promise<void> {
   try {
     const org = await prisma.organization.findUnique({
       where: { slug: SLUG },
-      select: { id: true, disabledFeatures: true },
+      select: { id: true, disabledFeatures: true, aiPlan: true },
     });
     if (!org) {
       console.log(`NO ORG with slug '${SLUG}'`);
@@ -27,38 +27,38 @@ async function main(): Promise<void> {
         greeting: true,
         greetingVoiceStorageKey: true,
         greetingImageStorageKey: true,
+        adminSystemPromptAppend: true,
         scriptedFlow: true,
+        languages: true,
         version: true,
         updatedAt: true,
       },
     });
     const flow = (cfg?.scriptedFlow as Record<string, unknown> | null) ?? null;
-    const nodes = (flow?.nodes as Record<string, { text?: string; voiceKey?: string | null }>) ?? {};
-    const nodeIds = Object.keys(nodes);
-    const isNewFlow = nodeIds.includes('s0_welcome') && nodeIds.includes('safety_check');
+    const flowEnabled = !!flow && (flow as { enabled?: boolean }).enabled === true;
+    const persona = cfg?.adminSystemPromptAppend ?? '';
+    const isPureLlmFatme = persona.includes('فريق فاطمة') && !flowEnabled;
 
     const channels = await prisma.whatsAppChannel.findMany({
       where: { organizationId: org.id },
       select: { label: true, isPrimary: true, isActive: true, botEnabled: true, phoneNumberId: true },
     });
 
-    console.log('\n=========== FATME STATE ===========');
+    console.log('\n=========== FATME STATE (pure-LLM intake) ===========');
     console.log('org.disabledFeatures      :', JSON.stringify(org.disabledFeatures));
     console.log('  → AI disabled?          :', (org.disabledFeatures ?? []).includes('ai') ? 'YES (bot will not reply)' : 'no');
+    const planModel: Record<string, string> = { basic: 'Groq Llama 3.3 70B / gpt-4o-mini', middle: 'OpenAI gpt-4o', max: 'Claude Sonnet', ultra: 'Claude Sonnet + Haiku aux' };
+    console.log('aiPlan (MODEL)            :', org.aiPlan, `→ ${planModel[org.aiPlan] ?? '?'}`, org.aiPlan === 'basic' ? '  ⚠ weak for nuanced Arabic — consider max (Sonnet)' : '');
     console.log('botConfig.version         :', cfg?.version, '  updatedAt:', cfg?.updatedAt?.toISOString());
     console.log('deployedAt                :', cfg?.deployedAt ? cfg.deployedAt.toISOString() : 'NULL (bot skip: not deployed)');
+    console.log('languages                 :', cfg?.languages);
     console.log('greeting (text)           :', cfg?.greeting ? `SET (${cfg.greeting.slice(0, 30)}…)` : 'empty');
-    console.log('---- VOICE ----');
-    console.log('greetingVoiceStorageKey   :', cfg?.greetingVoiceStorageKey || '❌ MISSING — NO voice can ever play. Re-upload in the bot builder greeting voice slot.');
-    console.log('s6_audio.voiceKey (in flow):', nodes.s6_audio?.voiceKey || 'none (seed injects greetingVoiceStorageKey here)');
-    console.log('---- FLOW ----');
-    console.log('scriptedFlow present       :', !!flow);
-    console.log('scriptedFlow.enabled       :', flow?.enabled);
-    console.log('scriptedFlow.entry         :', flow?.entry);
-    console.log('greetingVoiceOnEntry       :', flow?.greetingVoiceOnEntry);
-    console.log('node count                 :', nodeIds.length, `[${nodeIds.join(', ')}]`);
-    console.log('is the NEW flow?           :', isNewFlow ? '✅ yes (has s0_welcome + safety_check)' : '❌ NO — the new seed has NOT been applied');
-    console.log('entry node text            :', (nodes[String(flow?.entry)]?.text ?? '(none)').slice(0, 70));
+    console.log('---- VOICE (plays on opening reply) ----');
+    console.log('greetingVoiceStorageKey   :', cfg?.greetingVoiceStorageKey || '❌ MISSING — NO greeting voice can play. Upload it in the bot builder + save.');
+    console.log('---- MODE ----');
+    console.log('scriptedFlow enabled?     :', flowEnabled, flowEnabled ? '⚠ still a DETERMINISTIC flow — should be null for pure-LLM' : '(cleared → LLM path runs ✅)');
+    console.log('persona (adminAppend) set :', persona ? `yes (${persona.length} chars)` : '❌ NO — the pure-LLM seed has NOT been applied');
+    console.log('is pure-LLM fatme?        :', isPureLlmFatme ? '✅ yes (persona set + no scripted flow)' : '❌ NO — re-run seed-fatme-flow.ts');
     console.log('---- CHANNEL(S) ----');
     for (const ch of channels) {
       console.log(
@@ -68,8 +68,8 @@ async function main(): Promise<void> {
       if (!ch.botEnabled) console.log('    ⚠ botEnabled=false on this number → bot skip: bot disabled on this number');
     }
     console.log('===================================\n');
-    console.log('READ: if greetingVoiceStorageKey is MISSING → that is why no voice plays (upload it + re-run seed-fatme-flow).');
-    console.log('READ: if "is the NEW flow?" is NO → the seed hasn’t run. If YES but only 1 bubble sends live → the API wasn’t redeployed.');
+    console.log('READ: greetingVoiceStorageKey MISSING → no voice plays. Upload it in the bot builder + SAVE, then re-run the seed.');
+    console.log('READ: "is pure-LLM fatme?" NO → the seed hasn’t run (or the api wasn’t redeployed). scriptedFlow enabled=true → still deterministic.');
   } finally {
     await prisma.$disconnect();
   }

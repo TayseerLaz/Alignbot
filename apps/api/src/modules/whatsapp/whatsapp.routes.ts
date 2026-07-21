@@ -2993,6 +2993,33 @@ export default async function whatsappRoutes(app: FastifyInstance) {
                     entityId: thread.id,
                   },
                 });
+                // Capture Hader's own LEADS: anyone who messages the Hader AI
+                // assistant (the hader-support bot) becomes a lead on their FIRST
+                // message, so their number shows in /aligned-admin/leads next to
+                // the marketing-form leads. Scoped to the hader-support org only
+                // — other tenants' customers are NOT Hader leads. Runs once per
+                // customer (inboundCount === 0), so it's low-frequency + idempotent.
+                const leadOrg = await tx.organization.findUnique({
+                  where: { id: channel.organizationId },
+                  select: { slug: true },
+                });
+                if (leadOrg?.slug === 'hader-support') {
+                  const existingLead = await tx.lead.findFirst({
+                    where: { phone },
+                    select: { id: true },
+                  });
+                  if (!existingLead) {
+                    await tx.lead.create({
+                      data: {
+                        name: waProfileName?.trim() || phone,
+                        phone,
+                        source: 'hader_whatsapp',
+                        note: bodyText ? `First WhatsApp message: ${bodyText.slice(0, 300)}` : null,
+                      },
+                    });
+                    req.log.info({ phone }, '[whatsapp] hader lead captured from bot chat');
+                  }
+                }
               }
             }).catch((err) => req.log.error({ err }, '[whatsapp] persist failed'));
 

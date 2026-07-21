@@ -18,6 +18,7 @@ import OpenAI from 'openai';
 
 import { withRlsBypass } from './db.js';
 import { env } from './env.js';
+import { reportModelDegrade } from './model-degrade.js';
 import { getRedis } from './redis.js';
 
 let _client: OpenAI | null = null;
@@ -272,6 +273,9 @@ type CompleteResult = {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   model: string;
+  // True when a max/ultra tier silently fell back to the basic stack (missing
+  // Anthropic key / provider error). The reply still went out; WS6b alerts on it.
+  degraded?: boolean;
 };
 
 export async function complete(args: CompleteArgs): Promise<CompleteResult> {
@@ -317,6 +321,11 @@ export async function complete(args: CompleteArgs): Promise<CompleteResult> {
       args.organizationId,
       result.inputTokens + result.outputTokens - prePaid,
     );
+    // WS6b: if a max/ultra plan silently degraded to basic, alert admins
+    // (deduped 1/day/tenant). Fire-and-forget — never delays or breaks the reply.
+    if (result.degraded && (plan === 'max' || plan === 'ultra')) {
+      void reportModelDegrade(args.organizationId, plan, result.model);
+    }
     return result;
   } catch (err) {
     // The call failed (network / provider error) — refund the full pre-charge.
@@ -449,7 +458,7 @@ async function completeMax(args: CompleteArgs): Promise<CompleteResult> {
   if (!a) {
     // eslint-disable-next-line no-console
     console.warn('[chat] aiPlan=max but ANTHROPIC_API_KEY unset — degrading to basic');
-    return completeBasic(args);
+    return { ...(await completeBasic(args)), degraded: true };
   }
   try {
     const res = await a.messages.create({
@@ -482,7 +491,7 @@ async function completeMax(args: CompleteArgs): Promise<CompleteResult> {
       '[chat] Anthropic error — degrading to basic',
       err instanceof Error ? err.message.slice(0, 200) : String(err),
     );
-    return completeBasic(args);
+    return { ...(await completeBasic(args)), degraded: true };
   }
 }
 
@@ -498,7 +507,7 @@ async function completeUltra(args: CompleteArgs): Promise<CompleteResult> {
   if (!a) {
     // eslint-disable-next-line no-console
     console.warn('[chat] aiPlan=ultra but ANTHROPIC_API_KEY unset — degrading to basic');
-    return completeBasic(args);
+    return { ...(await completeBasic(args)), degraded: true };
   }
   try {
     const res = await a.messages.create({
@@ -528,7 +537,7 @@ async function completeUltra(args: CompleteArgs): Promise<CompleteResult> {
       '[chat] Anthropic (ultra) error — degrading to basic',
       err instanceof Error ? err.message.slice(0, 200) : String(err),
     );
-    return completeBasic(args);
+    return { ...(await completeBasic(args)), degraded: true };
   }
 }
 

@@ -4795,8 +4795,12 @@ async function maybeReplyAsBot(args: {
     // characters (👋 etc.) and without Unicode mode they don't match,
     // so "👋 Welcome to ..." silently fell through and the greeting
     // image never sent.
+    // The Arabic greeting stems match ANY trailing Arabic letters/diacritics
+    // (ء-ٟ) so LEVANTINE openers like "أهلين", "أهلاً", "مرحباً" match
+    // — the old `أهل[اًاً]?` only matched "أهلا"/"أهل" and silently skipped the
+    // greeting voice/image for tenants (e.g. fatme) that open with "أهلين".
     const GREETING_REPLY_RE =
-      /^(\s*[👋🙏✨🌟😊]?\s*)?(hi|hello|hey|welcome|good\s+(morning|afternoon|evening)|greetings|أهل[اًاً]?|مرحب[اًا]|سلام|bonjour|salut|hola|buen(os|as)\s+(d[ií]as|tardes|noches))[\s,!.:؛،]/iu;
+      /^(\s*[👋🙏✨🌟😊]?\s*)?(hi|hello|hey|welcome|good\s+(morning|afternoon|evening)|greetings|(?:أهل|اهل|مرحب|سلام|هلا)[ء-ٟ]*|bonjour|salut|hola|buen(os|as)\s+(d[ií]as|tardes|noches))(?:[\s,!.:؛،]|$)/iu;
     if ((greetingImageKey || greetingVoiceKey) && reply && GREETING_REPLY_RE.test(reply.trim())) {
       // The welcome banner/voice is for the START of a visit — not every time the
       // bot opens a mid-conversation reply with "Hey <name>". Suppress it when

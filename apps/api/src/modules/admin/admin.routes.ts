@@ -1636,6 +1636,142 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- Bot eval dashboard (WS3) ------------------------------------
+  // Read-only surface over the eval_runs table. Runs are produced by the eval
+  // harness's `--persist` flag (pre-deploy / manual runs against prod); this
+  // endpoint never executes the engine — it just reports the latest verdicts.
+  const evalTenantRowSchema = z.object({
+    org: z.string(),
+    total: z.number(),
+    retrievalScored: z.number(),
+    retrievalHits: z.number(),
+    deterministicPass: z.number(),
+    judgeScored: z.number(),
+    judgePass: z.number(),
+    overallPass: z.number(),
+  });
+  const evalScenarioResultSchema = z.object({
+    key: z.string(),
+    dialect: z.string().nullish(),
+    reply: z.string(),
+    candidateSkus: z.array(z.string()),
+    retrieval: z.object({
+      hit: z.boolean(),
+      found: z.array(z.string()),
+      missing: z.array(z.string()),
+      expected: z.number(),
+    }),
+    bestRank: z.number().nullable(),
+    deterministic: z.object({ passed: z.boolean(), failures: z.array(z.string()) }),
+    judge: z.object({ pass: z.boolean(), critique: z.string() }).nullish(),
+    model: z.string().nullish(),
+  });
+  const evalSummarySchema = evalTenantRowSchema.extend({
+    results: z.array(evalScenarioResultSchema),
+  });
+  const evalRunBaseSchema = z.object({
+    id: z.string(),
+    trigger: z.string(),
+    mode: z.string(),
+    threshold: z.number(),
+    passed: z.boolean(),
+    tenantCount: z.number(),
+    passedCount: z.number(),
+    gitSha: z.string().nullable(),
+    note: z.string().nullable(),
+    durationMs: z.number().nullable(),
+    createdAt: z.string(),
+  });
+
+  // GET /aligned-admin/eval/runs — recent runs (compact per-tenant rollup only,
+  // no per-scenario results, so the list stays light).
+  r.get(
+    '/aligned-admin/eval/runs',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'Recent bot-eval runs (WS3), newest first.',
+        querystring: z.object({ limit: z.coerce.number().int().min(1).max(100).default(25) }),
+        response: {
+          200: listEnvelopeSchema(evalRunBaseSchema.extend({ tenants: z.array(evalTenantRowSchema) })),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const rows = await withRlsBypass((tx) =>
+        tx.evalRun.findMany({ orderBy: { createdAt: 'desc' }, take: req.query.limit }),
+      );
+      return {
+        data: rows.map((row) => {
+          const summaries = (row.summaries as unknown as Array<z.infer<typeof evalSummarySchema>>) ?? [];
+          return {
+            id: row.id,
+            trigger: row.trigger,
+            mode: row.mode,
+            threshold: row.threshold,
+            passed: row.passed,
+            tenantCount: row.tenantCount,
+            passedCount: row.passedCount,
+            gitSha: row.gitSha,
+            note: row.note,
+            durationMs: row.durationMs,
+            createdAt: row.createdAt.toISOString(),
+            tenants: summaries.map((s) => ({
+              org: s.org,
+              total: s.total,
+              retrievalScored: s.retrievalScored,
+              retrievalHits: s.retrievalHits,
+              deterministicPass: s.deterministicPass,
+              judgeScored: s.judgeScored,
+              judgePass: s.judgePass,
+              overallPass: s.overallPass,
+            })),
+          };
+        }),
+        nextCursor: null,
+      };
+    },
+  );
+
+  // GET /aligned-admin/eval/runs/:id — one run in full (per-scenario results).
+  r.get(
+    '/aligned-admin/eval/runs/:id',
+    {
+      schema: {
+        tags: ['admin'],
+        summary: 'One bot-eval run with full per-scenario results.',
+        params: z.object({ id: uuidSchema }),
+        response: {
+          200: itemEnvelopeSchema(evalRunBaseSchema.extend({ summaries: z.array(evalSummarySchema) })),
+        },
+      },
+      preHandler: [app.requireAlignedAdmin],
+    },
+    async (req) => {
+      const row = await withRlsBypass((tx) =>
+        tx.evalRun.findUnique({ where: { id: req.params.id } }),
+      );
+      if (!row) throw notFound('Eval run not found.');
+      return {
+        data: {
+          id: row.id,
+          trigger: row.trigger,
+          mode: row.mode,
+          threshold: row.threshold,
+          passed: row.passed,
+          tenantCount: row.tenantCount,
+          passedCount: row.passedCount,
+          gitSha: row.gitSha,
+          note: row.note,
+          durationMs: row.durationMs,
+          createdAt: row.createdAt.toISOString(),
+          summaries: (row.summaries as unknown as Array<z.infer<typeof evalSummarySchema>>) ?? [],
+        },
+      };
+    },
+  );
+
   // ---------- GET /aligned-admin/traffic ----------------------------------
   // Live traffic snapshot parsed from the API's own /metrics endpoint.
   // Returns cumulative counters since the process started — for a real

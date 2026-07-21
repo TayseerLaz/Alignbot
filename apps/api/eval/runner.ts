@@ -17,6 +17,11 @@
 //   --no-judge          run generation + deterministic checks, skip the judge
 //   --threshold <0..1>  min overall pass rate before exit 0 (default 0.8)
 //   --json              emit the raw EvalSummary as JSON
+//   --persist           write the run to the eval_runs table so it shows up on
+//                       the /aligned-admin/eval dashboard (use on pre-deploy /
+//                       manual runs against prod). --trigger / --note tag it.
+//   --trigger <label>   'manual' | 'pre-deploy' | 'ci' | 'cli' (default cli)
+//   --note <text>       free-text note stored with a persisted run
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -88,6 +93,7 @@ async function main() {
   const threshold = Number(arg('threshold') ?? '0.8');
 
   const opts = { retrievalOnly, noJudge };
+  const startedAt = Date.now();
 
   // --all runs every tenant that has a golden set (eval/golden/*.json). This is
   // the point of the gate: a change that improves the average can silently
@@ -109,8 +115,6 @@ async function main() {
     else printReport(summary, retrievalOnly);
   }
 
-  await prisma.$disconnect();
-
   const rateOf = (su: EvalSummary) =>
     retrievalOnly
       ? su.retrievalScored === 0
@@ -120,6 +124,33 @@ async function main() {
         ? 1
         : su.overallPass / su.total;
   const failures = summaries.filter((su) => rateOf(su) + 1e-9 < threshold);
+
+  // --persist writes the run to eval_runs so it surfaces on /aligned-admin/eval.
+  // Fail-soft: a persistence error must never change the gate's exit code.
+  if (flag('persist') && summaries.length > 0) {
+    try {
+      await prisma.evalRun.create({
+        data: {
+          trigger: arg('trigger') ?? 'cli',
+          mode: retrievalOnly ? 'retrieval' : 'full',
+          threshold,
+          passed: failures.length === 0,
+          tenantCount: summaries.length,
+          passedCount: summaries.length - failures.length,
+          summaries: summaries as unknown as object,
+          gitSha: process.env.EVAL_GIT_SHA ?? process.env.GITHUB_SHA ?? null,
+          note: arg('note') ?? null,
+          durationMs: Date.now() - startedAt,
+        },
+      });
+      console.log('\n  ↳ persisted to eval_runs (visible on /aligned-admin/eval)');
+    } catch (e) {
+      console.error('  ↳ persist failed (gate result unaffected):', (e as Error).message);
+    }
+  }
+
+  await prisma.$disconnect();
+
   if (summaries.length > 1) {
     console.log(
       `\n=== gate: ${summaries.length - failures.length}/${summaries.length} tenants passed (threshold ${threshold}) ===`,

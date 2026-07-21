@@ -20,6 +20,25 @@ Beyond the single-turn gate, there are two more tools:
 - **`pnpm eval:replay`** (`gate-replay.ts`) — replays the grounding gate over recent real
   replies to measure the would-block rate that decides shadow → enforce.
 
+## Dashboard (`/aligned-admin/eval`)
+
+Pass **`--persist`** to any `runner.ts` run and it writes the result to the `eval_runs`
+table, which the **Bot eval** page under `/aligned-admin` surfaces (gate verdict per tenant,
+per-scenario drill-in, run history). Tag the run with `--trigger` and `--note`:
+
+```bash
+cd apps/api
+set -a; . ../../.env.production; set +a
+pnpm eval:gate -- --persist --trigger pre-deploy --note "before shipping X"
+# or a full run (deterministic + judge), all tenants:
+pnpm eval -- --all --persist --trigger pre-deploy
+```
+
+`eval_runs` is HQ infrastructure — it carries no `organization_id` and no RLS (an eval run
+spans every golden set at once), and is readable only through `requireAlignedAdmin`. The API
+never runs the engine on request; the dashboard is a read-only view of what `--persist` wrote,
+so the natural place to persist is the **pre-deploy** shadow-run against prod/staging.
+
 ## Layout
 
 ```

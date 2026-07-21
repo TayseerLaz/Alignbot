@@ -10,6 +10,7 @@ import {
   CalendarCheck,
   Contact as ContactIcon,
   ExternalLink,
+  FlaskConical,
   Inbox,
   LayoutDashboard,
   type LucideIcon,
@@ -132,6 +133,7 @@ const alignedAdminItems: NavItem[] = [
   { href: '/members', label: 'Members', icon: Users },
   { href: '/settings', label: 'Settings', icon: Settings },
   { href: '/aligned-admin/leads', label: 'Leads', icon: UserPlus, badgeKey: 'leadsNew' },
+  { href: '/aligned-admin/eval', label: 'Bot eval', icon: FlaskConical },
   { href: '/aligned-admin/system', label: 'System health', icon: Activity },
 ];
 

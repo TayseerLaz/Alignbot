@@ -20,6 +20,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import type { Prisma } from '../../lib/db.js';
+import { aliniaPriceLabel } from '../../lib/alinia-re.js';
 import { recordAudit } from '../../lib/audit.js';
 import { capCheck } from '../../lib/billing.js';
 import { prisma as rootPrisma } from '../../lib/db.js';
@@ -127,6 +128,9 @@ export default async function productRoutes(app: FastifyInstance) {
             slug: p.slug,
             shortDescription: p.shortDescription,
             priceMinor: p.priceMinor,
+            // Alinia mirror rows keep price in `attributes` (priceMinor is NULL);
+            // surface a rent/sale-aware label so the Properties view isn't blank.
+            priceLabel: p.sourceSystem === 'alinia' ? aliniaPriceLabel(p.attributes) : null,
             currency: orgCurrency,
             isAvailable: p.isAvailable,
             stockQuantity: p.stockQuantity,

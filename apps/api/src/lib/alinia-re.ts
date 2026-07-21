@@ -78,6 +78,35 @@ export function formatListingPrice(a: AliniaAttrs): string | null {
   return parts.length ? parts.join(' · ') : null;
 }
 
+/**
+ * Compact price for the portal Properties "Price" column and the read API.
+ * `price_minor` is intentionally NULL for alinia mirror rows (real-estate
+ * prices overflow the retail int4 cents column and vary by currency), so the
+ * displayable price is derived here from `attributes` — the same source the
+ * bot uses via formatListingPrice — rather than backfilling price_minor.
+ * Rent carries a period suffix (/mo, /yr); sale shows the bare amount.
+ */
+export function aliniaPriceLabel(attributes: unknown): string | null {
+  const a = parseAliniaAttrs(attributes);
+  if (!a) return null;
+  const ccy = a.currency ?? 'USD';
+  const per = a.pricePeriod === 'yearly' ? '/yr' : '/mo';
+  const fmt = (n: number) => `${ccy} ${Math.round(n).toLocaleString('en-US')}`;
+  if (a.transactionType === 'rent') {
+    const p = a.rentPrice ?? a.price;
+    return p != null ? `${fmt(p)}${per}` : null;
+  }
+  if (a.transactionType === 'both') {
+    const parts: string[] = [];
+    const sale = a.salePrice ?? a.price;
+    if (sale != null) parts.push(fmt(sale));
+    if (a.rentPrice != null) parts.push(`${fmt(a.rentPrice)}${per}`);
+    return parts.length ? parts.join(' / ') : null;
+  }
+  const p = a.salePrice ?? a.price ?? a.rentPrice;
+  return p != null ? fmt(p) : null;
+}
+
 /** Compact structured facts appended to the LLM's product line for alinia rows. */
 export function buildAliniaReTag(attributes: unknown): string {
   const a = parseAliniaAttrs(attributes);

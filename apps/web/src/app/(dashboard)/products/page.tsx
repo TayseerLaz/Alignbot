@@ -423,7 +423,7 @@ export default function ProductsPage() {
                           {p.categoryName ?? <span className="text-foreground-subtle">—</span>}
                         </td>
                         <td className="px-4 py-3 text-right font-medium">
-                          {formatMoney(p.priceMinor, p.currency)}
+                          {p.priceLabel ?? formatMoney(p.priceMinor, p.currency)}
                         </td>
                         <td className="hidden px-4 py-3 sm:table-cell">
                           {p.isAvailable ? (

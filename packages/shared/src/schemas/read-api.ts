@@ -15,6 +15,9 @@ export const readApiProductSchema = z.object({
   description: z.string().nullable(),
   shortDescription: z.string().nullable(),
   priceMinor: z.number().int().nonnegative().nullable(),
+  // Real-estate (Alinia) listings keep price in `attributes`, so priceMinor is
+  // null for them; priceLabel is the human-readable, rent/sale-aware price.
+  priceLabel: z.string().nullable().optional(),
   currency: currency3,
   available: z.boolean(),
   categoryName: z.string().nullable(),

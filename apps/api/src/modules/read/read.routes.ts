@@ -21,6 +21,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
+import { aliniaPriceLabel } from '../../lib/alinia-re.js';
 import { withTenant } from '../../lib/db.js';
 import { forbidden, notFound } from '../../lib/errors.js';
 import { readCacheGet, readCacheSet } from '../../lib/read-cache.js';
@@ -109,6 +110,7 @@ export default async function readApiRoutes(app: FastifyInstance) {
               description: stripHtmlForBot(p.description),
               shortDescription: stripHtmlForBot(p.shortDescription),
               priceMinor: p.priceMinor,
+              priceLabel: p.sourceSystem === 'alinia' ? aliniaPriceLabel(p.attributes) : null,
               currency: p.currency,
               available: p.isAvailable,
               categoryName: p.category?.name ?? null,
@@ -164,6 +166,7 @@ export default async function readApiRoutes(app: FastifyInstance) {
               description: stripHtmlForBot(p.description),
               shortDescription: stripHtmlForBot(p.shortDescription),
               priceMinor: p.priceMinor,
+              priceLabel: p.sourceSystem === 'alinia' ? aliniaPriceLabel(p.attributes) : null,
               currency: p.currency,
               available: p.isAvailable,
               categoryName: p.category?.name ?? null,

@@ -256,6 +256,16 @@ function fragmentMatchesAnyCandidate(
   return false;
 }
 
+// Trim a captured fragment down to its leading Title-Case phrase, dropping
+// trailing lowercase filler / numbers. Product names are Title Case, so
+// "Waffle for 0.300" → "Waffle", "Oreo Milkshake now" → "Oreo Milkshake".
+// This is what stops a noisy capture from failing the substring match against
+// the real product name (the #1 false-positive class in the shadow replay).
+function leadingTitlePhrase(frag: string): string {
+  const m = frag.match(/^[A-Z][a-zA-Z'&-]*(?:\s+[A-Z][a-zA-Z'&-]*){0,3}/);
+  return (m ? m[0] : frag).trim();
+}
+
 // ---------- main scanner --------------------------------------------------
 
 export function scanReply(
@@ -504,14 +514,28 @@ export function scanReply(
 
   // ---- hallucination scan ----
 
+  // The customer's own name (and operator nickname) frequently sits right
+  // before a total in cart confirmations ("I'll put this under Tayseer, total
+  // …") — the price-proximity pattern grabbed it as an "unknown product". Build
+  // a suppression set of their name tokens so we never flag the customer's name.
+  const customerTokens = new Set<string>();
+  for (const nm of [c.customer?.whatsappName, c.customer?.operatorNickname]) {
+    if (!nm) continue;
+    customerTokens.add(normalize(nm));
+    const first = nm.trim().split(/\s+/)[0];
+    if (first) customerTokens.add(normalize(first));
+  }
+  const isCustomerName = (t: string): boolean => customerTokens.has(normalize(t));
+
   // Pattern 1: cart actions — "added one Oreo Milkshake" / "removed 2x foo"
   const cartActionRe =
     /(?:added|i(?:'ve)?\s+added|i\s+added|removed)\s+(?:one|two|three|four|five|\d+)\s*(?:×|x)?\s+([A-Z][^\n.;,]{2,60})/gi;
   for (const m of reply.matchAll(cartActionRe)) {
-    const frag = (m[1] ?? '').trim();
+    const frag = leadingTitlePhrase((m[1] ?? '').trim());
     if (!frag) continue;
     if (fragmentMatchesAnyCandidate(frag, c)) continue;
     if (citedNames.has(normalize(frag))) continue;
+    if (isCustomerName(frag)) continue;
     if (isSuppressed(frag)) continue;
     hallucinations.push({
       type: 'unknown_product',
@@ -565,6 +589,10 @@ export function scanReply(
         'Add', 'Order', 'Pick', 'Have', 'Take', 'Need', 'Yes', 'No', 'Sure',
         'Okay', 'Great', 'Perfect', 'Thanks', 'Thank', 'Sorry', 'The', 'Just',
         'Got', 'Done', 'Cool', 'Awesome', 'Lovely', 'Nice', 'Excellent',
+        // prepositions / question-words / sentence openers that begin a line
+        // containing a price ("For max protein, …", "It's plain vanilla for …")
+        'For', 'It', 'About', 'From', 'When', 'Where', 'What', 'Which', 'If',
+        'Why', 'How', 'Who', 'While', 'Since', 'Because', 'After', 'Before',
         // pronouns / determiners / openers that begin a sentence containing a
         // price ("Your subtotal is …", "That comes to …")
         'Your', 'My', 'Our', 'Their', 'His', 'Her', 'Its', 'This', 'That',
@@ -618,6 +646,7 @@ export function scanReply(
         const rfrag = replacement.trim();
         if (fragmentMatchesAnyCandidate(rfrag, c)) continue;
         if (citedNames.has(normalize(rfrag))) continue;
+        if (isCustomerName(rfrag)) continue;
         if (isSuppressed(rfrag)) continue;
         hallucinations.push({
           type: 'unknown_product',
@@ -630,6 +659,7 @@ export function scanReply(
       }
       if (fragmentMatchesAnyCandidate(frag, c)) continue;
       if (citedNames.has(normalize(frag))) continue;
+      if (isCustomerName(frag)) continue;
       if (isSuppressed(frag)) continue;
       hallucinations.push({
         type: 'unknown_product',

@@ -22,12 +22,14 @@ async function main() {
   const show = process.argv.includes('--show');
 
   const rows = await prisma.$queryRawUnsafe<
-    Array<{ org: string; slug: string; body: string; candidate_product_ids: string[] }>
+    Array<{ org: string; slug: string; body: string; candidate_product_ids: string[]; cust_name: string | null }>
   >(
-    `select mp.organization_id as org, o.slug, m.body, mp.candidate_product_ids
+    `select mp.organization_id as org, o.slug, m.body, mp.candidate_product_ids,
+            t.customer_whatsapp_name as cust_name
      from message_provenances mp
      join organizations o on o.id = mp.organization_id
      join whatsapp_messages m on m.id = mp.message_id
+     left join whatsapp_threads t on t.id = m.thread_id
      where mp.created_at > now() - ($1 || ' days')::interval
        and m.body is not null and length(m.body) > 3`,
     String(days),
@@ -65,7 +67,12 @@ async function main() {
   const samples: { slug: string; reason: string; body: string }[] = [];
 
   for (const r of rows) {
-    const candidates = candByOrg.get(r.org)!;
+    const base = candByOrg.get(r.org)!;
+    // Pass the thread's customer name so the replay reflects the live gate's
+    // customer-name suppression (otherwise "…under Tayseer, total X" false-blocks).
+    const candidates: ScanCandidates = r.cust_name
+      ? { ...base, customer: { whatsappName: r.cust_name, operatorNickname: null } }
+      : base;
     const gate = groundingGate(r.body, candidates, 'enforce');
     const t = perTenant.get(r.slug) ?? { total: 0, block: 0 };
     t.total++;

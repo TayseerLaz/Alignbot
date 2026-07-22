@@ -17,8 +17,14 @@ import { isOpenAIConfigured } from '../../lib/openai.js';
 // Each industry demos a tenant whose live catalog + bot actually serves that
 // category. Real tenants where we have them; dedicated demo tenants for the rest.
 const CATEGORY_ORG: Record<string, string> = {
-  ecom: 'le-gabarit',
-  fnb: 'aseer-time',
+  // Small COMPLETE catalogs keep the demo both fast AND correct (a capped huge
+  // catalog drops items and the bot wrongly says "we don't have that"):
+  //   Booty Republic (29) for e-com, Full Volume (25) for F&B.
+  // Real estate has only one tenant (Yazbek, 400 listings) — left uncapped so
+  // its search stays correct; buildBotResponse's own retrieval bounds the prompt.
+  // (F&B WhatsApp still points at Aseer Time — unlimited plan, safe to expose.)
+  ecom: 'the-booty-republic',
+  fnb: 'full-volume',
   realestate: 'yazbek-real-estate',
   clinics: 'demo-clinic',
   education: 'demo-school',
@@ -90,16 +96,12 @@ export default async function demoChatRoutes(app: FastifyInstance) {
             tx.businessInfo.findUnique({ where: { organizationId: org.id }, select: { legalName: true } }),
             gatherBotData(tx, org.id),
           ]);
-          // Cap the catalog the demo feeds the LLM so every reply stays fast even
-          // on huge menus (Aseer Time has 600+ SKUs → a slow, token-heavy prompt).
-          // Prefer real menu items (those with a description) over bare add-ons,
-          // and keep it under the engine's small-catalog threshold so the whole
-          // set is sent without the extra embedding round-trip. Plenty to demo.
-          if (data.products && data.products.length > 50) {
-            const described = data.products.filter((p) => (p.shortDescription ?? '').trim().length > 8);
-            data.products = (described.length >= 20 ? described : data.products).slice(0, 50);
-          }
-          if (data.services && data.services.length > 30) data.services = data.services.slice(0, 30);
+          // Keep the FAQ/service context modest for a snappy demo. Products are
+          // NOT capped here — the demo tenants have small complete catalogs, and
+          // buildBotResponse's own retrieval bounds any large one (Yazbek) while
+          // keeping its search correct.
+          if (data.services && data.services.length > 20) data.services = data.services.slice(0, 20);
+          if (data.faqs && data.faqs.length > 12) data.faqs = data.faqs.slice(0, 12);
           return { orgId: org.id, name: biz?.legalName || org.name, data };
         });
         if (resolved?.data?.config) dataCache.set(req.body.category, { at: Date.now(), value: resolved });
@@ -115,10 +117,10 @@ export default async function demoChatRoutes(app: FastifyInstance) {
         userMessage: req.body.message,
         history,
         data: resolved.data,
-        // Force the fast tier (Groq Llama 3.3 70B) for the public demo — it
-        // answers from the same live data but in ~1s instead of the tenant's
-        // heavier plan (e.g. Aseer Time's Claude Sonnet). Demo speed > tier.
-        planOverride: 'basic',
+        // Run the public web chat on GPT-4 (OpenAI gpt-4o) regardless of the
+        // tenant's configured plan — keeps the demo OFF the pricier Claude tiers
+        // (cost), consistent across every industry, and fast.
+        planOverride: 'middle',
       });
 
       return { data: { reply: stripMarkers(reply.text) || '…', tenant: resolved.name } };

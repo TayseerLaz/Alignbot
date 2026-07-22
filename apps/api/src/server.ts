@@ -30,6 +30,7 @@ import dataExportRoutes from './modules/data-export/data-export.routes.js';
 import orgRoutes from './modules/org/org.routes.js';
 import saasRoutes from './modules/saas/saas.routes.js';
 import leadsRoutes from './modules/leads/leads.routes.js';
+import demoChatRoutes from './modules/demo-chat/demo-chat.routes.js';
 import statusRoutes from './modules/status/status.routes.js';
 import inboxRoutes from './modules/whatsapp-inbox/inbox.routes.js';
 import whatsappRoutes from './modules/whatsapp/whatsapp.routes.js';
@@ -389,6 +390,7 @@ export async function buildServer() {
 
   // Routes — public marketing lead capture (no auth, per-IP rate limited)
   await app.register(leadsRoutes, { prefix: '/api/v1' });
+  await app.register(demoChatRoutes, { prefix: '/api/v1' });
 
   // Routes — public status page data (no auth). Mounted at /api/v1/status.
   await app.register(statusRoutes, { prefix: '/api/v1' });

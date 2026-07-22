@@ -117,10 +117,10 @@ export default async function demoChatRoutes(app: FastifyInstance) {
         userMessage: req.body.message,
         history,
         data: resolved.data,
-        // Force the fast tier (Groq Llama 3.3 70B) for the public demo — it
-        // answers from the same live data but in ~1s instead of the tenant's
-        // heavier plan (e.g. Aseer Time's Claude Sonnet). Demo speed > tier.
-        planOverride: 'basic',
+        // Run the public web chat on GPT-4 (OpenAI gpt-4o) regardless of the
+        // tenant's configured plan — keeps the demo OFF the pricier Claude tiers
+        // (cost), consistent across every industry, and fast.
+        planOverride: 'middle',
       });
 
       return { data: { reply: stripMarkers(reply.text) || '…', tenant: resolved.name } };

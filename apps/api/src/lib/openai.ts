@@ -261,6 +261,10 @@ interface CompleteArgs {
   messages: { role: 'user' | 'assistant'; content: string }[];
   maxTokens?: number;
   temperature?: number;
+  // EVAL-ONLY plan override. When set, route to this model tier instead of the
+  // org's configured aiPlan — lets the eval harness run the SAME questions on
+  // every plan (basic/middle/max/ultra) to compare quality. Never set in prod.
+  planOverride?: 'basic' | 'middle' | 'max' | 'ultra';
 }
 
 // inputTokens = TOTAL input processed (uncached + cache read + cache write).
@@ -296,7 +300,7 @@ export async function complete(args: CompleteArgs): Promise<CompleteResult> {
     throw err;
   }
 
-  const plan = await loadOrgPlan(args.organizationId);
+  const plan = args.planOverride ?? (await loadOrgPlan(args.organizationId));
 
   try {
     let result: CompleteResult;

@@ -688,6 +688,9 @@ interface BotResponseArgs {
   // the default 0.4); the eval harness passes 0 so a run is reproducible and a
   // regression gate isn't fooled by sampling noise.
   temperature?: number;
+  // EVAL-ONLY. Route to this model tier instead of the org's configured aiPlan,
+  // so the harness can run the same questions on every plan. Never set in prod.
+  planOverride?: 'basic' | 'middle' | 'max' | 'ultra';
 }
 
 // Provenance bundle returned alongside the bot reply text. Captures
@@ -1589,6 +1592,7 @@ export async function buildBotResponse(
         // discouraging essays. Brevity is enforced by the style rules, not this.
         maxTokens: 560,
         temperature: args.temperature ?? TEMPERATURE,
+        planOverride: args.planOverride,
       });
   const latencyMs = Date.now() - llmStartedAt;
 

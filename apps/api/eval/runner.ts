@@ -92,7 +92,11 @@ async function main() {
   const noJudge = flag('no-judge');
   const threshold = Number(arg('threshold') ?? '0.8');
 
-  const opts = { retrievalOnly, noJudge };
+  // --plan basic|middle|max|ultra runs every scenario on THAT model tier instead
+  // of each tenant's configured plan — the plan × tenant quality matrix.
+  const plan = arg('plan') as 'basic' | 'middle' | 'max' | 'ultra' | undefined;
+  if (plan) console.log(`\n  [plan override: ${plan}]`);
+  const opts = { retrievalOnly, noJudge, plan };
   const startedAt = Date.now();
 
   // --all runs every tenant that has a golden set (eval/golden/*.json). This is
@@ -163,7 +167,7 @@ async function main() {
 
 async function runOrg(
   slug: string,
-  opts: { retrievalOnly: boolean; noJudge: boolean },
+  opts: { retrievalOnly: boolean; noJudge: boolean; plan?: 'basic' | 'middle' | 'max' | 'ultra' },
 ): Promise<EvalSummary | null> {
   const { retrievalOnly, noJudge } = opts;
   const org = await prisma.organization.findFirst({ where: { slug }, select: { id: true } });
@@ -199,6 +203,7 @@ async function runOrg(
       // Greedy decoding so a full run is reproducible — a regression gate must
       // not flip on sampling noise.
       temperature: 0,
+      planOverride: opts.plan,
     } as never);
 
     const candidateSkus = (res.inputs.candidateProductIds ?? [])

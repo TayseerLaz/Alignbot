@@ -18,7 +18,10 @@ import { isOpenAIConfigured } from '../../lib/openai.js';
 // category. Real tenants where we have them; dedicated demo tenants for the rest.
 const CATEGORY_ORG: Record<string, string> = {
   ecom: 'le-gabarit',
-  fnb: 'aseer-time',
+  // Full Volume (25-item high-protein menu) rather than Aseer Time (600+ SKUs):
+  // a small COMPLETE catalog stays both fast AND correct in the web/sandbox demo.
+  // (WhatsApp still points at Aseer Time — unlimited plan, safe to expose.)
+  fnb: 'full-volume',
   realestate: 'yazbek-real-estate',
   clinics: 'demo-clinic',
   education: 'demo-school',

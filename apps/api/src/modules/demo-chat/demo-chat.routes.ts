@@ -40,6 +40,13 @@ function stripMarkers(text: string): string {
     .trim();
 }
 
+// Small in-memory cache of the resolved bot data per category. Demo catalogs
+// barely change, so caching skips the (potentially large) gatherBotData query on
+// every turn — a big latency win on multi-message conversations. 5-minute TTL.
+type Resolved = { orgId: string; name: string; data: Awaited<ReturnType<typeof gatherBotData>> };
+const dataCache = new Map<string, { at: number; value: Resolved }>();
+const DATA_TTL_MS = 5 * 60 * 1000;
+
 export default async function demoChatRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
 
@@ -71,15 +78,22 @@ export default async function demoChatRoutes(app: FastifyInstance) {
         throw serviceUnavailable('The demo is temporarily unavailable.');
       }
       const slug = CATEGORY_ORG[req.body.category];
-      const resolved = await withRlsBypass(async (tx) => {
-        const org = await tx.organization.findUnique({ where: { slug }, select: { id: true, name: true } });
-        if (!org) return null;
-        const [biz, data] = await Promise.all([
-          tx.businessInfo.findUnique({ where: { organizationId: org.id }, select: { legalName: true } }),
-          gatherBotData(tx, org.id),
-        ]);
-        return { orgId: org.id, name: biz?.legalName || org.name, data };
-      });
+      const cached = dataCache.get(req.body.category);
+      let resolved: Resolved | null;
+      if (cached && Date.now() - cached.at < DATA_TTL_MS) {
+        resolved = cached.value;
+      } else {
+        resolved = await withRlsBypass(async (tx) => {
+          const org = await tx.organization.findUnique({ where: { slug }, select: { id: true, name: true } });
+          if (!org) return null;
+          const [biz, data] = await Promise.all([
+            tx.businessInfo.findUnique({ where: { organizationId: org.id }, select: { legalName: true } }),
+            gatherBotData(tx, org.id),
+          ]);
+          return { orgId: org.id, name: biz?.legalName || org.name, data };
+        });
+        if (resolved?.data?.config) dataCache.set(req.body.category, { at: Date.now(), value: resolved });
+      }
       // A tenant is demo-ready only once it has a BotConfig (persona) to run.
       if (!resolved || !resolved.data?.config) {
         throw notFound('This industry demo is not available yet.');
@@ -91,6 +105,10 @@ export default async function demoChatRoutes(app: FastifyInstance) {
         userMessage: req.body.message,
         history,
         data: resolved.data,
+        // Force the fast tier (Groq Llama 3.3 70B) for the public demo — it
+        // answers from the same live data but in ~1s instead of the tenant's
+        // heavier plan (e.g. Aseer Time's Claude Sonnet). Demo speed > tier.
+        planOverride: 'basic',
       });
 
       return { data: { reply: stripMarkers(reply.text) || '…', tenant: resolved.name } };

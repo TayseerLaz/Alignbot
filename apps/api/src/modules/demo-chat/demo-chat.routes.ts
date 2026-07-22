@@ -90,6 +90,16 @@ export default async function demoChatRoutes(app: FastifyInstance) {
             tx.businessInfo.findUnique({ where: { organizationId: org.id }, select: { legalName: true } }),
             gatherBotData(tx, org.id),
           ]);
+          // Cap the catalog the demo feeds the LLM so every reply stays fast even
+          // on huge menus (Aseer Time has 600+ SKUs → a slow, token-heavy prompt).
+          // Prefer real menu items (those with a description) over bare add-ons,
+          // and keep it under the engine's small-catalog threshold so the whole
+          // set is sent without the extra embedding round-trip. Plenty to demo.
+          if (data.products && data.products.length > 50) {
+            const described = data.products.filter((p) => (p.shortDescription ?? '').trim().length > 8);
+            data.products = (described.length >= 20 ? described : data.products).slice(0, 50);
+          }
+          if (data.services && data.services.length > 30) data.services = data.services.slice(0, 30);
           return { orgId: org.id, name: biz?.legalName || org.name, data };
         });
         if (resolved?.data?.config) dataCache.set(req.body.category, { at: Date.now(), value: resolved });

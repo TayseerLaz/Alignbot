@@ -95,11 +95,12 @@ export default async function demoChatRoutes(app: FastifyInstance) {
           // Prefer real menu items (those with a description) over bare add-ons,
           // and keep it under the engine's small-catalog threshold so the whole
           // set is sent without the extra embedding round-trip. Plenty to demo.
-          if (data.products && data.products.length > 50) {
+          if (data.products && data.products.length > 30) {
             const described = data.products.filter((p) => (p.shortDescription ?? '').trim().length > 8);
-            data.products = (described.length >= 20 ? described : data.products).slice(0, 50);
+            data.products = (described.length >= 15 ? described : data.products).slice(0, 30);
           }
-          if (data.services && data.services.length > 30) data.services = data.services.slice(0, 30);
+          if (data.services && data.services.length > 20) data.services = data.services.slice(0, 20);
+          if (data.faqs && data.faqs.length > 10) data.faqs = data.faqs.slice(0, 10);
           return { orgId: org.id, name: biz?.legalName || org.name, data };
         });
         if (resolved?.data?.config) dataCache.set(req.body.category, { at: Date.now(), value: resolved });

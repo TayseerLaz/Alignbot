@@ -1,6 +1,8 @@
 # ALIGNED Business Platform — CLAUDE.md
 
 > **For next-day Claude:** Read the `## Current Status` section first, then check `## Resume Checklist` at the bottom. The full 4-day plan is the source of truth for scope — do not re-design; execute what's here.
+>
+> **New to this codebase?** Read **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** first. It is the structural map — runtime topology, the tenancy seam, a 20-entry subsystem index, the 9 critical paths, 37 invariants, a 7-pass reading route (with region maps so you never read `whatsapp.routes.ts` end-to-end), plus the known gotchas and where this file has gone stale. THIS file is the running session log; that one is the map.
 
 ---
 
@@ -26,8 +28,8 @@
 | Auth | In-house (jose JWT access + httpOnly refresh cookies + bcrypt). RBAC: ALIGNED admin / Client admin / Editor / Viewer |
 | Storage | **Wasabi** (S3-compatible) via AWS SDK |
 | WhatsApp | **Meta Cloud API** (official, not WBiztool) |
-| Email | **Resend** |
-| Hosting | **Aligned Cloud Servers** via Docker Compose + Caddy (auto TLS) |
+| Email | **nodemailer over SMTP** — AWS SES in prod, Mailpit/Mailhog in dev ([lib/email.ts](apps/api/src/lib/email.ts)). *(Was originally specced as Resend; the code never used it. Corrected 2026-07-22.)* |
+| Hosting | **Aligned Cloud Servers**, **native systemd** units + Caddy (auto TLS). Deploy is manual + pull-based: `infra/scripts/redeploy.sh` on the box. *(The Docker prod stack was removed 2026-06-22; dev compose stays. Corrected 2026-07-22.)* |
 | CI/CD | **GitHub Actions** |
 | Observability | Pino + Sentry + Prometheus /metrics endpoint |
 | Multi-tenancy | Shared schema, `organization_id` column on every tenant-scoped table, **Postgres RLS** enforced as backstop, middleware sets `app.current_org_id` per request |

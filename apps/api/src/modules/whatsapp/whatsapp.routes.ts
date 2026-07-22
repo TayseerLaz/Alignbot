@@ -4828,7 +4828,24 @@ async function maybeReplyAsBot(args: {
     // greeting voice/image for tenants (e.g. fatme) that open with "أهلين".
     const GREETING_REPLY_RE =
       /^(\s*[👋🙏✨🌟😊]?\s*)?(hi|hello|hey|welcome|good\s+(morning|afternoon|evening)|greetings|(?:أهل|اهل|مرحب|سلام|هلا)[ء-ٟ]*|bonjour|salut|hola|buen(os|as)\s+(d[ií]as|tardes|noches))(?:[\s,!.:؛،]|$)/iu;
-    if ((greetingImageKey || greetingVoiceKey) && reply && GREETING_REPLY_RE.test(reply.trim())) {
+    // Voice-note triggers: the bot's reply opens with a greeting, the CUSTOMER
+    // greeted, OR the CUSTOMER asked for the voice note. (The old logic only
+    // fired when the BOT's reply happened to be greeting-shaped, so fatme's voice
+    // frequently never sent.) An explicit request always sends; fatme sends on
+    // every greeting/request (no 1h dedup) per the owner's request.
+    const replyIsGreeting = !!(reply && GREETING_REPLY_RE.test(reply.trim()));
+    const inboundGreetingText = (m.bodyText ?? '').trim();
+    const VOICE_REQUEST_RE =
+      /\bvoice\b|voice\s*note|\brecording\b|\baudio\b|فويس|تسجيل|الصوت|صوتي|صوتيه|رسالة صوتية|3awtiy|sawtiy|tasjil/i;
+    const customerGreeted = inboundGreetingText.length > 0 && GREETING_REPLY_RE.test(inboundGreetingText);
+    const customerAskedForVoice =
+      !!greetingVoiceKey && inboundGreetingText.length > 0 && VOICE_REQUEST_RE.test(inboundGreetingText);
+    const FATME_ORG_ID = '6b2d1c79-582b-4dd2-86db-ffdc8240d535';
+    const voiceBypassDedup = customerAskedForVoice || args.organizationId === FATME_ORG_ID;
+    if (
+      (greetingImageKey && replyIsGreeting) ||
+      (greetingVoiceKey && (replyIsGreeting || customerGreeted || customerAskedForVoice))
+    ) {
       // The welcome banner/voice is for the START of a visit — not every time the
       // bot opens a mid-conversation reply with "Hey <name>". Suppress it when
       // the bot has already replied in this thread within the last hour (an
@@ -4836,20 +4853,22 @@ async function maybeReplyAsBot(args: {
       // 1h, or a brand-new thread) still gets a fresh welcome. Previously this
       // was a 2-minute dedup, so a voice note 3 min after an order re-sent the
       // banner mid-conversation.
-      const recentlyChatting = await withRlsBypass(async (tx) => {
-        const row = await tx.whatsAppMessage.findFirst({
-          where: {
-            threadId: ctx.threadId,
-            organizationId: args.organizationId,
-            direction: 'outbound',
-            receivedAt: { gt: new Date(Date.now() - 60 * 60 * 1000) },
-          },
-          select: { id: true },
-        });
-        return !!row;
-      });
+      const recentlyChatting = voiceBypassDedup
+        ? false
+        : await withRlsBypass(async (tx) => {
+            const row = await tx.whatsAppMessage.findFirst({
+              where: {
+                threadId: ctx.threadId,
+                organizationId: args.organizationId,
+                direction: 'outbound',
+                receivedAt: { gt: new Date(Date.now() - 60 * 60 * 1000) },
+              },
+              select: { id: true },
+            });
+            return !!row;
+          });
       if (!recentlyChatting) {
-        if (greetingImageKey) {
+        if (greetingImageKey && replyIsGreeting) {
           // Prepend so the greeting image sends before any product images
           // in the same reply.
           dedupedImageSends.unshift({

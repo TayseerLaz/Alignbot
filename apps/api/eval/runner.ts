@@ -270,6 +270,18 @@ async function runOrg(
             if (hrs) factLines.push(`- [business hours] ${hrs}`);
           }
         }
+        // Locations + contact channels — the bot legitimately quotes a real
+        // branch address or phone when asked "do you deliver to X / where are you";
+        // without these the judge wrongly calls a real branch/phone "invented".
+        for (const loc of data.locations ?? []) {
+          const addr = [loc.addressLine1, loc.addressLine2, loc.city, loc.region, loc.country]
+            .filter(Boolean)
+            .join(', ');
+          factLines.push(`- [location] ${loc.name}${addr ? ` — ${addr}` : ''}${loc.phone ? ` — tel ${loc.phone}` : ''}`);
+        }
+        for (const ch of data.contactChannels ?? []) {
+          factLines.push(`- [contact] ${ch.kind}${ch.label ? ` (${ch.label})` : ''}: ${ch.value}`);
+        }
         const facts = factLines.join('\n');
         judge = (await judgeReply(sc, customerReply, facts || undefined)) ?? undefined;
       }

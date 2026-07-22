@@ -29,7 +29,7 @@ import { fileURLToPath } from 'node:url';
 
 import { prisma } from '@aligned/db';
 
-import { buildBotResponse, gatherBotData } from '../src/lib/bot-engine.js';
+import { buildBotResponse, formatOperatingHours, gatherBotData } from '../src/lib/bot-engine.js';
 import { scanReply, type ScanCandidates } from '../src/lib/provenance-scanner.js';
 
 import { judgeReply } from './judge.js';
@@ -231,28 +231,46 @@ async function runOrg(
       const scan = scanReply(res.text, toScanCandidates(data));
       deterministic = scoreDeterministic(customerReply, scan.hallucinations, sc);
       if (!noJudge) {
-        // Give the judge ground-truth facts for the products actually surfaced,
-        // so it can verify a quoted price instead of abstaining.
-        // Give the judge EVERY product the model saw (the packed candidate set,
-        // already bounded) — capping it drops the very siblings a scenario tests
-        // and makes the judge wrongly call a real product "not in the catalog".
-        const facts = (res.inputs.candidateProductIds ?? [])
-          .map((id: string) => data.products.find((p) => p.id === id))
-          .filter(Boolean)
-          .map((p) => {
-            // Include the description too — a high-protein brand legitimately
-            // states "65g protein" from the product's own description, and the
-            // judge must see it to avoid flagging a grounded claim as invented.
-            const desc = ((p as { shortDescription?: string | null; description?: string | null }).description ??
+        // Ground-truth facts for the judge = the SAME knowledge the bot had:
+        // candidate products (with FULL descriptions — nutrition/spec details
+        // like "65g protein" live there), candidate services, candidate FAQs,
+        // and business hours. Products-only + a 160-char cut used to wrongly flag
+        // GROUNDED claims (protein grams from the description, opening hours from
+        // Business Info, an FAQ-sourced answer) as invented hallucinations.
+        const clean = (s: string): string => s.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+        const factLines: string[] = [];
+        for (const id of res.inputs.candidateProductIds ?? []) {
+          const p = data.products.find((x) => x.id === id);
+          if (!p) continue;
+          const desc = clean(
+            (p as { description?: string | null; shortDescription?: string | null }).description ??
               (p as { shortDescription?: string | null }).shortDescription ??
-              '')
-              .replace(/<[^>]+>/g, '')
-              .replace(/\s+/g, ' ')
-              .trim()
-              .slice(0, 160);
-            return `- ${p!.name}${formatMoney(p!.priceMinor ?? null, p!.currency ?? null)}${desc ? ` — ${desc}` : ''}`;
-          })
-          .join('\n');
+              '',
+          ).slice(0, 400);
+          factLines.push(`- ${p.name}${formatMoney(p.priceMinor ?? null, p.currency ?? null)}${desc ? ` — ${desc}` : ''}`);
+        }
+        for (const id of res.inputs.candidateServiceIds ?? []) {
+          const s = data.services.find((x) => x.id === id);
+          if (!s) continue;
+          const desc = clean((s as { shortDescription?: string | null }).shortDescription ?? '').slice(0, 300);
+          factLines.push(
+            `- [service] ${s.name}${formatMoney(s.basePriceMinor ?? null, s.currency ?? null)}${desc ? ` — ${desc}` : ''}`,
+          );
+        }
+        for (const id of res.inputs.candidateFaqIds ?? []) {
+          const f = data.faqs.find((x) => x.id === id);
+          if (!f) continue;
+          factLines.push(`- [FAQ] Q: ${clean(f.question)} — A: ${clean(f.answer).slice(0, 300)}`);
+        }
+        if (data.biz) {
+          const b = data.biz as { legalName?: string | null; operatingHours?: unknown };
+          if (b.legalName) factLines.push(`- [business] Name: ${b.legalName}`);
+          if (b.operatingHours) {
+            const hrs = clean(formatOperatingHours(b.operatingHours));
+            if (hrs) factLines.push(`- [business hours] ${hrs}`);
+          }
+        }
+        const facts = factLines.join('\n');
         judge = (await judgeReply(sc, customerReply, facts || undefined)) ?? undefined;
       }
     }

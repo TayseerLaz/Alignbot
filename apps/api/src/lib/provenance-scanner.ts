@@ -632,6 +632,13 @@ export function scanReply(
         // hallucination that happens to start with one.
         'Freshly', 'Bottled', 'Homemade', 'Grilled', 'Fried', 'Baked', 'Roasted',
         'Crispy', 'Creamy', 'Loaded', 'Premium', 'Organic', 'Natural',
+        // past-participle / descriptor words that lead a clause ending in a price
+        // in elaborate replies ("Priced at 5.00 USD", "Rich and creamy for …") —
+        // the better models write these, and they were mis-read as product names.
+        'Priced', 'Rich', 'Served', 'Topped', 'Filled', 'Stuffed', 'Packed',
+        'Seasoned', 'Marinated', 'Smoked', 'Toasted', 'Blended', 'Whipped',
+        'Layered', 'Coated', 'Glazed', 'Garnished', 'Comes', 'Includes',
+        'Featuring', 'Made', 'Perfectly', 'Deliciously', 'Generously',
       ]);
       if (stop.has(frag.split(/\s+/)[0]!)) {
         // Common opener captured — fall back to scanning ALL phrases and

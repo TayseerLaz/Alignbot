@@ -100,28 +100,28 @@ function Kpi({
   return (
     <Card
       className={cn(
-        'rounded-2xl p-5 shadow-[0_1px_2px_rgba(54,5,22,0.04)] transition-shadow duration-200 hover:shadow-[0_10px_28px_-14px_rgba(54,5,22,0.18)]',
+        'rounded-lg p-5',
         highlight
-          ? 'border-transparent bg-gradient-to-br from-brand-500 to-brand-700 text-[#f2e7d5]'
-          : 'border-border/80',
+          ? 'border-transparent bg-brand-500 text-on-brand'
+          : '',
       )}
     >
       <div className="flex items-center justify-between">
         <p
           className={cn(
             'flex items-center gap-2 text-[0.8125rem] font-medium',
-            highlight ? 'text-[#f2e7d5]/80' : 'text-foreground-muted',
+            highlight ? 'text-on-brand/80' : 'text-foreground-muted',
           )}
         >
-          <Icon className={cn('size-[1.05rem] shrink-0', highlight ? 'text-[#f2e7d5]/70' : 'text-foreground-subtle')} />
+          <Icon className={cn('size-[1.05rem] shrink-0', highlight ? 'text-on-brand/70' : 'text-foreground-subtle')} />
           {label}
         </p>
-        <ArrowUpRight className={cn('size-4', highlight ? 'text-[#f2e7d5]/60' : 'text-foreground-subtle')} />
+        <ArrowUpRight className={cn('size-4', highlight ? 'text-on-brand/60' : 'text-foreground-subtle')} />
       </div>
       <p className="mt-3 font-mono text-[1.9rem] font-semibold leading-none tracking-[-0.02em] tabular-nums">
         {value}
       </p>
-      <p className={cn('mt-1.5 text-xs font-medium', highlight ? 'text-[#f2e7d5]/70' : 'text-foreground-subtle')}>
+      <p className={cn('mt-1.5 text-xs font-medium', highlight ? 'text-on-brand/70' : 'text-foreground-subtle')}>
         {sub ?? ' '}
       </p>
     </Card>
@@ -276,7 +276,7 @@ function LineCard({
   const max = Math.max(1, ...values);
   const yLabels = [max, Math.round(max * 0.66), Math.round(max * 0.33), 0];
   return (
-    <Card className="rounded-2xl border-border/80 p-5 shadow-[0_1px_2px_rgba(54,5,22,0.04)] transition-shadow duration-200 hover:shadow-[0_10px_28px_-14px_rgba(54,5,22,0.14)]">
+    <Card className="rounded-lg border-border p-5">
       <div className="flex items-start justify-between">
         <p className="text-sm font-semibold text-foreground">{title}</p>
         <ArrowUpRight className="size-4 text-foreground-subtle" />
@@ -315,7 +315,7 @@ function LineCard({
 
 function Panel({ title, right, children, bodyClassName }: { title: string; right?: ReactNode; children: ReactNode; bodyClassName?: string }) {
   return (
-    <Card className="h-full rounded-2xl border-border/80 shadow-[0_1px_2px_rgba(54,5,22,0.04)]">
+    <Card className="h-full rounded-lg border-border">
       <div className="flex items-center gap-2 border-b border-border px-5 py-3.5">
         <h3 className="text-sm font-semibold text-foreground">{title}</h3>
         {right ? <div className="ml-auto">{right}</div> : null}
@@ -419,7 +419,7 @@ export default function AnalyticsPage() {
       {!a ? (
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-[116px] rounded-2xl" />
+            <Skeleton key={i} className="h-[116px] rounded-lg" />
           ))}
         </div>
       ) : (

@@ -91,7 +91,7 @@ function Panel({
   bodyClassName?: string;
 }) {
   return (
-    <Card className="h-full rounded-2xl border-border/80 shadow-[0_1px_2px_rgba(54,5,22,0.04)]">
+    <Card className="h-full rounded-lg border-border">
       <div className="flex items-center gap-2 border-b border-border px-5 py-3.5">
         <h3 className="text-sm font-semibold text-foreground">{title}</h3>
         {right ? <div className="ml-auto">{right}</div> : null}
@@ -125,7 +125,7 @@ function KpiCard({
   tone: Tone;
 }) {
   return (
-    <Card className="rounded-2xl border-border/80 p-5 shadow-[0_1px_2px_rgba(54,5,22,0.04)] transition-shadow duration-200 hover:shadow-[0_8px_24px_-12px_rgba(54,5,22,0.12)]">
+    <Card className="rounded-lg border-border p-5">
       <p className="flex items-center gap-2 text-[0.8125rem] font-medium text-foreground-muted">
         <Icon className="size-[1.05rem] shrink-0 text-foreground-subtle" aria-hidden />
         {label}
@@ -171,12 +171,12 @@ function WhatsAppCreditsCard() {
     <Link href="/billing" className="group block h-full">
       <Card
         className={cn(
-          'h-full rounded-2xl p-5 shadow-[0_1px_2px_rgba(54,5,22,0.04)] transition-shadow duration-200 group-hover:shadow-[0_8px_24px_-12px_rgba(54,5,22,0.12)]',
+          'h-full rounded-lg p-5',
           paused
             ? 'border-red-300 bg-red-50/40'
             : low
               ? 'border-amber-300 bg-amber-50/30'
-              : 'border-border/80',
+              : 'border-border',
         )}
       >
         <p className="flex items-center gap-2 text-[0.8125rem] font-medium text-foreground-muted">
@@ -399,7 +399,7 @@ function BookingsWeek() {
           <Link href="/bookings">Open calendar</Link>
         </Button>
       </div>
-      <div className="overflow-x-auto rounded-2xl border border-border bg-surface p-2">
+      <div className="overflow-x-auto rounded-lg border border-border bg-surface p-2">
         <div className="grid min-w-[860px] grid-cols-7 gap-2">
           {(d?.days ?? Array.from({ length: 7 }, () => null)).map((day, i) => (
             <div key={i} className={cn('rounded-xl p-2', day?.isToday && 'bg-coral-50')}>
@@ -452,7 +452,7 @@ function BookingsWeek() {
 
 function InboxCta() {
   return (
-    <Card className="flex flex-wrap items-center gap-4 rounded-2xl border-border/80 p-5 shadow-[0_1px_2px_rgba(54,5,22,0.04)]">
+    <Card className="flex flex-wrap items-center gap-4 rounded-lg border-border p-5">
       <div className="min-w-[220px] flex-1">
         <p className="text-[14.5px] font-semibold text-foreground">Try the part your customers feel →</p>
         <p className="mt-0.5 text-sm text-foreground-muted">

@@ -61,7 +61,7 @@ export function WidgetFrame({
         ACCENT_BORDER[accent],
         // Softer SaaS card: roomier radius + a whisper of oxblood-tinted shadow
         // that lifts on hover. Matches the KPI strip so the panel reads cohesive.
-        'h-full rounded-2xl border-border/80 shadow-[0_1px_2px_rgba(54,5,22,0.04)] transition-shadow duration-200 hover:shadow-[0_8px_24px_-10px_rgba(54,5,22,0.10)]',
+        'h-full rounded-lg border-border',
         className,
       )}
     >

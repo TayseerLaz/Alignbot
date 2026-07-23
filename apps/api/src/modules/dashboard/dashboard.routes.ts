@@ -1210,13 +1210,17 @@ export default async function dashboardRoutes(app: FastifyInstance) {
       const data = await app.tenant(req, async (tx) => {
         const now = Date.now();
         const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
-        const twoWeeksAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
         const startOfDay = new Date();
         startOfDay.setUTCHours(0, 0, 0, 0);
+        // Conversations "this week" = the SAME 7 UTC days as the chart bars
+        // (today-6 … today), so the KPI equals the sum of the bars exactly. The
+        // delta compares to the 7 UTC days before that.
+        const nowD = new Date();
+        const weekStart = new Date(Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth(), nowD.getUTCDate() - 6));
+        const prevWeekStart = new Date(weekStart.getTime() - 7 * 86400000);
 
-        const [conv7d, convPrev7d, orders7d, ordersToday, botThreads7d, escalated7d] = await Promise.all([
-          tx.whatsAppThread.count({ where: { createdAt: { gte: weekAgo } } }),
-          tx.whatsAppThread.count({ where: { createdAt: { gte: twoWeeksAgo, lt: weekAgo } } }),
+        const [convPrev, orders7d, ordersToday, botThreads7d, escalated7d] = await Promise.all([
+          tx.whatsAppThread.count({ where: { createdAt: { gte: prevWeekStart, lt: weekStart } } }),
           tx.cart.count({ where: { status: { in: ORDER_STATES }, createdAt: { gte: weekAgo } } }),
           tx.cart.count({ where: { status: { in: ORDER_STATES }, createdAt: { gte: startOfDay } } }),
           tx.whatsAppThread.count({
@@ -1273,8 +1277,10 @@ export default async function dashboardRoutes(app: FastifyInstance) {
           });
         }
 
+        // Equal to the chart total by construction (same 7 UTC days).
+        const conversations7d = byDay.reduce((s, x) => s + x.count, 0);
         const conversationsDeltaPct =
-          convPrev7d === 0 ? null : Math.round(((conv7d - convPrev7d) / convPrev7d) * 100);
+          convPrev === 0 ? null : Math.round(((conversations7d - convPrev) / convPrev) * 100);
         const aiHandledPercent =
           botThreads7d === 0
             ? 0
@@ -1282,7 +1288,7 @@ export default async function dashboardRoutes(app: FastifyInstance) {
         const humanPercent = botThreads7d === 0 ? 0 : Math.max(0, 100 - aiHandledPercent);
 
         return {
-          conversations7d: conv7d,
+          conversations7d,
           conversationsDeltaPct,
           medianReplySeconds,
           orders7d,

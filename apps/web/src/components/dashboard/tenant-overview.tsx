@@ -191,7 +191,19 @@ function WhatsAppCreditsCard() {
   );
 }
 
-function KpiRow({ d }: { d?: OverviewData }) {
+// Static class strings so Tailwind keeps them; the row width adapts to how many
+// KPI cards survive feature-gating (2–5).
+const KPI_COLS: Record<number, string> = {
+  2: 'lg:grid-cols-2',
+  3: 'lg:grid-cols-3',
+  4: 'lg:grid-cols-4',
+  5: 'lg:grid-cols-5',
+};
+
+function KpiRow({ d, disabled }: { d?: OverviewData; disabled: string[] }) {
+  const hasAi = !disabled.includes('ai');
+  const hasOrders = !disabled.includes('orders');
+
   const convSub = !d
     ? ''
     : d.conversationsDeltaPct == null
@@ -202,37 +214,59 @@ function KpiRow({ d }: { d?: OverviewData }) {
   const convTone: Tone =
     !d || d.conversationsDeltaPct == null ? 'neutral' : d.conversationsDeltaPct >= 0 ? 'up' : 'down';
 
-  return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-      <WhatsAppCreditsCard />
+  // WhatsApp credits + Conversations are always shown; the AI + orders KPIs are
+  // gated on those features so a tenant only sees numbers that apply to them.
+  const cards: ReactNode[] = [
+    <WhatsAppCreditsCard key="credits" />,
+    <KpiCard
+      key="conv"
+      icon={Inbox}
+      label="Conversations"
+      value={d ? String(d.conversations7d) : '—'}
+      sub={convSub}
+      tone={convTone}
+    />,
+  ];
+  if (hasAi) {
+    cards.push(
       <KpiCard
-        icon={Inbox}
-        label="Conversations"
-        value={d ? String(d.conversations7d) : '—'}
-        sub={convSub}
-        tone={convTone}
-      />
-      <KpiCard
+        key="reply"
         icon={Timer}
         label="Median first reply"
         value={d ? formatReply(d.medianReplySeconds) : '—'}
         sub="across recent chats"
         tone="neutral"
-      />
+      />,
+    );
+  }
+  if (hasOrders) {
+    cards.push(
       <KpiCard
+        key="orders"
         icon={ShoppingCart}
         label="Orders captured"
         value={d ? String(d.orders7d) : '—'}
         sub={d ? (d.ordersToday > 0 ? `+${d.ordersToday} today` : 'this week') : ''}
         tone={d && d.ordersToday > 0 ? 'up' : 'neutral'}
-      />
+      />,
+    );
+  }
+  if (hasAi) {
+    cards.push(
       <KpiCard
+        key="ai"
         icon={Bot}
         label="Handled by AI"
         value={d ? `${d.aiHandledPercent}%` : '—'}
         sub={d ? `${d.humanPercent}% sent to a human` : ''}
         tone="down"
-      />
+      />,
+    );
+  }
+
+  return (
+    <div className={cn('grid grid-cols-1 gap-4 sm:grid-cols-2', KPI_COLS[cards.length] ?? 'lg:grid-cols-4')}>
+      {cards}
     </div>
   );
 }
@@ -462,7 +496,7 @@ export function TenantOverview({ greeting }: { greeting: string }) {
 
         {/* KPI row — WhatsApp credits sits beside the four hero metrics. */}
         <Reveal>
-          <KpiRow d={d} />
+          <KpiRow d={d} disabled={disabled} />
         </Reveal>
 
         <Reveal delay={90} className="grid grid-cols-1 gap-6 lg:grid-cols-[1.6fr_1fr]">

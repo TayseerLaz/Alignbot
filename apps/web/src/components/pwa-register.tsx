@@ -14,6 +14,20 @@ export function PwaRegister() {
       navigator.serviceWorker
         .register('/app/sw.js', { scope: '/app/' })
         .catch((err) => console.error('[PWA] SW registration failed:', err));
+
+      // Make deploys actually reach open tabs. Each deploy stamps sw.js with a
+      // new SHA, so the browser installs a new worker; when it takes control
+      // (skipWaiting + clients.claim), reload once onto the fresh build. Guarded
+      // to an already-controlled page so the FIRST-ever install (which also
+      // fires controllerchange via clients.claim) does not reload.
+      if (navigator.serviceWorker.controller) {
+        let reloading = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (reloading) return;
+          reloading = true;
+          window.location.reload();
+        });
+      }
     };
     if (document.readyState === 'complete') {
       register();

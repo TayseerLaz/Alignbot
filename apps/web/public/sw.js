@@ -10,10 +10,14 @@
  *   • build assets + static     → stale-while-revalidate (instant load, refresh in bg)
  *   • cross-origin (the API)    → not intercepted (origin guard) — always hits the network
  *
- * IMPORTANT: bump CACHE_VERSION on every deploy that changes precached files,
- * so `activate` purges the stale caches and clients pull the new shell.
+ * CACHE_VERSION is stamped with the deploy's git SHA by infra/scripts/
+ * redeploy.sh (it sed-replaces the __BUILD_ID__ token after `git reset`). That
+ * makes this file byte-different every deploy, so returning browsers install
+ * the new worker, `activate` purges the stale caches, and PwaRegister reloads
+ * open tabs onto the fresh build. In dev (no stamping) the literal token is a
+ * fine, stable cache name.
  */
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = '__BUILD_ID__';
 const STATIC_CACHE = `hader-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `hader-runtime-${CACHE_VERSION}`;
 

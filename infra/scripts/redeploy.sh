@@ -127,6 +127,16 @@ pnpm --filter @aligned/db exec prisma migrate deploy
 WEB_CHANGED=0
 if echo "$CHANGED" | grep -q '^apps/web/'; then
   echo "▶ web source changed — rebuilding Next…"
+  # Stamp the service worker with this deploy's SHA. `git reset --hard` above
+  # restored the __BUILD_ID__ token, so this makes sw.js byte-different every
+  # deploy → returning browsers install the new worker, its activate handler
+  # purges the old caches, and PwaRegister reloads open tabs onto the fresh
+  # build. Without this the SW keeps serving cached chunks and "the deploy
+  # didn't land" (the whole point of a PWA cache, working against us here).
+  if [ -f apps/web/public/sw.js ]; then
+    sed -i "s/__BUILD_ID__/${NEW}/g" apps/web/public/sw.js
+    echo "  ✓ stamped sw.js → ${NEW}"
+  fi
   # Next 15.5 intermittently fails the final "Collecting build traces" step with
   # ENOENT on a *.nft.json it wrote moments earlier (a concurrency race on this
   # box). The compiled .next is otherwise complete, and a plain retry succeeds —

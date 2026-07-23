@@ -128,94 +128,6 @@ function Kpi({
   );
 }
 
-// ---------------------------------------------------------------- gauge -----
-
-function Gauge({ percent, label, sub }: { percent: number; label: string; sub: string }) {
-  const [drawn, setDrawn] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => setDrawn(true), 120);
-    return () => clearTimeout(t);
-  }, []);
-  const r = 56;
-  const C = 2 * Math.PI * r;
-  const pct = Math.max(0, Math.min(100, Math.round(percent)));
-  const offset = drawn ? C * (1 - pct / 100) : C;
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 py-2">
-      <div className="relative grid place-items-center">
-        <svg viewBox="0 0 140 140" className="size-40 -rotate-90">
-          <circle cx="70" cy="70" r={r} fill="none" strokeWidth="13" style={{ stroke: 'var(--color-surface-muted)' }} />
-          <circle
-            cx="70"
-            cy="70"
-            r={r}
-            fill="none"
-            strokeWidth="13"
-            strokeLinecap="round"
-            strokeDasharray={C}
-            strokeDashoffset={offset}
-            style={{ stroke: 'var(--color-brand-500)', transition: 'stroke-dashoffset 1.2s cubic-bezier(.22,1,.36,1)' }}
-          />
-        </svg>
-        <div className="absolute grid place-items-center text-center">
-          <span className="font-mono text-3xl font-semibold tabular-nums">{pct}%</span>
-        </div>
-      </div>
-      <div className="text-center">
-        <p className="text-sm font-semibold text-foreground">{label}</p>
-        <p className="mt-0.5 text-xs text-foreground-muted">{sub}</p>
-      </div>
-    </div>
-  );
-}
-
-// ------------------------------------------------------------- bar chart ----
-
-function VolumeBars({ volume }: { volume: Analytics['volume'] }) {
-  const [grown, setGrown] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => setGrown(true), 80);
-    return () => clearTimeout(t);
-  }, []);
-  const totals = volume.map((v) => v.inbound + v.outbound);
-  const max = Math.max(1, ...totals);
-  const peak = totals.indexOf(Math.max(...totals, 0));
-  const labelEvery = volume.length > 14 ? Math.ceil(volume.length / 10) : 1;
-
-  if (volume.length === 0 || max === 1) {
-    return (
-      <div className="flex h-[176px] flex-col items-center justify-center text-center">
-        <p className="text-sm font-medium text-foreground">No messages in this window.</p>
-        <p className="mt-1 text-xs text-foreground-subtle">Pick a longer range or check back later.</p>
-      </div>
-    );
-  }
-  return (
-    <div>
-      <div className="flex h-[150px] items-end gap-1.5">
-        {volume.map((v, i) => (
-          <div
-            key={v.date}
-            className={cn(
-              'flex-1 rounded-t-md rounded-b-sm transition-[height] duration-700 ease-out',
-              i === peak ? 'bg-gradient-to-b from-[#7d4152] to-[#360516]' : 'bg-surface-elevated',
-            )}
-            style={{ height: grown ? `${Math.max(3, Math.round((totals[i]! / max) * 100))}%` : '4px' }}
-            title={`${v.date}: ${totals[i]} messages (${v.inbound} in · ${v.outbound} out)`}
-          />
-        ))}
-      </div>
-      <div className="mt-2 flex gap-1.5">
-        {volume.map((v, i) => (
-          <span key={v.date} className="flex-1 text-center font-mono text-[10px] text-foreground-subtle">
-            {i % labelEvery === 0 ? fmtDay(v.date) : ''}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ------------------------------------------------------------ line chart ----
 
 function LineChart({ values, gradId }: { values: number[]; gradId: string }) {
@@ -394,7 +306,6 @@ export default function AnalyticsPage() {
   const inbound = a?.volume.map((v) => v.inbound) ?? [];
   const outbound = a?.volume.map((v) => v.outbound) ?? [];
   const totalSeries = a?.volume.map((v) => v.inbound + v.outbound) ?? [];
-  const resolutionPct = a ? Math.round(a.botResolution.resolutionRate * 100) : 0;
 
   return (
     <>
@@ -438,20 +349,6 @@ export default function AnalyticsPage() {
             <Kpi icon={Clock} label="Avg response" value={fmtReply(a.avgResponseSeconds)} sub="first reply time" />
           </Reveal>
 
-          {/* Volume bars + AI-resolution gauge. */}
-          <Reveal delay={90} className="grid grid-cols-1 gap-6 lg:grid-cols-[1.7fr_1fr]">
-            <Panel title="Message volume">
-              <VolumeBars volume={a.volume} />
-            </Panel>
-            <Panel title="AI resolution">
-              <Gauge
-                percent={resolutionPct}
-                label="Handled by the bot"
-                sub={`${fmtNum(a.botResolution.handoffs)} handed to a human`}
-              />
-            </Panel>
-          </Reveal>
-
           {/* Report review — animated line charts. */}
           <div>
             <h2 className="mb-3 text-lg font-semibold tracking-[-0.01em] text-foreground">Report review</h2>
@@ -468,8 +365,8 @@ export default function AnalyticsPage() {
             </Reveal>
           </div>
 
-          {/* Usage & limits. */}
-          <Reveal delay={180} className="max-w-xl">
+          {/* Usage & limits — full width. */}
+          <Reveal delay={140}>
             <UsageLimitsWidget />
           </Reveal>
 

@@ -499,7 +499,7 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
 
       <div
         className={cn(
-          'grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-hidden border border-border bg-surface lg:grid-cols-[25rem_1fr]',
+          'grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-hidden border border-border bg-surface lg:grid-cols-[25rem_1fr] xl:grid-cols-[22rem_1fr_21rem]',
           // Rounded card only makes sense embedded; full-screen goes edge-to-edge.
           fullscreen ? '' : 'rounded-lg',
         )}
@@ -634,6 +634,24 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
             onDeleted={() => setActiveId(null)}
             currentUserId={session?.user.id ?? null}
           />
+        </div>
+
+        {/* Persistent customer details — the 3rd pane on xl screens. On smaller
+            screens the same info still opens as a slide-over from the header. */}
+        <div className="hidden min-h-0 min-w-0 border-l border-border xl:flex">
+          {active ? (
+            <CustomerInfoSheet
+              embedded
+              open
+              phone={active.customerPhone}
+              fallbackName={active.customerName ?? active.customerWhatsappName}
+              onClose={() => {}}
+            />
+          ) : (
+            <div className="grid w-full place-items-center p-6 text-center text-sm text-foreground-subtle">
+              Select a conversation to see customer details.
+            </div>
+          )}
         </div>
       </div>
 

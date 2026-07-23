@@ -25,6 +25,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { api } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 import { useSession } from '@/lib/session';
+import { cn } from '@/lib/utils';
 
 interface Overview {
   contact: {
@@ -104,11 +105,14 @@ export function CustomerInfoSheet({
   fallbackName,
   open,
   onClose,
+  embedded = false,
 }: {
   phone: string | null;
   fallbackName?: string | null;
   open: boolean;
   onClose: () => void;
+  /** Render as a persistent column (no fixed overlay/backdrop) — the inbox 3rd pane. */
+  embedded?: boolean;
 }) {
   const qc = useQueryClient();
   const { session } = useSession();
@@ -132,7 +136,7 @@ export function CustomerInfoSheet({
       api.get<{ data: Overview }>(
         `/api/v1/contacts/overview?phone=${encodeURIComponent(phone ?? '')}`,
       ),
-    enabled: open && !!phone,
+    enabled: (open || embedded) && !!phone,
   });
   const data = q.data?.data;
   const contactId = data?.contact?.id ?? null;
@@ -166,7 +170,7 @@ export function CustomerInfoSheet({
     onError: () => toast.error('Could not save user info'),
   });
 
-  if (!open) return null;
+  if (!open && !embedded) return null;
 
   const name = data?.contact?.displayName ?? data?.contact?.whatsappName ?? fallbackName ?? phone;
   const initial =
@@ -181,10 +185,13 @@ export function CustomerInfoSheet({
   const noteDirty = noteDraft !== null && noteDraft.trim() !== savedUserInfo.trim();
   const isOperatorEdited = !!data?.memory?.operatorNote;
 
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-[1px]" onClick={onClose} />
-      <div className="relative z-10 flex h-full w-full max-w-md flex-col overflow-y-auto bg-surface shadow-2xl">
+  const panel = (
+    <div
+      className={cn(
+        'flex h-full w-full flex-col overflow-y-auto bg-surface',
+        embedded ? '' : 'relative z-10 max-w-md shadow-2xl',
+      )}
+    >
         {/* Header */}
         <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-surface px-5 py-4">
           <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-brand-100 text-base font-semibold text-brand-700">
@@ -196,9 +203,11 @@ export function CustomerInfoSheet({
               <Phone className="size-3" /> {phone}
             </p>
           </div>
-          <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close">
-            <X className="size-4" />
-          </Button>
+          {!embedded ? (
+            <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close">
+              <X className="size-4" />
+            </Button>
+          ) : null}
         </div>
 
         {q.isLoading ? (
@@ -471,6 +480,13 @@ export function CustomerInfoSheet({
           </>
         )}
       </div>
+  );
+
+  if (embedded) return panel;
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-[1px]" onClick={onClose} />
+      {panel}
     </div>
   );
 }

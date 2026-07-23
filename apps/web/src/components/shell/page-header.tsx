@@ -6,6 +6,8 @@ import { cn } from '@/lib/utils';
 
 interface PageHeaderProps {
   title: React.ReactNode;
+  /** Optional uppercase eyebrow label above the title (e.g. "Overview"). */
+  eyebrow?: React.ReactNode;
   description?: React.ReactNode;
   actions?: React.ReactNode;
   /** Optional "you are here" trail above the title. */
@@ -25,6 +27,7 @@ interface PageHeaderProps {
 // whole app at once. Vertical rhythm comes from app-shell's space-y wrapper.
 export function PageHeader({
   title,
+  eyebrow,
   description,
   actions,
   breadcrumbs,
@@ -46,6 +49,11 @@ export function PageHeader({
             </Link>
           ) : null}
           {breadcrumbs && breadcrumbs.length > 0 ? <Breadcrumbs items={breadcrumbs} /> : null}
+          {eyebrow ? (
+            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground-subtle">
+              {eyebrow}
+            </p>
+          ) : null}
           <h1 className="truncate text-xl font-semibold leading-tight tracking-[-0.02em] text-foreground">
             {title}
           </h1>

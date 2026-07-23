@@ -149,7 +149,10 @@ function KpiTileCard({ tile }: { tile: KpiTile }) {
             })()
           )}
         </div>
-        <p className="mt-3 text-[1.75rem] font-semibold leading-none tracking-tight" aria-hidden>
+        <p
+          className="mt-3 font-mono text-[1.75rem] font-semibold leading-none tracking-tight tabular-nums"
+          aria-hidden
+        >
           {formatThousands(tile.value)}
         </p>
         {showHint ? (

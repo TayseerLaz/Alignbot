@@ -38,7 +38,7 @@ export function DashboardWalletCard() {
             <div className="flex items-center gap-2 text-sm font-medium text-foreground-muted">
               <Wallet className="size-4 text-brand-500" /> WhatsApp balance
             </div>
-            <p className="mt-1 text-3xl font-semibold leading-tight tabular-nums">
+            <p className="mt-1 font-mono text-3xl font-semibold leading-tight tabular-nums">
               ${formatMicrosUsd(d.availableMicros)}
             </p>
             <p className="mt-0.5 text-sm text-foreground-muted">

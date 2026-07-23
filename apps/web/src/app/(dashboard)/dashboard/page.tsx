@@ -77,8 +77,9 @@ function DashboardShell({ greeting }: { greeting: string }) {
   return (
     <>
       <PageHeader
-        title={greeting ? `Welcome back, ${greeting}` : 'Welcome back'}
-        description="Here's a snapshot of your organization's data health."
+        eyebrow="Overview"
+        title={greeting ? `${timeGreeting()}, ${greeting}` : timeGreeting()}
+        description="Here's a live snapshot of your business on Hader — every number updates in real time."
         actions={
           editing ? (
             <div className="flex items-center gap-2">
@@ -147,6 +148,15 @@ function DashboardShell({ greeting }: { greeting: string }) {
       <AddWidgetDialog open={addOpen} onOpenChange={setAddOpen} />
     </>
   );
+}
+
+// Time-of-day greeting (client-rendered) to mirror the warm, "living dashboard"
+// feel — "Good morning, Rana" rather than a static "Welcome back".
+function timeGreeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
 }
 
 function SlotRenderer({ def }: { def: WidgetDef }) {

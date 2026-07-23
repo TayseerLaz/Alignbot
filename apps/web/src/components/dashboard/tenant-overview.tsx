@@ -26,6 +26,7 @@ import Link from 'next/link';
 import { useEffect, useState, type ReactNode } from 'react';
 
 import { AiBudgetBanner } from '@/components/dashboard/ai-budget-banner';
+import { DashboardWalletCard } from '@/components/dashboard/dashboard-wallet-card';
 import { WalletBalanceBanner } from '@/components/dashboard/wallet-balance-banner';
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
@@ -403,23 +404,28 @@ export function TenantOverview({ greeting }: { greeting: string }) {
           <WalletBalanceBanner />
         </div>
 
+        {/* WhatsApp credits — prepaid balance + messages left. */}
         <Reveal>
+          <DashboardWalletCard />
+        </Reveal>
+
+        <Reveal delay={70}>
           <KpiRow d={d} />
         </Reveal>
 
-        <Reveal delay={90} className="grid grid-cols-1 gap-6 lg:grid-cols-[1.6fr_1fr]">
+        <Reveal delay={140} className="grid grid-cols-1 gap-6 lg:grid-cols-[1.6fr_1fr]">
           <ConversationsChart d={d} loading={overview.isLoading} />
           <RecentActivityPanel />
         </Reveal>
 
         {!disabled.includes('bookings') ? (
-          <Reveal delay={170}>
+          <Reveal delay={210}>
             <BookingsWeek />
           </Reveal>
         ) : null}
 
         {!disabled.includes('inbox') ? (
-          <Reveal delay={230}>
+          <Reveal delay={270}>
             <InboxCta />
           </Reveal>
         ) : null}

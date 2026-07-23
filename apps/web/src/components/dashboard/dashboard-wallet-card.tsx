@@ -29,8 +29,12 @@ export function DashboardWalletCard() {
     <Link href="/billing" className="group block">
       <Card
         className={cn(
-          'transition group-hover:shadow-sm',
-          paused ? 'border-red-300 bg-red-50/50' : low ? 'border-amber-300 bg-amber-50/40' : 'border-border',
+          'rounded-2xl shadow-[0_1px_2px_rgba(54,5,22,0.04)] transition-shadow duration-200 group-hover:shadow-[0_8px_24px_-12px_rgba(54,5,22,0.12)]',
+          paused
+            ? 'border-red-300 bg-red-50/50'
+            : low
+              ? 'border-amber-300 bg-amber-50/40'
+              : 'border-border/80',
         )}
       >
         <CardContent className="flex flex-wrap items-center justify-between gap-4 p-5">

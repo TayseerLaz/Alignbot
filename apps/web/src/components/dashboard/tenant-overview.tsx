@@ -7,6 +7,7 @@
 // configurable widget board for tenants; the ALIGNED-HQ admin dashboard is a
 // separate component.
 
+import { formatMicrosUsd } from '@aligned/shared';
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
@@ -21,12 +22,12 @@ import {
   ShoppingCart,
   Timer,
   Users,
+  Wallet,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState, type ReactNode } from 'react';
 
 import { AiBudgetBanner } from '@/components/dashboard/ai-budget-banner';
-import { DashboardWalletCard } from '@/components/dashboard/dashboard-wallet-card';
 import { WalletBalanceBanner } from '@/components/dashboard/wallet-balance-banner';
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
@@ -35,6 +36,7 @@ import {
   getBookingsWeek,
   getOverview,
   getRecentActivity,
+  getWalletOverview,
   type ActivityEvent,
   type OverviewData,
 } from '@/lib/dashboard-api';
@@ -136,6 +138,59 @@ function KpiCard({
   );
 }
 
+// WhatsApp prepaid credits as a KPI-row card (links to Billing). Amber/red
+// when the balance is running low / paused.
+function WhatsAppCreditsCard() {
+  const q = useQuery({
+    queryKey: ['billing', 'overview'],
+    queryFn: getWalletOverview,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const d = q.data;
+  const paused = !!d?.metered && d.alert.level === 'empty';
+  const low = !!d?.metered && d.alert.level === 'alert';
+  const sub = !d
+    ? ' '
+    : paused
+      ? 'Sending paused'
+      : low
+        ? 'Running low'
+        : d.metered
+          ? `≈ ${d.messagesRemaining.toLocaleString()} left`
+          : 'Billing →';
+  const subClass = paused
+    ? 'text-red-600'
+    : low
+      ? 'text-amber-700'
+      : d?.metered
+        ? 'text-foreground-subtle'
+        : 'text-brand-600';
+
+  return (
+    <Link href="/billing" className="group block h-full">
+      <Card
+        className={cn(
+          'h-full rounded-2xl p-5 shadow-[0_1px_2px_rgba(54,5,22,0.04)] transition-shadow duration-200 group-hover:shadow-[0_8px_24px_-12px_rgba(54,5,22,0.12)]',
+          paused
+            ? 'border-red-300 bg-red-50/40'
+            : low
+              ? 'border-amber-300 bg-amber-50/30'
+              : 'border-border/80',
+        )}
+      >
+        <p className="flex items-center gap-2 text-[0.8125rem] font-medium text-foreground-muted">
+          <Wallet className="size-[1.05rem] shrink-0 text-brand-500" aria-hidden /> WhatsApp credits
+        </p>
+        <p className="mt-2.5 font-mono text-[1.85rem] font-semibold leading-none tracking-[-0.02em] tabular-nums">
+          {d ? `$${formatMicrosUsd(d.availableMicros)}` : '—'}
+        </p>
+        <p className={cn('mt-1.5 text-xs font-semibold', subClass)}>{sub}</p>
+      </Card>
+    </Link>
+  );
+}
+
 function KpiRow({ d }: { d?: OverviewData }) {
   const convSub = !d
     ? ''
@@ -148,7 +203,8 @@ function KpiRow({ d }: { d?: OverviewData }) {
     !d || d.conversationsDeltaPct == null ? 'neutral' : d.conversationsDeltaPct >= 0 ? 'up' : 'down';
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <WhatsAppCreditsCard />
       <KpiCard
         icon={Inbox}
         label="Conversations"
@@ -404,28 +460,24 @@ export function TenantOverview({ greeting }: { greeting: string }) {
           <WalletBalanceBanner />
         </div>
 
-        {/* WhatsApp credits — prepaid balance + messages left. */}
+        {/* KPI row — WhatsApp credits sits beside the four hero metrics. */}
         <Reveal>
-          <DashboardWalletCard />
-        </Reveal>
-
-        <Reveal delay={70}>
           <KpiRow d={d} />
         </Reveal>
 
-        <Reveal delay={140} className="grid grid-cols-1 gap-6 lg:grid-cols-[1.6fr_1fr]">
+        <Reveal delay={90} className="grid grid-cols-1 gap-6 lg:grid-cols-[1.6fr_1fr]">
           <ConversationsChart d={d} loading={overview.isLoading} />
           <RecentActivityPanel />
         </Reveal>
 
         {!disabled.includes('bookings') ? (
-          <Reveal delay={210}>
+          <Reveal delay={170}>
             <BookingsWeek />
           </Reveal>
         ) : null}
 
         {!disabled.includes('inbox') ? (
-          <Reveal delay={270}>
+          <Reveal delay={230}>
             <InboxCta />
           </Reveal>
         ) : null}

@@ -1,7 +1,7 @@
 'use client';
 
 import { Check, Pencil, Plus } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { AddWidgetDialog } from '@/components/dashboard/add-widget-dialog';
 import { AdminPlatformDashboard } from '@/components/dashboard/admin-platform-dashboard';
@@ -14,7 +14,7 @@ import { WIDGETS_BY_ID, type WidgetDef, type WidgetId } from '@/components/dashb
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { useSession } from '@/lib/session';
-import { fullName } from '@/lib/utils';
+import { cn, fullName } from '@/lib/utils';
 
 // Dashboard page is now a thin layout shell:
 //   1) reads the operator's saved widget layout (localStorage)
@@ -111,34 +111,42 @@ function DashboardShell({ greeting }: { greeting: string }) {
       {/* Daily AI-budget alert — shown above everything when the bot is near or
           at its daily limit (the cap that pauses automatic replies). Paired with
           the prepaid WhatsApp balance alert (empty/low balance pauses sending). */}
-      <div className="mb-6 space-y-3">
+      <Reveal className="mb-6 space-y-3">
         <AiBudgetBanner />
         <WalletBalanceBanner />
-      </div>
+      </Reveal>
 
       {/* Wallet balance — pinned to the top for every tenant. */}
-      <div className="mb-6">
+      <Reveal delay={70} className="mb-6">
         <DashboardWalletCard />
-      </div>
+      </Reveal>
 
       {visible.length === 0 ? (
         <EmptyDashboard onAddClick={() => setAddOpen(true)} />
       ) : (
         <div className="space-y-6">
           {/* Slot 1: KPI strip — handles its own responsive 4/2/1 grid. */}
-          {kpi ? <SlotRenderer def={kpi} /> : null}
+          {kpi ? (
+            <Reveal delay={140}>
+              <SlotRenderer def={kpi} />
+            </Reveal>
+          ) : null}
 
           {/* Slot 2: Full-width widgets (onboarding banner). */}
-          {fullWidth.map((w) => (
-            <SlotRenderer key={w.id} def={w} />
+          {fullWidth.map((w, i) => (
+            <Reveal key={w.id} delay={210 + i * 60}>
+              <SlotRenderer def={w} />
+            </Reveal>
           ))}
 
           {/* Slot 3: 2-col grid of half-width cards. Collapses to 1
               column on mobile via grid-cols-1 → lg:grid-cols-2. */}
           {halfWidth.length > 0 ? (
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              {halfWidth.map((w) => (
-                <SlotRenderer key={w.id} def={w} />
+              {halfWidth.map((w, i) => (
+                <Reveal key={w.id} delay={270 + i * 55} className="h-full">
+                  <SlotRenderer def={w} />
+                </Reveal>
               ))}
             </div>
           ) : null}
@@ -157,6 +165,27 @@ function timeGreeting(): string {
   if (h < 12) return 'Good morning';
   if (h < 18) return 'Good afternoon';
   return 'Good evening';
+}
+
+// Subtle "panel rises in" entrance — mirrors the sandbox's fade-up. Runs once
+// on mount; the global reduced-motion rule neutralises it for those who ask.
+function Reveal({
+  delay = 0,
+  className,
+  children,
+}: {
+  delay?: number;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={cn('animate-in fade-in-0 slide-in-from-bottom-3', className)}
+      style={{ animationDuration: '520ms', animationDelay: `${delay}ms`, animationFillMode: 'both' }}
+    >
+      {children}
+    </div>
+  );
 }
 
 function SlotRenderer({ def }: { def: WidgetDef }) {

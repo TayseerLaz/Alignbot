@@ -2,7 +2,6 @@
 
 import { useQuery } from '@tanstack/react-query';
 import {
-  ArrowUpRight,
   HelpCircle,
   Info,
   Package,
@@ -112,13 +111,13 @@ export function KpiStripWidget() {
 
 function KpiTileCard({ tile }: { tile: KpiTile }) {
   const showHint = tile.hint?.kind === 'services-incomplete' && tile.subtextTone === 'warning';
+  const Icon = KPI_ICON[tile.id] ?? Package;
 
   return (
-    // Stretched-link pattern: a single overlay <Link> covers the whole card,
-    // and interactive children (ADD, the missing-details hint) opt back into
-    // pointer events above it. This avoids nesting anchors/buttons inside an
-    // anchor — which is invalid HTML and lets a press on the hint navigate
-    // away instead of opening it.
+    // Sandbox-style stat tile: icon + label on top, a big mono figure, then a
+    // tone-coloured delta line. Stretched-link pattern — one overlay <Link>
+    // covers the card; interactive children (ADD, the missing-details hint)
+    // opt back into pointer events above it.
     <Card className="group relative h-full rounded-2xl border-border/80 shadow-[0_1px_2px_rgba(54,5,22,0.04)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_8px_24px_-8px_rgba(54,5,22,0.12)]">
       <Link
         href={tile.href}
@@ -126,8 +125,9 @@ function KpiTileCard({ tile }: { tile: KpiTile }) {
         className="absolute inset-0 z-0 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
       />
       <CardContent className="pointer-events-none relative z-10 p-5">
-        <div className="flex items-start justify-between gap-2">
-          <p className="text-xs font-medium uppercase tracking-wider text-foreground-subtle">
+        <div className="flex items-center justify-between gap-2">
+          <p className="flex items-center gap-2 text-[0.8125rem] font-medium text-foreground-muted">
+            <Icon className="size-[1.05rem] shrink-0 text-foreground-subtle" aria-hidden />
             {tile.label}
           </p>
           {tile.action ? (
@@ -138,19 +138,10 @@ function KpiTileCard({ tile }: { tile: KpiTile }) {
             >
               <Plus className="size-3" aria-hidden /> {tile.action.label}
             </Link>
-          ) : (
-            (() => {
-              const Icon = KPI_ICON[tile.id] ?? Package;
-              return (
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-500 ring-1 ring-brand-100/60">
-                  <Icon className="size-4" aria-hidden />
-                </span>
-              );
-            })()
-          )}
+          ) : null}
         </div>
         <p
-          className="mt-3 font-mono text-[1.75rem] font-semibold leading-none tracking-tight tabular-nums"
+          className="mt-2.5 font-mono text-[1.85rem] font-semibold leading-none tracking-[-0.02em] tabular-nums"
           aria-hidden
         >
           {formatThousands(tile.value)}
@@ -160,7 +151,7 @@ function KpiTileCard({ tile }: { tile: KpiTile }) {
         ) : (
           <p
             className={cn(
-              'mt-1 flex items-center gap-1 text-xs',
+              'mt-1.5 text-xs font-semibold',
               tile.subtextTone === 'warning'
                 ? 'text-amber-700'
                 : tile.subtextTone === 'success'
@@ -168,13 +159,7 @@ function KpiTileCard({ tile }: { tile: KpiTile }) {
                   : 'text-foreground-subtle',
             )}
           >
-            {/* Non-color cue so the warning/success state still reads
-                in monochrome / for users with red-green CVD. */}
-            <span aria-hidden>
-              {tile.subtextTone === 'warning' ? '!' : tile.subtextTone === 'success' ? '✓' : '·'}
-            </span>
             {tile.subtext}
-            <ArrowUpRight className="ml-auto size-3 text-foreground-subtle transition group-hover:text-foreground" />
           </p>
         )}
       </CardContent>

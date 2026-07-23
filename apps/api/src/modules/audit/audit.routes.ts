@@ -65,9 +65,14 @@ export default async function auditRoutes(app: FastifyInstance) {
       return app.tenant(req, async (tx) => {
         const rows = await tx.auditLog.findMany({
           where: {
-            // Integration credentials a tenant entered are ALIGNED-HQ-only —
-            // never shown in the tenant's own activity.
-            NOT: { action: 'integration_credentials_set' as never },
+            // Hidden from the tenant's own activity: integration credentials
+            // (ALIGNED-HQ-only), and ALIGNED-HQ access events (an admin
+            // controlling the workspace) — the tenant shouldn't see those.
+            NOT: {
+              action: {
+                in: ['integration_credentials_set', 'aligned_admin_accessed', 'aligned_admin_exited'],
+              } as never,
+            },
             ...(q.entityType ? { entityType: q.entityType } : {}),
             ...(q.action ? { action: q.action as never } : {}),
             ...(q.actorEmail

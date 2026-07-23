@@ -763,6 +763,15 @@ export default async function dashboardRoutes(app: FastifyInstance) {
     async (req) => {
       const data = await app.tenant(req, async (tx) => {
         const rows = await tx.auditLog.findMany({
+          // Don't surface HQ-only or ALIGNED-admin-access events (an admin
+          // controlling the workspace) in the tenant's activity feed.
+          where: {
+            NOT: {
+              action: {
+                in: ['integration_credentials_set', 'aligned_admin_accessed', 'aligned_admin_exited'],
+              } as never,
+            },
+          },
           orderBy: { createdAt: 'desc' },
           take: 5,
           select: { id: true, action: true, entityType: true, createdAt: true },

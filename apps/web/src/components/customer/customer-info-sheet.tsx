@@ -188,7 +188,7 @@ export function CustomerInfoSheet({
   const panel = (
     <div
       className={cn(
-        'flex h-full w-full flex-col overflow-y-auto bg-surface',
+        'flex h-full w-full flex-col overflow-y-auto overscroll-contain bg-surface',
         embedded ? '' : 'relative z-10 max-w-md shadow-2xl',
       )}
     >

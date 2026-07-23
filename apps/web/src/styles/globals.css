@@ -313,7 +313,7 @@
    ============================================================================ */
 @layer base {
   *, ::before, ::after { border-color: var(--color-border); }
-  html, body { height: 100%; }
+  html, body { height: 100%; overscroll-behavior: none; }
   body {
     background: var(--color-surface-muted);
     color: var(--color-foreground);

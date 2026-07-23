@@ -402,3 +402,43 @@ export async function getVoice(): Promise<VoiceData> {
   const res = await api.get<{ data: VoiceData }>('/api/v1/dashboard/widgets/voice');
   return res.data;
 }
+
+// ---------- Overview hero (sandbox-style tenant dashboard) ------------------
+
+export interface OverviewData {
+  conversations7d: number;
+  conversationsDeltaPct: number | null;
+  medianReplySeconds: number | null;
+  orders7d: number;
+  ordersToday: number;
+  aiHandledPercent: number;
+  humanPercent: number;
+  byDay: { label: string; count: number }[];
+}
+
+export async function getOverview(): Promise<OverviewData> {
+  const res = await api.get<{ data: OverviewData }>('/api/v1/dashboard/widgets/overview');
+  return res.data;
+}
+
+export interface BookingWeekItem {
+  time: string;
+  title: string;
+  subtitle: string | null;
+  status: string;
+}
+export interface BookingWeekDay {
+  label: string;
+  dayNum: number;
+  isToday: boolean;
+  items: BookingWeekItem[];
+}
+export interface BookingsWeekData {
+  total: number;
+  days: BookingWeekDay[];
+}
+
+export async function getBookingsWeek(): Promise<BookingsWeekData> {
+  const res = await api.get<{ data: BookingsWeekData }>('/api/v1/dashboard/widgets/bookings-week');
+  return res.data;
+}

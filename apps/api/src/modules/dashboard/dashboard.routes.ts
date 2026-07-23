@@ -1168,6 +1168,216 @@ export default async function dashboardRoutes(app: FastifyInstance) {
       return { data: { widgets: body.widgets } };
     },
   );
+
+  // ---------- GET /dashboard/widgets/overview -----------------------------
+  // The sandbox-style hero KPIs + a 7-day conversations series for the bar
+  // chart. Everything here is the tenant's LIVE data (not the demo numbers):
+  // conversations = threads, reply time = median first-response, orders =
+  // captured carts, AI-handled = bot-only threads that never escalated.
+  r.get(
+    '/dashboard/widgets/overview',
+    {
+      schema: {
+        tags: ['dashboard'],
+        summary: 'Hero KPIs (conversations, reply time, orders, AI-handled) + 7-day series.',
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              conversations7d: z.number().int(),
+              conversationsDeltaPct: z.number().int().nullable(),
+              medianReplySeconds: z.number().int().nullable(),
+              orders7d: z.number().int(),
+              ordersToday: z.number().int(),
+              aiHandledPercent: z.number().int(),
+              humanPercent: z.number().int(),
+              byDay: z.array(z.object({ label: z.string(), count: z.number().int() })),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const data = await app.tenant(req, async (tx) => {
+        const now = Date.now();
+        const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+        const twoWeeksAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+        const startOfDay = new Date();
+        startOfDay.setUTCHours(0, 0, 0, 0);
+
+        const [conv7d, convPrev7d, orders7d, ordersToday, botThreads7d, escalated7d] = await Promise.all([
+          tx.whatsAppThread.count({ where: { createdAt: { gte: weekAgo } } }),
+          tx.whatsAppThread.count({ where: { createdAt: { gte: twoWeeksAgo, lt: weekAgo } } }),
+          tx.cart.count({ where: { status: { in: ORDER_STATES }, createdAt: { gte: weekAgo } } }),
+          tx.cart.count({ where: { status: { in: ORDER_STATES }, createdAt: { gte: startOfDay } } }),
+          tx.whatsAppThread.count({
+            where: {
+              messages: {
+                some: {
+                  direction: 'outbound',
+                  receivedAt: { gte: weekAgo },
+                  rawPayload: { path: ['sentBy'], equals: 'bot' },
+                },
+              },
+            },
+          }),
+          tx.whatsAppThread.count({ where: { status: 'escalated', updatedAt: { gte: weekAgo } } }),
+        ]);
+
+        // Median first-response time over the last 50 threads (robust to a
+        // single sleepy night). Same shape as the inbox-snapshot widget.
+        const samples = (await tx.$queryRawUnsafe(`
+          WITH first_msgs AS (
+            SELECT
+              t.id AS thread_id,
+              (SELECT MIN(m.received_at) FROM whatsapp_messages m WHERE m.thread_id = t.id AND m.direction = 'inbound') AS first_in,
+              (SELECT MIN(m.received_at) FROM whatsapp_messages m WHERE m.thread_id = t.id AND m.direction = 'outbound') AS first_out
+            FROM whatsapp_threads t
+            WHERE t.organization_id = current_setting('app.current_org_id')::uuid
+            ORDER BY t.last_message_at DESC
+            LIMIT 50
+          )
+          SELECT EXTRACT(EPOCH FROM (first_out - first_in))::int AS seconds
+          FROM first_msgs
+          WHERE first_in IS NOT NULL AND first_out IS NOT NULL AND first_out > first_in
+        `)) as { seconds: number }[];
+        const sorted = samples.map((s) => s.seconds).sort((a, b) => a - b);
+        const medianReplySeconds =
+          sorted.length === 0 ? null : sorted[Math.floor(sorted.length / 2)] ?? null;
+
+        // Conversations per UTC day over the last 7 days for the bar chart.
+        const byDayRows = (await tx.$queryRawUnsafe(`
+          SELECT to_char(date_trunc('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day, COUNT(*)::int AS count
+          FROM whatsapp_threads
+          WHERE organization_id = current_setting('app.current_org_id')::uuid
+            AND created_at >= now() - interval '7 days'
+          GROUP BY 1
+        `)) as { day: string; count: number }[];
+        const counts = new Map(byDayRows.map((r) => [r.day, r.count]));
+        const today = new Date();
+        const byDay: { label: string; count: number }[] = [];
+        for (let i = 6; i >= 0; i--) {
+          const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - i));
+          byDay.push({
+            label: d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }),
+            count: counts.get(d.toISOString().slice(0, 10)) ?? 0,
+          });
+        }
+
+        const conversationsDeltaPct =
+          convPrev7d === 0 ? null : Math.round(((conv7d - convPrev7d) / convPrev7d) * 100);
+        const aiHandledPercent =
+          botThreads7d === 0
+            ? 0
+            : Math.max(0, Math.min(100, Math.round(((botThreads7d - escalated7d) / botThreads7d) * 100)));
+        const humanPercent = botThreads7d === 0 ? 0 : Math.max(0, 100 - aiHandledPercent);
+
+        return {
+          conversations7d: conv7d,
+          conversationsDeltaPct,
+          medianReplySeconds,
+          orders7d,
+          ordersToday,
+          aiHandledPercent,
+          humanPercent,
+          byDay,
+        };
+      });
+      return { data };
+    },
+  );
+
+  // ---------- GET /dashboard/widgets/bookings-week ------------------------
+  // This week's bookings (Mon–Sun) grouped by day for the dashboard calendar,
+  // rendered in the tenant's timezone.
+  r.get(
+    '/dashboard/widgets/bookings-week',
+    {
+      schema: {
+        tags: ['dashboard'],
+        summary: "This week's bookings grouped by day (tenant timezone).",
+        response: {
+          200: itemEnvelopeSchema(
+            z.object({
+              total: z.number().int(),
+              days: z.array(
+                z.object({
+                  label: z.string(),
+                  dayNum: z.number().int(),
+                  isToday: z.boolean(),
+                  items: z.array(
+                    z.object({
+                      time: z.string(),
+                      title: z.string(),
+                      subtitle: z.string().nullable(),
+                      status: z.string(),
+                    }),
+                  ),
+                }),
+              ),
+            }),
+          ),
+        },
+      },
+      preHandler: [app.requireRole('viewer')],
+    },
+    async (req) => {
+      const data = await app.tenant(req, async (tx) => {
+        const biz = await tx.businessInfo.findFirst({ select: { timezone: true } });
+        const tz = biz?.timezone || 'UTC';
+        const now = new Date();
+        const localDate = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(d);
+        const localTime = (d: Date) =>
+          new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit' }).format(d);
+        const weekdayShort = (d: Date) =>
+          new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(d);
+
+        // Monday of the current week, in tz. Anchor on today's local date +
+        // weekday, then do date-only arithmetic at UTC midnight (labels only).
+        const todayKey = localDate(now);
+        const wdIdx = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(weekdayShort(now));
+        const mondayMs = new Date(todayKey + 'T00:00:00Z').getTime() - (wdIdx < 0 ? 0 : wdIdx) * 86400000;
+
+        const days = Array.from({ length: 7 }, (_, j) => {
+          const d = new Date(mondayMs + j * 86400000);
+          const key = d.toISOString().slice(0, 10);
+          return {
+            key,
+            label: d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }),
+            dayNum: d.getUTCDate(),
+            isToday: key === todayKey,
+            items: [] as { time: string; title: string; subtitle: string | null; status: string }[],
+          };
+        });
+        const dayByKey = new Map(days.map((d) => [d.key, d]));
+
+        // Generous UTC window covering the local week whatever the offset.
+        const rows = await tx.booking.findMany({
+          where: { appointmentAt: { gte: new Date(mondayMs - 86400000), lt: new Date(mondayMs + 9 * 86400000) } },
+          orderBy: { appointmentAt: 'asc' },
+          select: { appointmentAt: true, customerName: true, fields: true, notes: true, status: true },
+        });
+
+        let total = 0;
+        for (const b of rows) {
+          if (!b.appointmentAt) continue;
+          const day = dayByKey.get(localDate(b.appointmentAt));
+          if (!day) continue;
+          const title = bookingTitle(b.fields, b.notes, b.customerName);
+          day.items.push({
+            time: localTime(b.appointmentAt),
+            title,
+            subtitle: b.customerName && b.customerName !== title ? b.customerName : null,
+            status: b.status,
+          });
+          total += 1;
+        }
+
+        return { total, days: days.map(({ key: _key, ...rest }) => rest) };
+      });
+      return { data };
+    },
+  );
 }
 
 // Map raw audit_log.action strings to human-readable phrases for the
@@ -1191,4 +1401,25 @@ function humaniseAction(action: string, entityType: string | null): string {
   if (map[action]) return map[action];
   const phrase = action.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   return entityType ? `${phrase} (${entityType})` : phrase;
+}
+
+// Best-effort title for a booking on the dashboard calendar: the booked
+// subject from the frozen form fields (service/class/table/…), else the first
+// meaningful field, else the notes, else the customer's name.
+function bookingTitle(fields: unknown, notes: string | null, customerName: string | null): string {
+  const list = Array.isArray(fields)
+    ? (fields as { key?: string; label?: string; value?: unknown }[])
+    : [];
+  const SUBJECT = /(service|appointment|reason|type|session|class|event|tour|table|party|package|treatment)/i;
+  const SKIP = /(name|phone|email|date|time|when|number|note)/i;
+  for (const f of list) {
+    const tag = `${f?.key ?? ''} ${f?.label ?? ''}`;
+    if (SUBJECT.test(tag) && f?.value) return String(f.value).slice(0, 60);
+  }
+  for (const f of list) {
+    const tag = `${f?.key ?? ''} ${f?.label ?? ''}`;
+    if (!SKIP.test(tag) && f?.value) return String(f.value).slice(0, 60);
+  }
+  if (notes && notes.trim()) return notes.trim().split('\n')[0]!.slice(0, 60);
+  return customerName || 'Booking';
 }

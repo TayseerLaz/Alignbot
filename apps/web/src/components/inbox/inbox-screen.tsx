@@ -1848,7 +1848,9 @@ function Bubble({
       <div
         className={cn(
           'max-w-[85%] rounded-2xl px-4 py-2.5 text-base leading-relaxed shadow-sm sm:max-w-[78%] sm:text-[15px]',
-          isOut ? 'bg-brand-500 text-on-brand' : 'bg-surface-muted text-foreground',
+          // WhatsApp/Intercom-style tail: flatten the bottom corner on the
+          // sender's side (right for us, left for the customer).
+          isOut ? 'rounded-br-md bg-brand-500 text-on-brand' : 'rounded-bl-md bg-surface-muted text-foreground',
           // Subtle red ring when the scanner flagged hallucinations.
           canAudit && flaggedCount > 0 ? 'ring-2 ring-rose-400/70' : '',
         )}

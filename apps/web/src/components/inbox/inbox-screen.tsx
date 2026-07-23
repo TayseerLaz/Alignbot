@@ -15,7 +15,6 @@ import {
   MapPin,
   MessageCircle,
   MoreHorizontal,
-  PanelRight,
   Paperclip,
   Phone,
   RotateCcw,
@@ -300,8 +299,6 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
   // Canned-reply management now lives in the inbox itself (a dialog), not a
   // separate sidebar page.
   const [cannedOpen, setCannedOpen] = useState(false);
-  // The persistent customer-details panel (3rd pane on xl) can be shown/hidden.
-  const [showInfo, setShowInfo] = useState(true);
 
   // The org's WhatsApp numbers — drives the per-number entries in the channel
   // filter and the "replying from" labels.
@@ -479,16 +476,6 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
           <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setCannedOpen(true)}>
             <FileText className="size-4" /> Canned replies
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="hidden xl:inline-flex"
-            onClick={() => setShowInfo((v) => !v)}
-            aria-pressed={showInfo}
-            title={showInfo ? 'Hide customer details' : 'Show customer details'}
-          >
-            <PanelRight className="size-4" />
-          </Button>
         </div>
       ) : (
         <PageHeader
@@ -505,16 +492,6 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
               <Button variant="secondary" size="sm" onClick={() => setCannedOpen(true)}>
                 <FileText className="size-4" /> Canned replies
               </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                className="hidden xl:inline-flex"
-                onClick={() => setShowInfo((v) => !v)}
-                aria-pressed={showInfo}
-                title={showInfo ? 'Hide customer details' : 'Show customer details'}
-              >
-                <PanelRight className="size-4" /> {showInfo ? 'Hide details' : 'Details'}
-              </Button>
             </>
           }
         />
@@ -523,7 +500,6 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
       <div
         className={cn(
           'grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-hidden border border-border bg-surface lg:grid-cols-[25rem_1fr]',
-          showInfo ? 'xl:grid-cols-[22rem_1fr_21rem]' : 'xl:grid-cols-[25rem_1fr]',
           // Rounded card only makes sense embedded; full-screen goes edge-to-edge.
           fullscreen ? '' : 'rounded-lg',
         )}
@@ -659,24 +635,6 @@ export function InboxScreen({ fullscreen = false }: { fullscreen?: boolean }) {
             currentUserId={session?.user.id ?? null}
           />
         </div>
-
-        {/* Persistent customer details — the 3rd pane on xl screens. On smaller
-            screens the same info still opens as a slide-over from the header. */}
-        <div className={cn('min-h-0 min-w-0 border-l border-border', showInfo ? 'hidden xl:flex' : 'hidden')}>
-          {active ? (
-            <CustomerInfoSheet
-              embedded
-              open
-              phone={active.customerPhone}
-              fallbackName={active.customerName ?? active.customerWhatsappName}
-              onClose={() => {}}
-            />
-          ) : (
-            <div className="grid w-full place-items-center p-6 text-center text-sm text-foreground-subtle">
-              Select a conversation to see customer details.
-            </div>
-          )}
-        </div>
       </div>
 
       {/* Canned-reply management — now a feature inside the inbox (was a separate
@@ -811,12 +769,9 @@ function ThreadList({
                     )
                   ) : null}
                   {t.assignedToName ? (
-                    <span
-                      className="inline-flex size-5 items-center justify-center rounded-full bg-brand-100 text-[10px] font-semibold text-brand-700"
-                      title={`Assigned to ${t.assignedToName}`}
-                    >
-                      {t.assignedToName.replace(/[^\p{L}\p{N}]/gu, '').charAt(0).toUpperCase() || 'A'}
-                    </span>
+                    <Badge variant="muted" className="gap-1 text-[11px]">
+                      <UserCheck className="size-3" /> {t.assignedToName.split(' ')[0]}
+                    </Badge>
                   ) : null}
                   {t.noteCount > 0 ? (
                     <Badge variant="muted" className="gap-1 text-[11px]">
@@ -831,6 +786,9 @@ function ThreadList({
                   {t.tags.length > 1 ? (
                     <span className="text-[11px] text-foreground-subtle">+{t.tags.length - 1}</span>
                   ) : null}
+                  <span className="ml-auto whitespace-nowrap text-[11px] text-foreground-subtle">
+                    {t.inboundCount}↓ {t.outboundCount}↑
+                  </span>
                 </div>
               </div>
             </button>
@@ -1872,9 +1830,7 @@ function Bubble({
       <div
         className={cn(
           'max-w-[85%] rounded-2xl px-4 py-2.5 text-base leading-relaxed shadow-sm sm:max-w-[78%] sm:text-[15px]',
-          // WhatsApp/Intercom-style tail: flatten the bottom corner on the
-          // sender's side (right for us, left for the customer).
-          isOut ? 'rounded-br-md bg-brand-500 text-on-brand' : 'rounded-bl-md bg-surface-muted text-foreground',
+          isOut ? 'bg-brand-500 text-on-brand' : 'bg-surface-muted text-foreground',
           // Subtle red ring when the scanner flagged hallucinations.
           canAudit && flaggedCount > 0 ? 'ring-2 ring-rose-400/70' : '',
         )}
@@ -3199,16 +3155,14 @@ function ReplyBox({
 
   return (
     <div className="border-t border-border">
-      <div className="flex items-center gap-1 border-b border-border px-3">
+      <div className="flex items-center gap-1.5 border-b border-border bg-surface-muted/40 px-3 py-1">
         <button
           type="button"
           onClick={() => setMode('reply')}
           aria-pressed={mode === 'reply'}
           className={cn(
-            '-mb-px border-b-2 px-3 py-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
-            mode === 'reply'
-              ? 'border-brand-500 font-semibold text-foreground'
-              : 'border-transparent text-foreground-muted hover:text-foreground',
+            'rounded px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
+            mode === 'reply' ? 'bg-surface text-foreground shadow-sm' : 'text-foreground hover:bg-surface-muted',
           )}
         >
           Reply
@@ -3218,13 +3172,13 @@ function ReplyBox({
           onClick={() => setMode('note')}
           aria-pressed={mode === 'note'}
           className={cn(
-            '-mb-px inline-flex items-center gap-1 border-b-2 px-3 py-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
+            'rounded px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
             mode === 'note'
-              ? 'border-amber-500 font-semibold text-amber-800'
-              : 'border-transparent text-foreground-muted hover:text-foreground',
+              ? 'bg-amber-50 text-amber-800 shadow-sm'
+              : 'text-foreground hover:bg-surface-muted',
           )}
         >
-          <StickyNote className="size-3.5" /> Note
+          <StickyNote className="mr-1 inline size-3" /> Internal note
         </button>
         <div className="relative ml-auto flex items-center gap-1">
           <input

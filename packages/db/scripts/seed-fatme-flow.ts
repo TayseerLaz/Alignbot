@@ -64,7 +64,12 @@ const flow = {
 
     // ---- INTAKE QUESTIONS (typed, one at a time) ----
     q_name: { text: `شو اسمك الكريم؟`, waitFor: 'text', next: 'q_origin' },
-    q_origin: { text: `أهلين فيكِ 🌷 من وين إنتِ؟`, waitFor: 'text', next: 'q_how_found' },
+    q_origin: { text: `أهلين فيكِ 🌷 من وين إنتِ؟`, waitFor: 'text', next: 'q_age' },
+    q_age: {
+      text: `وقدّيش عمرك؟ (وإذا ما بتحبي تحكي عمرك، ولا يهمّك 🌷)`,
+      waitFor: 'text',
+      next: 'q_how_found',
+    },
     q_how_found: { text: `وشو وصّلك لصفحة فاطمة؟`, waitFor: 'text', next: 'q_email' },
     q_email: {
       text: `وإذا بتحبي، اتركيلي إيميلك 💌 لنبقى عالتواصل ونبعتلك كل جديد.`,

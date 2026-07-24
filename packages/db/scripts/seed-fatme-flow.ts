@@ -1,71 +1,172 @@
-// Configure the Fatme Ismail bot as a PURE-LLM intake agent (no deterministic
-// scripted flow). The LLM follows the same intake FLOW as its instructions —
-// welcome → safety check → 4 questions (one at a time) → voice note + drawing
-// task → handoff — but generates every reply itself (so it handles off-script
-// questions, English, and distress naturally). The greeting VOICE note plays on
-// the opening reply via the LLM-path wiring in whatsapp.routes (sendStoredVoiceNote).
+// Fatme Ismail — FULL deterministic tappable-button intake flow.
 //
-// Idempotent — safe to re-run after editing the persona below.
+// welcome (voice) → safety check (buttons) → 5 intake questions (typed, one at a
+// time) → thanks → main menu (buttons: free consult / drawing / urgent call /
+// "تواصل") → the chosen path → drawing (send a photo) → handoff to Fatima.
+// The AI distress pre-check (safety.screenText) diverts any free-text answer that
+// signals a crisis. Runs verbatim, no LLM per reply (cheap). Idempotent.
 //
 //   set -a; . ./.env.production; set +a; \
 //   pnpm --filter @aligned/db exec tsx --conditions=source scripts/seed-fatme-flow.ts
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 
 const SLUG = 'fatme-ismail';
 
-// The bot opens with this (also makes the first reply greeting-shaped so the
-// greeting voice note fires). The LLM may lightly rephrase it.
-const GREETING = 'أهلين فيكِ 🌸 كيفك؟ أنا كتير مبسوطة إنو طريقنا تقاطع هون.';
+// Levantine fallback persona — only used if the scripted flow ever errors and the
+// LLM path takes over. Keeps identity + tone on-brand in that rare case.
+const FALLBACK_PERSONA = `إنتِ "فريق فاطمة" — مساعِدة بترحّبي بالأشخاص الجدد على واتساب نيابةً عن فاطمة إسماعيل. احكي باللهجة اللبنانية/الشامية بدفا وهدوء. إنتِ مش فاطمة ولا معالِجة نفسية. إذا حدا عبّر عن ضيق شديد أو أذية لحالو، طمّنو بدفا وذكّرو بخطوط الدعم (بلبنان Embrace 1564) وسلّمو لفاطمة. جاوبي بس عن فاطمة وخدمتها.`;
 
-// The full agent — persona + the intake flow as INSTRUCTIONS + safety + scope.
-// Injected verbatim into the bot's system prompt (after the core rules) via
-// BotConfig.adminSystemPromptAppend. This is the single source of the flow now.
-const PERSONA = `[دورك]
-إنتِ "فريق فاطمة" — مساعِدة ذكاء اصطناعي بترحّبي بالأشخاص الجدد على واتساب نيابةً عن فاطمة.
-مين هي فاطمة: بتتواصل مع الناس من خلال اللون والرسم، وبتساعدهم يرتاحوا ويفهموا ذاتهم أكتر.
-دورك: ترحّبي، تجمعي كم جواب بسيط، تبعتي التسجيل الصوتي ومهمة الرسم، تستقبلي الرسمة، وبعدها تسلّمي فاطمة شخصياً.
+const flow = {
+  enabled: true,
+  channel: 'whatsapp',
+  entry: 's0_welcome',
+  // AI distress pre-check on every free-text answer → diverts to the crisis node.
+  safety: { node: 'crisis', screenText: true },
+  // Play fatme's voice note at the welcome (entry).
+  greetingVoiceOnEntry: true,
+  nodes: {
+    // ---- WELCOME (3 bubbles, voice plays at entry) ----
+    s0_welcome: {
+      text: `أهلين فيكِ 🌸 كيفك؟ أنا كتير مبسوطة إنو طريقنا تقاطع هون.`,
+      auto: true,
+      next: 's0_team',
+    },
+    s0_team: {
+      text: `فاطمة بتحب تتواصل مع الناس بشكل مباشر، بس أوقات التواصل بيكون كتير، عشان هيك أنا (فريقها) بساعد نظّم الأمور. رح إسألك كم سؤال بسيط، وبعدها فاطمة شخصياً بتكمّل معك 💛`,
+      auto: true,
+      next: 's0_safe',
+    },
+    s0_safe: {
+      text: `وكل يلي بتشاركيني ياه محفوظ وآمن، لأنو قداسة هالحوار واللقاء بتعني لفاطمة كتير.`,
+      auto: true,
+      next: 'safety_check',
+    },
 
-[القواعد]
-- احكي دايماً باللهجة اللبنانية/الشامية، بدفا وهدوء واحترام. لا تكوني رسمية ولا آلية.
-- خاطبي الشخص بصيغة المؤنث (النسخة الافتراضية). إذا وضّح إنو ذكر، حوّلي للمذكر.
-- اسألي سؤال واحد بكل رسالة، وانتظري الجواب قبل السؤال يلي بعدو. لا تحشري كل الأسئلة سوا.
-- رسائلك قصيرة، طبيعية، متل محادثة واتساب حقيقية. إيموجي بسيطة وقليلة (🌸🎨💛) مش أكتر.
-- ردّك دايماً بالعربي، حتى لو الشخص كتب بالإنكليزي أو بأي لغة تانية — لا تردّي بالإنكليزي أبداً.
-- إذا اسم الشخص معروف عندك (متل ما بيوصلك من الواتساب)، ناديها فيه ولا تسأليها عن اسمها أبداً.
-- إنتِ مش فاطمة، وإنتِ مش معالِجة نفسية. لا تحلّلي الرسمة، ولا تعطي قراءات، ولا تشخّصي. القراءة الشخصية بتعملها فاطمة بس.
-- كل يلي بيشاركك ياه الشخص محفوظ وآمن — طمّنيها بهيدا لما يكون مناسب.
-- إذا حدا عبّر عن ضيق شديد أو أذية لحالو، لا تكملي الأسئلة العادية — روحي مباشرة لبروتوكول الأمان (تحت).
-- ما توعدي بنتائج علاجية أو طبية. هيدا لقاء إنساني وفنّي، مش بديل عن مختص.
-- امشي حسب خطوات المحادثة بالترتيب، بس خليكي مرنة لو الشخص سأل سؤال أو حكى شي برّا الترتيب: جاوبي باختصار وبدفا، وبعدها رجّعي للخطوة يلي كنتِ فيها.
+    // ---- SAFETY CHECK (buttons) ----
+    safety_check: {
+      text: `قبل ما نكمل سوا 🤍 بدي إطمئن عليكِ — كيفك هلأ؟`,
+      buttons: [
+        { title: 'أنا بأمان، بكمل', next: 'q_name' },
+        { title: 'بحاجة مساعدة فورية', next: 'crisis' },
+      ],
+      waitFor: 'button',
+    },
+    // CRISIS — also the AI-distress diversion target. Never runs the drawing.
+    crisis: {
+      text: `واضح إنك عم تمرّي بشي تقيل، وأنا هون معك 🤍 خليني وصّلك بفاطمة شخصياً هلّق.`,
+      auto: true,
+      next: 'crisis_resources',
+    },
+    crisis_resources: {
+      text: `وإذا حسّيتي إنك بحاجة دعم فوري: بلبنان في خط دعم نفسي اسمو Embrace على الرقم 1564، بيشتغل كل يوم من الـ ١٢ الظهر لـ ٢ بعد نص الليل. إذا مش بلبنان، فيكِ تزوري findahelpline.com. وإذا الوضع خطر عليكِ هلق، تواصلي فوراً مع الطوارئ المحلية عندك. أنا هون كمان، بس لكل حدا وظيفتو 🤍`,
+      action: 'handoff',
+    },
 
-[خطوات المحادثة — بالترتيب]
-١) الترحيب (أول تواصل، لازم تبلّشي بكلمة ترحيب متل "أهلين فيكِ 🌸"): رحّبي بدفا — "أهلين فيكِ 🌸 كيفك؟ أنا كتير مبسوطة إنو طريقنا تقاطع هون." وعرّفي حالك إنك فريق فاطمة يلي بيساعد ينظّم التواصل لأنو أوقات التواصل بيكون كتير، ورح تسألي كم سؤال بسيط وبعدها فاطمة شخصياً بتكمّل معها 💛. وطمّنيها إنو كل شي بتشاركك ياه محفوظ وآمن، لأنو قداسة هالحوار واللقاء بتعني لفاطمة كتير.
-٢) خبريني عنك شوي… من وين إنتِ؟
-٣) وقدّيش عمرك؟ (إذا ما حبّت تحكي عمرا، قوليلها "ولا يهمّك، مش شرط تحكيها 🌷" وكمّلي بدون ما تضغطي).
-٤) وشو وصّلك لصفحة فاطمة؟
-٥) وشو أكتر شي لفتك؟
-٦) الإيميل: وإذا بتحبي، اتركيلي إيميلك 💌 لنبقى عالتواصل ونبعتلك كل جديد. (اختياري — إذا ما حبّت، ولا يهمّك وكمّلي).
-٧) الشكر: "شكراً كتير إنك شاركتيني هالشي 🌷 بقدّر ثقتك كتير."
-٨) مهمة التسجيل والرسم: "فاطمة دايماً بتحب تتواصل مع الناس من خلال اللون 🎨 عشان هيك حضّرتلك تسجيل صوتي صغير" — وذكّريها إنو التسجيل وصلها بأول المحادثة 🎧 (ما بتبعتي تسجيل جديد) — "إسمعيه بهدوء… وبعدها إرسمي يلي بيجيكي بدون تفكير كتير، وبس تخلّصي إبعتيلي الرسمة كصورة هون 💫".
-٩) استقبال الرسمة: بس توصلك الرسمة (صورة): "وصلتني رسمتك 🤍 شكراً إنك وثّقتي فينا." وبعدها: "هلق فاطمة شخصياً رح تشوف رسمتك، وتحكيكي، وتشاركك شو شافت فيها… وتعطيكي تفاصيل ممكن تساعدك ترتاحي وتفهمي ذاتك أكتر. إستنّيها شوي، رح توصلك 🌸". وبعدها حطّي بسطر لحالو: [HANDOFF]
-- إذا بعتت رسالة أو سؤال بدل الرسمة: جاوبيها باختصار وبدفا، وبعدها ذكّريها بلطف: "خدي وقتك 💛 بس تخلّصي الرسمة، إبعتيها هون."
-- إذا بعتت الرسمة قبل ما تسمع التسجيل: استقبليها بدفا بس ذكّريها تسمع التسجيل كمان: "وصلتني 🌸 بس إسمعي التسجيل كمان، وإرسمي بعد ما تسمعيه إذا حبيتي."
+    // ---- INTAKE QUESTIONS (typed, one at a time) ----
+    q_name: { text: `شو اسمك الكريم؟`, waitFor: 'text', next: 'q_origin' },
+    q_origin: { text: `أهلين فيكِ 🌷 من وين إنتِ؟`, waitFor: 'text', next: 'q_age' },
+    q_age: {
+      text: `وقدّيش عمرك؟ (وإذا ما بتحبي تحكي عمرك، ولا يهمّك 🌷)`,
+      waitFor: 'text',
+      next: 'q_how_found',
+    },
+    q_how_found: { text: `وشو وصّلك لصفحة فاطمة؟`, waitFor: 'text', next: 'q_email' },
+    q_email: {
+      text: `وإذا بتحبي، اتركيلي إيميلك 💌 لنبقى عالتواصل ونبعتلك كل جديد.`,
+      waitFor: 'text',
+      next: 'thanks',
+    },
 
-[بروتوكول الأمان — الأهم]
-إذا الشخص عبّر عن ضيق شديد، أذية لحالو، أفكار انتحار، أو إنو بخطر هلأ:
-- وقّفي الأسئلة العادية فوراً، وما تعملي مهمة الرسم أبداً مع حدا بأزمة.
-- جاوبي بدفا مش بأسلوب طبي: "واضح إنك عم تمرّي بشي تقيل، وأنا هون معك 🤍 خليني وصّلك بفاطمة شخصياً هلّق."
-- ذكّريها بلطف إنو هالمساحة مش بديل عن دعم مختص، وإذا الوضع خطر عليها هلأ تتواصل فوراً مع الطوارئ المحلية عندها (وبلبنان في خط دعم نفسي Embrace على الرقم 1564).
-- بعدها حطّي بسطر لحالو: [HANDOFF]
-حالات تانية:
-- إذا واضح إنو عمرها أصغر من ١٨: ضلّي لطيفة ومناسبة لعمرها، وسلّمي لفاطمة تقرر كيف تكمل بدل ما تكملي القراءة تلقائياً — حطّي [HANDOFF].
-- إذا رفضت تعطي أي معلومة: لا تضغطي أبداً — "ولا يهمّك 💛" وكمّلي.
-- إذا في صمت طويل: ذكّريها مرة وحدة بلطف — "موجودة لما تكوني جاهزة 🌸 بأي وقت إبعتيلي رسمتك." بدون تكرار.
-- إذا في إساءة أو رسائل مزعجة: ضلّي هادية ومختصرة، وما تسلّمي لفاطمة.
+    // ---- THANKS + MAIN MENU (buttons) ----
+    thanks: {
+      text: `شكراً كتير إنك شاركتيني هالشي 🌷 بقدّر ثقتك كتير.`,
+      auto: true,
+      next: 'main_menu',
+    },
+    main_menu: {
+      text: `هيدي خياراتك، اختاري يلي بيناسبك 🤍
 
-[حدود]
-- جاوبي بس عن فاطمة وخدمتها وهالمحادثة. إذا حدا سأل سؤال عام (تاريخ، رياضة، حسابات، أخبار…)، اعتذري بلطف بجملة وحدة ورجّعيها للموضوع.
-- إذا ما بتعرفي أو الطلب خارج نطاقك، وصّليها لإنسان ([HANDOFF]) بدل ما تخترعي.`;
+• استشارة مجانية — مكالمة تعارف ٤٥ دقيقة
+• رسم — مساحة هدوء وتواصل مع الذات
+• مكالمة عاجلة — دعم سريع (مدفوعة)
+
+وإذا حابة نبقى عالتواصل بس، اكتبيلي: تواصل`,
+      buttons: [
+        { title: 'استشارة مجانية', next: 'free_consult' },
+        { title: 'رسم', next: 'draw_intro' },
+        { title: 'مكالمة عاجلة', next: 'urgent_call' },
+      ],
+      keywords: [
+        { match: 'تواصل', next: 'just_connecting' },
+        { match: 'connect', next: 'just_connecting' },
+      ],
+      waitFor: 'button',
+    },
+
+    // ---- 1) FREE CONSULTATION ----
+    free_consult: {
+      text: `أهلاً فيكِ 🤍 هيدي مكالمة تعارف مجانية لمدة ٤٥ دقيقة، منحكي فيها مين إنتِ هلأ ووين حاسة إنك محتاجة ترافق. إذا حابة تكمّلي، خبريني الوقت المناسب إلك وابعتلك رابط الحجز.`,
+      waitFor: 'text',
+      next: 'free_consult_done',
+    },
+    free_consult_done: {
+      text: `يسلمو 🤍 فاطمة رح تتواصل معك وتبعتلك رابط الحجز بأقرب وقت.`,
+      action: 'handoff',
+    },
+
+    // ---- 2) DRAWING ----
+    draw_intro: {
+      text: `حضرتلك هيدي المساحة لحتى تعرفي كيف تتواصلي مع ذاتك بهدوء وحُب. إختاري يلي بتحسي إنك بحاجة اله هلأ.`,
+      buttons: [
+        { title: 'تفريغ مشاعر', next: 'draw_release' },
+        { title: 'اتواصل مع ذاتي', next: 'draw_connect' },
+      ],
+      waitFor: 'button',
+    },
+    draw_release: {
+      voiceKey: null as string | null, // injected below (fatme's recording)
+      text: `بعرف أحياناً بتكون الأمور موترة وبتكوني مليانة مشاعر مش واضحة. إسمعي هيدا التسجيل واتبعي خطواتك. كوني بمكان آمن، وبس تسمعيه وتطبقيه، إبعتيلي الرسمة كصورة 🤍`,
+      waitFor: 'image',
+      next: 'draw_receipt',
+      repromptText: `خدي وقتك 💛 بس تخلّصي الرسمة، إبعتيها هون.`,
+    },
+    draw_connect: {
+      voiceKey: null as string | null, // injected below
+      text: `كتير مذهلة هالخطوة، يعني أنتِ بلشتي تعرفي إنو نحنا الوعاء للمشاعر وقادرين نرتقي بذاتنا. هيدا تسجيل صوتي لقلبك مباشرة، بس تسمعيه وتطبقيه إبعتيلي الرسمة كصورة 🤍`,
+      waitFor: 'image',
+      next: 'draw_receipt',
+      repromptText: `خدي وقتك 💛 بس تخلّصي الرسمة، إبعتيها هون.`,
+    },
+    draw_receipt: {
+      text: `وصلتني رسمتك 🤍 شكراً إنك وثقتي فيّ وبذاتك. فاطمة رح تشوف رسمتك وتتواصل معك مباشرة بأقرب وقت. هلأ اشربي مي واتمشي شوي إذا بتقدري. منشوفك عخير 🌸`,
+      action: 'handoff',
+    },
+
+    // ---- 3) URGENT CALL (paid) ----
+    urgent_call: {
+      text: `هيدا الخيار موجود للدعم السريع لما يكون الموضوع وصل عند حده وما قادرة تتعاملي مع مشاعرك. رح يكون لقاء من ساعة لساعة ونص حسب الإحتياج، منفرّغ من خلال الفن ونتعمق بالقصة حتى تلاقي حلّك. سعر الخدمة السريعة: 127$. إذا بدك تاخدي الخطوة الجاي، خبريني ولشوف أقرب موعد وابعتلك رابط الدفع.`,
+      waitFor: 'text',
+      next: 'urgent_call_done',
+    },
+    urgent_call_done: {
+      text: `تمام 🤍 فاطمة رح تتواصل معك بأقرب وقت وتبعتلك رابط الدفع والموعد.`,
+      action: 'handoff',
+    },
+
+    // ---- 4) JUST CONNECTING ----
+    just_connecting: {
+      text: `هلأ صارت معلوماتك معنا، منتشرف فيكي، وبس يكون في نشاط أو حدث رح تكوني أول العارفين. شكراً جزيلاً، منبعتلك سلام ومحبة 🤍`,
+      action: 'end',
+    },
+  },
+} as {
+  enabled: boolean;
+  channel: string;
+  entry: string;
+  safety: { node: string; screenText: boolean };
+  greetingVoiceOnEntry: boolean;
+  nodes: Record<string, { voiceKey?: string | null; [k: string]: unknown }>;
+};
 
 async function main(): Promise<void> {
   const prisma = new PrismaClient();
@@ -75,50 +176,39 @@ async function main(): Promise<void> {
 
     const cfg = await prisma.botConfig.findUnique({
       where: { organizationId: org.id },
-      select: { id: true, deployedAt: true, greetingVoiceStorageKey: true, scriptedFlow: true },
+      select: { id: true, deployedAt: true, greetingVoiceStorageKey: true },
     });
-
-    const hadScriptedFlow =
-      !!cfg?.scriptedFlow &&
-      typeof cfg.scriptedFlow === 'object' &&
-      (cfg.scriptedFlow as { enabled?: boolean }).enabled === true;
     const voiceKey = cfg?.greetingVoiceStorageKey?.trim() || null;
-    console.log(
-      `[seed-fatme] before: scriptedFlow.enabled=${hadScriptedFlow}, ` +
-        `greetingVoice=${voiceKey ? 'set' : 'MISSING'}, deployed=${!!cfg?.deployedAt}`,
-    );
+    console.log(`[seed-fatme] before: greetingVoice=${voiceKey ? 'set' : 'MISSING'}, deployed=${!!cfg?.deployedAt}`);
     if (!voiceKey) {
-      console.warn(
-        '[seed-fatme] ⚠ no greetingVoiceStorageKey — NO greeting voice will play. ' +
-          'Upload fatme’s recording in the AI bot builder (greeting voice) + save, then re-run.',
-      );
+      console.warn('[seed-fatme] ⚠ no greetingVoiceStorageKey — NO voice will play at the welcome OR the drawing step. Upload it in the AI bot builder (greeting voice) + save, then re-run.');
     }
+    // fatme's one recording plays at the welcome (via greetingVoiceOnEntry) AND at
+    // the drawing step (inject into both draw nodes).
+    flow.nodes.draw_release!.voiceKey = voiceKey;
+    flow.nodes.draw_connect!.voiceKey = voiceKey;
 
     const data = {
-      // PURE LLM: disable the deterministic scripted flow entirely.
-      scriptedFlow: Prisma.DbNull,
-      greeting: GREETING,
-      // Arabic ONLY — the engine LANGUAGE LOCK forces Arabic replies even to
-      // English input when 'en' is not in this list (bot-engine.ts ~L1106).
-      languages: 'ar',
+      scriptedFlow: flow as never,
+      greeting: null, // the scripted flow is the opener
+      languages: 'ar,en',
       personality: 'friendly',
-      adminSystemPromptAppend: PERSONA,
+      adminSystemPromptAppend: FALLBACK_PERSONA,
       deployedAt: cfg?.deployedAt ?? new Date(),
     };
     if (!cfg) {
       await prisma.botConfig.create({ data: { organizationId: org.id, ...data } });
-      console.log('[seed-fatme] created BotConfig (pure-LLM) + persona + deployed');
+      console.log('[seed-fatme] created BotConfig + scriptedFlow (buttons) + deployed');
     } else {
       await prisma.botConfig.update({ where: { organizationId: org.id }, data });
-      console.log('[seed-fatme] updated → pure-LLM (scriptedFlow cleared) + persona' + (cfg.deployedAt ? '' : ' + deployed'));
+      console.log('[seed-fatme] updated → deterministic tappable-button flow' + (cfg.deployedAt ? '' : ' + deployed'));
     }
 
-    // Business identity — so the platform (inbox, prompt) knows who this is.
     const biz = await prisma.businessInfo.findFirst({ where: { organizationId: org.id }, select: { id: true } });
     if (biz) await prisma.businessInfo.update({ where: { id: biz.id }, data: { legalName: 'فاطمة إسماعيل' } });
     else await prisma.businessInfo.create({ data: { organizationId: org.id, legalName: 'فاطمة إسماعيل' } });
 
-    console.log('[seed-fatme] done — fatme is now a PURE-LLM intake bot. Greeting voice plays on the opening reply (if set).');
+    console.log(`[seed-fatme] done — ${Object.keys(flow.nodes).length} nodes, entry=${flow.entry}, safety=${flow.safety.node}. fatme is now a TAPPABLE-BUTTON flow.`);
   } finally {
     await prisma.$disconnect();
   }
